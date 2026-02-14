@@ -32,7 +32,9 @@ class ShardingStrategy(str, Enum):
             return cls(str(value))
         except ValueError as exc:
             allowed = ", ".join(item.value for item in cls)
-            raise ValueError(f"Unsupported sharding strategy: {value!r}. Allowed: {allowed}") from exc
+            raise ValueError(
+                f"Unsupported sharding strategy: {value!r}. Allowed: {allowed}"
+            ) from exc
 
 
 @dataclass(slots=True)
@@ -70,7 +72,7 @@ def add_db_id_column(
 
     resolved = ShardingSpec(
         strategy=sharding.strategy,
-        boundaries=list(sharding.boundaries) if sharding.boundaries is not None else None,
+        boundaries=sharding.boundaries if sharding.boundaries is not None else None,
         approx_quantile_rel_error=sharding.approx_quantile_rel_error,
         custom_expr=sharding.custom_expr,
         custom_column_builder=sharding.custom_column_builder,
@@ -129,9 +131,9 @@ def _resolve_boundaries(
     key_col: str,
     num_dbs: int,
     sharding: ShardingSpec,
-) -> list[float | int | str]:
+) -> list[float] | list[int] | list[str]:
     if sharding.boundaries is not None:
-        boundaries = list(sharding.boundaries)
+        boundaries = sharding.boundaries
         expected = max(num_dbs - 1, 0)
         if len(boundaries) != expected:
             raise ShardAssignmentError(
@@ -148,7 +150,9 @@ def _resolve_boundaries(
     return boundaries
 
 
-def _range_bucket_expr(col: Column, boundaries: list[float | int | str]) -> Column:
+def _range_bucket_expr(
+    col: Column, boundaries: list[float] | list[int] | list[str]
+) -> Column:
     expr: Column = F.lit(len(boundaries))
     for idx in range(len(boundaries) - 1, -1, -1):
         expr = F.when(col < F.lit(boundaries[idx]), F.lit(idx)).otherwise(expr)
