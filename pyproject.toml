@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "slatedb_spark_sharded"
+version = "0.1.0"
+description = "Sharded SlateDB snapshot writer for PySpark"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{name = "slatedb_spark_sharded contributors"}]
+license = {text = "Apache-2.0"}
+dependencies = [
+  "pyspark>=3.3",
+  "slatedb",
+  "boto3>=1.28",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=7.4",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["slatedb_spark_sharded*"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra"
+testpaths = ["tests"]
+markers = [
+  "spark: tests requiring local pyspark session",
+]
