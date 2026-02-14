@@ -88,6 +88,44 @@ config = SlateDbConfig(
 - `_CURRENT` pointer is always JSON (`application/json`) even if your manifest format is custom.
 - Recommended Spark setting: `spark.speculation=false`.
 
+## Phase 2: Service-side reads
+
+### Default mode (S3 publisher + default reader)
+
+```python
+from slatedb_spark_sharded import SlateShardedReader
+
+reader = SlateShardedReader(
+    s3_prefix="s3://bucket/prefix",
+    local_root="/tmp/slatedb-reader",
+)
+
+value = reader.get(123)
+batch = reader.multi_get([1, 2, 3])
+reader.refresh()
+reader.close()
+```
+
+### Custom mode (custom publisher requires custom manifest reader)
+
+If you provide a custom publisher, you must also provide a custom `ManifestReader`.
+
+```python
+from slatedb_spark_sharded import FunctionManifestReader, SlateShardedReader
+
+manifest_reader = FunctionManifestReader(
+    load_current_fn=my_load_current,
+    load_manifest_fn=my_load_manifest,
+)
+
+reader = SlateShardedReader(
+    s3_prefix="s3://bucket/prefix",
+    local_root="/tmp/slatedb-reader",
+    publisher=my_custom_publisher,
+    manifest_reader=manifest_reader,
+)
+```
+
 ## Integration test matrix (PySpark 3.5 and 4.x)
 
 ```bash

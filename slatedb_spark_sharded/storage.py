@@ -87,3 +87,21 @@ def get_bytes(url: str, *, s3_client=None) -> bytes:
     bucket, key = parse_s3_url(url)
     obj = client.get_object(Bucket=bucket, Key=key)
     return obj["Body"].read()
+
+
+def try_get_bytes(url: str, *, s3_client=None) -> bytes | None:
+    """Read object bytes and return None when object is not found."""
+
+    client = s3_client or create_s3_client()
+    bucket, key = parse_s3_url(url)
+    try:
+        obj = client.get_object(Bucket=bucket, Key=key)
+    except Exception as exc:  # pragma: no cover - runtime/SDK dependent
+        code = None
+        response = getattr(exc, "response", None)
+        if isinstance(response, dict):
+            code = response.get("Error", {}).get("Code")
+        if code in {"NoSuchKey", "404", "NotFound"}:
+            return None
+        raise
+    return obj["Body"].read()
