@@ -139,6 +139,7 @@ def _resolve_boundaries(
             raise ShardAssignmentError(
                 f"Range sharding expects {expected} boundaries for num_dbs={num_dbs}, got {len(boundaries)}"
             )
+        _validate_boundaries(boundaries)
         return boundaries
 
     probabilities = [idx / num_dbs for idx in range(1, num_dbs)]
@@ -147,6 +148,7 @@ def _resolve_boundaries(
         probabilities,
         sharding.approx_quantile_rel_error,
     )
+    _validate_boundaries(boundaries)
     return boundaries
 
 
@@ -167,3 +169,25 @@ def _custom_expr(sharding: ShardingSpec, key_col: str) -> Column:
     raise ShardAssignmentError(
         "custom_expr sharding requires either `custom_expr` SQL text or `custom_column_builder`."
     )
+
+
+def _validate_boundaries(boundaries: list[float] | list[int] | list[str]) -> None:
+    """Validate boundaries are non-null and strictly increasing."""
+
+    if any(boundary is None for boundary in boundaries):
+        raise ShardAssignmentError("Range boundaries must not contain null values")
+
+    for idx in range(1, len(boundaries)):
+        left = boundaries[idx - 1]
+        right = boundaries[idx]
+        try:
+            if not (left < right):
+                raise ShardAssignmentError(
+                    "Range boundaries must be strictly increasing; "
+                    f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
+                )
+        except TypeError as exc:
+            raise ShardAssignmentError(
+                "Range boundaries contain non-comparable values; "
+                f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
+            ) from exc

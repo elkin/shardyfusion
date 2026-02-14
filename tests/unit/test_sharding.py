@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from pyspark.sql import functions as F
+from slatedb_spark_sharded.errors import ShardAssignmentError
 from slatedb_spark_sharded.sharding import (
     DB_ID_COL,
     ShardingSpec,
@@ -40,3 +41,31 @@ def test_sharding_strategy_enum_coercion() -> None:
 def test_sharding_strategy_rejects_unknown_value() -> None:
     with pytest.raises(ValueError, match="Unsupported sharding strategy"):
         ShardingSpec(strategy="unknown")
+
+
+def test_range_sharding_rejects_unsorted_boundaries(spark) -> None:
+    df = spark.createDataFrame([(1,), (2,), (3,)], ["id"])
+    spec = ShardingSpec(strategy="range", boundaries=[20, 10])
+    with pytest.raises(ShardAssignmentError, match="strictly increasing"):
+        add_db_id_column(df, key_col="id", num_dbs=3, sharding=spec)
+
+
+def test_range_sharding_rejects_duplicate_boundaries(spark) -> None:
+    df = spark.createDataFrame([(1,), (2,), (3,)], ["id"])
+    spec = ShardingSpec(strategy="range", boundaries=[10, 10])
+    with pytest.raises(ShardAssignmentError, match="strictly increasing"):
+        add_db_id_column(df, key_col="id", num_dbs=3, sharding=spec)
+
+
+def test_range_sharding_rejects_null_boundaries(spark) -> None:
+    df = spark.createDataFrame([(1,), (2,), (3,)], ["id"])
+    spec = ShardingSpec(strategy="range", boundaries=[10, None])  # type: ignore[list-item]
+    with pytest.raises(ShardAssignmentError, match="must not contain null"):
+        add_db_id_column(df, key_col="id", num_dbs=3, sharding=spec)
+
+
+def test_range_sharding_rejects_duplicate_quantile_boundaries(spark) -> None:
+    df = spark.createDataFrame([(5,), (5,), (5,), (5,)], ["id"])
+    spec = ShardingSpec(strategy="range")
+    with pytest.raises(ShardAssignmentError, match="strictly increasing"):
+        add_db_id_column(df, key_col="id", num_dbs=3, sharding=spec)
