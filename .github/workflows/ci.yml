@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # Weekly build on Mondays at 06:00 UTC.
+    - cron: "0 6 * * 1"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: PySpark Matrix (3.5 and 4.x)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install tox
+        run: python -m pip install --upgrade pip tox
+
+      - name: Run integration tests (PySpark 3.5 and 4.x)
+        run: tox -e spark35,spark4
