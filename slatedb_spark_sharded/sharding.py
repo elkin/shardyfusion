@@ -76,16 +76,19 @@ def add_db_id_column(
         custom_column_builder=sharding.custom_column_builder,
     )
 
-    if sharding.strategy == ShardingStrategy.HASH:
-        db_expr = F.pmod(F.hash(F.col(key_col)), F.lit(num_dbs))
-    elif sharding.strategy == ShardingStrategy.RANGE:
-        boundaries = _resolve_boundaries(df, key_col, num_dbs, sharding)
-        resolved.boundaries = list(boundaries)
-        db_expr = _range_bucket_expr(F.col(key_col), boundaries)
-    elif sharding.strategy == ShardingStrategy.CUSTOM_EXPR:
-        db_expr = _custom_expr(sharding, key_col)
-    else:  # pragma: no cover - guarded by ShardingSpec.__post_init__
-        raise ShardAssignmentError(f"Unsupported sharding strategy: {sharding.strategy}")
+    match sharding.strategy:
+        case ShardingStrategy.HASH:
+            db_expr = F.pmod(F.hash(F.col(key_col)), F.lit(num_dbs))
+        case ShardingStrategy.RANGE:
+            boundaries = _resolve_boundaries(df, key_col, num_dbs, sharding)
+            resolved.boundaries = boundaries
+            db_expr = _range_bucket_expr(F.col(key_col), boundaries)
+        case ShardingStrategy.CUSTOM_EXPR:
+            db_expr = _custom_expr(sharding, key_col)
+        case _:  # pragma: no cover - guarded by ShardingSpec.__post_init__
+            raise ShardAssignmentError(
+                f"Unsupported sharding strategy: {sharding.strategy}"
+            )
 
     df_with_db_id = df.withColumn(DB_ID_COL, db_expr.cast("int"))
 
