@@ -87,3 +87,10 @@ config = SlateDbConfig(
 - Winner selection is deterministic per `db_id`.
 - `_CURRENT` pointer is always JSON (`application/json`) even if your manifest format is custom.
 - Recommended Spark setting: `spark.speculation=false`.
+
+## Integration test matrix (PySpark 3.5 and 4.x)
+
+```bash
+python3 -m pip install tox
+tox -e spark35,spark4
+```
