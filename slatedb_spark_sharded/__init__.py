@@ -20,7 +20,7 @@ from .publish import DefaultS3Publisher, ManifestPublisher
 from .reader import SlateShardedReader
 from .serde import ValueSpec
 from .routing import SnapshotRouter
-from .sharding import ShardingSpec
+from .sharding import ShardingSpec, ShardingStrategy
 from .writer import SparkConfOverrideContext, write_sharded_slatedb
 
 __all__ = [
@@ -40,6 +40,7 @@ __all__ = [
     "SlateShardedReader",
     "SnapshotRouter",
     "ShardingSpec",
+    "ShardingStrategy",
     "SlateDbConfig",
     "ValueSpec",
     "parse_json_manifest",

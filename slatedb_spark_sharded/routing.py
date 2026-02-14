@@ -8,6 +8,7 @@ from typing import Any
 
 from .manifest import RequiredBuildMeta, RequiredShardMeta
 from .serde import encode_key
+from .sharding import ShardingStrategy
 
 
 @dataclass(slots=True)
@@ -23,7 +24,7 @@ class SnapshotRouter:
     def __init__(self, required_build: RequiredBuildMeta, shards: list[RequiredShardMeta]) -> None:
         self.required_build = required_build
         self.shards = sorted(shards, key=lambda shard: shard.db_id)
-        self.strategy = required_build.sharding.strategy
+        self.strategy = ShardingStrategy.from_value(required_build.sharding.strategy)
         self.num_dbs = required_build.num_dbs
         self.key_encoding = required_build.key_encoding
 
@@ -33,14 +34,14 @@ class SnapshotRouter:
     def route_one(self, key: int | str | bytes) -> int:
         """Route one key to db_id."""
 
-        if self.strategy == "hash":
+        if self.strategy == ShardingStrategy.HASH:
             key_bytes = self._hash_bytes(key)
             return stable_hash64(key_bytes) % self.num_dbs
 
-        if self.strategy == "range":
+        if self.strategy == ShardingStrategy.RANGE:
             return self._route_range(key)
 
-        if self.strategy == "custom_expr":
+        if self.strategy == ShardingStrategy.CUSTOM_EXPR:
             if self._range_intervals or self._boundaries:
                 return self._route_range(key)
             raise ValueError(

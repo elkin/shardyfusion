@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Callable
 
 from pyspark import RDD
@@ -14,21 +15,44 @@ from .errors import ShardAssignmentError
 DB_ID_COL = "_slatedb_db_id"
 
 
+class ShardingStrategy(str, Enum):
+    """Supported sharding strategies."""
+
+    HASH = "hash"
+    RANGE = "range"
+    CUSTOM_EXPR = "custom_expr"
+
+    @classmethod
+    def from_value(cls, value: "ShardingStrategy | str") -> "ShardingStrategy":
+        """Parse a strategy value from enum or string input."""
+
+        if isinstance(value, cls):
+            return value
+        try:
+            return cls(str(value))
+        except ValueError as exc:
+            allowed = ", ".join(item.value for item in cls)
+            raise ValueError(f"Unsupported sharding strategy: {value!r}. Allowed: {allowed}") from exc
+
+
 @dataclass(slots=True)
 class ShardingSpec:
     """Configuration for mapping rows to shard database ids."""
 
-    strategy: str = "hash"
+    strategy: ShardingStrategy | str = ShardingStrategy.HASH
     boundaries: list[float] | list[int] | list[str] | None = None
     approx_quantile_rel_error: float = 0.01
     custom_expr: str | None = None
     custom_column_builder: Callable[[str], Column] | None = None
 
+    def __post_init__(self) -> None:
+        self.strategy = ShardingStrategy.from_value(self.strategy)
+
     def to_manifest_dict(self) -> dict[str, object]:
         """Return manifest-safe representation (Spark callables omitted)."""
 
         return {
-            "strategy": self.strategy,
+            "strategy": self.strategy.value,
             "boundaries": self.boundaries,
             "approx_quantile_rel_error": self.approx_quantile_rel_error,
             "custom_expr": self.custom_expr,
@@ -44,9 +68,6 @@ def add_db_id_column(
 ) -> tuple[DataFrame, ShardingSpec]:
     """Add deterministic db id column and return resolved sharding spec."""
 
-    if sharding.strategy not in {"hash", "range", "custom_expr"}:
-        raise ShardAssignmentError(f"Unsupported sharding strategy: {sharding.strategy}")
-
     resolved = ShardingSpec(
         strategy=sharding.strategy,
         boundaries=list(sharding.boundaries) if sharding.boundaries is not None else None,
@@ -55,14 +76,16 @@ def add_db_id_column(
         custom_column_builder=sharding.custom_column_builder,
     )
 
-    if sharding.strategy == "hash":
+    if sharding.strategy == ShardingStrategy.HASH:
         db_expr = F.pmod(F.hash(F.col(key_col)), F.lit(num_dbs))
-    elif sharding.strategy == "range":
+    elif sharding.strategy == ShardingStrategy.RANGE:
         boundaries = _resolve_boundaries(df, key_col, num_dbs, sharding)
         resolved.boundaries = list(boundaries)
         db_expr = _range_bucket_expr(F.col(key_col), boundaries)
-    else:
+    elif sharding.strategy == ShardingStrategy.CUSTOM_EXPR:
         db_expr = _custom_expr(sharding, key_col)
+    else:  # pragma: no cover - guarded by ShardingSpec.__post_init__
+        raise ShardAssignmentError(f"Unsupported sharding strategy: {sharding.strategy}")
 
     df_with_db_id = df.withColumn(DB_ID_COL, db_expr.cast("int"))
 
