@@ -21,7 +21,7 @@ from .reader import SlateShardedReader
 from .serde import ValueSpec
 from .routing import SnapshotRouter
 from .sharding import ShardingSpec
-from .writer import write_sharded_slatedb
+from .writer import SparkConfOverrideContext, write_sharded_slatedb
 
 __all__ = [
     "BuildResult",
@@ -36,6 +36,7 @@ __all__ = [
     "ManifestPublisher",
     "RequiredBuildMeta",
     "RequiredShardMeta",
+    "SparkConfOverrideContext",
     "SlateShardedReader",
     "SnapshotRouter",
     "ShardingSpec",

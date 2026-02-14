@@ -67,6 +67,65 @@ class _ShardAttemptResult:
     writer_info: dict[str, Any]
 
 
+class SparkConfOverrideContext:
+    """Temporarily override Spark configuration values and restore them on exit."""
+
+    def __init__(self, spark: Any, overrides: dict[str, str] | None) -> None:
+        self._spark = spark
+        self._overrides = dict(overrides or {})
+        self._original_values: dict[str, str | None] = {}
+
+    def __enter__(self) -> "SparkConfOverrideContext":
+        for key, value in self._overrides.items():
+            self._original_values[key] = self._get_conf_or_none(key)
+            try:
+                self._spark.conf.set(key, value)
+            except Exception as exc:  # pragma: no cover - Spark environment dependent
+                log_event(
+                    "spark_conf_override_failed",
+                    level=logging.WARNING,
+                    key=key,
+                    value=value,
+                    error=str(exc),
+                )
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        for key in reversed(list(self._overrides.keys())):
+            original = self._original_values.get(key)
+            try:
+                if original is None:
+                    self._unset_conf_if_supported(key)
+                else:
+                    self._spark.conf.set(key, original)
+            except Exception as restore_exc:  # pragma: no cover - Spark environment dependent
+                log_event(
+                    "spark_conf_restore_failed",
+                    level=logging.WARNING,
+                    key=key,
+                    original_value=original,
+                    error=str(restore_exc),
+                )
+
+    def _get_conf_or_none(self, key: str) -> str | None:
+        try:
+            return self._spark.conf.get(key, None)
+        except Exception:  # pragma: no cover - Spark environment dependent
+            return None
+
+    def _unset_conf_if_supported(self, key: str) -> None:
+        unset = getattr(self._spark.conf, "unset", None)
+        if callable(unset):
+            unset(key)
+            return
+
+        jsession = getattr(self._spark, "_jsparkSession", None)
+        if jsession is not None:
+            jconf = jsession.conf()
+            if hasattr(jconf, "unset"):
+                jconf.unset(key)
+
+
 def write_sharded_slatedb(df: DataFrame, config: SlateDbConfig) -> BuildResult:
     """Write a DataFrame into N independent SlateDB shards and publish manifest metadata."""
 
@@ -74,7 +133,23 @@ def write_sharded_slatedb(df: DataFrame, config: SlateDbConfig) -> BuildResult:
     run_id = config.run_id or uuid4().hex
     spark = df.sparkSession
 
-    _apply_spark_conf_overrides(spark, config.spark_conf_overrides)
+    with SparkConfOverrideContext(spark, config.spark_conf_overrides):
+        return _write_sharded_slatedb_impl(
+            df=df,
+            config=config,
+            run_id=run_id,
+            started=started,
+        )
+
+
+def _write_sharded_slatedb_impl(
+    *,
+    df: DataFrame,
+    config: SlateDbConfig,
+    run_id: str,
+    started: float,
+) -> BuildResult:
+    """Implementation for write_sharded_slatedb assuming Spark conf already prepared."""
 
     shard_start = time.perf_counter()
     df_with_db_id, resolved_sharding = add_db_id_column(
@@ -406,22 +481,6 @@ def _manifest_safe_sharding(sharding: ShardingSpec) -> ShardingSpec:
         custom_expr=sharding.custom_expr,
         custom_column_builder=None,
     )
-
-
-def _apply_spark_conf_overrides(spark: Any, overrides: dict[str, str] | None) -> None:
-    if not overrides:
-        return
-    for key, value in overrides.items():
-        try:
-            spark.conf.set(key, value)
-        except Exception as exc:  # pragma: no cover - Spark environment dependent
-            log_event(
-                "spark_conf_override_failed",
-                level=logging.WARNING,
-                key=key,
-                value=value,
-                error=str(exc),
-            )
 
 
 def _join_s3(base: str, *parts: str) -> str:
