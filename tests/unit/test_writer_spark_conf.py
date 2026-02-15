@@ -58,7 +58,7 @@ def test_write_sharded_slatedb_uses_optional_spark_conf_overrides(monkeypatch) -
     calls: list[tuple[str, object]] = []
     fake_spark = _FakeSparkSession()
     fake_df = SimpleNamespace(sparkSession=fake_spark)
-    fake_config = SimpleNamespace(run_id=None)
+    fake_config = SimpleNamespace(output=SimpleNamespace(run_id=None))
 
     class _RecordingCtx:
         def __init__(self, spark, overrides):

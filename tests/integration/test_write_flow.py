@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from slatedb_spark_sharded.config import SlateDbConfig
+from slatedb_spark_sharded.config import EngineOptions, ManifestOptions, OutputOptions, SlateDbConfig
 from slatedb_spark_sharded.manifest import ManifestArtifact
 from slatedb_spark_sharded.publish import ManifestPublisher
 from slatedb_spark_sharded.serde import ValueSpec
@@ -38,9 +38,9 @@ def test_write_sharded_flow_with_in_memory_publisher(spark) -> None:
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         value_spec=ValueSpec.binary_col("payload"),
-        publisher=publisher,
-        slatedb_adapter_factory=fake_adapter_factory,
-        run_id="run-test-1",
+        manifest=ManifestOptions(publisher=publisher),
+        engine=EngineOptions(slatedb_adapter_factory=fake_adapter_factory),
+        output=OutputOptions(run_id="run-test-1"),
     )
 
     result = write_sharded_slatedb(df, config)

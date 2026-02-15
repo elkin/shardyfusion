@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from slatedb_spark_sharded.config import SlateDbConfig
+from slatedb_spark_sharded.config import EngineOptions, ManifestOptions, OutputOptions, SlateDbConfig
 from slatedb_spark_sharded.errors import ConfigValidationError
 from slatedb_spark_sharded.serde import ValueSpec
 
@@ -21,10 +21,10 @@ def test_config_accepts_valid_values() -> None:
     "kwargs",
     [
         {"num_dbs": 0},
-        {"batch_size": 0},
+        {"engine": EngineOptions(batch_size=0)},
         {"s3_prefix": "not-s3"},
-        {"tmp_prefix": "../tmp"},
-        {"manifest_name": "bad/name"},
+        {"output": OutputOptions(tmp_prefix="../tmp")},
+        {"manifest": ManifestOptions(manifest_name="bad/name")},
     ],
 )
 def test_config_rejects_invalid_values(kwargs: dict[str, object]) -> None:

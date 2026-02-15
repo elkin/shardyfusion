@@ -134,7 +134,7 @@ def write_sharded_slatedb(
     """Write a DataFrame into N independent SlateDB shards and publish manifest metadata."""
 
     started = time.perf_counter()
-    run_id = config.run_id or uuid4().hex
+    run_id = config.output.run_id or uuid4().hex
     spark = df.sparkSession
     with SparkConfOverrideContext(spark, spark_conf_overrides):
         return _write_sharded_slatedb_impl(
@@ -153,34 +153,38 @@ def _write_sharded_slatedb_impl(
     started: float,
 ) -> BuildResult:
     """Implementation for write_sharded_slatedb assuming Spark conf already prepared."""
+    sharding_options = config.sharding
+    output_options = config.output
+    manifest_options = config.manifest
+    engine_options = config.engine
 
     shard_start = time.perf_counter()
     df_with_db_id, resolved_sharding = add_db_id_column(
         df,
         key_col=config.key_col,
         num_dbs=config.num_dbs,
-        sharding=config.sharding,
+        sharding=sharding_options.spec,
     )
     partitioned_rdd = prepare_partitioned_rdd(
         df_with_db_id,
         num_dbs=config.num_dbs,
         key_col=config.key_col,
-        sort_within_partitions=config.sort_within_partitions,
+        sort_within_partitions=sharding_options.sort_within_partitions,
     )
     shard_duration_ms = int((time.perf_counter() - shard_start) * 1000)
 
     runtime = _PartitionWriteConfig(
         run_id=run_id,
         s3_prefix=config.s3_prefix,
-        tmp_prefix=config.tmp_prefix,
-        db_path_template=config.db_path_template,
-        local_root=config.local_root,
+        tmp_prefix=output_options.tmp_prefix,
+        db_path_template=output_options.db_path_template,
+        local_root=output_options.local_root,
         key_col=config.key_col,
         value_spec=config.value_spec,
-        batch_size=config.batch_size,
-        slate_env_file=config.slate_env_file,
-        slate_settings=config.slate_settings,
-        slatedb_adapter_factory=config.slatedb_adapter_factory,
+        batch_size=engine_options.batch_size,
+        slate_env_file=engine_options.slate_env_file,
+        slate_settings=engine_options.slate_settings,
+        slatedb_adapter_factory=engine_options.slatedb_adapter_factory,
     )
 
     write_start = time.perf_counter()
@@ -200,34 +204,34 @@ def _write_sharded_slatedb_impl(
         s3_prefix=config.s3_prefix,
         key_col=config.key_col,
         sharding=_manifest_safe_sharding(resolved_sharding),
-        db_path_template=config.db_path_template,
-        tmp_prefix=config.tmp_prefix,
+        db_path_template=output_options.db_path_template,
+        tmp_prefix=output_options.tmp_prefix,
         key_encoding=KEY_ENCODING,
     )
 
-    builder = config.manifest_builder or JsonManifestBuilder()
-    for key, value in config.custom_manifest_fields.items():
+    builder = manifest_options.manifest_builder or JsonManifestBuilder()
+    for key, value in manifest_options.custom_manifest_fields.items():
         builder.add_custom_field(key, value)
 
     try:
         artifact = builder.build(
             required_build=required_build,
             shards=winners,
-            custom_fields=config.custom_manifest_fields,
+            custom_fields=manifest_options.custom_manifest_fields,
         )
     except Exception as exc:  # pragma: no cover - custom builder surface
         raise ManifestBuildError("Failed to build manifest artifact") from exc
 
-    publisher = config.publisher or DefaultS3Publisher(
+    publisher = manifest_options.publisher or DefaultS3Publisher(
         config.s3_prefix,
-        manifest_name=config.manifest_name,
-        current_name=config.current_name,
-        s3_client_config=config.s3_client_config,
+        manifest_name=manifest_options.manifest_name,
+        current_name=manifest_options.current_name,
+        s3_client_config=manifest_options.s3_client_config,
     )
 
     try:
         manifest_ref = publisher.publish_manifest(
-            name=config.manifest_name,
+            name=manifest_options.manifest_name,
             artifact=artifact,
             run_id=run_id,
         )
@@ -242,7 +246,7 @@ def _write_sharded_slatedb_impl(
 
     try:
         current_ref = publisher.publish_current(
-            name=config.current_name,
+            name=manifest_options.current_name,
             artifact=current_artifact,
         )
     except Exception as exc:  # pragma: no cover - runtime publisher failures

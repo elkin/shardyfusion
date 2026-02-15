@@ -1,6 +1,12 @@
 """Public API for slatedb_spark_sharded."""
 
-from .config import SlateDbConfig
+from .config import (
+    EngineOptions,
+    ManifestOptions,
+    OutputOptions,
+    ShardingOptions,
+    SlateDbConfig,
+)
 from .manifest import (
     BuildResult,
     CurrentPointer,
@@ -34,14 +40,18 @@ __all__ = [
     "ManifestBuilder",
     "ManifestReader",
     "ManifestPublisher",
+    "ManifestOptions",
+    "OutputOptions",
     "RequiredBuildMeta",
     "RequiredShardMeta",
     "SparkConfOverrideContext",
     "SlateShardedReader",
     "SnapshotRouter",
     "ShardingSpec",
+    "ShardingOptions",
     "ShardingStrategy",
     "SlateDbConfig",
+    "EngineOptions",
     "ValueSpec",
     "parse_json_manifest",
     "write_sharded_slatedb",

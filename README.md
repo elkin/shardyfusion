@@ -81,13 +81,17 @@ class InMemoryPublisher(ManifestPublisher):
 Pass custom components through config:
 
 ```python
+from slatedb_spark_sharded import ManifestOptions
+
 config = SlateDbConfig(
     num_dbs=8,
     s3_prefix="s3://bucket/prefix",
     key_col="id",
     value_spec=ValueSpec.binary_col("payload"),
-    manifest_builder=TeamJsonBuilder(),
-    publisher=InMemoryPublisher(),
+    manifest=ManifestOptions(
+        manifest_builder=TeamJsonBuilder(),
+        publisher=InMemoryPublisher(),
+    ),
 )
 ```
 
