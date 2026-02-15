@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 import xxhash
 
@@ -34,25 +34,12 @@ class SnapshotRouter:
 
         self._boundaries = list(required_build.sharding.boundaries or [])
         self._range_intervals = self._build_range_intervals(self.shards)
+        self._route_one_impl = self._build_route_one_impl()
 
     def route_one(self, key: int | str | bytes) -> int:
         """Route one key to db_id."""
 
-        if self.strategy == ShardingStrategy.HASH:
-            return _xxhash64_db_id(key, self.num_dbs, self.key_encoding)
-
-        if self.strategy == ShardingStrategy.RANGE:
-            return self._route_range(key)
-
-        if self.strategy == ShardingStrategy.CUSTOM_EXPR:
-            if self._range_intervals or self._boundaries:
-                return self._route_range(key)
-            raise ValueError(
-                "Sharding strategy custom_expr is not directly routable at read time; "
-                "manifest must include explicit boundaries or shard ranges."
-            )
-
-        raise ValueError(f"Unsupported sharding strategy for routing: {self.strategy}")
+        return self._route_one_impl(key)
 
     def group_keys(
         self, keys: list[int | str | bytes]
@@ -100,6 +87,29 @@ class SnapshotRouter:
         raise ValueError(
             "Range routing requires shard min/max ranges or sharding boundaries in manifest."
         )
+
+    def _build_route_one_impl(self) -> Callable[[int | str | bytes], int]:
+        if self.strategy == ShardingStrategy.HASH:
+            return (
+                lambda key: _xxhash64_db_id(
+                    key,
+                    self.num_dbs,
+                    self.key_encoding,
+                )
+            )
+
+        if self.strategy == ShardingStrategy.RANGE:
+            return self._route_range
+
+        if self.strategy == ShardingStrategy.CUSTOM_EXPR:
+            if self._range_intervals or self._boundaries:
+                return self._route_range
+            raise ValueError(
+                "Sharding strategy custom_expr is not directly routable at read time; "
+                "manifest must include explicit boundaries or shard ranges."
+            )
+
+        raise ValueError(f"Unsupported sharding strategy for routing: {self.strategy}")
 
     def _normalize_range_key(self, key: int | str | bytes) -> int | str:
         if isinstance(key, (int, str)):

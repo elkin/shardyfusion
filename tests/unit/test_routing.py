@@ -222,6 +222,5 @@ def test_custom_expr_requires_routing_info() -> None:
         ),
     ]
 
-    router = SnapshotRouter(required, shards)
     with pytest.raises(ValueError, match="not directly routable"):
-        router.route_one(1)
+        SnapshotRouter(required, shards)
