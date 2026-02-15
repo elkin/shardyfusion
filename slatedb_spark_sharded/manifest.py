@@ -70,6 +70,26 @@ class CurrentPointer:
 
 
 @dataclass(slots=True)
+class BuildDurations:
+    """Measured phase durations in milliseconds."""
+
+    sharding_ms: int
+    write_ms: int
+    manifest_ms: int
+    total_ms: int
+
+
+@dataclass(slots=True)
+class BuildStats:
+    """Deterministic build statistics with fixed schema."""
+
+    durations: BuildDurations
+    num_attempt_results: int
+    num_winners: int
+    rows_written: int
+
+
+@dataclass(slots=True)
 class BuildResult:
     """Result from `write_sharded_slatedb`."""
 
@@ -78,7 +98,7 @@ class BuildResult:
     manifest_artifact: ManifestArtifact
     manifest_ref: str
     current_ref: str | None
-    stats: dict[str, Any] = field(default_factory=dict)
+    stats: BuildStats
 
 
 class ManifestBuilder(Protocol):

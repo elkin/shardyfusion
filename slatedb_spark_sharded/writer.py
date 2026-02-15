@@ -25,7 +25,9 @@ from .errors import (
 )
 from .logging import log_event
 from .manifest import (
+    BuildDurations,
     BuildResult,
+    BuildStats,
     CurrentPointer,
     JsonManifestBuilder,
     ManifestArtifact,
@@ -257,17 +259,17 @@ def _write_sharded_slatedb_impl(
     manifest_duration_ms = int((time.perf_counter() - manifest_start) * 1000)
     total_duration_ms = int((time.perf_counter() - started) * 1000)
 
-    stats: dict[str, Any] = {
-        "durations_ms": {
-            "sharding": shard_duration_ms,
-            "write": write_duration_ms,
-            "manifest": manifest_duration_ms,
-            "total": total_duration_ms,
-        },
-        "num_attempt_results": len(attempts),
-        "num_winners": len(winners),
-        "rows_written": sum(w.row_count for w in winners),
-    }
+    stats = BuildStats(
+        durations=BuildDurations(
+            sharding_ms=shard_duration_ms,
+            write_ms=write_duration_ms,
+            manifest_ms=manifest_duration_ms,
+            total_ms=total_duration_ms,
+        ),
+        num_attempt_results=len(attempts),
+        num_winners=len(winners),
+        rows_written=sum(w.row_count for w in winners),
+    )
 
     return BuildResult(
         run_id=run_id,

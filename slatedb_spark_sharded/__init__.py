@@ -8,7 +8,9 @@ from .config import (
     SlateDbConfig,
 )
 from .manifest import (
+    BuildDurations,
     BuildResult,
+    BuildStats,
     CurrentPointer,
     ManifestArtifact,
     ManifestBuilder,
@@ -31,6 +33,8 @@ from .writer import SparkConfOverrideContext, write_sharded_slatedb
 
 __all__ = [
     "BuildResult",
+    "BuildStats",
+    "BuildDurations",
     "CurrentPointer",
     "DefaultS3Publisher",
     "DefaultS3ManifestReader",

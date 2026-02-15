@@ -5,7 +5,7 @@ import json
 import pytest
 
 from slatedb_spark_sharded.config import EngineOptions, ManifestOptions, OutputOptions, SlateDbConfig
-from slatedb_spark_sharded.manifest import ManifestArtifact
+from slatedb_spark_sharded.manifest import BuildStats, ManifestArtifact
 from slatedb_spark_sharded.publish import ManifestPublisher
 from slatedb_spark_sharded.serde import ValueSpec
 from slatedb_spark_sharded.testing import fake_adapter_factory
@@ -50,6 +50,8 @@ def test_write_sharded_flow_with_in_memory_publisher(spark) -> None:
     assert [item.db_id for item in result.winners] == [0, 1, 2, 3]
     assert result.manifest_ref.startswith("mem://manifests/")
     assert result.current_ref == "mem://_CURRENT"
+    assert isinstance(result.stats, BuildStats)
+    assert result.stats.num_winners == 4
 
     current_artifact = publisher.objects[result.current_ref]
     current_payload = json.loads(current_artifact.payload.decode("utf-8"))
