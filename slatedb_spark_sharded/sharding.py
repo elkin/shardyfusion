@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import math
 from typing import Callable
 
 from pyspark import RDD
@@ -78,21 +79,26 @@ def add_db_id_column(
         custom_column_builder=sharding.custom_column_builder,
     )
 
+    df_with_db_id: DataFrame
     match sharding.strategy:
         case ShardingStrategy.HASH:
             db_expr = F.pmod(F.hash(F.col(key_col)), F.lit(num_dbs))
+            df_with_db_id = df.withColumn(DB_ID_COL, db_expr.cast("int"))
         case ShardingStrategy.RANGE:
             boundaries = _resolve_boundaries(df, key_col, num_dbs, sharding)
             resolved.boundaries = boundaries
-            db_expr = _range_bucket_expr(F.col(key_col), boundaries)
+            if _boundaries_are_numeric(boundaries):
+                df_with_db_id = _range_bucketize_df(df, key_col, boundaries)
+            else:
+                db_expr = _range_bucket_expr(key_col, boundaries)
+                df_with_db_id = df.withColumn(DB_ID_COL, db_expr.cast("int"))
         case ShardingStrategy.CUSTOM_EXPR:
             db_expr = _custom_expr(sharding, key_col)
+            df_with_db_id = df.withColumn(DB_ID_COL, db_expr.cast("int"))
         case _:  # pragma: no cover - guarded by ShardingSpec.__post_init__
             raise ShardAssignmentError(
                 f"Unsupported sharding strategy: {sharding.strategy}"
             )
-
-    df_with_db_id = df.withColumn(DB_ID_COL, db_expr.cast("int"))
 
     invalid_count = (
         df_with_db_id.where(
@@ -153,12 +159,53 @@ def _resolve_boundaries(
 
 
 def _range_bucket_expr(
-    col: Column, boundaries: list[float] | list[int] | list[str]
+    key_col: str, boundaries: list[float] | list[int] | list[str]
 ) -> Column:
-    expr: Column = F.lit(len(boundaries))
-    for idx in range(len(boundaries) - 1, -1, -1):
-        expr = F.when(col < F.lit(boundaries[idx]), F.lit(idx)).otherwise(expr)
-    return expr
+    """Build range-bucket expression using pure Spark SQL functions."""
+
+    if not boundaries:
+        return F.lit(0)
+
+    escaped_col = key_col.replace("`", "``")
+    boundary_sql = ", ".join(_sql_literal(value) for value in boundaries)
+    # bucket id = number of boundaries less-than-or-equal-to value.
+    # Example boundaries [10, 20]:
+    #   value < 10  -> 0
+    #   10..19      -> 1
+    #   >= 20       -> 2
+    return F.expr(
+        f"size(filter(array({boundary_sql}), boundary -> `{escaped_col}` >= boundary))"
+    )
+
+
+def _boundaries_are_numeric(boundaries: list[float] | list[int] | list[str]) -> bool:
+    return all(
+        isinstance(boundary, (int, float)) and not isinstance(boundary, bool)
+        for boundary in boundaries
+    )
+
+
+def _range_bucketize_df(
+    df: DataFrame,
+    key_col: str,
+    boundaries: list[float] | list[int] | list[str],
+) -> DataFrame:
+    """Apply range bucketing with Spark ML Bucketizer for numeric boundaries."""
+
+    try:
+        from pyspark.ml.feature import Bucketizer
+    except Exception:  # pragma: no cover - dependency/environment dependent
+        db_expr = _range_bucket_expr(key_col, boundaries)
+        return df.withColumn(DB_ID_COL, db_expr.cast("int"))
+
+    splits = [-float("inf"), *[float(boundary) for boundary in boundaries], float("inf")]
+    bucketizer = Bucketizer(
+        splits=splits,
+        inputCol=key_col,
+        outputCol=DB_ID_COL,
+        handleInvalid="error",
+    )
+    return bucketizer.transform(df).withColumn(DB_ID_COL, F.col(DB_ID_COL).cast("int"))
 
 
 def _custom_expr(sharding: ShardingSpec, key_col: str) -> Column:
@@ -176,6 +223,10 @@ def _validate_boundaries(boundaries: list[float] | list[int] | list[str]) -> Non
 
     if any(boundary is None for boundary in boundaries):
         raise ShardAssignmentError("Range boundaries must not contain null values")
+    if any(isinstance(boundary, bool) for boundary in boundaries):
+        raise ShardAssignmentError(
+            "Range boundaries must not be boolean values"
+        )
 
     for idx in range(1, len(boundaries)):
         left = boundaries[idx - 1]
@@ -191,3 +242,22 @@ def _validate_boundaries(boundaries: list[float] | list[int] | list[str]) -> Non
                 "Range boundaries contain non-comparable values; "
                 f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
             ) from exc
+
+
+def _sql_literal(value: float | int | str) -> str:
+    """Render a safe SQL literal for range boundary values."""
+
+    if isinstance(value, str):
+        escaped = value.replace("'", "''")
+        return "'" + escaped + "'"
+    if isinstance(value, bool):
+        raise ShardAssignmentError("Boolean boundary literals are not supported")
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if math.isnan(value):
+            return "CAST('NaN' AS DOUBLE)"
+        if math.isinf(value):
+            return "CAST('Infinity' AS DOUBLE)" if value > 0 else "CAST('-Infinity' AS DOUBLE)"
+        return repr(value)
+    raise ShardAssignmentError(f"Unsupported boundary literal type: {type(value)!r}")
