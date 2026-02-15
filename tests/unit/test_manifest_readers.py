@@ -4,7 +4,10 @@ import json
 
 import pytest
 
-from slatedb_spark_sharded.manifest_readers import DefaultS3ManifestReader, parse_json_manifest
+from slatedb_spark_sharded.manifest_readers import (
+    DefaultS3ManifestReader,
+    parse_json_manifest,
+)
 
 
 def test_parse_json_manifest_round_trip() -> None:

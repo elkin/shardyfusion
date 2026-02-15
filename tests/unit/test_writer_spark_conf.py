@@ -106,8 +106,12 @@ def test_write_sharded_slatedb_uses_optional_spark_conf_overrides(monkeypatch) -
         calls.append(("impl", (df, config, run_id)))
         return "result-sentinel"
 
-    monkeypatch.setattr("slatedb_spark_sharded.writer.SparkConfOverrideContext", _RecordingCtx)
-    monkeypatch.setattr("slatedb_spark_sharded.writer._write_sharded_slatedb_impl", _fake_impl)
+    monkeypatch.setattr(
+        "slatedb_spark_sharded.writer.SparkConfOverrideContext", _RecordingCtx
+    )
+    monkeypatch.setattr(
+        "slatedb_spark_sharded.writer._write_sharded_slatedb_impl", _fake_impl
+    )
 
     result = write_sharded_slatedb(
         fake_df,  # type: ignore[arg-type]
@@ -144,8 +148,12 @@ def test_write_sharded_slatedb_wraps_input_df_when_cache_enabled(monkeypatch) ->
         calls.append(("impl", (df, config, run_id)))
         return "result-sentinel"
 
-    monkeypatch.setattr("slatedb_spark_sharded.writer.SparkConfOverrideContext", _RecordingCtx)
-    monkeypatch.setattr("slatedb_spark_sharded.writer._write_sharded_slatedb_impl", _fake_impl)
+    monkeypatch.setattr(
+        "slatedb_spark_sharded.writer.SparkConfOverrideContext", _RecordingCtx
+    )
+    monkeypatch.setattr(
+        "slatedb_spark_sharded.writer._write_sharded_slatedb_impl", _fake_impl
+    )
 
     result1 = write_sharded_slatedb(
         fake_df,  # type: ignore[arg-type]

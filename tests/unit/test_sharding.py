@@ -28,7 +28,9 @@ def test_hash_sharding_produces_db_id_in_range(spark) -> None:
 
 def test_hash_sharding_rejects_non_integral_key_type(spark) -> None:
     df = spark.createDataFrame([("1",), ("2",)], ["id"])
-    with pytest.raises(ShardAssignmentError, match="Hash sharding requires key column type"):
+    with pytest.raises(
+        ShardAssignmentError, match="Hash sharding requires key column type"
+    ):
         add_db_id_column(
             df,
             key_col="id",
@@ -42,7 +44,10 @@ def test_range_sharding_with_boundaries(spark) -> None:
     spec = ShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=[10, 20])
     with_db_id, _ = add_db_id_column(df, key_col="id", num_dbs=3, sharding=spec)
 
-    got = sorted((row["id"], row[DB_ID_COL]) for row in with_db_id.select("id", DB_ID_COL).collect())
+    got = sorted(
+        (row["id"], row[DB_ID_COL])
+        for row in with_db_id.select("id", DB_ID_COL).collect()
+    )
     assert got == [(1, 0), (5, 0), (10, 1), (15, 1), (20, 2)]
 
 
@@ -51,7 +56,10 @@ def test_range_sharding_accepts_float_key_type(spark) -> None:
     spec = ShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=[1.0])
     with_db_id, _ = add_db_id_column(df, key_col="id", num_dbs=2, sharding=spec)
 
-    got = {row["id"]: row[DB_ID_COL] for row in with_db_id.select("id", DB_ID_COL).collect()}
+    got = {
+        row["id"]: row[DB_ID_COL]
+        for row in with_db_id.select("id", DB_ID_COL).collect()
+    }
     assert got[0.1] == 0
     assert got[1.2] == 1
     assert got[2.8] == 1
@@ -60,7 +68,9 @@ def test_range_sharding_accepts_float_key_type(spark) -> None:
 def test_range_sharding_rejects_boolean_key_type(spark) -> None:
     df = spark.createDataFrame([(False,), (True,)], ["id"])
     spec = ShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=[0.5])
-    with pytest.raises(ShardAssignmentError, match="Range sharding requires key column type one of"):
+    with pytest.raises(
+        ShardAssignmentError, match="Range sharding requires key column type one of"
+    ):
         add_db_id_column(df, key_col="id", num_dbs=2, sharding=spec)
 
 
@@ -90,9 +100,7 @@ def test_range_sharding_rejects_duplicate_boundaries(spark) -> None:
 
 def test_range_sharding_rejects_null_boundaries(spark) -> None:
     df = spark.createDataFrame([(1,), (2,), (3,)], ["id"])
-    spec = ShardingSpec(
-        strategy=ShardingStrategy.RANGE, boundaries=[10, None]
-    )  # type: ignore[list-item]
+    spec = ShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=[10, None])  # type: ignore[list-item]
     with pytest.raises(ShardAssignmentError, match="must not contain null"):
         add_db_id_column(df, key_col="id", num_dbs=3, sharding=spec)
 
@@ -158,7 +166,10 @@ def test_range_sharding_string_boundaries_non_numeric_path(spark) -> None:
     df = spark.createDataFrame([("aa",), ("ba",), ("zz",)], ["id"])
     spec = ShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=["m"])
     with_db_id, _ = add_db_id_column(df, key_col="id", num_dbs=2, sharding=spec)
-    got = {row["id"]: row[DB_ID_COL] for row in with_db_id.select("id", DB_ID_COL).collect()}
+    got = {
+        row["id"]: row[DB_ID_COL]
+        for row in with_db_id.select("id", DB_ID_COL).collect()
+    }
     assert got["aa"] == 0
     assert got["ba"] == 0
     assert got["zz"] == 1

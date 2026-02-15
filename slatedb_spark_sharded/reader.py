@@ -321,56 +321,65 @@ def _open_slatedb_reader(
         ) from exc
 
     candidates: list[tuple[str, Any]] = []
+    reader_kwargs: dict[str, Any] = {"url": db_url}
+    if checkpoint_id is not None:
+        reader_kwargs["checkpoint_id"] = checkpoint_id
+    if env_file is not None:
+        reader_kwargs["env_file"] = env_file
+    if isinstance(settings, str):
+        reader_kwargs["settings"] = settings
+
     if hasattr(slatedb, "SlateDBReader"):
         cls = getattr(slatedb, "SlateDBReader")
         candidates.extend(
             [
                 (
                     "SlateDBReader(local_path, ...)",
-                    lambda: cls(
-                        local_path,
-                        url=db_url,
-                        checkpoint_id=checkpoint_id,
-                        env_file=env_file,
-                        settings=settings,
-                    ),
+                    lambda: cls(local_path, **reader_kwargs),
                 ),
                 (
                     "SlateDBReader(local_dir=..., ...)",
-                    lambda: cls(
-                        local_dir=local_path,
-                        url=db_url,
-                        checkpoint_id=checkpoint_id,
-                        env_file=env_file,
-                        settings=settings,
-                    ),
+                    lambda: cls(local_dir=local_path, **reader_kwargs),
                 ),
             ]
         )
+        if "settings" in reader_kwargs:
+            reader_kwargs_without_settings = dict(reader_kwargs)
+            reader_kwargs_without_settings.pop("settings", None)
+            candidates.extend(
+                [
+                    (
+                        "SlateDBReader(local_path, ...) without settings",
+                        lambda: cls(local_path, **reader_kwargs_without_settings),
+                    ),
+                    (
+                        "SlateDBReader(local_dir=..., ...) without settings",
+                        lambda: cls(
+                            local_dir=local_path,
+                            **reader_kwargs_without_settings,
+                        ),
+                    ),
+                ]
+            )
 
     if hasattr(slatedb, "SlateDB"):
         cls = getattr(slatedb, "SlateDB")
+        db_kwargs: dict[str, Any] = {"url": db_url}
+        if checkpoint_id is not None:
+            db_kwargs["checkpoint_id"] = checkpoint_id
+        if env_file is not None:
+            db_kwargs["env_file"] = env_file
+        if isinstance(settings, str):
+            db_kwargs["settings"] = settings
         candidates.extend(
             [
                 (
                     "SlateDB(local_path, ...)",
-                    lambda: cls(
-                        local_path,
-                        url=db_url,
-                        checkpoint_id=checkpoint_id,
-                        env_file=env_file,
-                        settings=settings,
-                    ),
+                    lambda: cls(local_path, **db_kwargs),
                 ),
                 (
                     "SlateDB(local_dir=..., ...)",
-                    lambda: cls(
-                        local_dir=local_path,
-                        url=db_url,
-                        checkpoint_id=checkpoint_id,
-                        env_file=env_file,
-                        settings=settings,
-                    ),
+                    lambda: cls(local_dir=local_path, **db_kwargs),
                 ),
             ]
         )

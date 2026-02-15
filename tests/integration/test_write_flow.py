@@ -4,11 +4,16 @@ import json
 
 import pytest
 
-from slatedb_spark_sharded.config import EngineOptions, ManifestOptions, OutputOptions, SlateDbConfig
+from slatedb_spark_sharded.config import (
+    EngineOptions,
+    ManifestOptions,
+    OutputOptions,
+    SlateDbConfig,
+)
 from slatedb_spark_sharded.manifest import BuildStats, ManifestArtifact
 from slatedb_spark_sharded.publish import ManifestPublisher
 from slatedb_spark_sharded.serde import ValueSpec
-from slatedb_spark_sharded.testing import fake_adapter_factory
+from slatedb_spark_sharded.testing import real_file_adapter_factory
 from slatedb_spark_sharded.writer import write_sharded_slatedb
 
 
@@ -16,7 +21,9 @@ class InMemoryPublisher(ManifestPublisher):
     def __init__(self) -> None:
         self.objects: dict[str, ManifestArtifact] = {}
 
-    def publish_manifest(self, *, name: str, artifact: ManifestArtifact, run_id: str) -> str:
+    def publish_manifest(
+        self, *, name: str, artifact: ManifestArtifact, run_id: str
+    ) -> str:
         ref = f"mem://manifests/run_id={run_id}/{name}"
         self.objects[ref] = artifact
         return ref
@@ -28,7 +35,7 @@ class InMemoryPublisher(ManifestPublisher):
 
 
 @pytest.mark.spark
-def test_write_sharded_flow_with_in_memory_publisher(spark) -> None:
+def test_write_sharded_flow_with_in_memory_publisher(spark, tmp_path) -> None:
     rows = [(i, f"v{i}".encode("utf-8")) for i in range(40)]
     df = spark.createDataFrame(rows, ["id", "payload"])
 
@@ -39,7 +46,11 @@ def test_write_sharded_flow_with_in_memory_publisher(spark) -> None:
         key_col="id",
         value_spec=ValueSpec.binary_col("payload"),
         manifest=ManifestOptions(publisher=publisher),
-        engine=EngineOptions(slatedb_adapter_factory=fake_adapter_factory),
+        engine=EngineOptions(
+            slatedb_adapter_factory=real_file_adapter_factory(
+                str(tmp_path / "object-store")
+            )
+        ),
         output=OutputOptions(run_id="run-test-1"),
     )
 

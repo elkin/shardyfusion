@@ -4,7 +4,12 @@ from dataclasses import dataclass
 
 import pytest
 
-from slatedb_spark_sharded.manifest import CurrentPointer, ParsedManifest, RequiredBuildMeta, RequiredShardMeta
+from slatedb_spark_sharded.manifest import (
+    CurrentPointer,
+    ParsedManifest,
+    RequiredBuildMeta,
+    RequiredShardMeta,
+)
 from slatedb_spark_sharded.reader import SlateShardedReader
 from slatedb_spark_sharded.sharding import ShardingSpec, ShardingStrategy
 
@@ -26,7 +31,9 @@ class _MutableManifestReader:
             updated_at="2026-01-01T00:00:00+00:00",
         )
 
-    def load_manifest(self, ref: str, content_type: str | None = None) -> ParsedManifest:
+    def load_manifest(
+        self, ref: str, content_type: str | None = None
+    ) -> ParsedManifest:
         _ = content_type
         return self.manifests[ref]
 
@@ -101,7 +108,9 @@ def test_refresh_swaps_manifest_ref_and_readers(monkeypatch, tmp_path) -> None:
         _ = (local_path, checkpoint_id, env_file, settings)
         return _FakeReader(stores[db_url])
 
-    monkeypatch.setattr("slatedb_spark_sharded.reader._open_slatedb_reader", fake_open_reader)
+    monkeypatch.setattr(
+        "slatedb_spark_sharded.reader._open_slatedb_reader", fake_open_reader
+    )
 
     reader = SlateShardedReader(
         s3_prefix="s3://bucket/prefix",
