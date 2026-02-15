@@ -83,7 +83,8 @@ def add_db_id_column(
     df_with_db_id: DataFrame
     match sharding.strategy:
         case ShardingStrategy.HASH:
-            db_expr = F.pmod(F.hash(F.col(key_col)), F.lit(num_dbs))
+            # Use explicit xxhash64 for stable cross-runtime sharding semantics.
+            db_expr = F.pmod(F.xxhash64(F.col(key_col).cast("long")), F.lit(num_dbs))
             df_with_db_id = df.withColumn(DB_ID_COL, db_expr.cast("int"))
         case ShardingStrategy.RANGE:
             boundaries = _resolve_boundaries(df, key_col, num_dbs, sharding)
@@ -139,9 +140,9 @@ def _resolve_boundaries(
     num_dbs: int,
     sharding: ShardingSpec,
 ) -> list[float] | list[int] | list[str]:
+    expected = max(num_dbs - 1, 0)
     if sharding.boundaries is not None:
         boundaries = sharding.boundaries
-        expected = max(num_dbs - 1, 0)
         if len(boundaries) != expected:
             raise ShardAssignmentError(
                 f"Range sharding expects {expected} boundaries for num_dbs={num_dbs}, got {len(boundaries)}"
@@ -155,6 +156,11 @@ def _resolve_boundaries(
         probabilities,
         sharding.approx_quantile_rel_error,
     )
+    if len(boundaries) != expected:
+        raise ShardAssignmentError(
+            "Range sharding could not derive the expected number of boundaries from "
+            f"approxQuantile: expected {expected}, got {len(boundaries)}"
+        )
     _validate_boundaries(boundaries)
     return boundaries
 

@@ -75,6 +75,13 @@ def test_range_sharding_rejects_duplicate_quantile_boundaries(spark) -> None:
         add_db_id_column(df, key_col="id", num_dbs=3, sharding=spec)
 
 
+def test_range_sharding_rejects_missing_auto_boundaries_for_empty_df(spark) -> None:
+    df = spark.createDataFrame([], "id long")
+    spec = ShardingSpec(strategy=ShardingStrategy.RANGE)
+    with pytest.raises(ShardAssignmentError, match="expected 2, got 0"):
+        add_db_id_column(df, key_col="id", num_dbs=3, sharding=spec)
+
+
 def test_range_sharding_many_boundaries(spark) -> None:
     boundaries = list(range(1, 100))
     df = spark.createDataFrame([(0,), (1,), (50,), (99,), (120,)], ["id"])
