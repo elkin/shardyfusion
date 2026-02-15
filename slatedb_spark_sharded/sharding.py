@@ -42,14 +42,15 @@ class ShardingStrategy(str, Enum):
 class ShardingSpec:
     """Configuration for mapping rows to shard database ids."""
 
-    strategy: ShardingStrategy | str = ShardingStrategy.HASH
+    strategy: ShardingStrategy = ShardingStrategy.HASH
     boundaries: list[float] | list[int] | list[str] | None = None
     approx_quantile_rel_error: float = 0.01
     custom_expr: str | None = None
     custom_column_builder: Callable[[str], Column] | None = None
 
     def __post_init__(self) -> None:
-        self.strategy = ShardingStrategy.from_value(self.strategy)
+        if not isinstance(self.strategy, ShardingStrategy):
+            raise ValueError("strategy must be ShardingStrategy")
 
     def to_manifest_dict(self) -> dict[str, object]:
         """Return manifest-safe representation (Spark callables omitted)."""

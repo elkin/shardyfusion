@@ -11,7 +11,7 @@ from slatedb_spark_sharded.manifest import (
 )
 from slatedb_spark_sharded.manifest_readers import ManifestReader, parse_json_manifest
 from slatedb_spark_sharded.reader import SlateShardedReader
-from slatedb_spark_sharded.sharding import ShardingSpec
+from slatedb_spark_sharded.sharding import ShardingSpec, ShardingStrategy
 
 
 class CustomPublisher:
@@ -67,7 +67,9 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(monkeypatc
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding="u64be",
-        sharding=ShardingSpec(strategy="range", boundaries=[10, 20]),
+        sharding=ShardingSpec(
+            strategy=ShardingStrategy.RANGE, boundaries=[10, 20]
+        ),
         db_path_template="db={db_id:05d}",
         tmp_prefix="_tmp",
     )

@@ -4,10 +4,12 @@ import pytest
 
 from slatedb_spark_sharded.manifest import RequiredBuildMeta, RequiredShardMeta
 from slatedb_spark_sharded.routing import SnapshotRouter
-from slatedb_spark_sharded.sharding import ShardingSpec
+from slatedb_spark_sharded.sharding import ShardingSpec, ShardingStrategy
 
 
-def _build_required(*, strategy: str, num_dbs: int, boundaries=None) -> RequiredBuildMeta:
+def _build_required(
+    *, strategy: ShardingStrategy, num_dbs: int, boundaries=None
+) -> RequiredBuildMeta:
     return RequiredBuildMeta(
         run_id="run-1",
         created_at="2026-01-01T00:00:00+00:00",
@@ -22,7 +24,7 @@ def _build_required(*, strategy: str, num_dbs: int, boundaries=None) -> Required
 
 
 def test_hash_router_is_deterministic_and_in_range() -> None:
-    required = _build_required(strategy="hash", num_dbs=8)
+    required = _build_required(strategy=ShardingStrategy.HASH, num_dbs=8)
     shards = [
         RequiredShardMeta(
             db_id=i,
@@ -46,7 +48,9 @@ def test_hash_router_is_deterministic_and_in_range() -> None:
 
 
 def test_range_router_with_boundaries() -> None:
-    required = _build_required(strategy="range", num_dbs=3, boundaries=[10, 20])
+    required = _build_required(
+        strategy=ShardingStrategy.RANGE, num_dbs=3, boundaries=[10, 20]
+    )
     shards = [
         RequiredShardMeta(
             db_id=0,
@@ -89,7 +93,9 @@ def test_range_router_with_boundaries() -> None:
 
 
 def test_custom_expr_requires_routing_info() -> None:
-    required = _build_required(strategy="custom_expr", num_dbs=2, boundaries=None)
+    required = _build_required(
+        strategy=ShardingStrategy.CUSTOM_EXPR, num_dbs=2, boundaries=None
+    )
     shards = [
         RequiredShardMeta(
             db_id=0,

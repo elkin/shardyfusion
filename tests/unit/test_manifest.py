@@ -7,7 +7,7 @@ from slatedb_spark_sharded.manifest import (
     RequiredBuildMeta,
     RequiredShardMeta,
 )
-from slatedb_spark_sharded.sharding import ShardingSpec
+from slatedb_spark_sharded.sharding import ShardingSpec, ShardingStrategy
 
 
 def test_json_manifest_builder_includes_required_shards_and_custom() -> None:
@@ -20,7 +20,7 @@ def test_json_manifest_builder_includes_required_shards_and_custom() -> None:
         num_dbs=2,
         s3_prefix="s3://bucket/prefix",
         key_col="id",
-        sharding=ShardingSpec(strategy="hash"),
+        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
         db_path_template="db={db_id:05d}",
         tmp_prefix="_tmp",
     )

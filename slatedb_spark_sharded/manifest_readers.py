@@ -11,7 +11,7 @@ from .manifest import (
     RequiredBuildMeta,
     RequiredShardMeta,
 )
-from .sharding import ShardingSpec
+from .sharding import ShardingSpec, ShardingStrategy
 from .storage import create_s3_client, get_bytes, try_get_bytes
 
 ManifestRef = str
@@ -78,11 +78,11 @@ class DefaultS3ManifestReader:
         if not manifest_ref:
             raise ValueError("CURRENT pointer missing required field `manifest_ref`")
 
-        manifest_content_type = obj.get("manifest_content_type") or obj.get(
-            "content_type"
-        )
+        manifest_content_type = obj.get("manifest_content_type")
         if manifest_content_type is None:
-            manifest_content_type = "application/json"
+            raise ValueError(
+                "CURRENT pointer missing required field `manifest_content_type`"
+            )
 
         run_id = obj.get("run_id")
         updated_at = obj.get("updated_at")
@@ -137,9 +137,13 @@ def parse_json_manifest(payload: bytes) -> ParsedManifest:
     sharding_raw = required_raw.get("sharding")
     if not isinstance(sharding_raw, dict):
         raise ValueError("Manifest required metadata missing `sharding` object")
+    try:
+        strategy = ShardingStrategy.from_value(sharding_raw.get("strategy", "hash"))
+    except ValueError as exc:
+        raise ValueError("Manifest sharding.strategy is invalid") from exc
 
     sharding = ShardingSpec(
-        strategy=str(sharding_raw.get("strategy", "hash")),
+        strategy=strategy,
         boundaries=sharding_raw.get("boundaries"),
         approx_quantile_rel_error=float(
             sharding_raw.get("approx_quantile_rel_error", 0.01)

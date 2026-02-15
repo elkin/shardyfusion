@@ -6,7 +6,7 @@ import pytest
 
 from slatedb_spark_sharded.manifest import CurrentPointer, ParsedManifest, RequiredBuildMeta, RequiredShardMeta
 from slatedb_spark_sharded.reader import SlateShardedReader
-from slatedb_spark_sharded.sharding import ShardingSpec
+from slatedb_spark_sharded.sharding import ShardingSpec, ShardingStrategy
 
 
 class CustomPublisher:
@@ -50,7 +50,7 @@ def _required_build() -> RequiredBuildMeta:
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding="u64be",
-        sharding=ShardingSpec(strategy="hash"),
+        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
         db_path_template="db={db_id:05d}",
         tmp_prefix="_tmp",
     )

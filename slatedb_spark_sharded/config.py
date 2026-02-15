@@ -72,15 +72,22 @@ class SlateDbConfig:
     key_col: str
     value_spec: ValueSpec
 
-    sharding: ShardingOptions | ShardingSpec = field(default_factory=ShardingOptions)
+    sharding: ShardingOptions = field(default_factory=ShardingOptions)
     output: OutputOptions = field(default_factory=OutputOptions)
     manifest: ManifestOptions = field(default_factory=ManifestOptions)
     engine: EngineOptions = field(default_factory=EngineOptions)
 
     def __post_init__(self) -> None:
-        # Backward-compatible convenience: allow passing ShardingSpec directly.
-        if isinstance(self.sharding, ShardingSpec):
-            self.sharding = ShardingOptions(spec=self.sharding)
+        if not isinstance(self.sharding, ShardingOptions):
+            raise ConfigValidationError(
+                "sharding must be ShardingOptions"
+            )
+        if not isinstance(self.output, OutputOptions):
+            raise ConfigValidationError("output must be OutputOptions")
+        if not isinstance(self.manifest, ManifestOptions):
+            raise ConfigValidationError("manifest must be ManifestOptions")
+        if not isinstance(self.engine, EngineOptions):
+            raise ConfigValidationError("engine must be EngineOptions")
 
         if self.num_dbs <= 0:
             raise ConfigValidationError("num_dbs must be > 0")

@@ -26,7 +26,7 @@ class SnapshotRouter:
     ) -> None:
         self.required_build = required_build
         self.shards = sorted(shards, key=lambda shard: shard.db_id)
-        self.strategy = ShardingStrategy.from_value(required_build.sharding.strategy)
+        self.strategy = required_build.sharding.strategy
         self.num_dbs = required_build.num_dbs
         self.key_encoding = required_build.key_encoding
 

@@ -19,7 +19,7 @@ def test_hash_sharding_produces_db_id_in_range(spark) -> None:
         df,
         key_col="id",
         num_dbs=8,
-        sharding=ShardingSpec(strategy="hash"),
+        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
     )
 
     bad = with_db_id.where((F.col(DB_ID_COL) < 0) | (F.col(DB_ID_COL) >= 8)).count()
@@ -28,47 +28,49 @@ def test_hash_sharding_produces_db_id_in_range(spark) -> None:
 
 def test_range_sharding_with_boundaries(spark) -> None:
     df = spark.createDataFrame([(1,), (5,), (10,), (15,), (20,)], ["id"])
-    spec = ShardingSpec(strategy="range", boundaries=[10, 20])
+    spec = ShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=[10, 20])
     with_db_id, _ = add_db_id_column(df, key_col="id", num_dbs=3, sharding=spec)
 
     got = sorted((row["id"], row[DB_ID_COL]) for row in with_db_id.select("id", DB_ID_COL).collect())
     assert got == [(1, 0), (5, 0), (10, 1), (15, 1), (20, 2)]
 
 
-def test_sharding_strategy_enum_coercion() -> None:
-    spec = ShardingSpec(strategy="hash")
-    assert spec.strategy == ShardingStrategy.HASH
+def test_sharding_strategy_requires_enum() -> None:
+    with pytest.raises(ValueError, match="strategy must be ShardingStrategy"):
+        ShardingSpec(strategy="hash")  # type: ignore[arg-type]
 
 
 def test_sharding_strategy_rejects_unknown_value() -> None:
-    with pytest.raises(ValueError, match="Unsupported sharding strategy"):
-        ShardingSpec(strategy="unknown")
+    with pytest.raises(ValueError, match="strategy must be ShardingStrategy"):
+        ShardingSpec(strategy="unknown")  # type: ignore[arg-type]
 
 
 def test_range_sharding_rejects_unsorted_boundaries(spark) -> None:
     df = spark.createDataFrame([(1,), (2,), (3,)], ["id"])
-    spec = ShardingSpec(strategy="range", boundaries=[20, 10])
+    spec = ShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=[20, 10])
     with pytest.raises(ShardAssignmentError, match="strictly increasing"):
         add_db_id_column(df, key_col="id", num_dbs=3, sharding=spec)
 
 
 def test_range_sharding_rejects_duplicate_boundaries(spark) -> None:
     df = spark.createDataFrame([(1,), (2,), (3,)], ["id"])
-    spec = ShardingSpec(strategy="range", boundaries=[10, 10])
+    spec = ShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=[10, 10])
     with pytest.raises(ShardAssignmentError, match="strictly increasing"):
         add_db_id_column(df, key_col="id", num_dbs=3, sharding=spec)
 
 
 def test_range_sharding_rejects_null_boundaries(spark) -> None:
     df = spark.createDataFrame([(1,), (2,), (3,)], ["id"])
-    spec = ShardingSpec(strategy="range", boundaries=[10, None])  # type: ignore[list-item]
+    spec = ShardingSpec(
+        strategy=ShardingStrategy.RANGE, boundaries=[10, None]
+    )  # type: ignore[list-item]
     with pytest.raises(ShardAssignmentError, match="must not contain null"):
         add_db_id_column(df, key_col="id", num_dbs=3, sharding=spec)
 
 
 def test_range_sharding_rejects_duplicate_quantile_boundaries(spark) -> None:
     df = spark.createDataFrame([(5,), (5,), (5,), (5,)], ["id"])
-    spec = ShardingSpec(strategy="range")
+    spec = ShardingSpec(strategy=ShardingStrategy.RANGE)
     with pytest.raises(ShardAssignmentError, match="strictly increasing"):
         add_db_id_column(df, key_col="id", num_dbs=3, sharding=spec)
 
@@ -76,7 +78,7 @@ def test_range_sharding_rejects_duplicate_quantile_boundaries(spark) -> None:
 def test_range_sharding_many_boundaries(spark) -> None:
     boundaries = list(range(1, 100))
     df = spark.createDataFrame([(0,), (1,), (50,), (99,), (120,)], ["id"])
-    spec = ShardingSpec(strategy="range", boundaries=boundaries)
+    spec = ShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=boundaries)
     with_db_id, _ = add_db_id_column(df, key_col="id", num_dbs=100, sharding=spec)
 
     got = {
@@ -111,14 +113,14 @@ def test_range_bucket_expr_and_bucketizer_are_equivalent(spark) -> None:
 
 def test_range_sharding_rejects_boolean_boundaries(spark) -> None:
     df = spark.createDataFrame([(False,), (True,)], ["id"])
-    spec = ShardingSpec(strategy="range", boundaries=[True])
+    spec = ShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=[True])
     with pytest.raises(ShardAssignmentError, match="must not be boolean"):
         add_db_id_column(df, key_col="id", num_dbs=2, sharding=spec)
 
 
 def test_range_sharding_string_boundaries_non_numeric_path(spark) -> None:
     df = spark.createDataFrame([("aa",), ("ba",), ("zz",)], ["id"])
-    spec = ShardingSpec(strategy="range", boundaries=["m"])
+    spec = ShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=["m"])
     with_db_id, _ = add_db_id_column(df, key_col="id", num_dbs=2, sharding=spec)
     got = {row["id"]: row[DB_ID_COL] for row in with_db_id.select("id", DB_ID_COL).collect()}
     assert got["aa"] == 0
