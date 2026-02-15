@@ -126,14 +126,17 @@ class SparkConfOverrideContext:
                 jconf.unset(key)
 
 
-def write_sharded_slatedb(df: DataFrame, config: SlateDbConfig) -> BuildResult:
+def write_sharded_slatedb(
+    df: DataFrame,
+    config: SlateDbConfig,
+    spark_conf_overrides: dict[str, str] | None = None,
+) -> BuildResult:
     """Write a DataFrame into N independent SlateDB shards and publish manifest metadata."""
 
     started = time.perf_counter()
     run_id = config.run_id or uuid4().hex
     spark = df.sparkSession
-
-    with SparkConfOverrideContext(spark, config.spark_conf_overrides):
+    with SparkConfOverrideContext(spark, spark_conf_overrides):
         return _write_sharded_slatedb_impl(
             df=df,
             config=config,

@@ -48,8 +48,6 @@ class SlateDbConfig:
     slate_settings: dict[str, Any] | None = None
     batch_size: int = 50_000
 
-    spark_conf_overrides: dict[str, str] | None = None
-
     # Optional default-publisher transport overrides (boto3/Ceph RGW support).
     s3_client_config: dict[str, Any] | None = None
 

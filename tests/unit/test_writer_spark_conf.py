@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from slatedb_spark_sharded.writer import SparkConfOverrideContext
+from types import SimpleNamespace
+
+from slatedb_spark_sharded.writer import (
+    SparkConfOverrideContext,
+    write_sharded_slatedb,
+)
 
 
 class _FakeSparkConf:
@@ -47,3 +52,41 @@ def test_spark_conf_context_restores_on_exception() -> None:
         pass
 
     assert spark.conf.get("spark.speculation") == "true"
+
+
+def test_write_sharded_slatedb_uses_optional_spark_conf_overrides(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+    fake_spark = _FakeSparkSession()
+    fake_df = SimpleNamespace(sparkSession=fake_spark)
+    fake_config = SimpleNamespace(run_id=None)
+
+    class _RecordingCtx:
+        def __init__(self, spark, overrides):
+            calls.append(("ctx_init", (spark, overrides)))
+
+        def __enter__(self):
+            calls.append(("ctx_enter", None))
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            calls.append(("ctx_exit", None))
+
+    def _fake_impl(*, df, config, run_id, started):
+        _ = started
+        calls.append(("impl", (df, config, run_id)))
+        return "result-sentinel"
+
+    monkeypatch.setattr("slatedb_spark_sharded.writer.SparkConfOverrideContext", _RecordingCtx)
+    monkeypatch.setattr("slatedb_spark_sharded.writer._write_sharded_slatedb_impl", _fake_impl)
+
+    result = write_sharded_slatedb(
+        fake_df,  # type: ignore[arg-type]
+        fake_config,  # type: ignore[arg-type]
+        spark_conf_overrides={"spark.speculation": "false"},
+    )
+
+    assert result == "result-sentinel"
+    assert calls[0] == ("ctx_init", (fake_spark, {"spark.speculation": "false"}))
+    assert calls[1][0] == "ctx_enter"
+    assert calls[2][0] == "impl"
+    assert calls[3][0] == "ctx_exit"

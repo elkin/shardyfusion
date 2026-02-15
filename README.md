@@ -23,6 +23,17 @@ config = SlateDbConfig(
 result = write_sharded_slatedb(df, config)
 ```
 
+To apply temporary Spark configuration only for the write call, pass
+`spark_conf_overrides`:
+
+```python
+result = write_sharded_slatedb(
+    df,
+    config,
+    spark_conf_overrides={"spark.speculation": "false"},
+)
+```
+
 ## Custom manifest builder
 
 ```python
