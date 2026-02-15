@@ -5,7 +5,12 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Protocol
 
-from .manifest import CurrentPointer, ParsedManifest, RequiredBuildMeta, RequiredShardMeta
+from .manifest import (
+    CurrentPointer,
+    ParsedManifest,
+    RequiredBuildMeta,
+    RequiredShardMeta,
+)
 from .sharding import ShardingSpec
 from .storage import create_s3_client, get_bytes, try_get_bytes
 
@@ -18,7 +23,9 @@ class ManifestReader(Protocol):
     def load_current(self) -> CurrentPointer | None:
         """Return CURRENT pointer or None if not present."""
 
-    def load_manifest(self, ref: str, content_type: str | None = None) -> ParsedManifest:
+    def load_manifest(
+        self, ref: str, content_type: str | None = None
+    ) -> ParsedManifest:
         """Fetch and decode a manifest reference."""
 
 
@@ -36,7 +43,9 @@ class FunctionManifestReader:
     def load_current(self) -> CurrentPointer | None:
         return self._load_current_fn()
 
-    def load_manifest(self, ref: str, content_type: str | None = None) -> ParsedManifest:
+    def load_manifest(
+        self, ref: str, content_type: str | None = None
+    ) -> ParsedManifest:
         return self._load_manifest_fn(ref, content_type)
 
 
@@ -69,14 +78,18 @@ class DefaultS3ManifestReader:
         if not manifest_ref:
             raise ValueError("CURRENT pointer missing required field `manifest_ref`")
 
-        manifest_content_type = obj.get("manifest_content_type") or obj.get("content_type")
+        manifest_content_type = obj.get("manifest_content_type") or obj.get(
+            "content_type"
+        )
         if manifest_content_type is None:
             manifest_content_type = "application/json"
 
         run_id = obj.get("run_id")
         updated_at = obj.get("updated_at")
         if run_id is None or updated_at is None:
-            raise ValueError("CURRENT pointer missing required fields `run_id` or `updated_at`")
+            raise ValueError(
+                "CURRENT pointer missing required fields `run_id` or `updated_at`"
+            )
 
         return CurrentPointer(
             manifest_ref=str(manifest_ref),
@@ -86,8 +99,12 @@ class DefaultS3ManifestReader:
             format_version=int(obj.get("format_version", 1)),
         )
 
-    def load_manifest(self, ref: str, content_type: str | None = None) -> ParsedManifest:
-        effective_content_type = (content_type or "application/json").split(";", 1)[0].strip()
+    def load_manifest(
+        self, ref: str, content_type: str | None = None
+    ) -> ParsedManifest:
+        effective_content_type = (
+            (content_type or "application/json").split(";", 1)[0].strip()
+        )
         if effective_content_type != "application/json":
             raise ValueError(
                 "Default reader supports only application/json manifests; "
@@ -124,7 +141,9 @@ def parse_json_manifest(payload: bytes) -> ParsedManifest:
     sharding = ShardingSpec(
         strategy=str(sharding_raw.get("strategy", "hash")),
         boundaries=sharding_raw.get("boundaries"),
-        approx_quantile_rel_error=float(sharding_raw.get("approx_quantile_rel_error", 0.01)),
+        approx_quantile_rel_error=float(
+            sharding_raw.get("approx_quantile_rel_error", 0.01)
+        ),
         custom_expr=sharding_raw.get("custom_expr"),
     )
 
@@ -162,10 +181,14 @@ def parse_json_manifest(payload: bytes) -> ParsedManifest:
         shards.append(shard)
 
     _validate_manifest(required_build, shards)
-    return ParsedManifest(required_build=required_build, shards=shards, custom=custom_raw)
+    return ParsedManifest(
+        required_build=required_build, shards=shards, custom=custom_raw
+    )
 
 
-def _validate_manifest(required_build: RequiredBuildMeta, shards: list[RequiredShardMeta]) -> None:
+def _validate_manifest(
+    required_build: RequiredBuildMeta, shards: list[RequiredShardMeta]
+) -> None:
     num_dbs = required_build.num_dbs
     if num_dbs <= 0:
         raise ValueError("Manifest required.num_dbs must be > 0")
@@ -177,7 +200,9 @@ def _validate_manifest(required_build: RequiredBuildMeta, shards: list[RequiredS
     ids = sorted(shard.db_id for shard in shards)
     expected = list(range(num_dbs))
     if ids != expected:
-        raise ValueError(f"Manifest shard coverage mismatch; expected {expected}, got {ids}")
+        raise ValueError(
+            f"Manifest shard coverage mismatch; expected {expected}, got {ids}"
+        )
 
     if not required_build.sharding or not required_build.sharding.strategy:
         raise ValueError("Manifest required.sharding.strategy is missing")

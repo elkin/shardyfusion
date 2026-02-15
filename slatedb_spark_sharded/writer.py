@@ -100,7 +100,9 @@ class SparkConfOverrideContext:
                     self._unset_conf_if_supported(key)
                 else:
                     self._spark.conf.set(key, original)
-            except Exception as restore_exc:  # pragma: no cover - Spark environment dependent
+            except (
+                Exception
+            ) as restore_exc:  # pragma: no cover - Spark environment dependent
                 log_event(
                     "spark_conf_restore_failed",
                     level=logging.WARNING,
@@ -430,7 +432,9 @@ def _select_winners(
     if got_ids != expected_ids:
         missing = sorted(expected_ids - got_ids)
         extra = sorted(got_ids - expected_ids)
-        raise ShardCoverageError(f"Shard coverage mismatch; missing={missing}, extra={extra}")
+        raise ShardCoverageError(
+            f"Shard coverage mismatch; missing={missing}, extra={extra}"
+        )
 
     winners: list[RequiredShardMeta] = []
     for db_id in range(num_dbs):
@@ -485,7 +489,9 @@ def _utc_now_iso() -> str:
 def _manifest_safe_sharding(sharding: ShardingSpec) -> ShardingSpec:
     return ShardingSpec(
         strategy=sharding.strategy,
-        boundaries=list(sharding.boundaries) if sharding.boundaries is not None else None,
+        boundaries=list(sharding.boundaries)
+        if sharding.boundaries is not None
+        else None,
         approx_quantile_rel_error=sharding.approx_quantile_rel_error,
         custom_expr=sharding.custom_expr,
         custom_column_builder=None,

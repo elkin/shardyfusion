@@ -109,9 +109,7 @@ class SlateDbConfig:
 def _validate_s3_prefix(s3_prefix: str) -> None:
     parsed = urlparse(s3_prefix)
     if parsed.scheme != "s3" or not parsed.netloc:
-        raise ConfigValidationError(
-            "s3_prefix must be parseable as s3://bucket/prefix"
-        )
+        raise ConfigValidationError("s3_prefix must be parseable as s3://bucket/prefix")
     if not parsed.path or parsed.path == "/":
         raise ConfigValidationError(
             "s3_prefix must include a non-empty key prefix, e.g. s3://bucket/prefix"

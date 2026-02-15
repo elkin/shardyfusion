@@ -27,16 +27,22 @@ def create_s3_client(s3_client_config: Mapping[str, Any] | None = None):
     try:
         import boto3
     except ImportError as exc:  # pragma: no cover - depends on runtime environment
-        raise PublishManifestError("boto3 is required for default S3 publishing") from exc
+        raise PublishManifestError(
+            "boto3 is required for default S3 publishing"
+        ) from exc
 
     config = dict(s3_client_config or {})
     endpoint_url = config.get("endpoint_url") or os.getenv("SLATEDB_S3_ENDPOINT_URL")
     region_name = config.get("region_name") or os.getenv("AWS_REGION")
-    aws_access_key_id = config.get("aws_access_key_id") or os.getenv("AWS_ACCESS_KEY_ID")
+    aws_access_key_id = config.get("aws_access_key_id") or os.getenv(
+        "AWS_ACCESS_KEY_ID"
+    )
     aws_secret_access_key = config.get("aws_secret_access_key") or os.getenv(
         "AWS_SECRET_ACCESS_KEY"
     )
-    aws_session_token = config.get("aws_session_token") or os.getenv("AWS_SESSION_TOKEN")
+    aws_session_token = config.get("aws_session_token") or os.getenv(
+        "AWS_SESSION_TOKEN"
+    )
 
     kwargs: dict[str, Any] = {}
     if endpoint_url:

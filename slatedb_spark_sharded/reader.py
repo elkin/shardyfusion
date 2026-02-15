@@ -114,7 +114,9 @@ class SlateShardedReader:
         finally:
             self._release_state(state)
 
-    def multi_get(self, keys: Sequence[int | str | bytes]) -> dict[int | str | bytes, bytes | None]:
+    def multi_get(
+        self, keys: Sequence[int | str | bytes]
+    ) -> dict[int | str | bytes, bytes | None]:
         """Get multiple keys with per-shard grouping and optional shard parallelism."""
 
         key_list = list(keys)
@@ -138,7 +140,9 @@ class SlateShardedReader:
                         results.update(future.result())
             else:
                 for db_id, shard_keys in grouped.items():
-                    results.update(_read_group(state.router, state.handles[db_id], shard_keys))
+                    results.update(
+                        _read_group(state.router, state.handles[db_id], shard_keys)
+                    )
 
             return {key: results.get(key) for key in key_list}
         finally:
@@ -312,7 +316,9 @@ def _open_slatedb_reader(
     try:
         import slatedb
     except ImportError as exc:  # pragma: no cover - runtime dependent
-        raise SlateDbApiError("slatedb package is required for SlateShardedReader") from exc
+        raise SlateDbApiError(
+            "slatedb package is required for SlateShardedReader"
+        ) from exc
 
     candidates: list[tuple[str, Any]] = []
     if hasattr(slatedb, "SlateDBReader"):

@@ -16,7 +16,9 @@ def encode_key(key: Any, *, encoding: str = "u64be") -> bytes:
         raise ConfigValidationError(f"Unsupported key encoding: {encoding}")
 
     if not isinstance(key, int):
-        raise ConfigValidationError(f"u64be encoding expects int key, got {type(key)!r}")
+        raise ConfigValidationError(
+            f"u64be encoding expects int key, got {type(key)!r}"
+        )
     if key < 0 or key > (2**64 - 1):
         raise ConfigValidationError("u64be encoding requires value in [0, 2^64-1]")
     return key.to_bytes(8, byteorder="big", signed=False)
@@ -59,9 +61,13 @@ class ValueSpec:
         """Encode selected columns (or full row) as UTF-8 JSON."""
 
         def _encode(row: Any) -> bytes:
-            row_dict = row.asDict(recursive=True) if hasattr(row, "asDict") else dict(row)
+            row_dict = (
+                row.asDict(recursive=True) if hasattr(row, "asDict") else dict(row)
+            )
             obj = {key: row_dict.get(key) for key in cols} if cols else row_dict
-            return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
 
         detail = "all" if cols is None else ",".join(cols)
         return cls(encoder=_encode, description=f"json_cols:{detail}")

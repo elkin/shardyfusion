@@ -21,7 +21,9 @@ class _RangeInterval:
 class SnapshotRouter:
     """Route point lookups to a shard database id using manifest sharding metadata."""
 
-    def __init__(self, required_build: RequiredBuildMeta, shards: list[RequiredShardMeta]) -> None:
+    def __init__(
+        self, required_build: RequiredBuildMeta, shards: list[RequiredShardMeta]
+    ) -> None:
         self.required_build = required_build
         self.shards = sorted(shards, key=lambda shard: shard.db_id)
         self.strategy = ShardingStrategy.from_value(required_build.sharding.strategy)
@@ -51,7 +53,9 @@ class SnapshotRouter:
 
         raise ValueError(f"Unsupported sharding strategy for routing: {self.strategy}")
 
-    def group_keys(self, keys: list[int | str | bytes]) -> dict[int, list[int | str | bytes]]:
+    def group_keys(
+        self, keys: list[int | str | bytes]
+    ) -> dict[int, list[int | str | bytes]]:
         """Group keys by routed db id while preserving order within each shard bucket."""
 
         grouped: dict[int, list[int | str | bytes]] = {}
@@ -119,7 +123,9 @@ class SnapshotRouter:
             try:
                 return key.decode("utf-8")
             except UnicodeDecodeError as exc:
-                raise ValueError("Range routing cannot decode bytes key as UTF-8") from exc
+                raise ValueError(
+                    "Range routing cannot decode bytes key as UTF-8"
+                ) from exc
 
         raise ValueError(f"Unsupported range key type: {type(key)!r}")
 
@@ -133,7 +139,9 @@ class SnapshotRouter:
         if not intervals:
             return []
 
-        has_any_bound = any(item.lower is not None or item.upper is not None for item in intervals)
+        has_any_bound = any(
+            item.lower is not None or item.upper is not None for item in intervals
+        )
         if not has_any_bound:
             return []
 

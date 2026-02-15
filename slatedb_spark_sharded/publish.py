@@ -11,7 +11,9 @@ from .storage import create_s3_client, put_bytes
 class ManifestPublisher(Protocol):
     """Protocol for writing manifest and CURRENT pointer artifacts."""
 
-    def publish_manifest(self, *, name: str, artifact: ManifestArtifact, run_id: str) -> str:
+    def publish_manifest(
+        self, *, name: str, artifact: ManifestArtifact, run_id: str
+    ) -> str:
         """Persist manifest and return a reference."""
 
     def publish_current(self, *, name: str, artifact: ManifestArtifact) -> str | None:
@@ -34,7 +36,9 @@ class DefaultS3Publisher:
         self.current_name = current_name
         self._s3_client = create_s3_client(s3_client_config)
 
-    def publish_manifest(self, *, name: str, artifact: ManifestArtifact, run_id: str) -> str:
+    def publish_manifest(
+        self, *, name: str, artifact: ManifestArtifact, run_id: str
+    ) -> str:
         manifest_name = name or self.manifest_name
         manifest_url = _join_s3(
             self.s3_prefix,

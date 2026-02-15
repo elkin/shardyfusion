@@ -198,7 +198,11 @@ def _range_bucketize_df(
         db_expr = _range_bucket_expr(key_col, boundaries)
         return df.withColumn(DB_ID_COL, db_expr.cast("int"))
 
-    splits = [-float("inf"), *[float(boundary) for boundary in boundaries], float("inf")]
+    splits = [
+        -float("inf"),
+        *[float(boundary) for boundary in boundaries],
+        float("inf"),
+    ]
     bucketizer = Bucketizer(
         splits=splits,
         inputCol=key_col,
@@ -224,9 +228,7 @@ def _validate_boundaries(boundaries: list[float] | list[int] | list[str]) -> Non
     if any(boundary is None for boundary in boundaries):
         raise ShardAssignmentError("Range boundaries must not contain null values")
     if any(isinstance(boundary, bool) for boundary in boundaries):
-        raise ShardAssignmentError(
-            "Range boundaries must not be boolean values"
-        )
+        raise ShardAssignmentError("Range boundaries must not be boolean values")
 
     for idx in range(1, len(boundaries)):
         left = boundaries[idx - 1]
@@ -258,6 +260,10 @@ def _sql_literal(value: float | int | str) -> str:
         if math.isnan(value):
             return "CAST('NaN' AS DOUBLE)"
         if math.isinf(value):
-            return "CAST('Infinity' AS DOUBLE)" if value > 0 else "CAST('-Infinity' AS DOUBLE)"
+            return (
+                "CAST('Infinity' AS DOUBLE)"
+                if value > 0
+                else "CAST('-Infinity' AS DOUBLE)"
+            )
         return repr(value)
     raise ShardAssignmentError(f"Unsupported boundary literal type: {type(value)!r}")
