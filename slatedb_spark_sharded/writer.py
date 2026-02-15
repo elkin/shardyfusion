@@ -12,7 +12,7 @@ import time
 from typing import Any, Iterator
 from uuid import uuid4
 
-from pyspark import TaskContext
+from pyspark import StorageLevel, TaskContext
 from pyspark.sql import DataFrame
 
 from .config import SlateDbConfig
@@ -130,10 +130,48 @@ class SparkConfOverrideContext:
                 jconf.unset(key)
 
 
+class DataFrameCacheContext:
+    """Cache a DataFrame for the lifetime of the context and unpersist on exit."""
+
+    def __init__(self, df: DataFrame, storage_level: StorageLevel | None = None) -> None:
+        self._df = df
+        self._storage_level = storage_level
+        self._cached_df: DataFrame | None = None
+
+    def __enter__(self) -> DataFrame:
+        try:
+            if self._storage_level is None:
+                self._cached_df = self._df.persist()
+            else:
+                self._cached_df = self._df.persist(self._storage_level)
+        except Exception as exc:  # pragma: no cover - Spark environment dependent
+            log_event(
+                "dataframe_cache_failed",
+                level=logging.WARNING,
+                error=str(exc),
+            )
+            self._cached_df = self._df
+        return self._cached_df
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self._cached_df is None:
+            return
+        try:
+            self._cached_df.unpersist(blocking=False)
+        except Exception as unpersist_exc:  # pragma: no cover - Spark env dependent
+            log_event(
+                "dataframe_unpersist_failed",
+                level=logging.WARNING,
+                error=str(unpersist_exc),
+            )
+
+
 def write_sharded_slatedb(
     df: DataFrame,
     config: SlateDbConfig,
     spark_conf_overrides: dict[str, str] | None = None,
+    cache_input: bool = False,
+    storage_level: StorageLevel | None = None,
 ) -> BuildResult:
     """Write a DataFrame into N independent SlateDB shards and publish manifest metadata."""
 
@@ -141,6 +179,14 @@ def write_sharded_slatedb(
     run_id = config.output.run_id or uuid4().hex
     spark = df.sparkSession
     with SparkConfOverrideContext(spark, spark_conf_overrides):
+        if cache_input:
+            with DataFrameCacheContext(df, storage_level=storage_level) as cached_df:
+                return _write_sharded_slatedb_impl(
+                    df=cached_df,
+                    config=config,
+                    run_id=run_id,
+                    started=started,
+                )
         return _write_sharded_slatedb_impl(
             df=df,
             config=config,
@@ -489,9 +535,7 @@ def _utc_now_iso() -> str:
 def _manifest_safe_sharding(sharding: ShardingSpec) -> ShardingSpec:
     return ShardingSpec(
         strategy=sharding.strategy,
-        boundaries=list(sharding.boundaries)
-        if sharding.boundaries is not None
-        else None,
+        boundaries=list(sharding.boundaries) if sharding.boundaries is not None else None,
         approx_quantile_rel_error=sharding.approx_quantile_rel_error,
         custom_expr=sharding.custom_expr,
         custom_column_builder=None,

@@ -10,6 +10,14 @@ from typing import Callable
 from pyspark import RDD
 from pyspark.sql import Column, DataFrame
 from pyspark.sql import functions as F
+from pyspark.sql.types import (
+    DataType,
+    DoubleType,
+    FloatType,
+    IntegerType,
+    LongType,
+    StringType,
+)
 
 from .errors import ShardAssignmentError
 
@@ -83,10 +91,20 @@ def add_db_id_column(
     df_with_db_id: DataFrame
     match sharding.strategy:
         case ShardingStrategy.HASH:
+            _validate_key_col_type(
+                df=df,
+                key_col=key_col,
+                strategy=sharding.strategy,
+            )
             # Use explicit xxhash64 for stable cross-runtime sharding semantics.
             db_expr = F.pmod(F.xxhash64(F.col(key_col).cast("long")), F.lit(num_dbs))
             df_with_db_id = df.withColumn(DB_ID_COL, db_expr.cast("int"))
         case ShardingStrategy.RANGE:
+            _validate_key_col_type(
+                df=df,
+                key_col=key_col,
+                strategy=sharding.strategy,
+            )
             boundaries = _resolve_boundaries(df, key_col, num_dbs, sharding)
             resolved.boundaries = boundaries
             if _boundaries_are_numeric(boundaries):
@@ -132,6 +150,36 @@ def prepare_partitioned_rdd(
 
     pair_rdd = prepared.rdd.map(lambda row: (int(row[DB_ID_COL]), row))
     return pair_rdd.partitionBy(num_dbs, lambda key: int(key))
+
+
+def _validate_key_col_type(
+    *,
+    df: DataFrame,
+    key_col: str,
+    strategy: ShardingStrategy,
+) -> None:
+    try:
+        dtype = df.schema[key_col].dataType
+    except Exception as exc:
+        raise ShardAssignmentError(f"Key column `{key_col}` was not found in DataFrame schema") from exc
+
+    if strategy == ShardingStrategy.HASH:
+        allowed: tuple[type[DataType], ...] = (IntegerType, LongType)
+        if not isinstance(dtype, allowed):
+            raise ShardAssignmentError(
+                "Hash sharding requires key column type IntegerType or LongType; "
+                f"got {type(dtype).__name__} for `{key_col}`"
+            )
+        return
+
+    if strategy == ShardingStrategy.RANGE:
+        allowed = (IntegerType, LongType, FloatType, DoubleType, StringType)
+        if not isinstance(dtype, allowed):
+            raise ShardAssignmentError(
+                "Range sharding requires key column type one of "
+                "IntegerType, LongType, FloatType, DoubleType, StringType; "
+                f"got {type(dtype).__name__} for `{key_col}`"
+            )
 
 
 def _resolve_boundaries(
