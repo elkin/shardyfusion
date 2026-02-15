@@ -161,7 +161,9 @@ def _validate_key_col_type(
     try:
         dtype = df.schema[key_col].dataType
     except Exception as exc:
-        raise ShardAssignmentError(f"Key column `{key_col}` was not found in DataFrame schema") from exc
+        raise ShardAssignmentError(
+            f"Key column `{key_col}` was not found in DataFrame schema"
+        ) from exc
 
     if strategy == ShardingStrategy.HASH:
         allowed: tuple[type[DataType], ...] = (IntegerType, LongType)

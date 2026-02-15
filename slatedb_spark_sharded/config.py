@@ -79,9 +79,7 @@ class SlateDbConfig:
 
     def __post_init__(self) -> None:
         if not isinstance(self.sharding, ShardingOptions):
-            raise ConfigValidationError(
-                "sharding must be ShardingOptions"
-            )
+            raise ConfigValidationError("sharding must be ShardingOptions")
         if not isinstance(self.output, OutputOptions):
             raise ConfigValidationError("output must be OutputOptions")
         if not isinstance(self.manifest, ManifestOptions):
