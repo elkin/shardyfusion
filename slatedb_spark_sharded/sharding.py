@@ -5,23 +5,64 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 import math
-from typing import Callable
-
-from pyspark import RDD
-from pyspark.sql import Column, DataFrame
-from pyspark.sql import functions as F
-from pyspark.sql.types import (
-    DataType,
-    DoubleType,
-    FloatType,
-    IntegerType,
-    LongType,
-    StringType,
-)
+from typing import TYPE_CHECKING, Any, Callable
 
 from .errors import ShardAssignmentError
 
 DB_ID_COL = "_slatedb_db_id"
+
+if TYPE_CHECKING:
+    from pyspark import RDD
+    from pyspark.sql import Column, DataFrame
+    from pyspark.sql.types import DataType
+
+
+def _require_pyspark() -> Any:
+    """Import pyspark.sql modules lazily for read-only installs without Spark."""
+
+    try:
+        import pyspark.sql.functions as functions
+        import pyspark.sql.types as types
+    except ImportError as exc:
+        raise ShardAssignmentError(
+            "pyspark is required for writer-side sharding operations"
+        ) from exc
+    return functions, types
+
+
+def _pyspark_functions() -> Any:
+    functions, _ = _require_pyspark()
+    return functions
+
+
+def _pyspark_datatype() -> type:
+    _, types = _require_pyspark()
+    return types.DataType
+
+
+def _pyspark_doubletype() -> type:
+    _, types = _require_pyspark()
+    return types.DoubleType
+
+
+def _pyspark_floattype() -> type:
+    _, types = _require_pyspark()
+    return types.FloatType
+
+
+def _pyspark_integertype() -> type:
+    _, types = _require_pyspark()
+    return types.IntegerType
+
+
+def _pyspark_longtype() -> type:
+    _, types = _require_pyspark()
+    return types.LongType
+
+
+def _pyspark_stringtype() -> type:
+    _, types = _require_pyspark()
+    return types.StringType
 
 
 class ShardingStrategy(str, Enum):
@@ -72,12 +113,12 @@ class ShardingSpec:
 
 
 def add_db_id_column(
-    df: DataFrame,
+    df: "DataFrame",
     *,
     key_col: str,
     num_dbs: int,
     sharding: ShardingSpec,
-) -> tuple[DataFrame, ShardingSpec]:
+) -> tuple["DataFrame", ShardingSpec]:
     """Add deterministic db id column and return resolved sharding spec."""
 
     resolved = ShardingSpec(
@@ -88,7 +129,8 @@ def add_db_id_column(
         custom_column_builder=sharding.custom_column_builder,
     )
 
-    df_with_db_id: DataFrame
+    F = _pyspark_functions()
+    df_with_db_id: "DataFrame"
     match sharding.strategy:
         case ShardingStrategy.HASH:
             _validate_key_col_type(
@@ -136,12 +178,12 @@ def add_db_id_column(
 
 
 def prepare_partitioned_rdd(
-    df_with_db_id: DataFrame,
+    df_with_db_id: "DataFrame",
     *,
     num_dbs: int,
     key_col: str,
     sort_within_partitions: bool,
-) -> RDD[tuple[int, object]]:
+) -> "RDD[tuple[int, object]]":
     """Return pair RDD partitioned so partition index matches db id."""
 
     prepared = df_with_db_id
@@ -154,10 +196,17 @@ def prepare_partitioned_rdd(
 
 def _validate_key_col_type(
     *,
-    df: DataFrame,
+    df: "DataFrame",
     key_col: str,
     strategy: ShardingStrategy,
 ) -> None:
+    DataType = _pyspark_datatype()
+    DoubleType = _pyspark_doubletype()
+    FloatType = _pyspark_floattype()
+    IntegerType = _pyspark_integertype()
+    LongType = _pyspark_longtype()
+    StringType = _pyspark_stringtype()
+
     try:
         dtype = df.schema[key_col].dataType
     except Exception as exc:
@@ -185,7 +234,7 @@ def _validate_key_col_type(
 
 
 def _resolve_boundaries(
-    df: DataFrame,
+    df: "DataFrame",
     key_col: str,
     num_dbs: int,
     sharding: ShardingSpec,
@@ -217,8 +266,10 @@ def _resolve_boundaries(
 
 def _range_bucket_expr(
     key_col: str, boundaries: list[float] | list[int] | list[str]
-) -> Column:
+) -> "Column":
     """Build range-bucket expression using pure Spark SQL functions."""
+
+    F = _pyspark_functions()
 
     if not boundaries:
         return F.lit(0)
@@ -243,11 +294,13 @@ def _boundaries_are_numeric(boundaries: list[float] | list[int] | list[str]) -> 
 
 
 def _range_bucketize_df(
-    df: DataFrame,
+    df: "DataFrame",
     key_col: str,
     boundaries: list[float] | list[int] | list[str],
-) -> DataFrame:
+) -> "DataFrame":
     """Apply range bucketing with Spark ML Bucketizer for numeric boundaries."""
+
+    F = _pyspark_functions()
 
     try:
         from pyspark.ml.feature import Bucketizer
@@ -270,6 +323,7 @@ def _range_bucketize_df(
 
 
 def _custom_expr(sharding: ShardingSpec, key_col: str) -> Column:
+    F = _pyspark_functions()
     if sharding.custom_expr:
         return F.expr(sharding.custom_expr)
     if sharding.custom_column_builder is not None:

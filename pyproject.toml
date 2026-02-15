@@ -11,13 +11,24 @@ requires-python = ">=3.10"
 authors = [{name = "slatedb_spark_sharded contributors"}]
 license = {text = "Apache-2.0"}
 dependencies = [
-  "pyspark>=3.3",
-  "slatedb",
-  "boto3>=1.28",
   "xxhash>=3.4",
 ]
 
 [project.optional-dependencies]
+read = [
+  "slatedb",
+  "boto3>=1.28",
+]
+writer = [
+  "pyspark>=3.3",
+  "slatedb",
+  "boto3>=1.28",
+]
+all = [
+  "pyspark>=3.3",
+  "slatedb",
+  "boto3>=1.28",
+]
 test = [
   "pytest>=7.4",
 ]

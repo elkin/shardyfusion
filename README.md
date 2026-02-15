@@ -8,6 +8,19 @@
 pip install -e .
 ```
 
+Optional dependency groups:
+
+```bash
+# Reader-side only (no pyspark)
+pip install -e ".[read]"
+
+# Writer-side APIs (includes pyspark)
+pip install -e ".[writer]"
+
+# Full install (reader + writer)
+pip install -e ".[all]"
+```
+
 ## Minimal usage
 
 ```python

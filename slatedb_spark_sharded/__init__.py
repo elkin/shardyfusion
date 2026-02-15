@@ -29,18 +29,30 @@ from .reader import SlateShardedReader
 from .serde import ValueSpec
 from .routing import SnapshotRouter
 from .sharding import ShardingSpec, ShardingStrategy
-from .writer import (
-    DataFrameCacheContext,
-    SparkConfOverrideContext,
-    write_sharded_slatedb,
-)
+
+_writer_exports: list[str] = []
+try:
+    from .writer import (
+        DataFrameCacheContext,
+        SparkConfOverrideContext,
+        write_sharded_slatedb,
+    )
+
+    _writer_exports = [
+        "DataFrameCacheContext",
+        "SparkConfOverrideContext",
+        "write_sharded_slatedb",
+    ]
+except ImportError:
+    # Writer APIs are unavailable when optional writer dependencies
+    # (notably pyspark) are not installed.
+    pass
 
 __all__ = [
     "BuildResult",
     "BuildStats",
     "BuildDurations",
     "CurrentPointer",
-    "DataFrameCacheContext",
     "DefaultS3Publisher",
     "DefaultS3ManifestReader",
     "FunctionManifestReader",
@@ -53,7 +65,6 @@ __all__ = [
     "OutputOptions",
     "RequiredBuildMeta",
     "RequiredShardMeta",
-    "SparkConfOverrideContext",
     "SlateShardedReader",
     "SnapshotRouter",
     "ShardingSpec",
@@ -63,5 +74,4 @@ __all__ = [
     "EngineOptions",
     "ValueSpec",
     "parse_json_manifest",
-    "write_sharded_slatedb",
-]
+] + _writer_exports
