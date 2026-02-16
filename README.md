@@ -8,6 +8,13 @@ It provides:
 - manifest + `_CURRENT` publishing protocol (default S3, pluggable interfaces)
 - reader-side routing helpers for service-side `get` and `multi_get`
 
+## Runtime Prerequisites
+
+- Reader-only usage does not require Java.
+- Writer usage (PySpark) requires a local Java runtime (JRE/JDK) available on `PATH`
+  or via `JAVA_HOME`.
+- Running Spark-based tests also requires Java.
+
 ## Installation
 
 ```bash
