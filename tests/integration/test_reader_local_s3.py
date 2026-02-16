@@ -4,6 +4,7 @@ from dataclasses import asdict
 import json
 
 import pytest
+import slatedb
 
 from slatedb_spark_sharded.manifest import (
     CurrentPointer,
@@ -17,7 +18,6 @@ from slatedb_spark_sharded.sharding import ShardingSpec, ShardingStrategy
 def test_reader_loads_current_and_manifest_from_local_s3(
     tmp_path, local_s3_service
 ) -> None:
-    slatedb = pytest.importorskip("slatedb")
     bucket = local_s3_service["bucket"]
     s3_prefix = f"s3://{bucket}/reader-only"
     manifest_ref = f"{s3_prefix}/manifests/run_id=reader-local/manifest"

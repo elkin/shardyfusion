@@ -137,9 +137,6 @@ def test_range_sharding_many_boundaries(spark) -> None:
 
 
 def test_range_bucket_expr_and_bucketizer_are_equivalent(spark) -> None:
-    pytest.importorskip("numpy")
-    pytest.importorskip("pyspark.ml.feature")
-
     boundaries = [10, 20, 35, 50]
     df = spark.createDataFrame(
         [(-5,), (0,), (9,), (10,), (19,), (20,), (35,), (36,), (50,), (100,)],

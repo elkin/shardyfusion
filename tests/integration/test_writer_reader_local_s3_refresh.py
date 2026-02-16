@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+import slatedb
 
 from slatedb_spark_sharded.config import (
     EngineOptions,
@@ -24,7 +25,6 @@ from slatedb_spark_sharded.writer import write_sharded_slatedb
 def test_reader_refreshes_after_new_writer_batch(
     monkeypatch, spark, tmp_path, local_s3_service
 ) -> None:
-    slatedb = pytest.importorskip("slatedb")
     bucket = local_s3_service["bucket"]
     endpoint_url = local_s3_service["endpoint_url"]
     s3_prefix = f"s3://{bucket}/writer-reader-refresh"

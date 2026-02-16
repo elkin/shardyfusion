@@ -12,10 +12,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: PySpark Matrix (3.5 and 4.x)
+  unit:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "read unit / py3.10"
+            python-version: "3.10"
+            tox-env: "py310-read-unit"
+          - name: "read unit / py3.11"
+            python-version: "3.11"
+            tox-env: "py311-read-unit"
+          - python-version: "3.10"
+            name: "all unit / py3.10 / spark35"
+            tox-env: "py310-all-spark35-unit"
+          - python-version: "3.10"
+            name: "all unit / py3.10 / spark4"
+            tox-env: "py310-all-spark4-unit"
+          - python-version: "3.11"
+            name: "all unit / py3.11 / spark35"
+            tox-env: "py311-all-spark35-unit"
+          - python-version: "3.11"
+            name: "all unit / py3.11 / spark4"
+            tox-env: "py311-all-spark4-unit"
+          - python-version: "3.10"
+            name: "writer unit / py3.10 / spark4"
+            tox-env: "py310-writer-spark4-unit"
+          - python-version: "3.11"
+            name: "writer unit / py3.11 / spark4"
+            tox-env: "py311-writer-spark4-unit"
 
     steps:
       - name: Checkout
@@ -24,7 +52,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "${{ matrix.python-version }}"
           cache: "pip"
 
       - name: Set up Java
@@ -36,5 +64,42 @@ jobs:
       - name: Install tox
         run: python -m pip install --upgrade pip tox
 
-      - name: Run integration tests (PySpark 3.5 and 4.x)
-        run: tox -e spark35,spark4
+      - name: Run tests
+        run: tox -e ${{ matrix.tox-env }}
+
+  integration:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "read integration / py3.11"
+            python-version: "3.11"
+            tox-env: "py311-read-integration"
+          - name: "writer integration / py3.11 / spark4"
+            python-version: "3.11"
+            tox-env: "py311-writer-spark4-integration"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python-version }}"
+          cache: "pip"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install tox
+        run: python -m pip install --upgrade pip tox
+
+      - name: Run tests
+        run: tox -e ${{ matrix.tox-env }}

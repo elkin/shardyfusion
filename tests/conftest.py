@@ -10,7 +10,8 @@ import pytest
 
 @pytest.fixture(scope="session")
 def spark():
-    pyspark = pytest.importorskip("pyspark")
+    import pyspark
+
     session = (
         pyspark.sql.SparkSession.builder.master("local[2]")
         .appName("slatedb_spark_sharded_tests")
@@ -32,8 +33,9 @@ def _pick_free_port() -> int:
 def local_s3_service() -> dict[str, Any]:
     """Start a local S3-compatible test service backed by moto."""
 
-    boto3 = pytest.importorskip("boto3")
-    moto_server = pytest.importorskip("moto.server")
+    import boto3
+    import moto.server as moto_server
+
     ThreadedMotoServer = getattr(moto_server, "ThreadedMotoServer")
 
     port = _pick_free_port()

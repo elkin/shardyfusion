@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+import slatedb
 
 from slatedb_spark_sharded.config import (
     EngineOptions,
@@ -25,7 +26,6 @@ from slatedb_spark_sharded.writer import write_sharded_slatedb
 def test_writer_publishes_manifest_and_current_to_local_s3(
     spark, local_s3_service, tmp_path
 ) -> None:
-    slatedb = pytest.importorskip("slatedb")
     rows = [(i, f"v{i}".encode("utf-8")) for i in range(24)]
     df = spark.createDataFrame(rows, ["id", "payload"])
 
