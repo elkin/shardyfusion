@@ -37,7 +37,7 @@ class SlateDbAdapter(Protocol):
 
 @dataclass(slots=True)
 class DefaultSlateDbAdapter:
-    """Best-effort adapter that probes common SlateDB binding surfaces."""
+    """Adapter using the official SlateDB Python binding constructor contract."""
 
     def open(
         self,
@@ -59,28 +59,18 @@ class DefaultSlateDbAdapter:
             )
 
         db_ctor = cast(Any, SlateDB)
-        constructors = [
-            lambda: db_ctor(
+        try:
+            return db_ctor(
                 local_dir,
                 url=db_url,
                 env_file=env_file,
                 settings=settings_payload,
-            ),
-            lambda: db_ctor(local_dir, db_url, env_file=env_file),
-            lambda: db_ctor(local_dir, db_url),
-        ]
-        last_exc: Exception | None = None
-        for ctor in constructors:
-            try:
-                return ctor()
-            except TypeError as exc:
-                last_exc = exc
-                continue
-
-        raise SlateDbApiError(
-            "Unable to construct SlateDB with known signatures; "
-            f"last error: {last_exc!r}"
-        )
+            )
+        except TypeError as exc:
+            raise SlateDbApiError(
+                "Unable to construct SlateDB using the official Python binding "
+                "signature `SlateDB(path, url=..., env_file=..., settings=...)`."
+            ) from exc
 
     def write_pairs(self, db: Any, pairs: Iterable[tuple[bytes, bytes]]) -> None:
         batch = list(pairs)
