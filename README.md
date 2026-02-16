@@ -109,6 +109,29 @@ Parallel tox environments (cap env-level parallelism to avoid OOM):
 uv run tox p -p 2
 ```
 
+Containerized local development run (Podman):
+
+```bash
+podman build -f docker/ci.Dockerfile -t slatedb-spark-sharded-ci .
+podman run --rm -v "$PWD:/workspace" -w /workspace slatedb-spark-sharded-ci \
+  /bin/bash -lc "uv sync --all-extras --dev && uv run tox -m quality && uv run tox -m unit && uv run tox -m integration"
+```
+
+The image includes both Python 3.11 and Python 3.10 so tox `py311-*` and
+`py310-*` environments execute instead of being skipped.
+
+Dev Container (VS Code):
+
+1. Install the VS Code `Dev Containers` extension.
+2. Open this repository in VS Code.
+3. Run `Dev Containers: Reopen in Container`.
+
+The Dev Container reuses `docker/ci.Dockerfile` and runs
+`uv sync --all-extras --dev` automatically after container creation.
+
+If you use Podman as the backend, expose a Docker-compatible socket
+(`podman system service`) and point VS Code Dev Containers to it.
+
 ### Build package artifacts
 
 ```bash

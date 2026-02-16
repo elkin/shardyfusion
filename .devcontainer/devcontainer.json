@@ -1,0 +1,23 @@
+{
+  "name": "slatedb_spark_sharded",
+  "build": {
+    "dockerfile": "../docker/ci.Dockerfile",
+    "context": ".."
+  },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "workspaceFolder": "/workspace",
+  "containerEnv": {
+    "SPARK_LOCAL_IP": "127.0.0.1"
+  },
+  "postCreateCommand": "uv sync --all-extras --dev",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "tamasfe.even-better-toml"
+      ]
+    }
+  }
+}
