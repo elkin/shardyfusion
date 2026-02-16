@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Mapping
 from urllib.parse import urlparse
-import os
 
 from .errors import PublishManifestError
 

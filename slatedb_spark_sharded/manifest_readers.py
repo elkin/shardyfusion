@@ -22,11 +22,13 @@ class ManifestReader(Protocol):
 
     def load_current(self) -> CurrentPointer | None:
         """Return CURRENT pointer or None if not present."""
+        ...
 
     def load_manifest(
         self, ref: str, content_type: str | None = None
     ) -> ParsedManifest:
         """Fetch and decode a manifest reference."""
+        ...
 
 
 class FunctionManifestReader:

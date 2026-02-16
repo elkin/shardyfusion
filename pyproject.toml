@@ -9,7 +9,7 @@ description = "Sharded SlateDB snapshot writer for PySpark"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{name = "slatedb_spark_sharded contributors"}]
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 dependencies = [
   "xxhash>=3.4",
 ]
@@ -34,11 +34,76 @@ test = [
   "pytest-xdist>=3.6",
   "numpy>=1.24",
   "moto[server]>=5.0",
+  "ruff>=0.8.0",
+  "ty>=0.0.17",
+  "pyright>=1.1.390",
+]
+docs = [
+  "mkdocs>=1.6.0",
+  "mkdocs-material>=9.5.0",
+  "mkdocstrings[python]>=0.26.0",
+  "mkdocs-gen-files>=0.5.0",
+  "mkdocs-literate-nav>=0.6.0",
+  "mkdocs-section-index>=0.3.9",
+]
+
+[dependency-groups]
+dev = [
+  "tox>=4.11",
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["slatedb_spark_sharded*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+exclude = [
+  ".git",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache",
+  ".tox",
+  ".venv",
+  "build",
+  "dist",
+]
+
+[tool.ruff.lint]
+select = [
+  "E",
+  "F",
+  "I",
+]
+ignore = [
+  "E501",
+]
+per-file-ignores = { "slatedb_spark_sharded/__init__.py" = ["F401"] }
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.pyright]
+pythonVersion = "3.10"
+typeCheckingMode = "standard"
+include = [
+  "slatedb_spark_sharded",
+]
+exclude = [
+  ".git",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache",
+  ".tox",
+  ".venv",
+  "build",
+  "dist",
+]
+reportMissingTypeStubs = false
+reportUnsupportedDunderAll = false
 
 [tool.pytest.ini_options]
 minversion = "7.0"

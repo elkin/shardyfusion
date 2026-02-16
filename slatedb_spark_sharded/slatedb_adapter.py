@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from typing import Any, Iterable, Protocol
+from typing import Any, Iterable, Protocol, cast
 
 from .errors import SlateDbApiError
 
@@ -51,17 +52,22 @@ class DefaultSlateDbAdapter:
         except ImportError as exc:
             raise SlateDbApiError("slatedb package is required at runtime") from exc
 
-        kwargs = {"url": db_url}
-        if env_file is not None:
-            kwargs["env_file"] = env_file
+        settings_payload: str | None = None
         if settings is not None:
-            kwargs["settings"] = settings
+            settings_payload = json.dumps(
+                settings, sort_keys=True, separators=(",", ":")
+            )
 
+        db_ctor = cast(Any, SlateDB)
         constructors = [
-            lambda: SlateDB(local_dir, **kwargs),
-            lambda: SlateDB(local_dir=local_dir, **kwargs),
-            lambda: SlateDB(path=local_dir, **kwargs),
-            lambda: SlateDB(local_dir, db_url, env_file=env_file, settings=settings),
+            lambda: db_ctor(
+                local_dir,
+                url=db_url,
+                env_file=env_file,
+                settings=settings_payload,
+            ),
+            lambda: db_ctor(local_dir, db_url, env_file=env_file),
+            lambda: db_ctor(local_dir, db_url),
         ]
         last_exc: Exception | None = None
         for ctor in constructors:

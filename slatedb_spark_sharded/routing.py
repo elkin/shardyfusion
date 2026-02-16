@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import xxhash
 
@@ -16,8 +16,8 @@ from .sharding import ShardingStrategy
 @dataclass(slots=True)
 class _RangeInterval:
     db_id: int
-    lower: int | str | None
-    upper: int | str | None
+    lower: int | float | str | None
+    upper: int | float | str | None
 
 
 class SnapshotRouter:
@@ -109,8 +109,8 @@ class SnapshotRouter:
 
         raise ValueError(f"Unsupported sharding strategy for routing: {self.strategy}")
 
-    def _normalize_range_key(self, key: int | str | bytes) -> int | str:
-        if isinstance(key, (int, str)):
+    def _normalize_range_key(self, key: int | str | bytes) -> int | float | str:
+        if isinstance(key, (int, float, str)):
             return key
 
         if isinstance(key, bytes):
@@ -145,12 +145,12 @@ class SnapshotRouter:
 
         sorted_intervals = sorted(intervals, key=_interval_sort_key)
 
-        prev_upper: int | str | None = None
+        prev_upper: int | float | str | None = None
         for current in sorted_intervals:
             if (
                 prev_upper is not None
                 and current.lower is not None
-                and current.lower <= prev_upper
+                and cast(Any, current.lower) <= cast(Any, prev_upper)
             ):
                 raise ValueError("Range shard intervals overlap and are not routable")
             if current.upper is not None:
@@ -207,7 +207,9 @@ def _interval_sort_key(interval: _RangeInterval) -> tuple[int, Any]:
     return (1, interval.lower)
 
 
-def _search_intervals(intervals: list[_RangeInterval], key: int | str) -> int | None:
+def _search_intervals(
+    intervals: list[_RangeInterval], key: int | float | str
+) -> int | None:
     lo = 0
     hi = len(intervals) - 1
 
@@ -215,11 +217,11 @@ def _search_intervals(intervals: list[_RangeInterval], key: int | str) -> int | 
         mid = (lo + hi) // 2
         interval = intervals[mid]
 
-        if interval.upper is not None and key > interval.upper:
+        if interval.upper is not None and cast(Any, key) > cast(Any, interval.upper):
             lo = mid + 1
             continue
 
-        if interval.lower is not None and key < interval.lower:
+        if interval.lower is not None and cast(Any, key) < cast(Any, interval.lower):
             hi = mid - 1
             continue
 

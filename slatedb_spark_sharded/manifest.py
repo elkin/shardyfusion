@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-import json
 from typing import Any, Protocol
 
 from .sharding import ShardingSpec
@@ -106,6 +106,7 @@ class ManifestBuilder(Protocol):
 
     def add_custom_field(self, key: str, value: Any) -> None:
         """Register one custom field before build."""
+        ...
 
     def build(
         self,
@@ -115,6 +116,7 @@ class ManifestBuilder(Protocol):
         custom_fields: dict[str, Any],
     ) -> ManifestArtifact:
         """Build a manifest artifact containing required metadata."""
+        ...
 
 
 class JsonManifestBuilder:

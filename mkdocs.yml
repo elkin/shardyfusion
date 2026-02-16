@@ -1,0 +1,39 @@
+site_name: slatedb_spark_sharded
+site_description: Sharded SlateDB snapshot writer and reader helpers for PySpark
+site_url: https://slatedb.github.io/slatedb_spark_sharded/
+repo_url: https://github.com/slatedb/slatedb_spark_sharded
+repo_name: slatedb/slatedb_spark_sharded
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths:
+            - .
+          options:
+            show_source: false
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Writer Side: writer.md
+  - Reader Side: reader.md
+  - Architecture: how-it-works.md
+  - Operations: operations.md
+  - Release Process: release.md
+  - API Reference: api.md
+
+markdown_extensions:
+  - admonition
+  - codehilite
+  - toc:
+      permalink: true

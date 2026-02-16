@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
-import os
 from queue import Queue
-import threading
 from typing import Any, Sequence
 
 from .errors import SlateDbApiError
@@ -31,7 +31,7 @@ class _ShardHandle:
     mode: str
     reader: Any | None = None
     lock: threading.Lock | None = None
-    pool: "_ReaderPool" | None = None
+    pool: "_ReaderPool | None" = None
 
 
 class _ReaderPool:

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 import json
+from dataclasses import asdict
 
-import pytest
 import slatedb
 
 from slatedb_spark_sharded.manifest import (

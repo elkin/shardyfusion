@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import socket
+from collections.abc import Generator
 from typing import Any
 from uuid import uuid4
 
@@ -9,11 +10,11 @@ import pytest
 
 
 @pytest.fixture(scope="session")
-def spark():
-    import pyspark
+def spark() -> Generator[Any, None, None]:
+    from pyspark.sql import SparkSession
 
     session = (
-        pyspark.sql.SparkSession.builder.master("local[2]")
+        SparkSession.builder.master("local[2]")
         .appName("slatedb_spark_sharded_tests")
         .config("spark.ui.enabled", "false")
         .getOrCreate()
@@ -30,7 +31,7 @@ def _pick_free_port() -> int:
 
 
 @pytest.fixture(scope="session")
-def local_s3_service() -> dict[str, Any]:
+def local_s3_service() -> Generator[dict[str, Any], None, None]:
     """Start a local S3-compatible test service backed by moto."""
 
     import boto3

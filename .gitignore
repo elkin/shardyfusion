@@ -11,6 +11,7 @@ venv/
 # Packaging/build artifacts
 build/
 dist/
+site/
 *.egg-info/
 .eggs/
 pip-wheel-metadata/

@@ -12,11 +12,11 @@ from .manifest import (
     BuildResult,
     BuildStats,
     CurrentPointer,
+    JsonManifestBuilder,
     ManifestArtifact,
     ManifestBuilder,
     RequiredBuildMeta,
     RequiredShardMeta,
-    JsonManifestBuilder,
 )
 from .manifest_readers import (
     DefaultS3ManifestReader,
@@ -26,8 +26,8 @@ from .manifest_readers import (
 )
 from .publish import DefaultS3Publisher, ManifestPublisher
 from .reader import SlateShardedReader
-from .serde import ValueSpec
 from .routing import SnapshotRouter
+from .serde import ValueSpec
 from .sharding import ShardingSpec, ShardingStrategy
 
 _writer_exports: list[str] = []
@@ -74,4 +74,5 @@ __all__ = [
     "EngineOptions",
     "ValueSpec",
     "parse_json_manifest",
-] + _writer_exports
+]
+__all__.extend(_writer_exports)

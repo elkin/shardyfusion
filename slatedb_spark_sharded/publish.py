@@ -15,9 +15,11 @@ class ManifestPublisher(Protocol):
         self, *, name: str, artifact: ManifestArtifact, run_id: str
     ) -> str:
         """Persist manifest and return a reference."""
+        ...
 
     def publish_current(self, *, name: str, artifact: ManifestArtifact) -> str | None:
         """Persist CURRENT pointer and return a reference if applicable."""
+        ...
 
 
 class DefaultS3Publisher:

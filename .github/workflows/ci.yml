@@ -12,10 +12,72 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quality:
+    name: Quality Gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Type check (ty)
+        run: uv run ty check slatedb_spark_sharded --python-version 3.10 --error-on-warning
+
+      - name: Type check fallback (pyright)
+        run: uv run pyright slatedb_spark_sharded
+
+  package:
+    name: Package Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: quality
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Sync dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Wheel install smoke test
+        run: |
+          uv run python -m pip install --force-reinstall dist/*.whl
+          uv run python -c "import slatedb_spark_sharded; print('import ok')"
+
   unit:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs: quality
     strategy:
       fail-fast: false
       matrix:
@@ -71,13 +133,26 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs: quality
     strategy:
       fail-fast: false
       matrix:
         include:
+          - name: "read integration / py3.10"
+            python-version: "3.10"
+            tox-env: "py310-read-integration"
           - name: "read integration / py3.11"
             python-version: "3.11"
             tox-env: "py311-read-integration"
+          - name: "writer integration / py3.10 / spark35"
+            python-version: "3.10"
+            tox-env: "py310-writer-spark35-integration"
+          - name: "writer integration / py3.10 / spark4"
+            python-version: "3.10"
+            tox-env: "py310-writer-spark4-integration"
+          - name: "writer integration / py3.11 / spark35"
+            python-version: "3.11"
+            tox-env: "py311-writer-spark35-integration"
           - name: "writer integration / py3.11 / spark4"
             python-version: "3.11"
             tox-env: "py311-writer-spark4-integration"

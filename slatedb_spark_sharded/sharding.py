@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
-import math
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Sequence, cast
 
 from .errors import ShardAssignmentError
 
@@ -14,7 +14,9 @@ DB_ID_COL = "_slatedb_db_id"
 if TYPE_CHECKING:
     from pyspark import RDD
     from pyspark.sql import Column, DataFrame
-    from pyspark.sql.types import DataType
+
+
+BoundaryValue = int | float | str
 
 
 def _require_pyspark() -> Any:
@@ -33,11 +35,6 @@ def _require_pyspark() -> Any:
 def _pyspark_functions() -> Any:
     functions, _ = _require_pyspark()
     return functions
-
-
-def _pyspark_datatype() -> type:
-    _, types = _require_pyspark()
-    return types.DataType
 
 
 def _pyspark_doubletype() -> type:
@@ -92,7 +89,7 @@ class ShardingSpec:
     """Configuration for mapping rows to shard database ids."""
 
     strategy: ShardingStrategy = ShardingStrategy.HASH
-    boundaries: list[float] | list[int] | list[str] | None = None
+    boundaries: list[BoundaryValue] | None = None
     approx_quantile_rel_error: float = 0.01
     custom_expr: str | None = None
     custom_column_builder: Callable[[str], Column] | None = None
@@ -190,7 +187,7 @@ def prepare_partitioned_rdd(
     if sort_within_partitions:
         prepared = prepared.sortWithinPartitions(key_col)
 
-    pair_rdd = prepared.rdd.map(lambda row: (int(row[DB_ID_COL]), row))
+    pair_rdd = cast(Any, prepared.rdd).map(lambda row: (int(row[DB_ID_COL]), row))
     return pair_rdd.partitionBy(num_dbs, lambda key: int(key))
 
 
@@ -200,7 +197,6 @@ def _validate_key_col_type(
     key_col: str,
     strategy: ShardingStrategy,
 ) -> None:
-    DataType = _pyspark_datatype()
     DoubleType = _pyspark_doubletype()
     FloatType = _pyspark_floattype()
     IntegerType = _pyspark_integertype()
@@ -215,7 +211,7 @@ def _validate_key_col_type(
         ) from exc
 
     if strategy == ShardingStrategy.HASH:
-        allowed: tuple[type[DataType], ...] = (IntegerType, LongType)
+        allowed = (IntegerType, LongType)
         if not isinstance(dtype, allowed):
             raise ShardAssignmentError(
                 "Hash sharding requires key column type IntegerType or LongType; "
@@ -238,10 +234,10 @@ def _resolve_boundaries(
     key_col: str,
     num_dbs: int,
     sharding: ShardingSpec,
-) -> list[float] | list[int] | list[str]:
+) -> list[BoundaryValue]:
     expected = max(num_dbs - 1, 0)
     if sharding.boundaries is not None:
-        boundaries = sharding.boundaries
+        boundaries = list(sharding.boundaries)
         if len(boundaries) != expected:
             raise ShardAssignmentError(
                 f"Range sharding expects {expected} boundaries for num_dbs={num_dbs}, got {len(boundaries)}"
@@ -260,13 +256,12 @@ def _resolve_boundaries(
             "Range sharding could not derive the expected number of boundaries from "
             f"approxQuantile: expected {expected}, got {len(boundaries)}"
         )
-    _validate_boundaries(boundaries)
-    return boundaries
+    resolved: list[BoundaryValue] = list(boundaries)
+    _validate_boundaries(resolved)
+    return resolved
 
 
-def _range_bucket_expr(
-    key_col: str, boundaries: list[float] | list[int] | list[str]
-) -> "Column":
+def _range_bucket_expr(key_col: str, boundaries: Sequence[BoundaryValue]) -> "Column":
     """Build range-bucket expression using pure Spark SQL functions."""
 
     F = _pyspark_functions()
@@ -286,7 +281,7 @@ def _range_bucket_expr(
     )
 
 
-def _boundaries_are_numeric(boundaries: list[float] | list[int] | list[str]) -> bool:
+def _boundaries_are_numeric(boundaries: Sequence[BoundaryValue]) -> bool:
     return all(
         isinstance(boundary, (int, float)) and not isinstance(boundary, bool)
         for boundary in boundaries
@@ -296,7 +291,7 @@ def _boundaries_are_numeric(boundaries: list[float] | list[int] | list[str]) -> 
 def _range_bucketize_df(
     df: "DataFrame",
     key_col: str,
-    boundaries: list[float] | list[int] | list[str],
+    boundaries: Sequence[BoundaryValue],
 ) -> "DataFrame":
     """Apply range bucketing with Spark ML Bucketizer for numeric boundaries."""
 
@@ -333,7 +328,7 @@ def _custom_expr(sharding: ShardingSpec, key_col: str) -> Column:
     )
 
 
-def _validate_boundaries(boundaries: list[float] | list[int] | list[str]) -> None:
+def _validate_boundaries(boundaries: Sequence[BoundaryValue]) -> None:
     """Validate boundaries are non-null and strictly increasing."""
 
     if any(boundary is None for boundary in boundaries):
@@ -344,20 +339,26 @@ def _validate_boundaries(boundaries: list[float] | list[int] | list[str]) -> Non
     for idx in range(1, len(boundaries)):
         left = boundaries[idx - 1]
         right = boundaries[idx]
+        if type(left) is not type(right):
+            raise ShardAssignmentError(
+                "Range boundaries must all share one type; "
+                f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
+            )
         try:
-            if not (left < right):
-                raise ShardAssignmentError(
-                    "Range boundaries must be strictly increasing; "
-                    f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
-                )
+            is_increasing = cast(Any, left) < cast(Any, right)
         except TypeError as exc:
             raise ShardAssignmentError(
                 "Range boundaries contain non-comparable values; "
                 f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
             ) from exc
+        if not is_increasing:
+            raise ShardAssignmentError(
+                "Range boundaries must be strictly increasing; "
+                f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
+            )
 
 
-def _sql_literal(value: float | int | str) -> str:
+def _sql_literal(value: BoundaryValue) -> str:
     """Render a safe SQL literal for range boundary values."""
 
     if isinstance(value, str):
