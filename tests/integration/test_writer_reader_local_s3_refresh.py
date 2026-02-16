@@ -66,9 +66,7 @@ def test_reader_refreshes_after_new_writer_batch(
     )
     result_v1 = write_sharded_slatedb(df_v1, build_config("refresh-run-1"))
 
-    def open_real_reader(
-        *, local_path, db_url, checkpoint_id, env_file, settings
-    ):
+    def open_real_reader(*, local_path, db_url, checkpoint_id, env_file, settings):
         _ = (local_path, env_file, settings)
         return slatedb.SlateDBReader(
             writer_local_dir_for_db_url(db_url, local_root),

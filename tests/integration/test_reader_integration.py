@@ -53,9 +53,7 @@ class InMemoryManifestReader(ManifestReader):
         return parse_json_manifest(self.manifests[ref])
 
 
-def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(
-    tmp_path
-) -> None:
+def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) -> None:
     local_root = tmp_path / "reader-cache"
     object_store_root = tmp_path / "object-store"
     object_store_root.mkdir(parents=True, exist_ok=True)

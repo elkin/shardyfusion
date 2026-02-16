@@ -90,12 +90,10 @@ class SnapshotRouter:
 
     def _build_route_one_impl(self) -> Callable[[int | str | bytes], int]:
         if self.strategy == ShardingStrategy.HASH:
-            return (
-                lambda key: _xxhash64_db_id(
-                    key,
-                    self.num_dbs,
-                    self.key_encoding,
-                )
+            return lambda key: _xxhash64_db_id(
+                key,
+                self.num_dbs,
+                self.key_encoding,
             )
 
         if self.strategy == ShardingStrategy.RANGE:

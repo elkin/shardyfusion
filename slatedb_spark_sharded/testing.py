@@ -154,7 +154,9 @@ def writer_local_dir_for_db_url(db_url: str, local_root: str) -> str:
     _, key = parse_s3_url(db_url)
     segments = [segment for segment in key.split("/") if segment]
     if len(segments) < 3:
-        raise ValueError(f"Unexpected db_url for writer local dir reconstruction: {db_url}")
+        raise ValueError(
+            f"Unexpected db_url for writer local dir reconstruction: {db_url}"
+        )
 
     run_segment = segments[-3]
     db_segment = segments[-2]
