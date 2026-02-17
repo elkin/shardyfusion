@@ -13,7 +13,7 @@ from typing import Any, Iterator
 from uuid import uuid4
 
 from pyspark import StorageLevel, TaskContext
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
 
 from .config import SlateDbConfig
 from .errors import (
@@ -72,7 +72,7 @@ class _ShardAttemptResult:
 class SparkConfOverrideContext:
     """Temporarily override Spark configuration values and restore them on exit."""
 
-    def __init__(self, spark: Any, overrides: dict[str, str] | None) -> None:
+    def __init__(self, spark: SparkSession, overrides: dict[str, str] | None) -> None:
         self._spark = spark
         self._overrides = dict(overrides or {})
         self._original_values: dict[str, str | None] = {}
@@ -122,12 +122,6 @@ class SparkConfOverrideContext:
         if callable(unset):
             unset(key)
             return
-
-        jsession = getattr(self._spark, "_jsparkSession", None)
-        if jsession is not None:
-            jconf = jsession.conf()
-            if hasattr(jconf, "unset"):
-                jconf.unset(key)
 
 
 class DataFrameCacheContext:
