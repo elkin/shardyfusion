@@ -151,10 +151,6 @@ def add_db_id_column(
         case ShardingStrategy.CUSTOM_EXPR:
             db_expr = _custom_expr(sharding, key_col)
             df_with_db_id = df.withColumn(DB_ID_COL, db_expr.cast("int"))
-        case _:  # pragma: no cover - guarded by ShardingSpec.__post_init__
-            raise ShardAssignmentError(
-                f"Unsupported sharding strategy: {sharding.strategy}"
-            )
 
     invalid_count = (
         df_with_db_id.where(

@@ -10,8 +10,19 @@ from slatedb_spark_sharded.sharding import (
     ShardingStrategy,
     _range_bucket_expr,
     _range_bucketize_df,
+    _resolve_boundaries,
     add_db_id_column,
 )
+
+
+class _FakeApproxQuantileDf:
+    def __init__(self, result):
+        self._result = result
+        self.calls: list[tuple[str, list[float], float]] = []
+
+    def approxQuantile(self, key_col: str, probabilities: list[float], rel_error: float):
+        self.calls.append((key_col, probabilities, rel_error))
+        return self._result
 
 
 def test_hash_sharding_produces_db_id_in_range(spark) -> None:
@@ -171,3 +182,41 @@ def test_range_sharding_string_boundaries_non_numeric_path(spark) -> None:
     assert got["aa"] == 0
     assert got["ba"] == 0
     assert got["zz"] == 1
+
+
+def test_resolve_boundaries_uses_explicit_and_skips_quantiles() -> None:
+    df = _FakeApproxQuantileDf(result=[999, 1000])
+    sharding = ShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=[10, 20])
+
+    boundaries = _resolve_boundaries(df, "id", 3, sharding)  # type: ignore[arg-type]
+
+    assert boundaries == [10, 20]
+    assert df.calls == []
+
+
+def test_resolve_boundaries_uses_approx_quantile_when_boundaries_missing() -> None:
+    df = _FakeApproxQuantileDf(result=[10.0, 20.0])
+    sharding = ShardingSpec(
+        strategy=ShardingStrategy.RANGE, approx_quantile_rel_error=0.05
+    )
+
+    boundaries = _resolve_boundaries(df, "id", 3, sharding)  # type: ignore[arg-type]
+
+    assert boundaries == [10.0, 20.0]
+    assert df.calls == [("id", [1 / 3, 2 / 3], 0.05)]
+
+
+def test_resolve_boundaries_rejects_wrong_quantile_count() -> None:
+    df = _FakeApproxQuantileDf(result=[10.0])
+    sharding = ShardingSpec(strategy=ShardingStrategy.RANGE)
+
+    with pytest.raises(ShardAssignmentError, match="expected 2, got 1"):
+        _resolve_boundaries(df, "id", 3, sharding)  # type: ignore[arg-type]
+
+
+def test_resolve_boundaries_validates_quantile_order() -> None:
+    df = _FakeApproxQuantileDf(result=[20.0, 10.0])
+    sharding = ShardingSpec(strategy=ShardingStrategy.RANGE)
+
+    with pytest.raises(ShardAssignmentError, match="strictly increasing"):
+        _resolve_boundaries(df, "id", 3, sharding)  # type: ignore[arg-type]
