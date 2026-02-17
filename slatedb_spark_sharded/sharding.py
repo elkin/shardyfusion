@@ -120,30 +120,27 @@ def add_db_id_column(
 
     resolved = ShardingSpec(
         strategy=sharding.strategy,
-        boundaries=sharding.boundaries if sharding.boundaries is not None else None,
+        boundaries=sharding.boundaries,
         approx_quantile_rel_error=sharding.approx_quantile_rel_error,
         custom_expr=sharding.custom_expr,
         custom_column_builder=sharding.custom_column_builder,
     )
 
+    if sharding.strategy in {ShardingStrategy.HASH, ShardingStrategy.RANGE}:
+        _validate_key_col_type(
+            df=df,
+            key_col=key_col,
+            strategy=sharding.strategy,
+        )
+
     F = _pyspark_functions()
     df_with_db_id: "DataFrame"
     match sharding.strategy:
         case ShardingStrategy.HASH:
-            _validate_key_col_type(
-                df=df,
-                key_col=key_col,
-                strategy=sharding.strategy,
-            )
             # Use explicit xxhash64 for stable cross-runtime sharding semantics.
             db_expr = F.pmod(F.xxhash64(F.col(key_col).cast("long")), F.lit(num_dbs))
             df_with_db_id = df.withColumn(DB_ID_COL, db_expr.cast("int"))
         case ShardingStrategy.RANGE:
-            _validate_key_col_type(
-                df=df,
-                key_col=key_col,
-                strategy=sharding.strategy,
-            )
             boundaries = _resolve_boundaries(df, key_col, num_dbs, sharding)
             resolved.boundaries = boundaries
             if _boundaries_are_numeric(boundaries):
