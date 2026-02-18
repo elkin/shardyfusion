@@ -2,6 +2,7 @@ FROM python:3.11-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV UV_SYSTEM_PYTHON=1
+ENV UV_PROJECT_ENVIRONMENT=/opt/slatedb-venv
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -19,6 +20,7 @@ RUN uv python install 3.10 \
     && ln -sf "$(uv python find 3.10)" /usr/local/bin/python3.10
 
 WORKDIR /workspace
+RUN mkdir -p /opt/slatedb-venv
 
 # Example usage:
 #   podman build -f docker/ci.Dockerfile -t slatedb-spark-sharded-ci .

@@ -120,6 +120,26 @@ podman run --rm -v "$PWD:/workspace" -w /workspace slatedb-spark-sharded-ci \
 The image includes both Python 3.11 and Python 3.10 so tox `py311-*` and
 `py310-*` environments execute instead of being skipped.
 
+Short container prefix via `just`:
+
+```bash
+just docker-build
+just d uv run tox -m quality
+just d uv run tox -m unit
+just d uv run tox -m integration
+```
+
+`just d ...` runs the same command shape as local usage, but inside the container.
+It uses container-only uv state and a container-only project venv path
+(`UV_PROJECT_ENVIRONMENT=/opt/slatedb-venv`), so it does not reuse host `.venv`.
+
+Container runtime defaults to `podman`; switch to Docker with:
+
+```bash
+CONTAINER_ENGINE=docker just docker-build
+CONTAINER_ENGINE=docker just d uv run tox -m quality
+```
+
 Dev Container (VS Code):
 
 1. Install the VS Code `Dev Containers` extension.
