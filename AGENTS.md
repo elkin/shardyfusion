@@ -4,7 +4,7 @@
 - Source package: `slatedb_spark_sharded/`
   - Writer path: `writer.py`, `sharding.py`, `serde.py`, `slatedb_adapter.py`
   - Reader path: `reader.py`, `routing.py`, `manifest_readers.py`
-  - Shared models/protocols: `config.py`, `manifest.py`, `publish.py`, `storage.py`
+  - Shared models/protocols: `config.py`, `manifest.py`, `publish.py`, `storage.py`, `testing.py`
 - Tests: `tests/`
   - Unit: `tests/unit/shared`, `tests/unit/read`, `tests/unit/writer`
   - Integration: `tests/integration/read`, `tests/integration/writer`
@@ -12,7 +12,10 @@
 - Local container/dev setup: `docker/ci.Dockerfile`, `.devcontainer/devcontainer.json`
 
 ## Build, Test, and Development Commands
-- Sync dev environment: `uv sync --all-extras --dev`
+- Install dependencies:
+  - Reader-only: `uv sync --extra read`
+  - Writer-only: `uv sync --extra writer`
+  - Full dev: `uv sync --all-extras --dev`
 - Lint: `uv run ruff check .`
 - Format check: `uv run ruff format --check .`
 - Type checks:
@@ -23,6 +26,19 @@
   - `uv run tox -m quality`
   - `uv run tox -m unit`
   - `uv run tox -m integration`
+  - Matrix includes Python `3.10`/`3.11` and Spark `3.5`/`4` where configured.
+- Container workflows via `justfile`:
+  - Build image: `just docker-build`
+  - Run shell in container: `just docker-shell`
+  - Run any local-style command in container: `just d <command>`
+  - Examples:
+    - `just d uv run tox -m quality`
+    - `just d uv run tox -m unit`
+    - `just d uv run tox -m integration`
+  - Use Docker instead of Podman:
+    - `CONTAINER_ENGINE=docker just docker-build`
+    - `CONTAINER_ENGINE=docker just d <command>`
+  - Container runs use an isolated uv project env at `/opt/slatedb-venv` (not host `.venv`).
 
 ## Coding Style & Naming Conventions
 - Python 3.10+ with full type hints.
@@ -36,6 +52,7 @@
 - Prefer targeted runs while developing:
   - `uv run pytest -q tests/unit/writer`
   - `uv run pytest -q tests/integration/read`
+- Integration writer tests require Spark + Java and local S3 emulation (`moto`).
 - For behavior changes, add/adjust unit tests first, then integration tests where routing/publishing or Spark behavior is affected.
 
 ## Commit & Pull Request Guidelines
