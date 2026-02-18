@@ -184,13 +184,19 @@ class RealSlateDbFileAdapter:
         kwargs: dict[str, Any] = {"url": mapped_url}
         if env_file is not None:
             kwargs["env_file"] = env_file
-        if isinstance(settings, str):
-            kwargs["settings"] = settings
+        if settings is not None:
+            kwargs["settings"] = json.dumps(
+                settings, sort_keys=True, separators=(",", ":")
+            )
         return SlateDB(local_dir, **kwargs)
 
     def write_pairs(self, db: Any, pairs) -> None:
+        from slatedb import WriteBatch
+
+        wb = WriteBatch()
         for key, value in pairs:
-            db.put(bytes(key), bytes(value))
+            wb.put(bytes(key), bytes(value))
+        db.write(wb)
 
     def flush_wal_if_supported(self, db: Any) -> None:
         db.flush_with_options("wal")

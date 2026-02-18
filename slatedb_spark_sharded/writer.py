@@ -118,10 +118,7 @@ class SparkConfOverrideContext:
             return None
 
     def _unset_conf_if_supported(self, key: str) -> None:
-        unset = getattr(self._spark.conf, "unset", None)
-        if callable(unset):
-            unset(key)
-            return
+        self._spark.conf.unset(key)
 
 
 class DataFrameCacheContext:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import types
+from dataclasses import dataclass, field
 
 import pytest
 
@@ -58,3 +59,45 @@ def test_open_raises_when_binding_signature_is_not_official(monkeypatch) -> None
             env_file=None,
             settings={"durability": "strict"},
         )
+
+
+@dataclass
+class _FakeWriteBatch:
+    pairs: list[tuple[bytes, bytes]] = field(default_factory=list)
+
+    def put(self, key: bytes, value: bytes) -> None:
+        self.pairs.append((key, value))
+
+
+class _FakeDb:
+    def __init__(self) -> None:
+        self.writes: list[_FakeWriteBatch] = []
+
+    def write(self, batch: _FakeWriteBatch) -> None:
+        self.writes.append(batch)
+
+
+def test_write_pairs_uses_official_write_batch_api(monkeypatch) -> None:
+    fake_module = types.ModuleType("slatedb")
+    fake_module.WriteBatch = _FakeWriteBatch
+    monkeypatch.setitem(sys.modules, "slatedb", fake_module)
+
+    adapter = DefaultSlateDbAdapter()
+    db = _FakeDb()
+
+    adapter.write_pairs(db, [(b"k1", b"v1"), (b"k2", b"v2")])
+
+    assert len(db.writes) == 1
+    assert db.writes[0].pairs == [(b"k1", b"v1"), (b"k2", b"v2")]
+
+
+def test_write_pairs_raises_when_official_write_api_missing(monkeypatch) -> None:
+    fake_module = types.ModuleType("slatedb")
+    fake_module.WriteBatch = _FakeWriteBatch
+    monkeypatch.setitem(sys.modules, "slatedb", fake_module)
+
+    adapter = DefaultSlateDbAdapter()
+    db = object()
+
+    with pytest.raises(AttributeError):
+        adapter.write_pairs(db, [(b"k", b"v")])

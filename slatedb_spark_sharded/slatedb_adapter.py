@@ -1,10 +1,10 @@
-"""Thin compatibility adapter around SlateDB Python bindings."""
+"""Thin adapter around official SlateDB Python bindings."""
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Iterable, Protocol, cast
+from typing import Any, Iterable, Protocol
 
 from .errors import SlateDbApiError
 
@@ -58,9 +58,8 @@ class DefaultSlateDbAdapter:
                 settings, sort_keys=True, separators=(",", ":")
             )
 
-        db_ctor = cast(Any, SlateDB)
         try:
-            return db_ctor(
+            return SlateDB(
                 local_dir,
                 url=db_url,
                 env_file=env_file,
@@ -77,43 +76,25 @@ class DefaultSlateDbAdapter:
         if not batch:
             return
 
-        # Most efficient option: write(WriteBatch-like) if exposed.
-        if hasattr(db, "new_write_batch") and hasattr(db, "write"):
-            wb = db.new_write_batch()
-            for key, value in batch:
-                wb.put(key, value)
-            db.write(wb)
-            return
+        try:
+            from slatedb import WriteBatch
+        except ImportError as exc:
+            raise SlateDbApiError("slatedb package is required at runtime") from exc
 
-        if hasattr(db, "write_batch"):
-            db.write_batch(batch)
-            return
-
-        if hasattr(db, "put"):
-            for key, value in batch:
-                db.put(key, value)
-            return
-
-        raise SlateDbApiError("SlateDB binding exposes no supported write API")
+        wb = WriteBatch()
+        for key, value in batch:
+            wb.put(key, value)
+        db.write(wb)
 
     def flush_wal_if_supported(self, db: Any) -> None:
-        if hasattr(db, "flush_with_options"):
-            try:
-                db.flush_with_options("wal")
-                return
-            except TypeError:
-                pass
-
-        if hasattr(db, "flush"):
-            db.flush()
+        if not hasattr(db, "flush_with_options"):
+            return
+        db.flush_with_options("wal")
 
     def create_checkpoint_if_supported(self, db: Any) -> str | None:
         if not hasattr(db, "create_checkpoint"):
             return None
-        try:
-            checkpoint = db.create_checkpoint(scope="durable")
-        except TypeError:
-            checkpoint = db.create_checkpoint()
+        checkpoint = db.create_checkpoint(scope="durable")
 
         if checkpoint is None:
             return None

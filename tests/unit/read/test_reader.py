@@ -1,16 +1,23 @@
 from __future__ import annotations
 
+import sys
+import types
 from dataclasses import dataclass
 
 import pytest
 
+from slatedb_spark_sharded.errors import SlateDbApiError
 from slatedb_spark_sharded.manifest import (
     CurrentPointer,
     ParsedManifest,
     RequiredBuildMeta,
     RequiredShardMeta,
 )
-from slatedb_spark_sharded.reader import SlateShardedReader
+from slatedb_spark_sharded.reader import (
+    SlateShardedReader,
+    _open_slatedb_reader,
+    _reader_get,
+)
 from slatedb_spark_sharded.sharding import ShardingSpec, ShardingStrategy
 
 
@@ -47,6 +54,12 @@ class _FakeReader:
 
     def close(self) -> None:
         return None
+
+
+class _FakeReadMethodOnlyReader:
+    def read(self, key: bytes) -> bytes | None:
+        _ = key
+        return b"v"
 
 
 def _required_build() -> RequiredBuildMeta:
@@ -130,3 +143,38 @@ def test_refresh_swaps_manifest_ref_and_readers(monkeypatch, tmp_path) -> None:
         assert unchanged is False
     finally:
         reader.close()
+
+
+def test_reader_get_requires_get_method() -> None:
+    with pytest.raises(SlateDbApiError, match="does not expose `get`"):
+        _reader_get(_FakeReadMethodOnlyReader(), b"k")
+
+
+def test_open_slatedb_reader_uses_official_slatedbreader_signature(monkeypatch) -> None:
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    sentinel = _FakeReader({})
+
+    def fake_reader_ctor(*args, **kwargs):
+        calls.append((args, kwargs))
+        return sentinel
+
+    fake_module = types.ModuleType("slatedb")
+    fake_module.SlateDBReader = fake_reader_ctor
+    monkeypatch.setitem(sys.modules, "slatedb", fake_module)
+
+    reader = _open_slatedb_reader(
+        local_path="/tmp/local",
+        db_url="s3://bucket/db",
+        checkpoint_id="ckpt-1",
+        env_file="slatedb.env",
+        settings={"durability": "strict"},
+    )
+
+    assert reader is sentinel
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert args == ("/tmp/local",)
+    assert kwargs["url"] == "s3://bucket/db"
+    assert kwargs["checkpoint_id"] == "ckpt-1"
+    assert kwargs["env_file"] == "slatedb.env"
+    assert kwargs["settings"] == '{"durability":"strict"}'

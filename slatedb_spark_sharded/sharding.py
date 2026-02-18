@@ -289,12 +289,7 @@ def _range_bucketize_df(
     """Apply range bucketing with Spark ML Bucketizer for numeric boundaries."""
 
     F = _pyspark_functions()
-
-    try:
-        from pyspark.ml.feature import Bucketizer
-    except Exception:  # pragma: no cover - dependency/environment dependent
-        db_expr = _range_bucket_expr(key_col, boundaries)
-        return df.withColumn(DB_ID_COL, db_expr.cast("int"))
+    from pyspark.ml.feature import Bucketizer
 
     splits = [
         -float("inf"),

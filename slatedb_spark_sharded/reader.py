@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -300,9 +301,7 @@ def _read_one(handle: _ShardHandle, key: bytes) -> bytes | None:
 def _reader_get(reader: Any, key: bytes) -> bytes | None:
     if hasattr(reader, "get"):
         return reader.get(key)
-    if hasattr(reader, "read"):
-        return reader.read(key)
-    raise SlateDbApiError("SlateDB reader instance does not expose `get` or `read`")
+    raise SlateDbApiError("SlateDB reader instance does not expose `get`")
 
 
 def _open_slatedb_reader(
@@ -314,90 +313,36 @@ def _open_slatedb_reader(
     settings: dict[str, Any] | None,
 ) -> Any:
     try:
-        import slatedb
+        from slatedb import SlateDBReader
     except ImportError as exc:  # pragma: no cover - runtime dependent
         raise SlateDbApiError(
             "slatedb package is required for SlateShardedReader"
         ) from exc
 
-    candidates: list[tuple[str, Any]] = []
     reader_kwargs: dict[str, Any] = {"url": db_url}
     if checkpoint_id is not None:
         reader_kwargs["checkpoint_id"] = checkpoint_id
     if env_file is not None:
         reader_kwargs["env_file"] = env_file
-    if isinstance(settings, str):
-        reader_kwargs["settings"] = settings
-
-    if hasattr(slatedb, "SlateDBReader"):
-        cls = getattr(slatedb, "SlateDBReader")
-        candidates.extend(
-            [
-                (
-                    "SlateDBReader(local_path, ...)",
-                    lambda: cls(local_path, **reader_kwargs),
-                ),
-                (
-                    "SlateDBReader(local_dir=..., ...)",
-                    lambda: cls(local_dir=local_path, **reader_kwargs),
-                ),
-            ]
-        )
-        if "settings" in reader_kwargs:
-            reader_kwargs_without_settings = dict(reader_kwargs)
-            reader_kwargs_without_settings.pop("settings", None)
-            candidates.extend(
-                [
-                    (
-                        "SlateDBReader(local_path, ...) without settings",
-                        lambda: cls(local_path, **reader_kwargs_without_settings),
-                    ),
-                    (
-                        "SlateDBReader(local_dir=..., ...) without settings",
-                        lambda: cls(
-                            local_dir=local_path,
-                            **reader_kwargs_without_settings,
-                        ),
-                    ),
-                ]
-            )
-
-    if hasattr(slatedb, "SlateDB"):
-        cls = getattr(slatedb, "SlateDB")
-        db_kwargs: dict[str, Any] = {"url": db_url}
-        if checkpoint_id is not None:
-            db_kwargs["checkpoint_id"] = checkpoint_id
-        if env_file is not None:
-            db_kwargs["env_file"] = env_file
-        if isinstance(settings, str):
-            db_kwargs["settings"] = settings
-        candidates.extend(
-            [
-                (
-                    "SlateDB(local_path, ...)",
-                    lambda: cls(local_path, **db_kwargs),
-                ),
-                (
-                    "SlateDB(local_dir=..., ...)",
-                    lambda: cls(local_dir=local_path, **db_kwargs),
-                ),
-            ]
+    if settings is not None:
+        reader_kwargs["settings"] = json.dumps(
+            settings, sort_keys=True, separators=(",", ":")
         )
 
-    last_exc: Exception | None = None
-    for _, ctor in candidates:
-        try:
-            reader = ctor()
-        except TypeError as exc:
-            last_exc = exc
-            continue
-        if hasattr(reader, "get") or hasattr(reader, "read"):
-            return reader
+    try:
+        reader = SlateDBReader(local_path, **reader_kwargs)
+    except TypeError as exc:
+        raise SlateDbApiError(
+            "Unable to construct SlateDBReader using the official Python binding "
+            "signature `SlateDBReader(path, url=..., checkpoint_id=..., "
+            "env_file=..., settings=...)`."
+        ) from exc
 
-    raise SlateDbApiError(
-        "Unable to construct SlateDB reader with known signatures; "
-        f"last constructor error: {last_exc!r}"
-    )
+    if not hasattr(reader, "get"):
+        raise SlateDbApiError(
+            "SlateDBReader instance does not expose required `get` API"
+        )
+    return reader
 
 
 def _close_state(state: _ReaderState) -> None:
