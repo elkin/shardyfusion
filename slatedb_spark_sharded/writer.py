@@ -445,7 +445,6 @@ def _write_one_shard_partition(
     os.makedirs(local_dir, exist_ok=True)
 
     adapter_factory = runtime.slatedb_adapter_factory or default_adapter_factory
-    adapter = adapter_factory()
 
     partition_started = time.perf_counter()
     row_count = 0
@@ -454,39 +453,36 @@ def _write_one_shard_partition(
     checkpoint_id: str | None = None
     batch: list[tuple[bytes, bytes]] = []
 
-    db = adapter.open(
-        local_dir=local_dir,
-        db_url=db_url,
-        env_file=runtime.slate_env_file,
-        settings=runtime.slate_settings,
-    )
-
     try:
-        for _, row in rows_iter:
-            key_value = row[runtime.key_col]
-            key_bytes = encode_key(key_value, encoding=KEY_ENCODING)
-            value_bytes = runtime.value_spec.encode(row)
+        with adapter_factory(
+            local_dir=local_dir,
+            db_url=db_url,
+            env_file=runtime.slate_env_file,
+            settings=runtime.slate_settings,
+        ) as adapter:
+            for _, row in rows_iter:
+                key_value = row[runtime.key_col]
+                key_bytes = encode_key(key_value, encoding=KEY_ENCODING)
+                value_bytes = runtime.value_spec.encode(row)
 
-            batch.append((key_bytes, value_bytes))
-            row_count += 1
-            min_key, max_key = _update_min_max(min_key, max_key, key_value)
+                batch.append((key_bytes, value_bytes))
+                row_count += 1
+                min_key, max_key = _update_min_max(min_key, max_key, key_value)
 
-            if len(batch) >= runtime.batch_size:
-                adapter.write_pairs(db, batch)
+                if len(batch) >= runtime.batch_size:
+                    adapter.write_pairs(batch)
+                    batch.clear()
+
+            if batch:
+                adapter.write_pairs(batch)
                 batch.clear()
 
-        if batch:
-            adapter.write_pairs(db, batch)
-            batch.clear()
-
-        adapter.flush_wal_if_supported(db)
-        checkpoint_id = adapter.create_checkpoint_if_supported(db)
+            adapter.flush_wal_if_supported()
+            checkpoint_id = adapter.create_checkpoint_if_supported()
     except Exception as exc:  # pragma: no cover - worker runtime failure surface
         raise SlatedbSparkShardedError(
             f"Shard write failed for db_id={db_id}, attempt={attempt}: {exc}"
         ) from exc
-    finally:
-        adapter.close_if_supported(db)
 
     writer_info = {
         "stage_id": stage_id,

@@ -54,7 +54,7 @@ class _ReaderPool:
 
     def close(self) -> None:
         for reader in self._readers:
-            _close_reader_if_supported(reader)
+            reader.close()
 
 
 class SlateShardedReader:
@@ -291,17 +291,11 @@ def _read_one(handle: _ShardHandle, key: bytes) -> bytes | None:
         assert handle.lock is not None
         assert handle.reader is not None
         with handle.lock:
-            return _reader_get(handle.reader, key)
+            return handle.reader.get(key)
 
     assert handle.pool is not None
     with handle.pool.checkout() as reader:
-        return _reader_get(reader, key)
-
-
-def _reader_get(reader: Any, key: bytes) -> bytes | None:
-    if hasattr(reader, "get"):
         return reader.get(key)
-    raise SlateDbApiError("SlateDB reader instance does not expose `get`")
 
 
 def _open_slatedb_reader(
@@ -338,10 +332,6 @@ def _open_slatedb_reader(
             "env_file=..., settings=...)`."
         ) from exc
 
-    if not hasattr(reader, "get"):
-        raise SlateDbApiError(
-            "SlateDBReader instance does not expose required `get` API"
-        )
     return reader
 
 
@@ -352,11 +342,6 @@ def _close_state(state: _ReaderState) -> None:
 
 def _close_handle(handle: _ShardHandle) -> None:
     if handle.mode == "lock" and handle.reader is not None:
-        _close_reader_if_supported(handle.reader)
+        handle.reader.close()
     if handle.mode == "pool" and handle.pool is not None:
         handle.pool.close()
-
-
-def _close_reader_if_supported(reader: Any) -> None:
-    if hasattr(reader, "close"):
-        reader.close()

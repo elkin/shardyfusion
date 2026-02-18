@@ -20,7 +20,9 @@ class _FakeApproxQuantileDf:
         self._result = result
         self.calls: list[tuple[str, list[float], float]] = []
 
-    def approxQuantile(self, key_col: str, probabilities: list[float], rel_error: float):
+    def approxQuantile(
+        self, key_col: str, probabilities: list[float], rel_error: float
+    ):
         self.calls.append((key_col, probabilities, rel_error))
         return self._result
 

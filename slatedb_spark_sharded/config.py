@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from .errors import ConfigValidationError
@@ -13,7 +13,7 @@ from .sharding import ShardingSpec
 if TYPE_CHECKING:
     from .manifest import ManifestBuilder
     from .publish import ManifestPublisher
-    from .slatedb_adapter import SlateDbAdapter
+    from .slatedb_adapter import SlateDbAdapterFactory
 
 
 _SAFE_SEGMENT_CHARS = frozenset(
@@ -60,7 +60,7 @@ class EngineOptions:
     slate_settings: dict[str, Any] | None = None
     batch_size: int = 50_000
     # Advanced/testing hook for injecting an adapter implementation.
-    slatedb_adapter_factory: Callable[[], SlateDbAdapter] | None = None
+    slatedb_adapter_factory: SlateDbAdapterFactory | None = None
 
 
 @dataclass(slots=True)

@@ -22,15 +22,14 @@ def test_open_uses_official_constructor_signature(monkeypatch) -> None:
     fake_module.SlateDB = fake_slatedb_ctor
     monkeypatch.setitem(sys.modules, "slatedb", fake_module)
 
-    adapter = DefaultSlateDbAdapter()
-    result = adapter.open(
+    adapter = DefaultSlateDbAdapter(
         local_dir="/tmp/local",
         db_url="s3://bucket/path",
         env_file="slatedb.env",
         settings={"durability": "strict"},
     )
 
-    assert result is sentinel
+    assert adapter.db is sentinel
     assert len(calls) == 1
     args, kwargs = calls[0]
     assert args == ("/tmp/local",)
@@ -48,12 +47,11 @@ def test_open_raises_when_binding_signature_is_not_official(monkeypatch) -> None
     fake_module.SlateDB = fake_slatedb_ctor
     monkeypatch.setitem(sys.modules, "slatedb", fake_module)
 
-    adapter = DefaultSlateDbAdapter()
     with pytest.raises(
         SlateDbApiError,
         match="official Python binding signature",
     ):
-        adapter.open(
+        DefaultSlateDbAdapter(
             local_dir="/tmp/local",
             db_url="s3://bucket/path",
             env_file=None,
@@ -77,15 +75,24 @@ class _FakeDb:
         self.writes.append(batch)
 
 
+class _FakeClosableDb:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def test_write_pairs_uses_official_write_batch_api(monkeypatch) -> None:
     fake_module = types.ModuleType("slatedb")
     fake_module.WriteBatch = _FakeWriteBatch
     monkeypatch.setitem(sys.modules, "slatedb", fake_module)
 
-    adapter = DefaultSlateDbAdapter()
+    adapter = DefaultSlateDbAdapter.__new__(DefaultSlateDbAdapter)
     db = _FakeDb()
+    adapter._db = db
 
-    adapter.write_pairs(db, [(b"k1", b"v1"), (b"k2", b"v2")])
+    adapter.write_pairs([(b"k1", b"v1"), (b"k2", b"v2")])
 
     assert len(db.writes) == 1
     assert db.writes[0].pairs == [(b"k1", b"v1"), (b"k2", b"v2")]
@@ -96,8 +103,20 @@ def test_write_pairs_raises_when_official_write_api_missing(monkeypatch) -> None
     fake_module.WriteBatch = _FakeWriteBatch
     monkeypatch.setitem(sys.modules, "slatedb", fake_module)
 
-    adapter = DefaultSlateDbAdapter()
-    db = object()
+    adapter = DefaultSlateDbAdapter.__new__(DefaultSlateDbAdapter)
+    adapter._db = object()
 
     with pytest.raises(AttributeError):
-        adapter.write_pairs(db, [(b"k", b"v")])
+        adapter.write_pairs([(b"k", b"v")])
+
+
+def test_context_manager_closes_db() -> None:
+    adapter = DefaultSlateDbAdapter.__new__(DefaultSlateDbAdapter)
+    db = _FakeClosableDb()
+    adapter._db = db
+
+    with adapter as entered:
+        assert entered is adapter
+        assert db.closed is False
+
+    assert db.closed is True

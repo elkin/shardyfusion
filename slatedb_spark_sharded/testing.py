@@ -20,35 +20,55 @@ class FakeDb:
 class FakeSlateDbAdapter:
     """Minimal adapter implementation for tests without real SlateDB."""
 
-    def open(
+    def __init__(
         self,
         *,
         local_dir: str,
         db_url: str,
         env_file: str | None,
         settings: dict[str, Any] | None,
-    ) -> FakeDb:
+    ) -> None:
         _ = (local_dir, db_url, env_file, settings)
-        return FakeDb()
+        self._db = FakeDb()
 
-    def write_pairs(self, db: FakeDb, pairs) -> None:
-        db.writes += len(list(pairs))
+    @property
+    def db(self) -> FakeDb:
+        return self._db
 
-    def flush_wal_if_supported(self, db: FakeDb) -> None:
-        _ = db
+    def __enter__(self) -> "FakeSlateDbAdapter":
+        return self
 
-    def create_checkpoint_if_supported(self, db: FakeDb) -> str | None:
-        _ = db
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def write_pairs(self, pairs) -> None:
+        self._db.writes += len(list(pairs))
+
+    def flush_wal_if_supported(self) -> None:
+        return None
+
+    def create_checkpoint_if_supported(self) -> str | None:
         return "fake-checkpoint"
 
-    def close_if_supported(self, db: FakeDb) -> None:
-        _ = db
+    def close(self) -> None:
+        return None
 
 
-def fake_adapter_factory() -> FakeSlateDbAdapter:
+def fake_adapter_factory(
+    *,
+    local_dir: str,
+    db_url: str,
+    env_file: str | None,
+    settings: dict[str, Any] | None,
+) -> FakeSlateDbAdapter:
     """Return a worker-serializable fake adapter instance."""
 
-    return FakeSlateDbAdapter()
+    return FakeSlateDbAdapter(
+        local_dir=local_dir,
+        db_url=db_url,
+        env_file=env_file,
+        settings=settings,
+    )
 
 
 @dataclass(slots=True)
@@ -61,24 +81,33 @@ class FileBackedDb:
 class FileBackedSlateDbAdapter:
     """Fake adapter that persists written kv pairs to local files."""
 
-    def __init__(self, root_dir: str) -> None:
-        self._root_dir = root_dir
-
-    def open(
+    def __init__(
         self,
+        root_dir: str,
         *,
         local_dir: str,
         db_url: str,
         env_file: str | None,
         settings: dict[str, Any] | None,
-    ) -> FileBackedDb:
+    ) -> None:
         _ = (local_dir, env_file, settings)
+        self._root_dir = root_dir
         os.makedirs(self._root_dir, exist_ok=True)
-        return FileBackedDb(file_path=_file_path_for_db_url(self._root_dir, db_url))
+        self._db = FileBackedDb(file_path=_file_path_for_db_url(self._root_dir, db_url))
 
-    def write_pairs(self, db: FileBackedDb, pairs) -> None:
-        os.makedirs(os.path.dirname(db.file_path), exist_ok=True)
-        with open(db.file_path, "ab") as handle:
+    @property
+    def db(self) -> FileBackedDb:
+        return self._db
+
+    def __enter__(self) -> "FileBackedSlateDbAdapter":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def write_pairs(self, pairs) -> None:
+        os.makedirs(os.path.dirname(self._db.file_path), exist_ok=True)
+        with open(self._db.file_path, "ab") as handle:
             for key, value in pairs:
                 payload = {
                     "key": base64.b64encode(bytes(key)).decode("ascii"),
@@ -87,15 +116,14 @@ class FileBackedSlateDbAdapter:
                 handle.write(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
                 handle.write(b"\n")
 
-    def flush_wal_if_supported(self, db: FileBackedDb) -> None:
-        _ = db
+    def flush_wal_if_supported(self) -> None:
+        return None
 
-    def create_checkpoint_if_supported(self, db: FileBackedDb) -> str | None:
-        _ = db
+    def create_checkpoint_if_supported(self) -> str | None:
         return "file-backed-checkpoint"
 
-    def close_if_supported(self, db: FileBackedDb) -> None:
-        _ = db
+    def close(self) -> None:
+        return None
 
 
 @dataclass(slots=True)
@@ -104,8 +132,21 @@ class FileBackedSlateDbAdapterFactory:
 
     root_dir: str
 
-    def __call__(self) -> FileBackedSlateDbAdapter:
-        return FileBackedSlateDbAdapter(self.root_dir)
+    def __call__(
+        self,
+        *,
+        local_dir: str,
+        db_url: str,
+        env_file: str | None,
+        settings: dict[str, Any] | None,
+    ) -> FileBackedSlateDbAdapter:
+        return FileBackedSlateDbAdapter(
+            self.root_dir,
+            local_dir=local_dir,
+            db_url=db_url,
+            env_file=env_file,
+            settings=settings,
+        )
 
 
 def file_backed_adapter_factory(root_dir: str) -> FileBackedSlateDbAdapterFactory:
@@ -167,17 +208,17 @@ def writer_local_dir_for_db_url(db_url: str, local_root: str) -> str:
 class RealSlateDbFileAdapter:
     """Real SlateDB adapter that writes to a local file:// object-store path."""
 
-    def __init__(self, object_store_root: str) -> None:
-        self._object_store_root = object_store_root
-
-    def open(
+    def __init__(
         self,
+        object_store_root: str,
         *,
         local_dir: str,
         db_url: str,
         env_file: str | None,
         settings: dict[str, Any] | None,
-    ):
+    ) -> None:
+        self._object_store_root = object_store_root
+
         from slatedb import SlateDB
 
         mapped_url = map_s3_db_url_to_file_url(db_url, self._object_store_root)
@@ -188,28 +229,35 @@ class RealSlateDbFileAdapter:
             kwargs["settings"] = json.dumps(
                 settings, sort_keys=True, separators=(",", ":")
             )
-        return SlateDB(local_dir, **kwargs)
+        self._db = SlateDB(local_dir, **kwargs)
 
-    def write_pairs(self, db: Any, pairs) -> None:
+    @property
+    def db(self) -> Any:
+        return self._db
+
+    def __enter__(self) -> "RealSlateDbFileAdapter":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def write_pairs(self, pairs) -> None:
         from slatedb import WriteBatch
 
         wb = WriteBatch()
         for key, value in pairs:
             wb.put(bytes(key), bytes(value))
-        db.write(wb)
+        self._db.write(wb)
 
-    def flush_wal_if_supported(self, db: Any) -> None:
-        db.flush_with_options("wal")
+    def flush_wal_if_supported(self) -> None:
+        self._db.flush_with_options("wal")
 
-    def create_checkpoint_if_supported(self, db: Any) -> str | None:
-        checkpoint = db.create_checkpoint(scope="durable")
-        if isinstance(checkpoint, dict):
-            checkpoint_id = checkpoint.get("id")
-            return str(checkpoint_id) if checkpoint_id is not None else None
-        return str(checkpoint)
+    def create_checkpoint_if_supported(self) -> str | None:
+        checkpoint = self._db.create_checkpoint(scope="durable")
+        return checkpoint["id"]
 
-    def close_if_supported(self, db: Any) -> None:
-        db.close()
+    def close(self) -> None:
+        self._db.close()
 
 
 @dataclass(slots=True)
@@ -218,8 +266,21 @@ class RealSlateDbFileAdapterFactory:
 
     object_store_root: str
 
-    def __call__(self) -> RealSlateDbFileAdapter:
-        return RealSlateDbFileAdapter(self.object_store_root)
+    def __call__(
+        self,
+        *,
+        local_dir: str,
+        db_url: str,
+        env_file: str | None,
+        settings: dict[str, Any] | None,
+    ) -> RealSlateDbFileAdapter:
+        return RealSlateDbFileAdapter(
+            self.object_store_root,
+            local_dir=local_dir,
+            db_url=db_url,
+            env_file=env_file,
+            settings=settings,
+        )
 
 
 def real_file_adapter_factory(object_store_root: str) -> RealSlateDbFileAdapterFactory:
