@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Protocol
 
 from .manifest import ManifestArtifact
 from .storage import create_s3_client, put_bytes
+from .type_defs import S3ClientConfig
 
 
 class ManifestPublisher(Protocol):
@@ -31,7 +32,7 @@ class DefaultS3Publisher:
         *,
         manifest_name: str = "manifest",
         current_name: str = "_CURRENT",
-        s3_client_config: dict[str, Any] | None = None,
+        s3_client_config: S3ClientConfig | None = None,
     ) -> None:
         self.s3_prefix = s3_prefix.rstrip("/")
         self.manifest_name = manifest_name

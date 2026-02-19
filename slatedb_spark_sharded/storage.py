@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Mapping
+from typing import Mapping, TypedDict
 from urllib.parse import urlparse
 
 from .errors import PublishManifestError
+from .type_defs import S3ClientConfig
 
 
 def parse_s3_url(url: str) -> tuple[str, str]:
@@ -21,7 +22,15 @@ def parse_s3_url(url: str) -> tuple[str, str]:
     return parsed.netloc, key
 
 
-def create_s3_client(s3_client_config: Mapping[str, Any] | None = None):
+class _S3ClientKwargs(TypedDict, total=False):
+    endpoint_url: str
+    region_name: str
+    access_key_id: str
+    secret_access_key: str
+    session_token: str
+
+
+def create_s3_client(s3_client_config: S3ClientConfig | None = None):
     """Create boto3 S3 client with optional explicit/ENV overrides."""
 
     try:
@@ -31,32 +40,43 @@ def create_s3_client(s3_client_config: Mapping[str, Any] | None = None):
             "boto3 is required for default S3 publishing"
         ) from exc
 
-    config = dict(s3_client_config or {})
+    config = s3_client_config or {}
     endpoint_url = config.get("endpoint_url") or os.getenv("SLATEDB_S3_ENDPOINT_URL")
-    region_name = config.get("region_name") or os.getenv("AWS_REGION")
-    aws_access_key_id = config.get("aws_access_key_id") or os.getenv(
+    region_name = config.get("region_name") or os.getenv("S3_REGION") or os.getenv(
+        "AWS_REGION"
+    )
+    access_key_id = config.get("access_key_id") or os.getenv("S3_ACCESS_KEY_ID") or os.getenv(
         "AWS_ACCESS_KEY_ID"
     )
-    aws_secret_access_key = config.get("aws_secret_access_key") or os.getenv(
-        "AWS_SECRET_ACCESS_KEY"
+    secret_access_key = (
+        config.get("secret_access_key")
+        or os.getenv("S3_SECRET_ACCESS_KEY")
+        or os.getenv("AWS_SECRET_ACCESS_KEY")
     )
-    aws_session_token = config.get("aws_session_token") or os.getenv(
+    session_token = config.get("session_token") or os.getenv("S3_SESSION_TOKEN") or os.getenv(
         "AWS_SESSION_TOKEN"
     )
 
-    kwargs: dict[str, Any] = {}
+    kwargs: _S3ClientKwargs = {}
     if endpoint_url:
         kwargs["endpoint_url"] = endpoint_url
     if region_name:
         kwargs["region_name"] = region_name
-    if aws_access_key_id:
-        kwargs["aws_access_key_id"] = aws_access_key_id
-    if aws_secret_access_key:
-        kwargs["aws_secret_access_key"] = aws_secret_access_key
-    if aws_session_token:
-        kwargs["aws_session_token"] = aws_session_token
+    if access_key_id:
+        kwargs["access_key_id"] = access_key_id
+    if secret_access_key:
+        kwargs["secret_access_key"] = secret_access_key
+    if session_token:
+        kwargs["session_token"] = session_token
 
-    return boto3.client("s3", **kwargs)
+    return boto3.client(
+        "s3",
+        endpoint_url=kwargs.get("endpoint_url"),
+        region_name=kwargs.get("region_name"),
+        aws_access_key_id=kwargs.get("access_key_id"),
+        aws_secret_access_key=kwargs.get("secret_access_key"),
+        aws_session_token=kwargs.get("session_token"),
+    )
 
 
 def put_bytes(
@@ -72,7 +92,7 @@ def put_bytes(
     client = s3_client or create_s3_client()
     bucket, key = parse_s3_url(url)
 
-    put_kwargs: dict[str, Any] = {
+    put_kwargs: dict[str, object] = {
         "Bucket": bucket,
         "Key": key,
         "Body": payload,

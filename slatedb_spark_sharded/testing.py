@@ -6,10 +6,11 @@ import base64
 import json
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import TypedDict
 from urllib.parse import quote
 
 from .storage import parse_s3_url
+from .type_defs import JsonObject
 
 
 @dataclass(slots=True)
@@ -26,7 +27,7 @@ class FakeSlateDbAdapter:
         local_dir: str,
         db_url: str,
         env_file: str | None,
-        settings: dict[str, Any] | None,
+        settings: JsonObject | None,
     ) -> None:
         _ = (local_dir, db_url, env_file, settings)
         self._db = FakeDb()
@@ -59,7 +60,7 @@ def fake_adapter_factory(
     local_dir: str,
     db_url: str,
     env_file: str | None,
-    settings: dict[str, Any] | None,
+    settings: JsonObject | None,
 ) -> FakeSlateDbAdapter:
     """Return a worker-serializable fake adapter instance."""
 
@@ -88,7 +89,7 @@ class FileBackedSlateDbAdapter:
         local_dir: str,
         db_url: str,
         env_file: str | None,
-        settings: dict[str, Any] | None,
+        settings: JsonObject | None,
     ) -> None:
         _ = (local_dir, env_file, settings)
         self._root_dir = root_dir
@@ -138,7 +139,7 @@ class FileBackedSlateDbAdapterFactory:
         local_dir: str,
         db_url: str,
         env_file: str | None,
-        settings: dict[str, Any] | None,
+        settings: JsonObject | None,
     ) -> FileBackedSlateDbAdapter:
         return FileBackedSlateDbAdapter(
             self.root_dir,
@@ -205,6 +206,12 @@ def writer_local_dir_for_db_url(db_url: str, local_root: str) -> str:
     return os.path.join(local_root, run_segment, db_segment, attempt_segment)
 
 
+class _SlateDbOpenKwargs(TypedDict, total=False):
+    url: str
+    env_file: str
+    settings: str
+
+
 class RealSlateDbFileAdapter:
     """Real SlateDB adapter that writes to a local file:// object-store path."""
 
@@ -215,14 +222,14 @@ class RealSlateDbFileAdapter:
         local_dir: str,
         db_url: str,
         env_file: str | None,
-        settings: dict[str, Any] | None,
+        settings: JsonObject | None,
     ) -> None:
         self._object_store_root = object_store_root
 
         from slatedb import SlateDB
 
         mapped_url = map_s3_db_url_to_file_url(db_url, self._object_store_root)
-        kwargs: dict[str, Any] = {"url": mapped_url}
+        kwargs: _SlateDbOpenKwargs = {"url": mapped_url}
         if env_file is not None:
             kwargs["env_file"] = env_file
         if settings is not None:
@@ -232,7 +239,7 @@ class RealSlateDbFileAdapter:
         self._db = SlateDB(local_dir, **kwargs)
 
     @property
-    def db(self) -> Any:
+    def db(self) -> object:
         return self._db
 
     def __enter__(self) -> "RealSlateDbFileAdapter":
@@ -272,7 +279,7 @@ class RealSlateDbFileAdapterFactory:
         local_dir: str,
         db_url: str,
         env_file: str | None,
-        settings: dict[str, Any] | None,
+        settings: JsonObject | None,
     ) -> RealSlateDbFileAdapter:
         return RealSlateDbFileAdapter(
             self.object_store_root,

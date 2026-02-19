@@ -53,8 +53,8 @@ def test_writer_publishes_manifest_and_current_to_local_s3(
             s3_client_config={
                 "endpoint_url": endpoint_url,
                 "region_name": local_s3_service["region_name"],
-                "aws_access_key_id": local_s3_service["aws_access_key_id"],
-                "aws_secret_access_key": local_s3_service["aws_secret_access_key"],
+                "access_key_id": local_s3_service["access_key_id"],
+                "secret_access_key": local_s3_service["secret_access_key"],
             }
         ),
         output=OutputOptions(

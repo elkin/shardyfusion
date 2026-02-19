@@ -16,10 +16,6 @@ from slatedb_spark_sharded.reader import SlateShardedReader
 from slatedb_spark_sharded.sharding import ShardingSpec, ShardingStrategy
 
 
-class CustomPublisher:
-    pass
-
-
 class InMemoryManifestReader(ManifestReader):
     def __init__(
         self,
@@ -161,7 +157,6 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
     reader = SlateShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(local_root),
-        publisher=CustomPublisher(),
         manifest_reader=InMemoryManifestReader(
             current_ref="mem://current",
             pointers=pointers,

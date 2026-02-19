@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Callable, Mapping, Protocol, cast
 
 from .errors import ConfigValidationError
 
 
-def encode_key(key: Any, *, encoding: str = "u64be") -> bytes:
+class _KeyedRow(Protocol):
+    def __getitem__(self, key: str) -> object: ...
+
+
+class _AsDictRow(Protocol):
+    def asDict(self, recursive: bool = False) -> dict[str, object]: ...
+
+
+def encode_key(key: object, *, encoding: str = "u64be") -> bytes:
     """Encode a key into bytes for SlateDB."""
 
     if encoding != "u64be":
@@ -28,10 +36,10 @@ def encode_key(key: Any, *, encoding: str = "u64be") -> bytes:
 class ValueSpec:
     """Value serialization strategy for a Spark row."""
 
-    encoder: Callable[[Any], bytes]
+    encoder: Callable[[object], bytes]
     description: str
 
-    def encode(self, row: Any) -> bytes:
+    def encode(self, row: object) -> bytes:
         """Encode one row into value bytes."""
 
         return self.encoder(row)
@@ -40,8 +48,8 @@ class ValueSpec:
     def binary_col(cls, col_name: str) -> "ValueSpec":
         """Use one column directly as bytes payload."""
 
-        def _encode(row: Any) -> bytes:
-            value = row[col_name]
+        def _encode(row: object) -> bytes:
+            value = cast(_KeyedRow, row)[col_name]
             if value is None:
                 return b""
             if isinstance(value, bytes):
@@ -60,9 +68,11 @@ class ValueSpec:
     def json_cols(cls, cols: list[str] | None = None) -> "ValueSpec":
         """Encode selected columns (or full row) as UTF-8 JSON."""
 
-        def _encode(row: Any) -> bytes:
+        def _encode(row: object) -> bytes:
             row_dict = (
-                row.asDict(recursive=True) if hasattr(row, "asDict") else dict(row)
+                cast(_AsDictRow, row).asDict(recursive=True)
+                if hasattr(row, "asDict")
+                else dict(cast(Mapping[str, object], row))
             )
             obj = {key: row_dict.get(key) for key in cols} if cols else row_dict
             return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode(
@@ -73,7 +83,7 @@ class ValueSpec:
         return cls(encoder=_encode, description=f"json_cols:{detail}")
 
     @classmethod
-    def callable_encoder(cls, fn: Callable[[Any], bytes]) -> "ValueSpec":
+    def callable_encoder(cls, fn: Callable[[object], bytes]) -> "ValueSpec":
         """Use a custom callable encoder."""
 
         return cls(encoder=fn, description=getattr(fn, "__name__", "callable_encoder"))

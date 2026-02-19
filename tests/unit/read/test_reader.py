@@ -4,8 +4,6 @@ import sys
 import types
 from dataclasses import dataclass
 
-import pytest
-
 from slatedb_spark_sharded.manifest import (
     CurrentPointer,
     ParsedManifest,
@@ -14,10 +12,6 @@ from slatedb_spark_sharded.manifest import (
 )
 from slatedb_spark_sharded.reader import SlateShardedReader, _open_slatedb_reader
 from slatedb_spark_sharded.sharding import ShardingSpec, ShardingStrategy
-
-
-class CustomPublisher:
-    pass
 
 
 class _MutableManifestReader:
@@ -84,16 +78,6 @@ def _manifest(db_url: str) -> ParsedManifest:
     )
 
 
-def test_custom_publisher_requires_manifest_reader(tmp_path) -> None:
-    with pytest.raises(ValueError, match="Custom publisher detected"):
-        SlateShardedReader(
-            s3_prefix="s3://bucket/prefix",
-            local_root=str(tmp_path),
-            publisher=CustomPublisher(),
-            manifest_reader=None,
-        )
-
-
 def test_refresh_swaps_manifest_ref_and_readers(monkeypatch, tmp_path) -> None:
     manifests = {
         "mem://manifest/one": _manifest("mem://db/one"),
@@ -106,8 +90,8 @@ def test_refresh_swaps_manifest_ref_and_readers(monkeypatch, tmp_path) -> None:
         "mem://db/two": {(1).to_bytes(8, "big", signed=False): b"two"},
     }
 
-    def fake_open_reader(*, local_path, db_url, checkpoint_id, env_file, settings):
-        _ = (local_path, checkpoint_id, env_file, settings)
+    def fake_open_reader(*, local_path, db_url, checkpoint_id, env_file):
+        _ = (local_path, checkpoint_id, env_file)
         return _FakeReader(stores[db_url])
 
     monkeypatch.setattr(
@@ -117,7 +101,6 @@ def test_refresh_swaps_manifest_ref_and_readers(monkeypatch, tmp_path) -> None:
     reader = SlateShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        publisher=CustomPublisher(),
         manifest_reader=manifest_reader,
     )
     try:
@@ -151,7 +134,6 @@ def test_open_slatedb_reader_uses_official_slatedbreader_signature(monkeypatch) 
         db_url="s3://bucket/db",
         checkpoint_id="ckpt-1",
         env_file="slatedb.env",
-        settings={"durability": "strict"},
     )
 
     assert reader is sentinel
@@ -161,4 +143,3 @@ def test_open_slatedb_reader_uses_official_slatedbreader_signature(monkeypatch) 
     assert kwargs["url"] == "s3://bucket/db"
     assert kwargs["checkpoint_id"] == "ckpt-1"
     assert kwargs["env_file"] == "slatedb.env"
-    assert kwargs["settings"] == '{"durability":"strict"}'

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Iterable, Protocol
+from typing import Iterable, Protocol
 
 from .errors import SlateDbApiError
+from .type_defs import JsonObject
 
 
 class SlateDbAdapter(Protocol):
@@ -20,7 +21,7 @@ class SlateDbAdapter(Protocol):
         ...
 
     @property
-    def db(self) -> Any:
+    def db(self) -> object:
         """Underlying db handle (for advanced/testing access)."""
         ...
 
@@ -50,7 +51,7 @@ class SlateDbAdapterFactory(Protocol):
         local_dir: str,
         db_url: str,
         env_file: str | None,
-        settings: dict[str, Any] | None,
+        settings: JsonObject | None,
     ) -> SlateDbAdapter:
         """Construct an opened adapter instance."""
         ...
@@ -65,7 +66,7 @@ class DefaultSlateDbAdapter:
         local_dir: str,
         db_url: str,
         env_file: str | None,
-        settings: dict[str, Any] | None,
+        settings: JsonObject | None,
     ) -> None:
         try:
             from slatedb import SlateDB
@@ -92,7 +93,7 @@ class DefaultSlateDbAdapter:
             ) from exc
 
     @property
-    def db(self) -> Any:
+    def db(self) -> object:
         return self._db
 
     def __enter__(self) -> "DefaultSlateDbAdapter":
@@ -132,7 +133,7 @@ def default_adapter_factory(
     local_dir: str,
     db_url: str,
     env_file: str | None,
-    settings: dict[str, Any] | None,
+    settings: JsonObject | None,
 ) -> SlateDbAdapter:
     """Factory for default adapter instances."""
 

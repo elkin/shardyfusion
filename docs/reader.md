@@ -28,7 +28,7 @@ changed = reader.refresh()
 reader.close()
 ```
 
-Custom publisher mode:
+Custom manifest reader mode:
 
-- if writer side uses a custom publisher, reader side must provide a matching custom `ManifestReader`
+- provide `manifest_reader` when manifests are not in default S3 JSON format
 - use `FunctionManifestReader` for simple adapter-style integrations

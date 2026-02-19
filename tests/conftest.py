@@ -3,14 +3,26 @@ from __future__ import annotations
 import os
 import socket
 from collections.abc import Generator
-from typing import Any
+from typing import TYPE_CHECKING, TypedDict
 from uuid import uuid4
 
 import pytest
 
+if TYPE_CHECKING:
+    from pyspark.sql import SparkSession
+
+
+class LocalS3Service(TypedDict):
+    endpoint_url: str
+    region_name: str
+    access_key_id: str
+    secret_access_key: str
+    bucket: str
+    client: object
+
 
 @pytest.fixture(scope="session")
-def spark() -> Generator[Any, None, None]:
+def spark() -> Generator[SparkSession, None, None]:
     from pyspark.sql import SparkSession
 
     session = (
@@ -31,7 +43,7 @@ def _pick_free_port() -> int:
 
 
 @pytest.fixture(scope="session")
-def local_s3_service() -> Generator[dict[str, Any], None, None]:
+def local_s3_service() -> Generator[LocalS3Service, None, None]:
     """Start a local S3-compatible test service backed by moto."""
 
     import boto3
@@ -74,8 +86,8 @@ def local_s3_service() -> Generator[dict[str, Any], None, None]:
         yield {
             "endpoint_url": endpoint_url,
             "region_name": region_name,
-            "aws_access_key_id": access_key,
-            "aws_secret_access_key": secret_key,
+            "access_key_id": access_key,
+            "secret_access_key": secret_key,
             "bucket": bucket,
             "client": client,
         }

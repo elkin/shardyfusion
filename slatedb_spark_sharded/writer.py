@@ -7,13 +7,14 @@ import logging
 import os
 import time
 from collections import defaultdict
+from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Any, Iterator
+from typing import cast
 from uuid import uuid4
 
-from pyspark import StorageLevel, TaskContext
-from pyspark.sql import DataFrame, SparkSession
+from pyspark import RDD, StorageLevel, TaskContext
+from pyspark.sql import DataFrame, Row, SparkSession
 
 from .config import SlateDbConfig
 from .errors import (
@@ -34,10 +35,12 @@ from .manifest import (
     RequiredBuildMeta,
     RequiredShardMeta,
 )
+from .ordering import compare_ordered
 from .publish import DefaultS3Publisher
-from .serde import encode_key
+from .serde import ValueSpec, encode_key
 from .sharding import ShardingSpec, add_db_id_column, prepare_partitioned_rdd
-from .slatedb_adapter import default_adapter_factory
+from .slatedb_adapter import SlateDbAdapterFactory, default_adapter_factory
+from .type_defs import JsonObject, KeyLike
 
 KEY_ENCODING = "u64be"
 
@@ -50,11 +53,11 @@ class _PartitionWriteConfig:
     db_path_template: str
     local_root: str
     key_col: str
-    value_spec: Any
+    value_spec: ValueSpec
     batch_size: int
     slate_env_file: str | None
-    slate_settings: dict[str, Any] | None
-    slatedb_adapter_factory: Any | None
+    slate_settings: JsonObject | None
+    slatedb_adapter_factory: SlateDbAdapterFactory | None
 
 
 @dataclass(slots=True)
@@ -66,7 +69,27 @@ class _ShardAttemptResult:
     min_key: int | str | None
     max_key: int | str | None
     checkpoint_id: str | None
-    writer_info: dict[str, Any]
+    writer_info: JsonObject
+
+
+@dataclass(slots=True)
+class _PreparedPartitionRows:
+    partitioned_rdd: RDD[tuple[int, Row]]
+    resolved_sharding: ShardingSpec
+    shard_duration_ms: int
+
+
+@dataclass(slots=True)
+class _PartitionWriteOutcome:
+    attempts: list[_ShardAttemptResult]
+    winners: list[RequiredShardMeta]
+    write_duration_ms: int
+
+
+@dataclass(slots=True)
+class _PublishResult:
+    manifest_ref: str
+    current_ref: str | None
 
 
 class SparkConfOverrideContext:
@@ -196,13 +219,13 @@ def _write_sharded_slatedb_impl(
     started: float,
 ) -> BuildResult:
     """Implementation for write_sharded_slatedb assuming Spark conf already prepared."""
-    partitioned_rdd, resolved_sharding, shard_duration_ms = _prepare_partitioned_rows(
+    prepared_rows = _prepare_partitioned_rows(
         df=df,
         config=config,
     )
     runtime = _build_partition_write_runtime(config=config, run_id=run_id)
-    attempts, winners, write_duration_ms = _run_partition_writes(
-        partitioned_rdd=partitioned_rdd,
+    write_outcome = _run_partition_writes(
+        partitioned_rdd=prepared_rows.partitioned_rdd,
         runtime=runtime,
         num_dbs=config.num_dbs,
     )
@@ -211,10 +234,10 @@ def _write_sharded_slatedb_impl(
     artifact = _build_manifest_artifact(
         config=config,
         run_id=run_id,
-        resolved_sharding=resolved_sharding,
-        winners=winners,
+        resolved_sharding=prepared_rows.resolved_sharding,
+        winners=write_outcome.winners,
     )
-    manifest_ref, current_ref = _publish_manifest_and_current(
+    publish_result = _publish_manifest_and_current(
         config=config,
         run_id=run_id,
         artifact=artifact,
@@ -223,13 +246,13 @@ def _write_sharded_slatedb_impl(
 
     return _assemble_build_result(
         run_id=run_id,
-        winners=winners,
+        winners=write_outcome.winners,
         artifact=artifact,
-        manifest_ref=manifest_ref,
-        current_ref=current_ref,
-        attempts=attempts,
-        shard_duration_ms=shard_duration_ms,
-        write_duration_ms=write_duration_ms,
+        manifest_ref=publish_result.manifest_ref,
+        current_ref=publish_result.current_ref,
+        attempts=write_outcome.attempts,
+        shard_duration_ms=prepared_rows.shard_duration_ms,
+        write_duration_ms=write_outcome.write_duration_ms,
         manifest_duration_ms=manifest_duration_ms,
         started=started,
     )
@@ -239,7 +262,7 @@ def _prepare_partitioned_rows(
     *,
     df: DataFrame,
     config: SlateDbConfig,
-) -> tuple[Any, ShardingSpec, int]:
+) -> _PreparedPartitionRows:
     """Assign shard ids and build the one-writer-per-db partitioned RDD."""
 
     shard_started = time.perf_counter()
@@ -256,7 +279,11 @@ def _prepare_partitioned_rows(
         sort_within_partitions=config.sharding.sort_within_partitions,
     )
     shard_duration_ms = int((time.perf_counter() - shard_started) * 1000)
-    return partitioned_rdd, resolved_sharding, shard_duration_ms
+    return _PreparedPartitionRows(
+        partitioned_rdd=partitioned_rdd,
+        resolved_sharding=resolved_sharding,
+        shard_duration_ms=shard_duration_ms,
+    )
 
 
 def _build_partition_write_runtime(
@@ -283,10 +310,10 @@ def _build_partition_write_runtime(
 
 def _run_partition_writes(
     *,
-    partitioned_rdd: Any,
+    partitioned_rdd: RDD[tuple[int, Row]],
     runtime: _PartitionWriteConfig,
     num_dbs: int,
-) -> tuple[list[_ShardAttemptResult], list[RequiredShardMeta], int]:
+) -> _PartitionWriteOutcome:
     """Execute partition writers and deterministically select winning shard attempts."""
 
     write_started = time.perf_counter()
@@ -297,7 +324,11 @@ def _run_partition_writes(
 
     attempts = [_parse_attempt_line(line) for line in json_lines]
     winners = _select_winners(attempts, num_dbs=num_dbs)
-    return attempts, winners, write_duration_ms
+    return _PartitionWriteOutcome(
+        attempts=attempts,
+        winners=winners,
+        write_duration_ms=write_duration_ms,
+    )
 
 
 def _build_manifest_artifact(
@@ -340,7 +371,7 @@ def _publish_manifest_and_current(
     config: SlateDbConfig,
     run_id: str,
     artifact: ManifestArtifact,
-) -> tuple[str, str | None]:
+) -> _PublishResult:
     """Publish manifest and CURRENT pointer, enforcing publish ordering semantics."""
 
     publisher = config.manifest.publisher or DefaultS3Publisher(
@@ -375,7 +406,7 @@ def _publish_manifest_and_current(
             f"Manifest already published at {manifest_ref}; failed publishing CURRENT"
         ) from exc
 
-    return manifest_ref, current_ref
+    return _PublishResult(manifest_ref=manifest_ref, current_ref=current_ref)
 
 
 def _assemble_build_result(
@@ -418,7 +449,7 @@ def _assemble_build_result(
 
 def _write_one_shard_partition(
     db_id: int,
-    rows_iter: Iterator[tuple[int, Any]],
+    rows_iter: Iterable[tuple[int, Row]],
     runtime: _PartitionWriteConfig,
 ) -> Iterator[str]:
     """Write exactly one shard from one partition and emit one JSON result line."""
@@ -448,8 +479,8 @@ def _write_one_shard_partition(
 
     partition_started = time.perf_counter()
     row_count = 0
-    min_key: int | str | None = None
-    max_key: int | str | None = None
+    min_key: KeyLike | None = None
+    max_key: KeyLike | None = None
     checkpoint_id: str | None = None
     batch: list[tuple[bytes, bytes]] = []
 
@@ -505,27 +536,36 @@ def _write_one_shard_partition(
 
 
 def _update_min_max(
-    min_key: int | str | None,
-    max_key: int | str | None,
-    key: Any,
-) -> tuple[int | str | None, int | str | None]:
-    if key is None:
+    min_key: KeyLike | None,
+    max_key: KeyLike | None,
+    key: object,
+) -> tuple[KeyLike | None, KeyLike | None]:
+    normalized_key = _normalize_key(key)
+    if normalized_key is None:
         return min_key, max_key
 
     if min_key is None:
-        min_key = key
-    else:
-        min_key = key if key < min_key else min_key
+        min_key = normalized_key
+    elif compare_ordered(
+        normalized_key,
+        min_key,
+        mismatch_message="Shard key type changed within partition: mixed int/str keys",
+    ) < 0:
+        min_key = normalized_key
 
     if max_key is None:
-        max_key = key
-    else:
-        max_key = key if key > max_key else max_key
+        max_key = normalized_key
+    elif compare_ordered(
+        normalized_key,
+        max_key,
+        mismatch_message="Shard key type changed within partition: mixed int/str keys",
+    ) > 0:
+        max_key = normalized_key
 
     return min_key, max_key
 
 
-def _normalize_key(key: Any) -> int | str | None:
+def _normalize_key(key: object) -> KeyLike | None:
     if key is None:
         return None
     if isinstance(key, (int, str)):
@@ -543,7 +583,7 @@ def _parse_attempt_line(line: str) -> _ShardAttemptResult:
         min_key=payload.get("min_key"),
         max_key=payload.get("max_key"),
         checkpoint_id=payload.get("checkpoint_id"),
-        writer_info=dict(payload.get("writer_info") or {}),
+        writer_info=cast(JsonObject, dict(payload.get("writer_info") or {})),
     )
 
 
@@ -588,8 +628,10 @@ def _winner_sort_key(item: _ShardAttemptResult) -> tuple[int, int, str]:
     task_attempt_id = item.writer_info.get("task_attempt_id")
     if task_attempt_id is None:
         normalized_task_attempt_id = 2**63 - 1
-    else:
+    elif isinstance(task_attempt_id, (int, float, str)):
         normalized_task_attempt_id = int(task_attempt_id)
+    else:
+        normalized_task_attempt_id = 2**63 - 1
     return (item.attempt, normalized_task_attempt_id, item.db_url)
 
 

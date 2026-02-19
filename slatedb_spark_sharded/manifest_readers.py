@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Protocol
+from typing import Callable, Protocol, cast
 
 from .manifest import (
     CurrentPointer,
@@ -13,6 +13,7 @@ from .manifest import (
 )
 from .sharding import ShardingSpec, ShardingStrategy
 from .storage import create_s3_client, get_bytes, try_get_bytes
+from .type_defs import JsonObject, S3ClientConfig
 
 ManifestRef = str
 
@@ -59,7 +60,7 @@ class DefaultS3ManifestReader:
         s3_prefix: str,
         *,
         current_name: str = "_CURRENT",
-        s3_client_config: dict[str, Any] | None = None,
+        s3_client_config: S3ClientConfig | None = None,
     ) -> None:
         self.s3_prefix = s3_prefix.rstrip("/")
         self.current_name = current_name
@@ -135,6 +136,7 @@ def parse_json_manifest(payload: bytes) -> ParsedManifest:
         raise ValueError("Manifest missing required array `shards`")
     if not isinstance(custom_raw, dict):
         raise ValueError("Manifest field `custom` must be an object")
+    custom = cast(JsonObject, custom_raw)
 
     sharding_raw = required_raw.get("sharding")
     if not isinstance(sharding_raw, dict):
@@ -182,14 +184,12 @@ def parse_json_manifest(payload: bytes) -> ParsedManifest:
                 if item.get("checkpoint_id") is None
                 else str(item.get("checkpoint_id"))
             ),
-            writer_info=dict(item.get("writer_info") or {}),
+            writer_info=cast(JsonObject, dict(item.get("writer_info") or {})),
         )
         shards.append(shard)
 
     _validate_manifest(required_build, shards)
-    return ParsedManifest(
-        required_build=required_build, shards=shards, custom=custom_raw
-    )
+    return ParsedManifest(required_build=required_build, shards=shards, custom=custom)
 
 
 def _validate_manifest(

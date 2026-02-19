@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-import json
 import os
 import threading
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from queue import Queue
-from typing import Any, Sequence
+from typing import Sequence
 
 from .errors import SlateDbApiError
 from .manifest import ParsedManifest
 from .manifest_readers import DefaultS3ManifestReader, ManifestReader
-from .publish import DefaultS3Publisher, ManifestPublisher
 from .routing import SnapshotRouter
+from .type_defs import KeyInput, ShardReader
 
 
 @dataclass(slots=True)
@@ -30,13 +30,13 @@ class _ReaderState:
 @dataclass(slots=True)
 class _ShardHandle:
     mode: str
-    reader: Any | None = None
+    reader: ShardReader | None = None
     lock: threading.Lock | None = None
     pool: "_ReaderPool | None" = None
 
 
 class _ReaderPool:
-    def __init__(self, readers: list[Any]) -> None:
+    def __init__(self, readers: list[ShardReader]) -> None:
         if not readers:
             raise ValueError("Reader pool requires at least one reader")
         self._readers = readers
@@ -45,7 +45,7 @@ class _ReaderPool:
             self._indexes.put(idx)
 
     @contextmanager
-    def checkout(self):
+    def checkout(self) -> Iterator[ShardReader]:
         idx = self._indexes.get()
         try:
             yield self._readers[idx]
@@ -65,29 +65,18 @@ class SlateShardedReader:
         *,
         s3_prefix: str,
         local_root: str,
-        publisher: ManifestPublisher | None = None,
         manifest_reader: ManifestReader | None = None,
         current_name: str = "_CURRENT",
         slate_env_file: str | None = None,
-        slate_settings: dict | None = None,
         thread_safety: str = "lock",
         max_workers: int | None = None,
     ) -> None:
         if thread_safety not in {"lock", "pool"}:
             raise ValueError("thread_safety must be 'lock' or 'pool'")
 
-        if publisher is not None and not isinstance(publisher, DefaultS3Publisher):
-            if manifest_reader is None:
-                raise ValueError(
-                    "Custom publisher detected. Provide a custom ManifestReader that can "
-                    "load CURRENT and decode manifest refs."
-                )
-
         self.s3_prefix = s3_prefix
         self.local_root = local_root
-        self.current_name = current_name
         self.slate_env_file = slate_env_file
-        self.slate_settings = slate_settings
         self.thread_safety = thread_safety
         self.max_workers = max_workers
 
@@ -103,7 +92,7 @@ class SlateShardedReader:
         self._closed = False
         self._state = self._load_initial_state()
 
-    def get(self, key: int | str | bytes) -> bytes | None:
+    def get(self, key: KeyInput) -> bytes | None:
         """Get one key from the currently loaded snapshot."""
 
         state = self._acquire_state()
@@ -115,16 +104,14 @@ class SlateShardedReader:
         finally:
             self._release_state(state)
 
-    def multi_get(
-        self, keys: Sequence[int | str | bytes]
-    ) -> dict[int | str | bytes, bytes | None]:
+    def multi_get(self, keys: Sequence[KeyInput]) -> dict[KeyInput, bytes | None]:
         """Get multiple keys with per-shard grouping and optional shard parallelism."""
 
         key_list = list(keys)
         state = self._acquire_state()
         try:
             grouped = state.router.group_keys(key_list)
-            results: dict[int | str | bytes, bytes | None] = {}
+            results: dict[KeyInput, bytes | None] = {}
 
             if self.max_workers and self.max_workers > 1 and len(grouped) > 1:
                 with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -226,7 +213,6 @@ class SlateShardedReader:
                         db_url=shard.db_url,
                         checkpoint_id=shard.checkpoint_id,
                         env_file=self.slate_env_file,
-                        settings=self.slate_settings,
                     )
                     handles[shard.db_id] = _ShardHandle(
                         mode="lock",
@@ -241,7 +227,6 @@ class SlateShardedReader:
                             db_url=shard.db_url,
                             checkpoint_id=shard.checkpoint_id,
                             env_file=self.slate_env_file,
-                            settings=self.slate_settings,
                         )
                         for _ in range(pool_size)
                     ]
@@ -277,9 +262,9 @@ class SlateShardedReader:
 def _read_group(
     router: SnapshotRouter,
     handle: _ShardHandle,
-    keys: list[int | str | bytes],
-) -> dict[int | str | bytes, bytes | None]:
-    results: dict[int | str | bytes, bytes | None] = {}
+    keys: list[KeyInput],
+) -> dict[KeyInput, bytes | None]:
+    results: dict[KeyInput, bytes | None] = {}
     for key in keys:
         key_bytes = router.encode_lookup_key(key)
         results[key] = _read_one(handle, key_bytes)
@@ -304,8 +289,7 @@ def _open_slatedb_reader(
     db_url: str,
     checkpoint_id: str | None,
     env_file: str | None,
-    settings: dict[str, Any] | None,
-) -> Any:
+) -> ShardReader:
     try:
         from slatedb import SlateDBReader
     except ImportError as exc:  # pragma: no cover - runtime dependent
@@ -313,26 +297,12 @@ def _open_slatedb_reader(
             "slatedb package is required for SlateShardedReader"
         ) from exc
 
-    reader_kwargs: dict[str, Any] = {"url": db_url}
-    if checkpoint_id is not None:
-        reader_kwargs["checkpoint_id"] = checkpoint_id
-    if env_file is not None:
-        reader_kwargs["env_file"] = env_file
-    if settings is not None:
-        reader_kwargs["settings"] = json.dumps(
-            settings, sort_keys=True, separators=(",", ":")
-        )
-
-    try:
-        reader = SlateDBReader(local_path, **reader_kwargs)
-    except TypeError as exc:
-        raise SlateDbApiError(
-            "Unable to construct SlateDBReader using the official Python binding "
-            "signature `SlateDBReader(path, url=..., checkpoint_id=..., "
-            "env_file=..., settings=...)`."
-        ) from exc
-
-    return reader
+    return SlateDBReader(
+        local_path,
+        url=db_url,
+        env_file=env_file,
+        checkpoint_id=checkpoint_id,
+    )
 
 
 def _close_state(state: _ReaderState) -> None:

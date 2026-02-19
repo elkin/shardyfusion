@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import Protocol
 
 from .sharding import ShardingSpec
+from .type_defs import JsonObject, JsonValue
 
 
 @dataclass(slots=True)
@@ -37,7 +38,7 @@ class RequiredShardMeta:
     min_key: int | str | None
     max_key: int | str | None
     checkpoint_id: str | None
-    writer_info: dict[str, Any] = field(default_factory=dict)
+    writer_info: JsonObject = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -46,7 +47,7 @@ class ParsedManifest:
 
     required_build: RequiredBuildMeta
     shards: list[RequiredShardMeta]
-    custom: dict[str, Any] = field(default_factory=dict)
+    custom: JsonObject = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -104,7 +105,7 @@ class BuildResult:
 class ManifestBuilder(Protocol):
     """Protocol for custom manifest formats."""
 
-    def add_custom_field(self, key: str, value: Any) -> None:
+    def add_custom_field(self, key: str, value: JsonValue) -> None:
         """Register one custom field before build."""
         ...
 
@@ -113,7 +114,7 @@ class ManifestBuilder(Protocol):
         *,
         required_build: RequiredBuildMeta,
         shards: list[RequiredShardMeta],
-        custom_fields: dict[str, Any],
+        custom_fields: JsonObject,
     ) -> ManifestArtifact:
         """Build a manifest artifact containing required metadata."""
         ...
@@ -123,9 +124,9 @@ class JsonManifestBuilder:
     """Default manifest builder emitting JSON."""
 
     def __init__(self) -> None:
-        self._custom_fields: dict[str, Any] = {}
+        self._custom_fields: JsonObject = {}
 
-    def add_custom_field(self, key: str, value: Any) -> None:
+    def add_custom_field(self, key: str, value: JsonValue) -> None:
         self._custom_fields[key] = value
 
     def build(
@@ -133,7 +134,7 @@ class JsonManifestBuilder:
         *,
         required_build: RequiredBuildMeta,
         shards: list[RequiredShardMeta],
-        custom_fields: dict[str, Any],
+        custom_fields: JsonObject,
     ) -> ManifestArtifact:
         merged_custom = dict(self._custom_fields)
         merged_custom.update(custom_fields)

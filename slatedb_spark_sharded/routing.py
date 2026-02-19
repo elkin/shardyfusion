@@ -4,20 +4,26 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from dataclasses import dataclass
-from typing import Any, Callable, cast
+from typing import Callable
 
 import xxhash
 
 from .manifest import RequiredBuildMeta, RequiredShardMeta
+from .ordering import compare_ordered
 from .serde import encode_key
 from .sharding import ShardingStrategy
+from .type_defs import KeyInput
+
+RangeValue = int | float | str
+_RANGE_INTERVAL_MISMATCH = "Range shard intervals use mixed bound types and are not routable"
+_RANGE_KEY_MISMATCH = "Range key type does not match shard bound type in manifest"
 
 
 @dataclass(slots=True)
 class _RangeInterval:
     db_id: int
-    lower: int | float | str | None
-    upper: int | float | str | None
+    lower: RangeValue | None
+    upper: RangeValue | None
 
 
 class SnapshotRouter:
@@ -36,23 +42,21 @@ class SnapshotRouter:
         self._range_intervals = self._build_range_intervals(self.shards)
         self._route_one_impl = self._build_route_one_impl()
 
-    def route_one(self, key: int | str | bytes) -> int:
+    def route_one(self, key: KeyInput) -> int:
         """Route one key to db_id."""
 
         return self._route_one_impl(key)
 
-    def group_keys(
-        self, keys: list[int | str | bytes]
-    ) -> dict[int, list[int | str | bytes]]:
+    def group_keys(self, keys: list[KeyInput]) -> dict[int, list[KeyInput]]:
         """Group keys by routed db id while preserving order within each shard bucket."""
 
-        grouped: dict[int, list[int | str | bytes]] = {}
+        grouped: dict[int, list[KeyInput]] = {}
         for key in keys:
             db_id = self.route_one(key)
             grouped.setdefault(db_id, []).append(key)
         return grouped
 
-    def encode_lookup_key(self, key: int | str | bytes) -> bytes:
+    def encode_lookup_key(self, key: KeyInput) -> bytes:
         """Encode lookup key for SlateDB read calls."""
 
         if self.key_encoding == "u64be":
@@ -73,7 +77,7 @@ class SnapshotRouter:
 
         raise ValueError(f"Unsupported key type for lookup: {type(key)!r}")
 
-    def _route_range(self, key: int | str | bytes) -> int:
+    def _route_range(self, key: KeyInput) -> int:
         key_value = self._normalize_range_key(key)
 
         if self._range_intervals:
@@ -88,7 +92,7 @@ class SnapshotRouter:
             "Range routing requires shard min/max ranges or sharding boundaries in manifest."
         )
 
-    def _build_route_one_impl(self) -> Callable[[int | str | bytes], int]:
+    def _build_route_one_impl(self) -> Callable[[KeyInput], int]:
         if self.strategy == ShardingStrategy.HASH:
             return lambda key: _xxhash64_db_id(
                 key,
@@ -109,7 +113,7 @@ class SnapshotRouter:
 
         raise ValueError(f"Unsupported sharding strategy for routing: {self.strategy}")
 
-    def _normalize_range_key(self, key: int | str | bytes) -> int | float | str:
+    def _normalize_range_key(self, key: KeyInput) -> RangeValue:
         if isinstance(key, (int, float, str)):
             return key
 
@@ -143,16 +147,22 @@ class SnapshotRouter:
         if not has_any_bound:
             return []
 
+        _validate_interval_bound_types(intervals)
+
         sorted_intervals = sorted(intervals, key=_interval_sort_key)
 
         prev_upper: int | float | str | None = None
         for current in sorted_intervals:
-            if (
-                prev_upper is not None
-                and current.lower is not None
-                and cast(Any, current.lower) <= cast(Any, prev_upper)
-            ):
-                raise ValueError("Range shard intervals overlap and are not routable")
+            if prev_upper is not None and current.lower is not None:
+                if (
+                    compare_ordered(
+                        current.lower,
+                        prev_upper,
+                        mismatch_message=_RANGE_INTERVAL_MISMATCH,
+                    )
+                    <= 0
+                ):
+                    raise ValueError("Range shard intervals overlap and are not routable")
             if current.upper is not None:
                 prev_upper = current.upper
 
@@ -165,14 +175,14 @@ _INT64_MAX = (1 << 63) - 1
 _INT64_MOD = 1 << 64
 
 
-def _xxhash64_db_id(key: int | str | bytes, num_dbs: int, key_encoding: str) -> int:
+def _xxhash64_db_id(key: KeyInput, num_dbs: int, key_encoding: str) -> int:
     """Route key with `pmod(xxhash64(...), num_dbs)` semantics."""
 
     digest = _xxhash64_signed(_xxhash64_payload(key, key_encoding))
     return digest % num_dbs
 
 
-def _xxhash64_payload(key: int | str | bytes, key_encoding: str) -> bytes:
+def _xxhash64_payload(key: KeyInput, key_encoding: str) -> bytes:
     if key_encoding == "u64be":
         if isinstance(key, bytes):
             if len(key) != 8:
@@ -201,15 +211,13 @@ def _xxhash64_signed(payload: bytes) -> int:
     return digest if digest <= _INT64_MAX else digest - _INT64_MOD
 
 
-def _interval_sort_key(interval: _RangeInterval) -> tuple[int, Any]:
+def _interval_sort_key(interval: _RangeInterval) -> tuple[int, RangeValue]:
     if interval.lower is None:
         return (0, 0)
     return (1, interval.lower)
 
 
-def _search_intervals(
-    intervals: list[_RangeInterval], key: int | float | str
-) -> int | None:
+def _search_intervals(intervals: list[_RangeInterval], key: RangeValue) -> int | None:
     lo = 0
     hi = len(intervals) - 1
 
@@ -217,14 +225,43 @@ def _search_intervals(
         mid = (lo + hi) // 2
         interval = intervals[mid]
 
-        if interval.upper is not None and cast(Any, key) > cast(Any, interval.upper):
+        if (
+            interval.upper is not None
+            and compare_ordered(
+                key,
+                interval.upper,
+                mismatch_message=_RANGE_KEY_MISMATCH,
+            )
+            > 0
+        ):
             lo = mid + 1
             continue
 
-        if interval.lower is not None and cast(Any, key) < cast(Any, interval.lower):
+        if (
+            interval.lower is not None
+            and compare_ordered(
+                key,
+                interval.lower,
+                mismatch_message=_RANGE_KEY_MISMATCH,
+            )
+            < 0
+        ):
             hi = mid - 1
             continue
 
         return interval.db_id
 
     return None
+
+
+def _validate_interval_bound_types(intervals: list[_RangeInterval]) -> None:
+    expected_kind: bool | None = None
+    for interval in intervals:
+        for bound in (interval.lower, interval.upper):
+            if bound is None:
+                continue
+            is_str = isinstance(bound, str)
+            if expected_kind is None:
+                expected_kind = is_str
+            elif expected_kind != is_str:
+                raise ValueError(_RANGE_INTERVAL_MISMATCH)

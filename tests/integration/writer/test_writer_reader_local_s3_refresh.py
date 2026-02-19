@@ -54,8 +54,8 @@ def test_reader_refreshes_after_new_writer_batch(
                 s3_client_config={
                     "endpoint_url": endpoint_url,
                     "region_name": local_s3_service["region_name"],
-                    "aws_access_key_id": local_s3_service["aws_access_key_id"],
-                    "aws_secret_access_key": local_s3_service["aws_secret_access_key"],
+                    "access_key_id": local_s3_service["access_key_id"],
+                    "secret_access_key": local_s3_service["secret_access_key"],
                 }
             ),
         )
@@ -66,8 +66,8 @@ def test_reader_refreshes_after_new_writer_batch(
     )
     result_v1 = write_sharded_slatedb(df_v1, build_config("refresh-run-1"))
 
-    def open_real_reader(*, local_path, db_url, checkpoint_id, env_file, settings):
-        _ = (local_path, env_file, settings)
+    def open_real_reader(*, local_path, db_url, checkpoint_id, env_file):
+        _ = (local_path, env_file)
         return slatedb.SlateDBReader(
             writer_local_dir_for_db_url(db_url, local_root),
             url=map_s3_db_url_to_file_url(db_url, object_store_root),

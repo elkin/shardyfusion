@@ -8,12 +8,13 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Sequence, cast
 
 from .errors import ShardAssignmentError
+from .ordering import compare_ordered
 
 DB_ID_COL = "_slatedb_db_id"
 
 if TYPE_CHECKING:
     from pyspark import RDD
-    from pyspark.sql import Column, DataFrame
+    from pyspark.sql import Column, DataFrame, Row
 
 
 BoundaryValue = int | float | str
@@ -173,14 +174,15 @@ def prepare_partitioned_rdd(
     num_dbs: int,
     key_col: str,
     sort_within_partitions: bool,
-) -> "RDD[tuple[int, object]]":
+) -> "RDD[tuple[int, Row]]":
     """Return pair RDD partitioned so partition index matches db id."""
 
     prepared = df_with_db_id
     if sort_within_partitions:
         prepared = prepared.sortWithinPartitions(key_col)
 
-    pair_rdd = cast(Any, prepared.rdd).map(lambda row: (int(row[DB_ID_COL]), row))
+    source_rdd = cast("RDD[Row]", prepared.rdd)
+    pair_rdd = source_rdd.map(lambda row: (int(row[DB_ID_COL]), row))
     return pair_rdd.partitionBy(num_dbs, lambda key: int(key))
 
 
@@ -332,13 +334,21 @@ def _validate_boundaries(boundaries: Sequence[BoundaryValue]) -> None:
                 "Range boundaries must all share one type; "
                 f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
             )
+        mismatch_message = (
+            "Range boundaries contain non-comparable values; "
+            f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
+        )
         try:
-            is_increasing = cast(Any, left) < cast(Any, right)
-        except TypeError as exc:
-            raise ShardAssignmentError(
-                "Range boundaries contain non-comparable values; "
-                f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
-            ) from exc
+            is_increasing = (
+                compare_ordered(
+                    left,
+                    right,
+                    mismatch_message=mismatch_message,
+                )
+                < 0
+            )
+        except ValueError as exc:
+            raise ShardAssignmentError(str(exc)) from exc
         if not is_increasing:
             raise ShardAssignmentError(
                 "Range boundaries must be strictly increasing; "

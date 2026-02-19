@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from .errors import ConfigValidationError
 from .serde import ValueSpec
 from .sharding import ShardingSpec
+from .type_defs import JsonObject, S3ClientConfig
 
 if TYPE_CHECKING:
     from .manifest import ManifestBuilder
@@ -47,9 +48,9 @@ class ManifestOptions:
     current_name: str = "_CURRENT"
     manifest_builder: ManifestBuilder | None = None
     publisher: ManifestPublisher | None = None
-    custom_manifest_fields: dict[str, Any] = field(default_factory=dict)
+    custom_manifest_fields: JsonObject = field(default_factory=dict)
     # Optional default-publisher transport overrides (boto3/Ceph RGW support).
-    s3_client_config: dict[str, Any] | None = None
+    s3_client_config: S3ClientConfig | None = None
 
 
 @dataclass(slots=True)
@@ -57,7 +58,7 @@ class EngineOptions:
     """SlateDB engine options and writer batching behavior."""
 
     slate_env_file: str | None = None
-    slate_settings: dict[str, Any] | None = None
+    slate_settings: JsonObject | None = None
     batch_size: int = 50_000
     # Advanced/testing hook for injecting an adapter implementation.
     slatedb_adapter_factory: SlateDbAdapterFactory | None = None

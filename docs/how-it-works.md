@@ -97,6 +97,11 @@ Grouped options:
   - `publisher`
   - `custom_manifest_fields`
   - `s3_client_config`
+    - `endpoint_url`
+    - `region_name`
+    - `access_key_id`
+    - `secret_access_key`
+    - `session_token`
 - `engine: EngineOptions`
   - `slate_env_file`
   - `slate_settings`
@@ -126,8 +131,8 @@ Primary class:
 ### Reader initialization flow
 
 1. Select manifest reader implementation:
-   - default mode (`publisher` absent or default S3): uses `DefaultS3ManifestReader`
-   - custom publisher mode: caller must provide `manifest_reader` (enforced)
+   - default mode: uses `DefaultS3ManifestReader`
+   - custom mode: caller may provide `manifest_reader`
 2. Load CURRENT pointer.
 3. Load manifest from CURRENT’s `manifest_ref`.
 4. Build `SnapshotRouter`.
