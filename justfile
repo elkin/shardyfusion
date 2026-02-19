@@ -7,7 +7,7 @@ uv_cache_volume := "slatedb-spark-sharded-uv-cache"
 uv_venv_volume := "slatedb-spark-sharded-uv-venv"
 uv_project_env := "/opt/slatedb-venv"
 
-default:
+_default:
     @just --list
 
 # ── Local ────────────────────────────────────────────────────────────────────
