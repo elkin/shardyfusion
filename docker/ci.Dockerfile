@@ -19,8 +19,16 @@ ENV PATH="/root/.local/bin:${PATH}"
 RUN uv python install 3.10 \
     && ln -sf "$(uv python find 3.10)" /usr/local/bin/python3.10
 
-WORKDIR /workspace
 RUN mkdir -p /opt/slatedb-venv
+
+# Pre-install project dependencies into the container-local uv environment.
+# This ensures runtime tools (e.g. slatedb, pyspark, tox deps) are available
+# even before mounting the local workspace.
+WORKDIR /tmp/slatedb-spark-sharded-deps
+COPY pyproject.toml uv.lock ./
+RUN uv sync --all-extras --dev --no-install-project --quiet
+
+WORKDIR /workspace
 
 # Example usage:
 #   podman build -f docker/ci.Dockerfile -t slatedb-spark-sharded-ci .

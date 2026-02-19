@@ -21,7 +21,7 @@ docker-shell:
       -w {{workspace}} \
       -e UV_PROJECT_ENVIRONMENT={{uv_project_env}} \
       {{image}} \
-      /bin/bash
+      /bin/bash -lc "uv sync --all-extras --dev --quiet && exec /bin/bash"
 
 d +cmd:
     {{engine}} run --rm -it \
