@@ -106,7 +106,12 @@ class SlateDbConfig:
 
         try:
             self.output.db_path_template.format(db_id=0)
-        except Exception as exc:  # pragma: no cover - defensive formatting surface
+        except (
+            KeyError,
+            IndexError,
+            TypeError,
+            ValueError,
+        ) as exc:  # pragma: no cover - defensive formatting surface
             raise ConfigValidationError(
                 "output.db_path_template must support format(db_id=...)"
             ) from exc

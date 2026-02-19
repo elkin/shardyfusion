@@ -200,7 +200,7 @@ def _validate_key_col_type(
 
     try:
         dtype = df.schema[key_col].dataType
-    except Exception as exc:
+    except KeyError as exc:
         raise ShardAssignmentError(
             f"Key column `{key_col}` was not found in DataFrame schema"
         ) from exc

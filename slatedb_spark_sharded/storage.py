@@ -126,7 +126,7 @@ def try_get_bytes(url: str, *, s3_client=None) -> bytes | None:
     bucket, key = parse_s3_url(url)
     try:
         obj = client.get_object(Bucket=bucket, Key=key)
-    except Exception as exc:  # pragma: no cover - runtime/SDK dependent
+    except Exception as exc:  # pragma: no cover - broad catch intentional: supports duck-typed S3-compatible clients whose error types vary
         code = None
         response = getattr(exc, "response", None)
         if isinstance(response, dict):

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from queue import Queue
 from typing import Sequence
 
-from .errors import SlateDbApiError
+from .errors import ReaderStateError, SlateDbApiError, SlatedbSparkShardedError
 from .manifest import ParsedManifest
 from .manifest_readers import DefaultS3ManifestReader, ManifestReader
 from .routing import SnapshotRouter
@@ -115,17 +115,24 @@ class SlateShardedReader:
 
             if self.max_workers and self.max_workers > 1 and len(grouped) > 1:
                 with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                    futures = [
-                        executor.submit(
+                    futures = {
+                        db_id: executor.submit(
                             _read_group,
                             state.router,
                             state.handles[db_id],
                             shard_keys,
                         )
                         for db_id, shard_keys in grouped.items()
-                    ]
-                    for future in futures:
-                        results.update(future.result())
+                    }
+                    for db_id, future in futures.items():
+                        try:
+                            results.update(future.result())
+                        except SlatedbSparkShardedError:
+                            raise  # domain exceptions propagate unchanged
+                        except Exception as exc:
+                            raise SlateDbApiError(
+                                f"Read failed for shard db_id={db_id}"
+                            ) from exc
             else:
                 for db_id, shard_keys in grouped.items():
                     results.update(
@@ -141,12 +148,12 @@ class SlateShardedReader:
 
         current = self._manifest_reader.load_current()
         if current is None:
-            raise ValueError("CURRENT pointer not found during refresh")
+            raise ReaderStateError("CURRENT pointer not found during refresh")
 
         current_ref = current.manifest_ref
         with self._state_lock:
             if self._closed:
-                raise RuntimeError("Reader is closed")
+                raise ReaderStateError("Reader is closed")
             if current_ref == self._state.manifest_ref:
                 return False
 
@@ -161,7 +168,7 @@ class SlateShardedReader:
         with self._state_lock:
             if self._closed:
                 _close_state(new_state)
-                raise RuntimeError("Reader is closed")
+                raise ReaderStateError("Reader is closed")
             old_state = self._state
             self._state = new_state
             old_state.retired = True
@@ -190,7 +197,7 @@ class SlateShardedReader:
     def _load_initial_state(self) -> _ReaderState:
         current = self._manifest_reader.load_current()
         if current is None:
-            raise ValueError("CURRENT pointer not found")
+            raise ReaderStateError("CURRENT pointer not found")
 
         manifest = self._manifest_reader.load_manifest(
             current.manifest_ref,
@@ -244,7 +251,7 @@ class SlateShardedReader:
     def _acquire_state(self) -> _ReaderState:
         with self._state_lock:
             if self._closed:
-                raise RuntimeError("Reader is closed")
+                raise ReaderStateError("Reader is closed")
             state = self._state
             state.refcount += 1
             return state

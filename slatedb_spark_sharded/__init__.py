@@ -7,6 +7,10 @@ from .config import (
     ShardingOptions,
     SlateDbConfig,
 )
+from .errors import (
+    ManifestParseError,
+    ReaderStateError,
+)
 from .manifest import (
     BuildDurations,
     BuildResult,
@@ -49,6 +53,8 @@ except ImportError:
     pass
 
 __all__ = [
+    "ManifestParseError",
+    "ReaderStateError",
     "BuildResult",
     "BuildStats",
     "BuildDurations",

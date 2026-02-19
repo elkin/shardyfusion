@@ -31,3 +31,11 @@ class PublishManifestError(SlatedbSparkShardedError):
 
 class PublishCurrentError(SlatedbSparkShardedError):
     """CURRENT pointer publish operation failed."""
+
+
+class ManifestParseError(SlatedbSparkShardedError):
+    """Manifest or CURRENT pointer payload could not be parsed or is structurally invalid."""
+
+
+class ReaderStateError(SlatedbSparkShardedError):
+    """Reader operation attempted in an invalid lifecycle state (closed, missing CURRENT)."""

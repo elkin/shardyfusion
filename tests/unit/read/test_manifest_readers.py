@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from slatedb_spark_sharded.errors import ManifestParseError
 from slatedb_spark_sharded.manifest_readers import (
     DefaultS3ManifestReader,
     parse_json_manifest,
@@ -85,11 +86,54 @@ def test_parse_json_manifest_rejects_bad_shard_coverage() -> None:
         "custom": {},
     }
 
-    with pytest.raises(ValueError, match="shard count mismatch"):
+    with pytest.raises(ManifestParseError, match="shard count mismatch"):
         parse_json_manifest(json.dumps(payload).encode("utf-8"))
 
 
 def test_default_reader_rejects_non_json_manifest_content_type() -> None:
     reader = DefaultS3ManifestReader("s3://bucket/prefix")
-    with pytest.raises(ValueError, match="supports only application/json"):
+    with pytest.raises(ManifestParseError, match="supports only application/json"):
         reader.load_manifest("s3://bucket/prefix/manifest", "application/x-custom")
+
+
+def test_parse_json_manifest_rejects_corrupt_json() -> None:
+    with pytest.raises(ManifestParseError, match="not valid JSON"):
+        parse_json_manifest(b"not-json{{{")
+
+
+def test_parse_json_manifest_rejects_missing_required_field() -> None:
+    payload = json.dumps({"shards": [], "custom": {}}).encode("utf-8")
+    with pytest.raises(ManifestParseError, match="missing required object"):
+        parse_json_manifest(payload)
+
+
+def test_load_current_rejects_corrupt_json(monkeypatch) -> None:
+    def fake_try_get_bytes(url, *, s3_client=None):
+        return b"not-json{{{"
+
+    monkeypatch.setattr(
+        "slatedb_spark_sharded.manifest_readers.try_get_bytes", fake_try_get_bytes
+    )
+    reader = DefaultS3ManifestReader("s3://bucket/prefix")
+    with pytest.raises(ManifestParseError, match="not valid JSON"):
+        reader.load_current()
+
+
+def test_load_current_rejects_missing_manifest_ref(monkeypatch) -> None:
+    def fake_try_get_bytes(url, *, s3_client=None):
+        return json.dumps(
+            {
+                "manifest_content_type": "application/json",
+                "run_id": "run-1",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+            }
+        ).encode("utf-8")
+
+    monkeypatch.setattr(
+        "slatedb_spark_sharded.manifest_readers.try_get_bytes", fake_try_get_bytes
+    )
+    reader = DefaultS3ManifestReader("s3://bucket/prefix")
+    with pytest.raises(
+        ManifestParseError, match="missing required field `manifest_ref`"
+    ):
+        reader.load_current()

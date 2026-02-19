@@ -138,6 +138,11 @@ class SparkConfOverrideContext:
         try:
             return self._spark.conf.get(key, None)
         except Exception:  # pragma: no cover - Spark environment dependent
+            log_event(
+                "spark_conf_get_failed",
+                level=logging.WARNING,
+                key=key,
+            )
             return None
 
     def _unset_conf_if_supported(self, key: str) -> None:
