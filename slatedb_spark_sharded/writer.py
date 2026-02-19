@@ -323,7 +323,10 @@ def _run_partition_writes(
 
     write_started = time.perf_counter()
     json_lines = partitioned_rdd.mapPartitionsWithIndex(
-        lambda db_id, items: _write_one_shard_partition(db_id, items, runtime)
+        lambda db_id, items: (
+            json.dumps(asdict(r), sort_keys=True)
+            for r in _write_one_shard_partition(db_id, items, runtime)
+        )
     ).collect()
     write_duration_ms = int((time.perf_counter() - write_started) * 1000)
 
@@ -456,8 +459,8 @@ def _write_one_shard_partition(
     db_id: int,
     rows_iter: Iterable[tuple[int, Row]],
     runtime: _PartitionWriteConfig,
-) -> Iterator[str]:
-    """Write exactly one shard from one partition and emit one JSON result line."""
+) -> Iterator[_ShardAttemptResult]:
+    """Write exactly one shard from one partition and yield one _ShardAttemptResult."""
 
     ctx = TaskContext.get()
     attempt = int(ctx.attemptNumber()) if ctx else 0
@@ -527,17 +530,16 @@ def _write_one_shard_partition(
         "duration_ms": int((time.perf_counter() - partition_started) * 1000),
     }
 
-    payload = {
-        "db_id": db_id,
-        "db_url": db_url,
-        "attempt": attempt,
-        "row_count": row_count,
-        "min_key": _normalize_key(min_key),
-        "max_key": _normalize_key(max_key),
-        "checkpoint_id": checkpoint_id,
-        "writer_info": writer_info,
-    }
-    yield json.dumps(payload, sort_keys=True)
+    yield _ShardAttemptResult(
+        db_id=db_id,
+        db_url=db_url,
+        attempt=attempt,
+        row_count=row_count,
+        min_key=_normalize_key(min_key),
+        max_key=_normalize_key(max_key),
+        checkpoint_id=checkpoint_id,
+        writer_info=writer_info,
+    )
 
 
 def _update_min_max(
