@@ -13,6 +13,10 @@
   "postCreateCommand": "uv sync --all-extras --dev",
   "customizations": {
     "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/slatedb-venv/bin/python",
+        "python.terminal.activateEnvironment": true
+      },
       "extensions": [
         "ms-python.python",
         "ms-python.vscode-pylance",
