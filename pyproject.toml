@@ -34,6 +34,8 @@ test = [
   "pytest-xdist>=3.6",
   "numpy>=1.24",
   "moto[server]>=5.0",
+]
+quality = [
   "ruff>=0.8.0",
   "ty>=0.0.17",
   "pyright>=1.1.390",
