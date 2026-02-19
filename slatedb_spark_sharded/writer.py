@@ -546,20 +546,26 @@ def _update_min_max(
 
     if min_key is None:
         min_key = normalized_key
-    elif compare_ordered(
-        normalized_key,
-        min_key,
-        mismatch_message="Shard key type changed within partition: mixed int/str keys",
-    ) < 0:
+    elif (
+        compare_ordered(
+            normalized_key,
+            min_key,
+            mismatch_message="Shard key type changed within partition: mixed int/str keys",
+        )
+        < 0
+    ):
         min_key = normalized_key
 
     if max_key is None:
         max_key = normalized_key
-    elif compare_ordered(
-        normalized_key,
-        max_key,
-        mismatch_message="Shard key type changed within partition: mixed int/str keys",
-    ) > 0:
+    elif (
+        compare_ordered(
+            normalized_key,
+            max_key,
+            mismatch_message="Shard key type changed within partition: mixed int/str keys",
+        )
+        > 0
+    ):
         max_key = normalized_key
 
     return min_key, max_key

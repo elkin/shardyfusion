@@ -15,7 +15,9 @@ from .sharding import ShardingStrategy
 from .type_defs import KeyInput
 
 RangeValue = int | float | str
-_RANGE_INTERVAL_MISMATCH = "Range shard intervals use mixed bound types and are not routable"
+_RANGE_INTERVAL_MISMATCH = (
+    "Range shard intervals use mixed bound types and are not routable"
+)
 _RANGE_KEY_MISMATCH = "Range key type does not match shard bound type in manifest"
 
 
@@ -162,7 +164,9 @@ class SnapshotRouter:
                     )
                     <= 0
                 ):
-                    raise ValueError("Range shard intervals overlap and are not routable")
+                    raise ValueError(
+                        "Range shard intervals overlap and are not routable"
+                    )
             if current.upper is not None:
                 prev_upper = current.upper
 

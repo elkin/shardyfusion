@@ -42,19 +42,23 @@ def create_s3_client(s3_client_config: S3ClientConfig | None = None):
 
     config = s3_client_config or {}
     endpoint_url = config.get("endpoint_url") or os.getenv("SLATEDB_S3_ENDPOINT_URL")
-    region_name = config.get("region_name") or os.getenv("S3_REGION") or os.getenv(
-        "AWS_REGION"
+    region_name = (
+        config.get("region_name") or os.getenv("S3_REGION") or os.getenv("AWS_REGION")
     )
-    access_key_id = config.get("access_key_id") or os.getenv("S3_ACCESS_KEY_ID") or os.getenv(
-        "AWS_ACCESS_KEY_ID"
+    access_key_id = (
+        config.get("access_key_id")
+        or os.getenv("S3_ACCESS_KEY_ID")
+        or os.getenv("AWS_ACCESS_KEY_ID")
     )
     secret_access_key = (
         config.get("secret_access_key")
         or os.getenv("S3_SECRET_ACCESS_KEY")
         or os.getenv("AWS_SECRET_ACCESS_KEY")
     )
-    session_token = config.get("session_token") or os.getenv("S3_SESSION_TOKEN") or os.getenv(
-        "AWS_SESSION_TOKEN"
+    session_token = (
+        config.get("session_token")
+        or os.getenv("S3_SESSION_TOKEN")
+        or os.getenv("AWS_SESSION_TOKEN")
     )
 
     kwargs: _S3ClientKwargs = {}
