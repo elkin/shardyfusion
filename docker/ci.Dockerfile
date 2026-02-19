@@ -1,13 +1,13 @@
 FROM python:3.11-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV UV_SYSTEM_PYTHON=1
 ENV UV_PROJECT_ENVIRONMENT=/opt/slatedb-venv
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
         git \
+        libatomic1 \
         openjdk-17-jre-headless \
     && rm -rf /var/lib/apt/lists/*
 
