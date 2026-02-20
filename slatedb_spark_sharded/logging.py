@@ -10,6 +10,12 @@ from typing import Any
 
 LOGGER = logging.getLogger("slatedb_spark_sharded")
 
+_SEVERITY_TO_LOG_LEVEL: dict[str, int] = {
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "FATAL": logging.CRITICAL,
+}
+
 
 class FailureSeverity(str, Enum):
     """Severity classification for operational failures.

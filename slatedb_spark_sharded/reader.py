@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from collections.abc import Iterator
@@ -55,7 +56,14 @@ class _ReaderPool:
 
     def close(self) -> None:
         for reader in self._readers:
-            reader.close()
+            try:
+                reader.close()
+            except Exception as exc:
+                log_failure(
+                    "reader_pool_member_close_failed",
+                    severity=FailureSeverity.ERROR,
+                    error=exc,
+                )
 
 
 class SlateShardedReader:

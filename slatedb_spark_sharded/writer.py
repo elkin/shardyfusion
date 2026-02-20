@@ -389,7 +389,12 @@ def _publish_manifest_and_current(
     run_id: str,
     artifact: ManifestArtifact,
 ) -> _PublishResult:
-    """Publish manifest and CURRENT pointer, enforcing publish ordering semantics."""
+    """Publish manifest and CURRENT pointer, enforcing publish ordering semantics.
+
+    Both publish steps already benefit from per-request S3 retries in
+    ``storage.put_bytes``.  This function additionally logs failures at
+    severity-appropriate levels before re-raising.
+    """
 
     publisher = config.manifest.publisher or DefaultS3Publisher(
         config.s3_prefix,
