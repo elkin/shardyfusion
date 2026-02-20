@@ -73,16 +73,8 @@ def build_refresh_result(changed: bool) -> dict[str, Any]:
 
 def build_info_result(reader: Any) -> dict[str, Any]:
     """Extract manifest metadata from a SlateShardedReader."""
-    state = reader._state  # noqa: SLF001 – internal access within same package
-    rb = state.router.required_build
-    return {
-        "op": "info",
-        "run_id": rb.run_id,
-        "num_dbs": rb.num_dbs,
-        "sharding": rb.sharding.strategy.value,
-        "created_at": rb.created_at,
-        "manifest_ref": state.manifest_ref,
-    }
+    info = reader.snapshot_info()
+    return {"op": "info", **info}
 
 
 def build_error_result(op: str, key_hint: str | None, error: str) -> dict[str, Any]:

@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from queue import Queue
-from typing import Sequence
+from typing import Any, Sequence
 
 from .errors import ReaderStateError, SlateDbApiError, SlatedbSparkShardedError
 from .manifest import ParsedManifest
@@ -91,6 +91,23 @@ class SlateShardedReader:
         self._state_lock = threading.Lock()
         self._closed = False
         self._state = self._load_initial_state()
+
+    @property
+    def key_encoding(self) -> str:
+        """The key encoding used by the loaded manifest (e.g. ``u64be``)."""
+        return self._state.router.key_encoding
+
+    def snapshot_info(self) -> dict[str, Any]:
+        """Return a dict of manifest metadata for the current snapshot."""
+        state = self._state
+        rb = state.router.required_build
+        return {
+            "run_id": rb.run_id,
+            "num_dbs": rb.num_dbs,
+            "sharding": rb.sharding.strategy.value,
+            "created_at": rb.created_at,
+            "manifest_ref": state.manifest_ref,
+        }
 
     def get(self, key: KeyInput) -> bytes | None:
         """Get one key from the currently loaded snapshot."""

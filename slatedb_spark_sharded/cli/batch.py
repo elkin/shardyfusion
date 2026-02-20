@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from typing import IO, Any
 
-from .config import OutputConfig
+from .config import OutputConfig, coerce_cli_key
 from .output import (
     build_error_result,
     build_get_result,
@@ -26,7 +26,7 @@ def load_script(script_path: str) -> dict[str, Any]:
             "Install it with: pip install 'slatedb_spark_sharded[cli]'"
         ) from exc
 
-    with open(script_path) as fh:
+    with open(script_path, encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
 
     if not isinstance(data, dict):
@@ -109,7 +109,8 @@ def _execute_command(
         if key is None:
             raise ValueError("'get' command requires a 'key' field")
         key = str(key)
-        value = reader.get(key)
+        coerced = coerce_cli_key(key, reader.key_encoding)
+        value = reader.get(coerced)
         return build_get_result(key, value, cfg)
 
     if op == "multiget":
@@ -117,7 +118,8 @@ def _execute_command(
         if not isinstance(keys_raw, list) or not keys_raw:
             raise ValueError("'multiget' command requires a non-empty 'keys' list")
         keys = [str(k) for k in keys_raw]
-        values = reader.multi_get(keys)
+        coerced = [coerce_cli_key(k, reader.key_encoding) for k in keys]
+        values = reader.multi_get(coerced)
         return build_multiget_result(keys, values, cfg)
 
     if op == "refresh":

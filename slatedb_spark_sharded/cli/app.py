@@ -12,6 +12,7 @@ from .config import (
     OutputConfig,
     ReaderConfig,
     build_s3_client_config,
+    coerce_cli_key,
     coerce_s3_option,
     load_credentials_profile,
     load_reader_config,
@@ -60,7 +61,7 @@ def _build_reader(ctx: click.Context) -> Any:
             current_name=current_name,
             slate_env_file=reader_cfg.slate_env_file,
             thread_safety=reader_cfg.thread_safety,
-            max_workers=reader_cfg.max_workers if reader_cfg.max_workers > 1 else None,
+            max_workers=reader_cfg.max_workers,
         )
     except Exception as exc:
         raise click.ClickException(f"Failed to initialise reader: {exc}") from exc
@@ -79,7 +80,16 @@ def _get_output_cfg(ctx: click.Context) -> OutputConfig:
     invoke_without_command=True,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
-@click.argument("current_url", required=False, default=None)
+@click.option(
+    "--current-url",
+    "current_url",
+    default=None,
+    metavar="URL",
+    help=(
+        "S3 URL to the _CURRENT pointer "
+        "(overrides SLATE_READER_CURRENT env and reader.toml)."
+    ),
+)
 @click.option(
     "--config",
     "config_path",
@@ -124,8 +134,8 @@ def cli(
     """slate-reader — interactive and batch lookups for sharded SlateDB snapshots.
 
     \b
-    CURRENT_URL may be supplied as a positional argument, via the
-    SLATE_READER_CURRENT environment variable, or as current_url in reader.toml.
+    CURRENT_URL may be supplied via --current-url, the SLATE_READER_CURRENT
+    environment variable, or as current_url in reader.toml.
 
     \b
     When no subcommand is given the tool enters interactive mode.
@@ -200,7 +210,8 @@ def get_cmd(ctx: click.Context, key: str) -> None:
     output_cfg = _get_output_cfg(ctx)
     reader = _build_reader(ctx)
     try:
-        value = reader.get(key)
+        coerced = coerce_cli_key(key, reader.key_encoding)
+        value = reader.get(coerced)
         result = build_get_result(key, value, output_cfg)
         emit(result, output_cfg)
     except Exception as exc:
@@ -217,11 +228,12 @@ def get_cmd(ctx: click.Context, key: str) -> None:
 def multiget_cmd(ctx: click.Context, keys: tuple[str, ...]) -> None:
     """Look up multiple KEYS (space-separated)."""
     output_cfg = _get_output_cfg(ctx)
-    key_list = list(keys)
     reader = _build_reader(ctx)
     try:
-        values = reader.multi_get(key_list)
-        result = build_multiget_result(key_list, values, output_cfg)
+        coerced = [coerce_cli_key(k, reader.key_encoding) for k in keys]
+        values = reader.multi_get(coerced)
+        display_keys = list(keys)
+        result = build_multiget_result(display_keys, values, output_cfg)
         emit(result, output_cfg)
     except Exception as exc:
         result = build_error_result("multiget", None, str(exc))
@@ -286,19 +298,12 @@ def exec_cmd(ctx: click.Context, script_path: str, output_path: str | None) -> N
     """Execute a batch YAML script file against the snapshot."""
     output_cfg = _get_output_cfg(ctx)
 
-    # Batch mode defaults to jsonl
-    batch_cfg = OutputConfig(
-        format=output_cfg.format if output_cfg.format != "json" else "jsonl",
-        value_encoding=output_cfg.value_encoding,
-        null_repr=output_cfg.null_repr,
-    )
-
     reader = _build_reader(ctx)
     out_file = None
     try:
         if output_path:
-            out_file = open(output_path, "w")
-        error_count = run_script(reader, script_path, batch_cfg, output_file=out_file)
+            out_file = open(output_path, "w", encoding="utf-8")
+        error_count = run_script(reader, script_path, output_cfg, output_file=out_file)
     except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     finally:

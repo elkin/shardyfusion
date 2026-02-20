@@ -86,11 +86,6 @@ def create_s3_client(s3_client_config: S3ClientConfig | None = None):
     if signature_version:
         boto_config_kwargs["signature_version"] = signature_version
 
-    verify_ssl = config.get("verify_ssl")
-    if verify_ssl is not None and verify_ssl is not True:
-        # True is the boto3 default; only pass when explicitly False or CA bundle path
-        boto_config_kwargs["verify"] = verify_ssl
-
     connect_timeout = config.get("connect_timeout")
     if connect_timeout is not None:
         boto_config_kwargs["connect_timeout"] = connect_timeout

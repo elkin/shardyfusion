@@ -7,7 +7,7 @@ import shlex
 import sys
 from typing import Any
 
-from .config import OutputConfig
+from .config import OutputConfig, coerce_cli_key
 from .output import (
     build_error_result,
     build_get_result,
@@ -46,13 +46,14 @@ class SlateReaderRepl(cmd.Cmd):
         if len(parts) != 1:
             self._error("get", None, "Usage: get KEY")
             return
-        key = parts[0]
+        raw_key = parts[0]
         try:
-            value = self._reader.get(key)
-            result = build_get_result(key, value, self._interactive_cfg)
+            coerced = coerce_cli_key(raw_key, self._reader.key_encoding)
+            value = self._reader.get(coerced)
+            result = build_get_result(raw_key, value, self._interactive_cfg)
             emit(result, self._interactive_cfg)
         except Exception as exc:
-            self._error("get", key, str(exc))
+            self._error("get", raw_key, str(exc))
 
     def do_multiget(self, line: str) -> None:
         """multiget KEY [KEY …] — Look up multiple keys."""
@@ -61,7 +62,8 @@ class SlateReaderRepl(cmd.Cmd):
             self._error("multiget", None, "Usage: multiget KEY [KEY …]")
             return
         try:
-            values = self._reader.multi_get(parts)
+            coerced = [coerce_cli_key(k, self._reader.key_encoding) for k in parts]
+            values = self._reader.multi_get(coerced)
             result = build_multiget_result(parts, values, self._interactive_cfg)
             emit(result, self._interactive_cfg)
         except Exception as exc:
@@ -102,9 +104,7 @@ class SlateReaderRepl(cmd.Cmd):
 
     def _error(self, op: str, key: str | None, message: str) -> None:
         result = build_error_result(op, key, message)
-        from .output import format_result
-
-        print(format_result(result, self._interactive_cfg.format), file=sys.stderr)
+        emit(result, self._interactive_cfg, file=sys.stderr)
 
     # ------------------------------------------------------------------
     # Startup banner
@@ -113,11 +113,10 @@ class SlateReaderRepl(cmd.Cmd):
     def print_banner(self) -> None:
         """Print the startup banner showing manifest metadata."""
         try:
-            state = self._reader._state  # noqa: SLF001
-            rb = state.router.required_build
+            info = self._reader.snapshot_info()
             print(
-                f"Loaded manifest run_id={rb.run_id}  "
-                f"({rb.num_dbs} shards, {rb.sharding.strategy.value} sharding)"
+                f"Loaded manifest run_id={info['run_id']}  "
+                f"({info['num_dbs']} shards, {info['sharding']} sharding)"
             )
         except Exception:
             pass

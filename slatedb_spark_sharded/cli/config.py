@@ -202,6 +202,22 @@ def coerce_s3_option(key: str, value: str) -> bool | int | str:
     return value  # str or unknown key → leave as string
 
 
+def coerce_cli_key(key: str, key_encoding: str) -> int | str:
+    """Coerce a CLI key string to the type expected by the reader.
+
+    For ``u64be`` encoding the key must be a valid integer; for other
+    encodings the raw string is returned unchanged.
+    """
+    if key_encoding == "u64be":
+        try:
+            return int(key)
+        except ValueError:
+            raise ValueError(
+                f"Key {key!r} is not a valid integer (required by u64be encoding)"
+            ) from None
+    return key
+
+
 def resolve_current_url(
     positional: str | None,
     reader_cfg: ReaderConfig,
@@ -215,7 +231,7 @@ def resolve_current_url(
     if reader_cfg.current_url:
         return reader_cfg.current_url
     raise SystemExit(
-        "Error: CURRENT URL is required. Provide it as a positional argument, "
+        "Error: CURRENT URL is required. Provide it via --current-url, "
         "set SLATE_READER_CURRENT env var, or set current_url in reader.toml."
     )
 
