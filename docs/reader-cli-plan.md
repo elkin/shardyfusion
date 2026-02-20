@@ -23,21 +23,27 @@ The CLI maps directly to `SlateShardedReader` methods:
 
 ---
 
-## Required Argument
+## CURRENT Pointer Location
 
-The full S3 URL of the CURRENT pointer is the **required first positional argument**:
+The full S3 URL of the CURRENT pointer can be supplied in three ways
+(highest → lowest priority):
+
+| Source | Example |
+|---|---|
+| Positional argument | `slate-reader s3://bucket/prefix/_CURRENT …` |
+| Environment variable | `SLATE_READER_CURRENT=s3://bucket/prefix/_CURRENT` |
+| Config file key | `current_url = "s3://bucket/prefix/_CURRENT"` in `reader.toml` |
+
+**At least one source must be present;** the CLI exits with an error if none
+is found.
 
 ```
-slate-reader s3://bucket/prefix/_CURRENT [OPTIONS] [COMMAND]
+slate-reader [CURRENT_URL] [OPTIONS] [COMMAND]
 ```
 
-- `s3_prefix` is derived by stripping the last path segment.
+- `s3_prefix` is derived by stripping the last path segment of the resolved URL.
 - `current_name` is the last path segment (e.g. `_CURRENT`).
 - If no COMMAND is given the tool enters **interactive mode**.
-
-This argument may also be supplied via the `SLATE_READER_CURRENT` environment
-variable or as `current_url` in `reader.toml`, but the positional argument
-always wins.
 
 ---
 
@@ -47,6 +53,7 @@ always wins.
 
 ```toml
 [reader]
+current_url          = "s3://bucket/prefix/_CURRENT"   # optional; omit to require positional arg
 local_root           = "/tmp/slatefusion"
 thread_safety        = "lock"       # "lock" | "pool"
 max_workers          = 4
@@ -343,10 +350,14 @@ backfill is needed given the minimum Python version is now **3.11**.
 
 ## Key Design Decisions
 
-### CURRENT URL as the primary entry point
-Providing the full CURRENT pointer URL as a positional argument keeps every
-invocation self-contained — the dataset identity is explicit. The `s3_prefix`
-and `current_name` are derived, not configured separately.
+### CURRENT URL resolution order
+The CURRENT pointer URL is resolved from three sources in priority order:
+positional argument → `SLATE_READER_CURRENT` env var → `current_url` in
+`reader.toml`. This means a shared `reader.toml` per dataset can embed the URL
+so users never have to repeat it on every invocation, while still allowing
+per-invocation overrides via the positional argument. The `s3_prefix` and
+`current_name` are always derived from the resolved URL, never configured
+separately.
 
 ### TOML for configs
 `pyproject.toml` is already TOML; `tomllib` ships with the Python 3.11 stdlib
