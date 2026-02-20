@@ -255,7 +255,6 @@ slatedb_spark_sharded/
 cli = [
   "click>=8.0",
   "pyyaml>=6.0",
-  "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.scripts]
@@ -273,7 +272,9 @@ All new dependencies go under the `cli` extra so the core library and existing
 |---|---|---|
 | `click>=8.0` | CLI framework (argument parsing, subcommands, help) | No |
 | `pyyaml>=6.0` | YAML script file parsing | No |
-| `tomli>=2.0` | TOML config parsing on Python 3.10 | No (3.11+ ships `tomllib`) |
+
+`tomllib` (TOML parsing) ships with the Python 3.11 stdlib, so no third-party
+backfill is needed given the minimum Python version is now **3.11**.
 
 ---
 
@@ -285,9 +286,9 @@ invocation self-contained — the dataset identity is explicit. The `s3_prefix`
 and `current_name` are derived, not configured separately.
 
 ### TOML for configs
-`pyproject.toml` is already TOML; Python 3.11 ships `tomllib` in stdlib; `tomli`
-backfills 3.10. No new heavy dependency, and the format is human-friendly with
-good comment support.
+`pyproject.toml` is already TOML; `tomllib` ships with the Python 3.11 stdlib
+(the project minimum), so TOML config parsing requires no extra dependency. The
+format is human-friendly with good comment support.
 
 ### YAML for scripts
 Comments, multi-line strings, and readable heterogeneous lists make YAML the
