@@ -84,15 +84,15 @@ class SlateReaderRepl(cmd.Cmd):
         except Exception as exc:
             self._error("info", None, str(exc))
 
-    def do_quit(self, line: str) -> bool:  # type: ignore[override]
+    def do_quit(self, line: str) -> bool:
         """quit — Exit the REPL."""
         return True
 
-    def do_exit(self, line: str) -> bool:  # type: ignore[override]
+    def do_exit(self, line: str) -> bool:
         """exit — Exit the REPL."""
         return True
 
-    def do_EOF(self, line: str) -> bool:  # type: ignore[override]
+    def do_EOF(self, line: str) -> bool:
         print()  # newline after ^D
         return True
 
