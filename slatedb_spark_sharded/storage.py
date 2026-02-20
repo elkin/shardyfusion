@@ -101,12 +101,17 @@ def create_s3_client(s3_client_config: S3ClientConfig | None = None):
 
     max_attempts = config.get("max_attempts")
     if max_attempts is not None:
-        boto_config_kwargs["retries"] = {"max_attempts": max_attempts, "mode": "standard"}
+        boto_config_kwargs["retries"] = {
+            "max_attempts": max_attempts,
+            "mode": "standard",
+        }
 
     if s3_options:
         boto_config_kwargs["s3"] = s3_options  # type: ignore[assignment]
 
-    botocore_config = BotocoreConfig(**boto_config_kwargs) if boto_config_kwargs else None
+    botocore_config = (
+        BotocoreConfig(**boto_config_kwargs) if boto_config_kwargs else None
+    )
 
     verify = config.get("verify_ssl")
     client_kwargs: dict[str, object] = {

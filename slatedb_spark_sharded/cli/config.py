@@ -6,7 +6,7 @@ import os
 import stat
 import sys
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..type_defs import S3ClientConfig
@@ -85,7 +85,9 @@ def _find_file(
     return None
 
 
-def load_reader_config(config_path: str | None = None) -> tuple[ReaderConfig, OutputConfig]:
+def load_reader_config(
+    config_path: str | None = None,
+) -> tuple[ReaderConfig, OutputConfig]:
     """Load and return (ReaderConfig, OutputConfig) from the resolved reader.toml.
 
     Falls back to defaults when no file is found.
@@ -127,9 +129,7 @@ def load_credentials_profile(
     Returns None when no credentials file is found (boto3 chain is used as fallback).
     Warns when the file has permissions wider than 0600 on UNIX.
     """
-    path = _find_file(
-        credentials_path, "SLATE_READER_CREDENTIALS", _CREDS_SEARCH_PATHS
-    )
+    path = _find_file(credentials_path, "SLATE_READER_CREDENTIALS", _CREDS_SEARCH_PATHS)
     if path is None:
         return None
 
@@ -148,9 +148,7 @@ def load_credentials_profile(
 
     raw = data.get(profile_name)
     if raw is None:
-        raise KeyError(
-            f"Credentials profile '{profile_name}' not found in {path}"
-        )
+        raise KeyError(f"Credentials profile '{profile_name}' not found in {path}")
 
     verify_ssl_raw = raw.get("verify_ssl", True)
     verify_ssl: bool | str
@@ -227,7 +225,9 @@ def split_current_url(current_url: str) -> tuple[str, str]:
     current_url = current_url.rstrip("/")
     idx = current_url.rfind("/")
     if idx < 0:
-        raise ValueError(f"Cannot split CURRENT URL into prefix and name: {current_url!r}")
+        raise ValueError(
+            f"Cannot split CURRENT URL into prefix and name: {current_url!r}"
+        )
     return current_url[:idx], current_url[idx + 1 :]
 
 

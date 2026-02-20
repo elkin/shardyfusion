@@ -58,7 +58,11 @@ def build_multiget_result(
             results_list.append({"key": key, "found": False})
         else:
             results_list.append(
-                {"key": key, "found": True, "value": encode_value(raw, cfg.value_encoding)}
+                {
+                    "key": key,
+                    "found": True,
+                    "value": encode_value(raw, cfg.value_encoding),
+                }
             )
     return {"op": "multiget", "results": results_list}
 

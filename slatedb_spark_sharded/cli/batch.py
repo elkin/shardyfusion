@@ -34,7 +34,9 @@ def load_script(script_path: str) -> dict[str, Any]:
 
     commands = data.get("commands")
     if not isinstance(commands, list):
-        raise ValueError("Script file must have a 'commands' key with a list of operations")
+        raise ValueError(
+            "Script file must have a 'commands' key with a list of operations"
+        )
 
     return data
 
@@ -66,7 +68,9 @@ def run_script(
 
     for i, cmd in enumerate(commands):
         if not isinstance(cmd, dict):
-            result = build_error_result("unknown", None, f"Command #{i} is not a mapping")
+            result = build_error_result(
+                "unknown", None, f"Command #{i} is not a mapping"
+            )
             emit(result, batch_cfg, file=out)
             error_count += 1
             if on_error == "stop":
