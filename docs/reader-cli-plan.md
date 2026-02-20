@@ -61,20 +61,76 @@ null_repr      = "null"        # string representation for missing keys
 
 ### Sensitive: `credentials.toml`
 
+Each profile carries both credentials and the S3 connection options that are
+specific to that storage endpoint. Keeping them together means every dataset
+config only needs to name a profile; all endpoint behaviour follows automatically.
+
 ```toml
 [default]
+# --- credentials ---
 endpoint_url      = "https://s3.amazonaws.com"   # omit for real AWS
 region            = "us-east-1"
 access_key_id     = "AKID…"
 secret_access_key = "SECRET…"
 # session_token   = ""   # optional
 
+# --- S3 / object-store options ---
+addressing_style  = "virtual"   # virtual | path | auto
+signature_version = "s3v4"      # s3v4 | s3
+verify_ssl        = true        # false to disable; or path to CA bundle
+connect_timeout   = 10          # seconds
+read_timeout      = 30          # seconds
+max_attempts      = 3           # total attempts (initial + retries)
+
 [ceph-prod]
+# --- credentials ---
 endpoint_url      = "https://ceph.prod.example.com"
 region            = "us-east-1"
 access_key_id     = "…"
 secret_access_key = "…"
+
+# --- S3 / object-store options ---
+addressing_style  = "path"      # Ceph RGW requires path-style
+verify_ssl        = true
+connect_timeout   = 10
+read_timeout      = 30
+max_attempts      = 5
 ```
+
+All S3 option keys are optional; unset keys fall back to boto3 defaults.
+
+#### Supported S3 options and their boto3 mapping
+
+| Config key | Type | boto3 / botocore mapping |
+|---|---|---|
+| `addressing_style` | `"virtual"` \| `"path"` \| `"auto"` | `Config(s3={"addressing_style": …})` |
+| `signature_version` | `"s3v4"` \| `"s3"` | `Config(signature_version=…)` |
+| `verify_ssl` | `bool` or CA-bundle path string | `boto3.client(verify=…)` |
+| `connect_timeout` | int (seconds) | `Config(connect_timeout=…)` |
+| `read_timeout` | int (seconds) | `Config(read_timeout=…)` |
+| `max_attempts` | int | `Config(retries={"max_attempts": …, "mode": "standard"})` |
+
+`config.py` assembles a `botocore.config.Config` object from these fields and
+passes it to `boto3.client()` alongside the credential kwargs.  The existing
+`S3ClientConfig` TypedDict in `storage.py` will be extended (or supplemented
+with a separate `S3Options` TypedDict) to carry these fields through to
+`create_s3_client`.
+
+#### CLI escape hatch: `--s3-option`
+
+Individual S3 options can be overridden per-invocation without editing any
+config file:
+
+```bash
+slate-reader s3://bucket/prefix/_CURRENT \
+  --s3-option addressing_style=path \
+  --s3-option verify_ssl=false \
+  get 12345
+```
+
+`--s3-option` accepts `KEY=VALUE` pairs and applies on top of whatever the
+active credentials profile specifies. Values are coerced to the expected type
+(bool, int, or string) using the same table above.
 
 **Why a separate file:**
 
@@ -124,6 +180,12 @@ slate-reader s3://bucket/prefix/_CURRENT info
 slate-reader s3://bucket/prefix/_CURRENT \
   --config ~/datasets/orders/reader.toml \
   --credentials ~/.config/slatefusion/credentials.toml \
+  get 42
+
+# Override S3 options inline (takes precedence over credentials.toml)
+slate-reader s3://bucket/prefix/_CURRENT \
+  --s3-option addressing_style=path \
+  --s3-option verify_ssl=false \
   get 42
 ```
 
@@ -236,8 +298,9 @@ slatedb_spark_sharded/
     ├── __init__.py          # exports main()
     ├── app.py               # click top-level group + subcommands (get, multiget,
     │                        #   refresh, info, exec)
-    ├── config.py            # ReaderConfig + CredentialsConfig dataclasses,
-    │                        #   TOML loaders, search-order resolution
+    ├── config.py            # ReaderConfig, CredentialsProfile + S3Options dataclasses,
+    │                        #   TOML loaders, search-order resolution,
+    │                        #   botocore.config.Config assembly
     ├── interactive.py       # cmd.Cmd REPL backed by SlateShardedReader
     ├── batch.py             # YAML script loader + sequential executor
     ├── output.py            # formatters: json, jsonl, table, text
@@ -308,3 +371,12 @@ Mirrors the pattern already established by `~/.aws/credentials`. One file per
 user/machine, multiple named profiles for multiple storage clusters. Each
 dataset config references a profile name, so rotating or adding credentials
 never requires touching dataset configs.
+
+### S3 options co-located with credentials, not with reader config
+Connection behaviour (`addressing_style`, timeouts, SSL, retries) is a property
+of the storage endpoint, not of the dataset or the read workload. Ceph always
+needs `addressing_style=path`; a slow WAN cluster always needs higher timeouts —
+regardless of which dataset is being read. Placing these options in the
+credentials profile means they travel with the endpoint, not with each
+`reader.toml`. The `--s3-option` CLI flag covers one-off overrides without
+touching either file.
