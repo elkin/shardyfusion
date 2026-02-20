@@ -7,7 +7,7 @@ name = "slatedb_spark_sharded"
 version = "0.1.0"
 description = "Sharded SlateDB snapshot writer for PySpark"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [{name = "slatedb_spark_sharded contributors"}]
 license = "Apache-2.0"
 dependencies = [
@@ -59,7 +59,7 @@ where = ["."]
 include = ["slatedb_spark_sharded*"]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 line-length = 88
 exclude = [
   ".git",
@@ -89,7 +89,7 @@ indent-style = "space"
 line-ending = "lf"
 
 [tool.pyright]
-pythonVersion = "3.10"
+pythonVersion = "3.11"
 typeCheckingMode = "standard"
 include = [
   "slatedb_spark_sharded",
