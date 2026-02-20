@@ -32,3 +32,10 @@ class S3ClientConfig(TypedDict, total=False):
     access_key_id: str
     secret_access_key: str
     session_token: str
+    # botocore / S3-connection options
+    addressing_style: str  # "virtual" | "path" | "auto"
+    signature_version: str  # "s3v4" | "s3"
+    verify_ssl: bool | str  # bool or path to CA bundle
+    connect_timeout: int  # seconds
+    read_timeout: int  # seconds
+    max_attempts: int  # total attempts (initial + retries)

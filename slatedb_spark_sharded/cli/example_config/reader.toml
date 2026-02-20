@@ -1,0 +1,40 @@
+# reader.toml — non-sensitive reader configuration
+# Safe to commit; does NOT contain credentials.
+
+[reader]
+# Full S3 URL to the CURRENT pointer.
+# Optional: omit to require the positional argument or SLATE_READER_CURRENT env var.
+current_url = "s3://bucket/prefix/_CURRENT"
+
+# Local directory for shard data cache.
+local_root = "/tmp/slatefusion"
+
+# Thread-safety mode for concurrent lookups: "lock" (one reader per shard,
+# mutex-protected) or "pool" (N readers per shard, round-robin checkout).
+thread_safety = "lock"
+
+# Worker threads for parallel multi-shard lookups (applies to both modes).
+max_workers = 4
+
+# Path to a slatedb env file passed to the SlateDB Rust binding for credentials.
+# Optional; omit if credentials are provided via environment variables instead.
+slate_env_file = ""
+
+# Name of the credentials profile to use from credentials.toml.
+# Must match a section header in that file (e.g. [default] or [ceph-prod]).
+credentials_profile = "default"
+
+[output]
+# Output format: json | jsonl | table | text
+# - json:   pretty-printed JSON (default in interactive mode)
+# - jsonl:  one JSON object per line (default in batch/exec mode)
+# - table:  human-readable columnar output (best for multiget in a terminal)
+# - text:   plain KEY=VALUE; simplest for shell scripting
+format = "jsonl"
+
+# How to encode raw value bytes in the output:
+# base64 | utf8 | hex
+value_encoding = "base64"
+
+# String representation for missing / not-found keys.
+null_repr = "null"

@@ -24,6 +24,10 @@ writer = [
   "slatedb",
   "boto3>=1.28",
 ]
+cli = [
+  "click>=8.0",
+  "pyyaml>=6.0",
+]
 all = [
   "pyspark>=3.3",
   "slatedb",
@@ -48,6 +52,9 @@ docs = [
   "mkdocs-literate-nav>=0.6.0",
   "mkdocs-section-index>=0.3.9",
 ]
+
+[project.scripts]
+slate-reader = "slatedb_spark_sharded.cli.app:main"
 
 [dependency-groups]
 dev = [
