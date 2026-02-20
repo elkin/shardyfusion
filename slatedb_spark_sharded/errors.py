@@ -22,6 +22,7 @@ class SlatedbSparkShardedError(Exception):
 # Configuration / programmer errors  (never retryable)
 # ---------------------------------------------------------------------------
 
+
 class ConfigValidationError(SlatedbSparkShardedError):
     """Configuration failed validation."""
 
@@ -43,6 +44,7 @@ class ShardCoverageError(SlatedbSparkShardedError):
 # ---------------------------------------------------------------------------
 # Runtime / infrastructure errors  (retryable varies)
 # ---------------------------------------------------------------------------
+
 
 class SlateDbApiError(SlatedbSparkShardedError):
     """SlateDB binding was unavailable or incompatible."""
