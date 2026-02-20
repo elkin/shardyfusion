@@ -12,6 +12,7 @@ from queue import Queue
 from typing import Any, Sequence
 
 from .errors import ReaderStateError, SlateDbApiError, SlatedbSparkShardedError
+from .logging import FailureSeverity, log_failure
 from .manifest import ParsedManifest
 from .manifest_readers import DefaultS3ManifestReader, ManifestReader
 from .routing import SnapshotRouter
@@ -165,6 +166,11 @@ class SlateShardedReader:
 
         current = self._manifest_reader.load_current()
         if current is None:
+            log_failure(
+                "reader_refresh_current_not_found",
+                severity=FailureSeverity.ERROR,
+                s3_prefix=self.s3_prefix,
+            )
             raise ReaderStateError("CURRENT pointer not found during refresh")
 
         current_ref = current.manifest_ref
@@ -214,6 +220,11 @@ class SlateShardedReader:
     def _load_initial_state(self) -> _ReaderState:
         current = self._manifest_reader.load_current()
         if current is None:
+            log_failure(
+                "reader_current_not_found",
+                severity=FailureSeverity.ERROR,
+                s3_prefix=self.s3_prefix,
+            )
             raise ReaderStateError("CURRENT pointer not found")
 
         manifest = self._manifest_reader.load_manifest(
@@ -330,8 +341,27 @@ def _open_slatedb_reader(
 
 
 def _close_state(state: _ReaderState) -> None:
-    for handle in state.handles.values():
-        _close_handle(handle)
+    errors: list[tuple[int, BaseException]] = []
+    for db_id, handle in state.handles.items():
+        try:
+            _close_handle(handle)
+        except Exception as exc:
+            errors.append((db_id, exc))
+            log_failure(
+                "reader_handle_close_failed",
+                severity=FailureSeverity.ERROR,
+                error=exc,
+                db_id=db_id,
+                manifest_ref=state.manifest_ref,
+            )
+    if errors:
+        log_failure(
+            "reader_state_close_partial_failure",
+            severity=FailureSeverity.ERROR,
+            error=errors[0][1],
+            failed_db_ids=[db_id for db_id, _ in errors],
+            total_handles=len(state.handles),
+        )
 
 
 def _close_handle(handle: _ShardHandle) -> None:

@@ -11,6 +11,7 @@ from .errors import (
     ManifestParseError,
     ReaderStateError,
 )
+from .logging import FailureSeverity
 from .manifest import (
     BuildDurations,
     BuildResult,
@@ -54,6 +55,7 @@ except ImportError:
     pass
 
 __all__ = [
+    "FailureSeverity",
     "ManifestParseError",
     "ReaderStateError",
     "BuildResult",

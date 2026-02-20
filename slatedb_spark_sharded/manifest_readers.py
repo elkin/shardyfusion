@@ -8,6 +8,7 @@ from typing import Callable, Protocol
 from pydantic import ValidationError
 
 from .errors import ManifestParseError
+from .logging import FailureSeverity, log_failure
 from .manifest import (
     CurrentPointer,
     ParsedManifest,
@@ -100,7 +101,16 @@ class DefaultS3ManifestReader:
                 "provide a custom ManifestReader."
             )
 
-        payload = get_bytes(ref, s3_client=self._s3_client)
+        try:
+            payload = get_bytes(ref, s3_client=self._s3_client)
+        except Exception as exc:
+            log_failure(
+                "manifest_s3_load_failed",
+                severity=FailureSeverity.ERROR,
+                error=exc,
+                manifest_ref=ref,
+            )
+            raise
         return parse_json_manifest(payload)
 
 
@@ -110,6 +120,12 @@ def parse_json_manifest(payload: bytes) -> ParsedManifest:
     try:
         obj = json.loads(payload.decode("utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        log_failure(
+            "manifest_payload_decode_failed",
+            severity=FailureSeverity.ERROR,
+            error=exc,
+            payload_size=len(payload),
+        )
         raise ManifestParseError(
             "Manifest payload is not valid JSON or not valid UTF-8"
         ) from exc
