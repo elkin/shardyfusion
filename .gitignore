@@ -40,3 +40,4 @@ metastore_db/
 # OS files
 .DS_Store
 Thumbs.db
+uv.lock
