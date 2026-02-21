@@ -15,7 +15,7 @@ from slatedb_spark_sharded.manifest import (
     RequiredShardMeta,
 )
 from slatedb_spark_sharded.reader import SlateShardedReader, _open_slatedb_reader
-from slatedb_spark_sharded.sharding import ShardingStrategy
+from slatedb_spark_sharded.sharding_types import ShardingStrategy
 
 
 class _MutableManifestReader:

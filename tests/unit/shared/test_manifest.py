@@ -8,7 +8,7 @@ from slatedb_spark_sharded.manifest import (
     RequiredBuildMeta,
     RequiredShardMeta,
 )
-from slatedb_spark_sharded.sharding import ShardingStrategy
+from slatedb_spark_sharded.sharding_types import ShardingStrategy
 
 
 def test_json_manifest_builder_includes_required_shards_and_custom() -> None:

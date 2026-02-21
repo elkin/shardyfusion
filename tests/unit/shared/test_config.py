@@ -11,7 +11,7 @@ from slatedb_spark_sharded.config import (
 )
 from slatedb_spark_sharded.errors import ConfigValidationError
 from slatedb_spark_sharded.serde import ValueSpec
-from slatedb_spark_sharded.sharding import ShardingSpec
+from slatedb_spark_sharded.sharding_types import ShardingSpec
 
 
 def test_config_accepts_valid_values() -> None:
