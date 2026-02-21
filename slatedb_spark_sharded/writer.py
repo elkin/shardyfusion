@@ -7,9 +7,9 @@ import time
 import types
 from collections import defaultdict
 from collections.abc import Iterable, Iterator
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Self, cast
+from typing import Self
 from uuid import uuid4
 
 from pyspark import RDD, StorageLevel, TaskContext
@@ -332,15 +332,10 @@ def _run_partition_writes(
     """Execute partition writers and deterministically select winning shard attempts."""
 
     write_started = time.perf_counter()
-    json_lines = partitioned_rdd.mapPartitionsWithIndex(
-        lambda db_id, items: (
-            json.dumps(asdict(r), sort_keys=True)
-            for r in _write_one_shard_partition(db_id, items, runtime)
-        )
+    attempts: list[_ShardAttemptResult] = partitioned_rdd.mapPartitionsWithIndex(
+        lambda db_id, items: _write_one_shard_partition(db_id, items, runtime)
     ).collect()
     write_duration_ms = int((time.perf_counter() - write_started) * 1000)
-
-    attempts = [_parse_attempt_line(line) for line in json_lines]
     winners = _select_winners(attempts, num_dbs=num_dbs)
     return _PartitionWriteOutcome(
         attempts=attempts,
@@ -629,43 +624,6 @@ def _update_min_max(
 
 def _normalize_key(key: KeyLike | None) -> KeyLike | None:
     return key
-
-
-def _parse_attempt_line(line: str) -> _ShardAttemptResult:
-    try:
-        payload = json.loads(line)
-    except (json.JSONDecodeError, ValueError) as exc:
-        log_failure(
-            "attempt_result_parse_failed",
-            severity=FailureSeverity.CRITICAL,
-            error=exc,
-            line_preview=line[:200],
-        )
-        raise SlatedbSparkShardedError(
-            f"Worker emitted unparseable attempt result: {exc}"
-        ) from exc
-
-    try:
-        return _ShardAttemptResult(
-            db_id=int(payload["db_id"]),
-            db_url=str(payload["db_url"]),
-            attempt=int(payload["attempt"]),
-            row_count=int(payload.get("row_count", 0)),
-            min_key=payload.get("min_key"),
-            max_key=payload.get("max_key"),
-            checkpoint_id=payload.get("checkpoint_id"),
-            writer_info=cast(JsonObject, dict(payload.get("writer_info") or {})),
-        )
-    except (KeyError, TypeError, ValueError) as exc:
-        log_failure(
-            "attempt_result_field_error",
-            severity=FailureSeverity.CRITICAL,
-            error=exc,
-            payload_keys=sorted(payload.keys()) if isinstance(payload, dict) else None,
-        )
-        raise SlatedbSparkShardedError(
-            f"Worker attempt result missing required fields: {exc}"
-        ) from exc
 
 
 def _select_winners(
