@@ -127,12 +127,12 @@ def add_db_id_column(
         custom_column_builder=sharding.custom_column_builder,
     )
 
-    if sharding.strategy in {ShardingStrategy.HASH, ShardingStrategy.RANGE}:
-        _validate_key_col_type(
-            df=df,
-            key_col=key_col,
-            strategy=sharding.strategy,
-        )
+    # For HASH and RANGE strategies we can validate key column type and resolve any missing boundaries before adding the db_id column.
+    _validate_key_col_type(
+        df=df,
+        key_col=key_col,
+        strategy=sharding.strategy,
+    )
 
     F = _pyspark_functions()
     df_with_db_id: "DataFrame"
@@ -205,23 +205,29 @@ def _validate_key_col_type(
             f"Key column `{key_col}` was not found in DataFrame schema"
         ) from exc
 
-    if strategy == ShardingStrategy.HASH:
-        allowed_hash = (IntegerType, LongType)
-        if not isinstance(dtype, allowed_hash):
-            raise ShardAssignmentError(
-                "Hash sharding requires key column type IntegerType or LongType; "
-                f"got {type(dtype).__name__} for `{key_col}`"
-            )
-        return
+    match strategy:
+        case ShardingStrategy.HASH:
+            allowed_hash = (IntegerType, LongType)
+            if not isinstance(dtype, allowed_hash):
+                raise ShardAssignmentError(
+                    "Hash sharding requires key column type IntegerType or LongType; "
+                    f"got {type(dtype).__name__} for `{key_col}`"
+                )
+            return
 
-    if strategy == ShardingStrategy.RANGE:
-        allowed_range = (IntegerType, LongType, FloatType, DoubleType, StringType)
-        if not isinstance(dtype, allowed_range):
-            raise ShardAssignmentError(
-                "Range sharding requires key column type one of "
-                "IntegerType, LongType, FloatType, DoubleType, StringType; "
-                f"got {type(dtype).__name__} for `{key_col}`"
-            )
+        case ShardingStrategy.RANGE:
+            allowed_range = (IntegerType, LongType, FloatType, DoubleType, StringType)
+            if not isinstance(dtype, allowed_range):
+                raise ShardAssignmentError(
+                    "Range sharding requires key column type one of "
+                    "IntegerType, LongType, FloatType, DoubleType, StringType; "
+                    f"got {type(dtype).__name__} for `{key_col}`"
+                )
+            return
+
+        case ShardingStrategy.CUSTOM_EXPR:
+            # Custom sharding strategies may have arbitrary requirements, so we skip validation here.
+            return
 
 
 def _resolve_boundaries(
