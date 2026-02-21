@@ -116,7 +116,8 @@ exclude = [
   "**/__pycache__",
   "**/.*",
 ]
-reportMissingTypeStubs = false
+reportArgumentType = "error"
+reportMissingParameterType = "error"
 reportUnsupportedDunderAll = false
 
 [tool.pytest.ini_options]

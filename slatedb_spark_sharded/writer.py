@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import time
+import types
 from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass
@@ -115,7 +116,12 @@ class SparkConfOverrideContext:
                 )
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: types.TracebackType | None,
+    ) -> None:
         for key in reversed(list(self._overrides.keys())):
             original = self._original_values.get(key)
             try:
@@ -174,7 +180,12 @@ class DataFrameCacheContext:
             self._cached_df = self._df
         return self._cached_df
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: types.TracebackType | None,
+    ) -> None:
         if self._cached_df is None:
             return
         try:

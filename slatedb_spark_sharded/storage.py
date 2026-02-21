@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Mapping, TypedDict
+from collections.abc import Callable
+from typing import Any, Mapping, TypedDict
 from urllib.parse import urlparse
 
 from .errors import PublishManifestError
@@ -63,7 +64,7 @@ def _is_transient_s3_error(exc: BaseException) -> bool:
     return False
 
 
-def _retry_s3_operation(operation, *, operation_name: str, url: str):
+def _retry_s3_operation(operation: Callable[[], Any], *, operation_name: str, url: str):
     """Execute *operation* with exponential-backoff retries on transient S3 errors.
 
     Returns the result of *operation()* on success, or re-raises the last
@@ -227,7 +228,7 @@ def put_bytes(
     content_type: str,
     headers: Mapping[str, str] | None = None,
     *,
-    s3_client=None,
+    s3_client: Any = None,
 ) -> None:
     """PUT bytes to S3 URL with automatic retry on transient S3 errors."""
 
@@ -252,7 +253,7 @@ def put_bytes(
     )
 
 
-def get_bytes(url: str, *, s3_client=None) -> bytes:
+def get_bytes(url: str, *, s3_client: Any = None) -> bytes:
     """Read object bytes from S3 URL with automatic retry on transient errors."""
 
     client = s3_client or create_s3_client()
@@ -265,7 +266,7 @@ def get_bytes(url: str, *, s3_client=None) -> bytes:
     return _retry_s3_operation(_do_get, operation_name="get_object", url=url)
 
 
-def try_get_bytes(url: str, *, s3_client=None) -> bytes | None:
+def try_get_bytes(url: str, *, s3_client: Any = None) -> bytes | None:
     """Read object bytes and return None when object is not found.
 
     Transient S3 errors (throttling, timeouts) are retried automatically.

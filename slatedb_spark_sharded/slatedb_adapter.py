@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import types
 from typing import Iterable, Protocol
 
 from .errors import SlateDbApiError
@@ -17,7 +18,12 @@ class SlateDbAdapter(Protocol):
         """Enter adapter context."""
         ...
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: types.TracebackType | None,
+    ) -> None:
         """Exit adapter context and release resources."""
         ...
 
@@ -100,7 +106,12 @@ class DefaultSlateDbAdapter:
     def __enter__(self) -> "DefaultSlateDbAdapter":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: types.TracebackType | None,
+    ) -> None:
         self.close()
 
     def write_pairs(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:

@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import json
 import os
+import types
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TypedDict
 from urllib.parse import quote
@@ -39,10 +41,15 @@ class FakeSlateDbAdapter:
     def __enter__(self) -> "FakeSlateDbAdapter":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: types.TracebackType | None,
+    ) -> None:
         self.close()
 
-    def write_pairs(self, pairs) -> None:
+    def write_pairs(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
         self._db.writes += len(list(pairs))
 
     def flush_wal_if_supported(self) -> None:
@@ -103,10 +110,15 @@ class FileBackedSlateDbAdapter:
     def __enter__(self) -> "FileBackedSlateDbAdapter":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: types.TracebackType | None,
+    ) -> None:
         self.close()
 
-    def write_pairs(self, pairs) -> None:
+    def write_pairs(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
         os.makedirs(os.path.dirname(self._db.file_path), exist_ok=True)
         with open(self._db.file_path, "ab") as handle:
             for key, value in pairs:
@@ -245,10 +257,15 @@ class RealSlateDbFileAdapter:
     def __enter__(self) -> "RealSlateDbFileAdapter":
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: types.TracebackType | None,
+    ) -> None:
         self.close()
 
-    def write_pairs(self, pairs) -> None:
+    def write_pairs(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
         from slatedb import WriteBatch
 
         wb = WriteBatch()
