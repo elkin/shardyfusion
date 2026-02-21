@@ -54,6 +54,12 @@ class _FakeReader:
     def close(self) -> None:
         pass
 
+    def __enter__(self) -> "_FakeReader":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
+
 
 def _invoke(
     args: list[str],

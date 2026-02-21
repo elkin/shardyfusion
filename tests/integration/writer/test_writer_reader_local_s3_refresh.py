@@ -78,11 +78,10 @@ def test_reader_refreshes_after_new_writer_batch(
         "slatedb_spark_sharded.reader._open_slatedb_reader", open_real_reader
     )
 
-    reader = SlateShardedReader(
+    with SlateShardedReader(
         s3_prefix=s3_prefix,
         local_root=str(tmp_path / "reader-cache"),
-    )
-    try:
+    ) as reader:
         assert reader.get(7) == b"old-7"
 
         df_v2 = spark.createDataFrame(
@@ -99,5 +98,3 @@ def test_reader_refreshes_after_new_writer_batch(
 
         unchanged = reader.refresh()
         assert unchanged is False
-    finally:
-        reader.close()

@@ -118,21 +118,17 @@ class SlateShardedReader:
     def get(self, key: KeyInput) -> bytes | None:
         """Get one key from the currently loaded snapshot."""
 
-        state = self._acquire_state()
-        try:
+        with self._use_state() as state:
             db_id = state.router.route_one(key)
             key_bytes = state.router.encode_lookup_key(key)
             handle = state.handles[db_id]
             return _read_one(handle, key_bytes)
-        finally:
-            self._release_state(state)
 
     def multi_get(self, keys: Sequence[KeyInput]) -> dict[KeyInput, bytes | None]:
         """Get multiple keys with per-shard grouping and optional shard parallelism."""
 
         key_list = list(keys)
-        state = self._acquire_state()
-        try:
+        with self._use_state() as state:
             grouped = state.router.group_keys(key_list)
             results: dict[KeyInput, bytes | None] = {}
 
@@ -163,8 +159,6 @@ class SlateShardedReader:
                     )
 
             return {key: results.get(key) for key in key_list}
-        finally:
-            self._release_state(state)
 
     def refresh(self) -> bool:
         """Reload CURRENT and manifest, atomically swapping readers when ref changes."""
@@ -221,6 +215,12 @@ class SlateShardedReader:
 
         if state_to_close is not None:
             _close_state(state_to_close)
+
+    def __enter__(self) -> "SlateShardedReader":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
 
     def _load_initial_state(self) -> _ReaderState:
         current = self._manifest_reader.load_current()
@@ -280,6 +280,15 @@ class SlateShardedReader:
             raise
 
         return _ReaderState(manifest_ref=manifest_ref, router=router, handles=handles)
+
+    @contextmanager
+    def _use_state(self) -> Iterator[_ReaderState]:
+        """Acquire and release a refcounted snapshot of the current state."""
+        state = self._acquire_state()
+        try:
+            yield state
+        finally:
+            self._release_state(state)
 
     def _acquire_state(self) -> _ReaderState:
         with self._state_lock:

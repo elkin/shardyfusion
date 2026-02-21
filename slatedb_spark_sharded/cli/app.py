@@ -186,13 +186,10 @@ def cli(
 
     # If no subcommand was invoked, enter interactive mode
     if ctx.invoked_subcommand is None:
-        reader = _build_reader(ctx)
-        repl = SlateReaderRepl(reader, output_cfg)
-        repl.print_banner()
-        try:
+        with _build_reader(ctx) as reader:
+            repl = SlateReaderRepl(reader, output_cfg)
+            repl.print_banner()
             repl.cmdloop()
-        finally:
-            reader.close()
 
 
 # ---------------------------------------------------------------------------
@@ -206,18 +203,16 @@ def cli(
 def get_cmd(ctx: click.Context, key: str) -> None:
     """Look up a single KEY."""
     output_cfg = _get_output_cfg(ctx)
-    reader = _build_reader(ctx)
-    try:
-        coerced = coerce_cli_key(key, reader.key_encoding)
-        value = reader.get(coerced)
-        result = build_get_result(key, value, output_cfg)
-        emit(result, output_cfg)
-    except Exception as exc:
-        result = build_error_result("get", key, str(exc))
-        emit(result, output_cfg, file=sys.stderr)
-        sys.exit(1)
-    finally:
-        reader.close()
+    with _build_reader(ctx) as reader:
+        try:
+            coerced = coerce_cli_key(key, reader.key_encoding)
+            value = reader.get(coerced)
+            result = build_get_result(key, value, output_cfg)
+            emit(result, output_cfg)
+        except Exception as exc:
+            result = build_error_result("get", key, str(exc))
+            emit(result, output_cfg, file=sys.stderr)
+            sys.exit(1)
 
 
 @cli.command("multiget")
@@ -226,19 +221,17 @@ def get_cmd(ctx: click.Context, key: str) -> None:
 def multiget_cmd(ctx: click.Context, keys: tuple[str, ...]) -> None:
     """Look up multiple KEYS (space-separated)."""
     output_cfg = _get_output_cfg(ctx)
-    reader = _build_reader(ctx)
-    try:
-        coerced = [coerce_cli_key(k, reader.key_encoding) for k in keys]
-        values = reader.multi_get(coerced)
-        display_keys = list(keys)
-        result = build_multiget_result(display_keys, values, output_cfg)
-        emit(result, output_cfg)
-    except Exception as exc:
-        result = build_error_result("multiget", None, str(exc))
-        emit(result, output_cfg, file=sys.stderr)
-        sys.exit(1)
-    finally:
-        reader.close()
+    with _build_reader(ctx) as reader:
+        try:
+            coerced = [coerce_cli_key(k, reader.key_encoding) for k in keys]
+            values = reader.multi_get(coerced)
+            display_keys = list(keys)
+            result = build_multiget_result(display_keys, values, output_cfg)
+            emit(result, output_cfg)
+        except Exception as exc:
+            result = build_error_result("multiget", None, str(exc))
+            emit(result, output_cfg, file=sys.stderr)
+            sys.exit(1)
 
 
 @cli.command("refresh")
@@ -246,17 +239,15 @@ def multiget_cmd(ctx: click.Context, keys: tuple[str, ...]) -> None:
 def refresh_cmd(ctx: click.Context) -> None:
     """Reload CURRENT and manifest."""
     output_cfg = _get_output_cfg(ctx)
-    reader = _build_reader(ctx)
-    try:
-        changed = reader.refresh()
-        result = build_refresh_result(changed)
-        emit(result, output_cfg)
-    except Exception as exc:
-        result = build_error_result("refresh", None, str(exc))
-        emit(result, output_cfg, file=sys.stderr)
-        sys.exit(1)
-    finally:
-        reader.close()
+    with _build_reader(ctx) as reader:
+        try:
+            changed = reader.refresh()
+            result = build_refresh_result(changed)
+            emit(result, output_cfg)
+        except Exception as exc:
+            result = build_error_result("refresh", None, str(exc))
+            emit(result, output_cfg, file=sys.stderr)
+            sys.exit(1)
 
 
 @cli.command("info")
@@ -264,16 +255,14 @@ def refresh_cmd(ctx: click.Context) -> None:
 def info_cmd(ctx: click.Context) -> None:
     """Show manifest metadata."""
     output_cfg = _get_output_cfg(ctx)
-    reader = _build_reader(ctx)
-    try:
-        result = build_info_result(reader)
-        emit(result, output_cfg)
-    except Exception as exc:
-        result = build_error_result("info", None, str(exc))
-        emit(result, output_cfg, file=sys.stderr)
-        sys.exit(1)
-    finally:
-        reader.close()
+    with _build_reader(ctx) as reader:
+        try:
+            result = build_info_result(reader)
+            emit(result, output_cfg)
+        except Exception as exc:
+            result = build_error_result("info", None, str(exc))
+            emit(result, output_cfg, file=sys.stderr)
+            sys.exit(1)
 
 
 @cli.command("exec")
@@ -296,18 +285,19 @@ def exec_cmd(ctx: click.Context, script_path: str, output_path: str | None) -> N
     """Execute a batch YAML script file against the snapshot."""
     output_cfg = _get_output_cfg(ctx)
 
-    reader = _build_reader(ctx)
     out_file = None
-    try:
-        if output_path:
-            out_file = open(output_path, "w", encoding="utf-8")
-        error_count = run_script(reader, script_path, output_cfg, output_file=out_file)
-    except (OSError, ValueError) as exc:
-        raise click.ClickException(str(exc)) from exc
-    finally:
-        if out_file is not None:
-            out_file.close()
-        reader.close()
+    with _build_reader(ctx) as reader:
+        try:
+            if output_path:
+                out_file = open(output_path, "w", encoding="utf-8")
+            error_count = run_script(
+                reader, script_path, output_cfg, output_file=out_file
+            )
+        except (OSError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        finally:
+            if out_file is not None:
+                out_file.close()
 
     if error_count:
         sys.exit(1)

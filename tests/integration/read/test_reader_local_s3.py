@@ -113,11 +113,10 @@ def test_reader_loads_current_and_manifest_from_local_s3(
         ContentType="application/json",
     )
 
-    reader = SlateShardedReader(
+    with SlateShardedReader(
         s3_prefix=s3_prefix,
         local_root=str(local_root),
-    )
-    try:
+    ) as reader:
         assert reader.get(1) == b"v1"
         assert reader.get(10) == b"v10"
         got = reader.multi_get([8, 15, 1, 10])
@@ -125,5 +124,3 @@ def test_reader_loads_current_and_manifest_from_local_s3(
         assert got[15] == b"v15"
         assert got[1] == b"v1"
         assert got[10] == b"v10"
-    finally:
-        reader.close()

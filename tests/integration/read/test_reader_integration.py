@@ -150,7 +150,7 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
     }
     manifests = {"mem://manifest/1": manifest_payload}
 
-    reader = SlateShardedReader(
+    with SlateShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(local_root),
         manifest_reader=InMemoryManifestReader(
@@ -159,8 +159,7 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
             manifests=manifests,
         ),
         max_workers=4,
-    )
-    try:
+    ) as reader:
         assert reader.get(15) == b"v15"
         got = reader.multi_get([1, 20, 10, 27, 9])
         assert got[1] == b"v1"
@@ -168,5 +167,3 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
         assert got[10] == b"v10"
         assert got[27] == b"v27"
         assert got[9] == b"v9"
-    finally:
-        reader.close()

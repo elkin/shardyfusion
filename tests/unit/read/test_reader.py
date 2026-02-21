@@ -102,12 +102,11 @@ def test_refresh_swaps_manifest_ref_and_readers(monkeypatch, tmp_path) -> None:
         "slatedb_spark_sharded.reader._open_slatedb_reader", fake_open_reader
     )
 
-    reader = SlateShardedReader(
+    with SlateShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_reader=manifest_reader,
-    )
-    try:
+    ) as reader:
         assert reader.get(1) == b"one"
         manifest_reader.current_ref = "mem://manifest/two"
 
@@ -117,8 +116,6 @@ def test_refresh_swaps_manifest_ref_and_readers(monkeypatch, tmp_path) -> None:
 
         unchanged = reader.refresh()
         assert unchanged is False
-    finally:
-        reader.close()
 
 
 def test_open_slatedb_reader_uses_official_slatedbreader_signature(monkeypatch) -> None:
@@ -210,6 +207,29 @@ def test_closed_reader_refresh_raises_reader_state_error(monkeypatch, tmp_path) 
         reader.refresh()
 
 
+def test_context_manager_returns_self_and_calls_close(monkeypatch, tmp_path) -> None:
+    manifests = {"mem://manifest/one": _manifest("mem://db/one")}
+    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+
+    monkeypatch.setattr(
+        "slatedb_spark_sharded.reader._open_slatedb_reader",
+        lambda *, local_path, db_url, checkpoint_id, env_file: _FakeReader({}),
+    )
+
+    reader = SlateShardedReader(
+        s3_prefix="s3://bucket/prefix",
+        local_root=str(tmp_path),
+        manifest_reader=manifest_reader,
+    )
+
+    with reader as ctx:
+        assert ctx is reader
+
+    # After exiting the context, the reader should be closed.
+    with pytest.raises(ReaderStateError, match="Reader is closed"):
+        reader.get(1)
+
+
 def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
     """Two-shard range manifest: keys <=5 → shard 0, keys >=6 → shard 1."""
     required = RequiredBuildMeta(
@@ -271,15 +291,12 @@ def test_multi_get_shard_failure_raises_slate_db_api_error(
         lambda *, local_path, db_url, checkpoint_id, env_file: _BrokenReader(),
     )
 
-    reader = SlateShardedReader(
+    with SlateShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_reader=manifest_reader,
         max_workers=2,
-    )
-    try:
+    ) as reader:
         # key=1 routes to shard 0, key=6 routes to shard 1 → both shards in executor
         with pytest.raises(SlateDbApiError, match="db_id="):
             reader.multi_get([1, 6])
-    finally:
-        reader.close()
