@@ -35,6 +35,7 @@ def create_s3_client(s3_client_config: S3ClientConfig | None = None):
 
     try:
         import boto3
+        from botocore.config import Config as BotocoreConfig
     except ImportError as exc:  # pragma: no cover - depends on runtime environment
         raise PublishManifestError(
             "boto3 is required for default S3 publishing"
@@ -73,14 +74,54 @@ def create_s3_client(s3_client_config: S3ClientConfig | None = None):
     if session_token:
         kwargs["session_token"] = session_token
 
-    return boto3.client(
-        "s3",
-        endpoint_url=kwargs.get("endpoint_url"),
-        region_name=kwargs.get("region_name"),
-        aws_access_key_id=kwargs.get("access_key_id"),
-        aws_secret_access_key=kwargs.get("secret_access_key"),
-        aws_session_token=kwargs.get("session_token"),
+    # Assemble botocore Config from optional connection options
+    boto_config_kwargs: dict[str, object] = {}
+    s3_options: dict[str, object] = {}
+
+    addressing_style = config.get("addressing_style")
+    if addressing_style:
+        s3_options["addressing_style"] = addressing_style
+
+    signature_version = config.get("signature_version")
+    if signature_version:
+        boto_config_kwargs["signature_version"] = signature_version
+
+    connect_timeout = config.get("connect_timeout")
+    if connect_timeout is not None:
+        boto_config_kwargs["connect_timeout"] = connect_timeout
+
+    read_timeout = config.get("read_timeout")
+    if read_timeout is not None:
+        boto_config_kwargs["read_timeout"] = read_timeout
+
+    max_attempts = config.get("max_attempts")
+    if max_attempts is not None:
+        boto_config_kwargs["retries"] = {
+            "max_attempts": max_attempts,
+            "mode": "standard",
+        }
+
+    if s3_options:
+        boto_config_kwargs["s3"] = s3_options
+
+    botocore_config = (
+        BotocoreConfig(**boto_config_kwargs) if boto_config_kwargs else None
     )
+
+    verify = config.get("verify_ssl")
+    client_kwargs: dict[str, object] = {
+        "endpoint_url": kwargs.get("endpoint_url"),
+        "region_name": kwargs.get("region_name"),
+        "aws_access_key_id": kwargs.get("access_key_id"),
+        "aws_secret_access_key": kwargs.get("secret_access_key"),
+        "aws_session_token": kwargs.get("session_token"),
+    }
+    if botocore_config is not None:
+        client_kwargs["config"] = botocore_config
+    if verify is not None and verify is not True:
+        client_kwargs["verify"] = verify
+
+    return boto3.client("s3", **client_kwargs)
 
 
 def put_bytes(
