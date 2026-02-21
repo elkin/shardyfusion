@@ -19,6 +19,7 @@ from .manifest import (
     JsonManifestBuilder,
     ManifestArtifact,
     ManifestBuilder,
+    ManifestShardingSpec,
     RequiredBuildMeta,
     RequiredShardMeta,
 )
@@ -65,6 +66,7 @@ __all__ = [
     "JsonManifestBuilder",
     "ManifestArtifact",
     "ManifestBuilder",
+    "ManifestShardingSpec",
     "ManifestReader",
     "ManifestPublisher",
     "ManifestOptions",

@@ -3,51 +3,69 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Any, Protocol
 
-from .sharding import ShardingSpec
+from pydantic import BaseModel, ConfigDict, Field
+
+from .sharding import BoundaryValue, ShardingStrategy
 from .type_defs import JsonObject, JsonValue
 
 
-@dataclass(slots=True)
-class RequiredBuildMeta:
+class ManifestShardingSpec(BaseModel):
+    """Manifest-safe sharding specification (no Callable fields).
+
+    This is the Pydantic counterpart of :class:`ShardingSpec` for
+    serialization and deserialization in manifests.  Writer-side
+    ``ShardingSpec`` (which carries a ``custom_column_builder`` callable)
+    remains a plain dataclass.
+    """
+
+    model_config = ConfigDict(use_enum_values=False)
+
+    strategy: ShardingStrategy = ShardingStrategy.HASH
+    boundaries: list[BoundaryValue] | None = None
+    approx_quantile_rel_error: float = Field(default=0.01, gt=0, lt=1)
+    custom_expr: str | None = None
+
+
+class RequiredBuildMeta(BaseModel):
     """Library-owned metadata required for all manifests."""
+
+    model_config = ConfigDict(use_enum_values=False)
 
     run_id: str
     created_at: str
-    num_dbs: int
+    num_dbs: int = Field(gt=0)
     s3_prefix: str
     key_col: str
-    sharding: ShardingSpec
+    sharding: ManifestShardingSpec
     db_path_template: str
     tmp_prefix: str
     format_version: int = 1
     key_encoding: str = "u64be"
 
 
-@dataclass(slots=True)
-class RequiredShardMeta:
+class RequiredShardMeta(BaseModel):
     """Winner shard metadata emitted by writer partitions."""
 
-    db_id: int
+    db_id: int = Field(ge=0)
     db_url: str
-    attempt: int
-    row_count: int
-    min_key: int | str | None
-    max_key: int | str | None
-    checkpoint_id: str | None
-    writer_info: JsonObject = field(default_factory=dict)
+    attempt: int = Field(ge=0)
+    row_count: int = Field(ge=0)
+    min_key: int | str | None = None
+    max_key: int | str | None = None
+    checkpoint_id: str | None = None
+    writer_info: dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass(slots=True)
-class ParsedManifest:
+class ParsedManifest(BaseModel):
     """Typed representation of a parsed manifest payload."""
 
     required_build: RequiredBuildMeta
     shards: list[RequiredShardMeta]
-    custom: JsonObject = field(default_factory=dict)
+    custom: dict[str, Any] = Field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -59,8 +77,7 @@ class ManifestArtifact:
     headers: dict[str, str] = field(default_factory=dict)
 
 
-@dataclass(slots=True)
-class CurrentPointer:
+class CurrentPointer(BaseModel):
     """JSON pointer to the latest published manifest."""
 
     manifest_ref: str
@@ -140,8 +157,8 @@ class JsonManifestBuilder:
         merged_custom.update(custom_fields)
 
         payload_obj = {
-            "required": asdict(required_build),
-            "shards": [asdict(shard) for shard in shards],
+            "required": required_build.model_dump(mode="json"),
+            "shards": [shard.model_dump(mode="json") for shard in shards],
             "custom": merged_custom,
         }
         payload = json.dumps(

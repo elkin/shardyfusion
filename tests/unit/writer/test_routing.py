@@ -3,9 +3,13 @@ from __future__ import annotations
 import pytest
 from pyspark.sql import functions as F
 
-from slatedb_spark_sharded.manifest import RequiredBuildMeta, RequiredShardMeta
+from slatedb_spark_sharded.manifest import (
+    ManifestShardingSpec,
+    RequiredBuildMeta,
+    RequiredShardMeta,
+)
 from slatedb_spark_sharded.routing import SnapshotRouter
-from slatedb_spark_sharded.sharding import ShardingSpec, ShardingStrategy
+from slatedb_spark_sharded.sharding import ShardingStrategy
 
 
 def _build_required(
@@ -18,7 +22,7 @@ def _build_required(
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding="u64be",
-        sharding=ShardingSpec(strategy=strategy, boundaries=boundaries),
+        sharding=ManifestShardingSpec(strategy=strategy, boundaries=boundaries),
         db_path_template="db={db_id:05d}",
         tmp_prefix="_tmp",
     )
@@ -241,7 +245,7 @@ def _build_required_u32be(
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding="u32be",
-        sharding=ShardingSpec(strategy=strategy, boundaries=boundaries),
+        sharding=ManifestShardingSpec(strategy=strategy, boundaries=boundaries),
         db_path_template="db={db_id:05d}",
         tmp_prefix="_tmp",
     )

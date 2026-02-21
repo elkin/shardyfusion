@@ -133,7 +133,5 @@ def test_load_current_rejects_missing_manifest_ref(monkeypatch) -> None:
         "slatedb_spark_sharded.manifest_readers.try_get_bytes", fake_try_get_bytes
     )
     reader = DefaultS3ManifestReader("s3://bucket/prefix")
-    with pytest.raises(
-        ManifestParseError, match="missing required field `manifest_ref`"
-    ):
+    with pytest.raises(ManifestParseError, match="manifest_ref"):
         reader.load_current()

@@ -6,30 +6,36 @@ import os
 import stat
 import sys
 import tomllib
-from dataclasses import dataclass
 from pathlib import Path
+
+from pydantic import BaseModel, Field, field_validator
 
 from ..type_defs import S3ClientConfig
 
 # ---------------------------------------------------------------------------
-# Config dataclasses
+# Config models
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class ReaderConfig:
+class ReaderConfig(BaseModel):
     """Non-sensitive reader settings from [reader] in reader.toml."""
 
     current_url: str | None = None
     local_root: str = "/tmp/slatefusion"
     thread_safety: str = "lock"
-    max_workers: int = 4
+    max_workers: int = Field(default=4, ge=1)
     slate_env_file: str | None = None
     credentials_profile: str = "default"
 
+    @field_validator("current_url", mode="before")
+    @classmethod
+    def _empty_str_to_none(cls, v: object) -> object:
+        if v == "":
+            return None
+        return v
 
-@dataclass
-class OutputConfig:
+
+class OutputConfig(BaseModel):
     """Output formatting settings from [output] in reader.toml."""
 
     format: str = "jsonl"
@@ -37,8 +43,7 @@ class OutputConfig:
     null_repr: str = "null"
 
 
-@dataclass
-class CredentialsProfile:
+class CredentialsProfile(BaseModel):
     """One named profile from credentials.toml (credentials + S3 options)."""
 
     endpoint_url: str | None = None
@@ -50,9 +55,25 @@ class CredentialsProfile:
     addressing_style: str | None = None
     signature_version: str | None = None
     verify_ssl: bool | str = True
-    connect_timeout: int = 10
-    read_timeout: int = 30
-    max_attempts: int = 3
+    connect_timeout: int = Field(default=10, ge=0)
+    read_timeout: int = Field(default=30, ge=0)
+    max_attempts: int = Field(default=3, ge=1)
+
+    @field_validator(
+        "endpoint_url",
+        "region",
+        "access_key_id",
+        "secret_access_key",
+        "session_token",
+        "addressing_style",
+        "signature_version",
+        mode="before",
+    )
+    @classmethod
+    def _empty_str_to_none(cls, v: object) -> object:
+        if v == "":
+            return None
+        return v
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +94,7 @@ _CREDS_SEARCH_PATHS = [
 def _find_file(
     explicit: str | None, env_var: str, search_paths: list[Path]
 ) -> Path | None:
-    """Return first resolved path using: explicit flag → env var → search paths."""
+    """Return first resolved path using: explicit flag -> env var -> search paths."""
     if explicit:
         return Path(explicit)
     env = os.getenv(env_var)
@@ -99,23 +120,8 @@ def load_reader_config(
     with open(path, "rb") as fh:
         data = tomllib.load(fh)
 
-    reader_raw = data.get("reader", {})
-    output_raw = data.get("output", {})
-
-    reader_cfg = ReaderConfig(
-        current_url=reader_raw.get("current_url") or None,
-        local_root=reader_raw.get("local_root", "/tmp/slatefusion"),
-        thread_safety=reader_raw.get("thread_safety", "lock"),
-        max_workers=int(reader_raw.get("max_workers", 4)),
-        slate_env_file=reader_raw.get("slate_env_file") or None,
-        credentials_profile=reader_raw.get("credentials_profile", "default"),
-    )
-
-    output_cfg = OutputConfig(
-        format=output_raw.get("format", "jsonl"),
-        value_encoding=output_raw.get("value_encoding", "base64"),
-        null_repr=output_raw.get("null_repr", "null"),
-    )
+    reader_cfg = ReaderConfig.model_validate(data.get("reader", {}))
+    output_cfg = OutputConfig.model_validate(data.get("output", {}))
 
     return reader_cfg, output_cfg
 
@@ -150,28 +156,7 @@ def load_credentials_profile(
     if raw is None:
         raise KeyError(f"Credentials profile '{profile_name}' not found in {path}")
 
-    verify_ssl_raw = raw.get("verify_ssl", True)
-    verify_ssl: bool | str
-    if isinstance(verify_ssl_raw, bool):
-        verify_ssl = verify_ssl_raw
-    elif isinstance(verify_ssl_raw, str):
-        verify_ssl = verify_ssl_raw
-    else:
-        verify_ssl = bool(verify_ssl_raw)
-
-    return CredentialsProfile(
-        endpoint_url=raw.get("endpoint_url") or None,
-        region=raw.get("region") or None,
-        access_key_id=raw.get("access_key_id") or None,
-        secret_access_key=raw.get("secret_access_key") or None,
-        session_token=raw.get("session_token") or None,
-        addressing_style=raw.get("addressing_style") or None,
-        signature_version=raw.get("signature_version") or None,
-        verify_ssl=verify_ssl,
-        connect_timeout=int(raw.get("connect_timeout", 10)),
-        read_timeout=int(raw.get("read_timeout", 30)),
-        max_attempts=int(raw.get("max_attempts", 3)),
-    )
+    return CredentialsProfile.model_validate(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +184,7 @@ def coerce_s3_option(key: str, value: str) -> bool | int | str:
         raise ValueError(f"Cannot coerce '{value}' to bool for option '{key}'")
     if target is int:
         return int(value)
-    return value  # str or unknown key → leave as string
+    return value  # str or unknown key -> leave as string
 
 
 def coerce_cli_key(key: str, key_encoding: str) -> int | str:
@@ -222,7 +207,7 @@ def resolve_current_url(
     positional: str | None,
     reader_cfg: ReaderConfig,
 ) -> str:
-    """Resolve CURRENT URL from positional arg → env var → config file."""
+    """Resolve CURRENT URL from positional arg -> env var -> config file."""
     if positional:
         return positional
     env = os.getenv("SLATE_READER_CURRENT")

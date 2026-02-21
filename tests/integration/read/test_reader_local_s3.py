@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 
 import slatedb
 
 from slatedb_spark_sharded.manifest import (
     CurrentPointer,
+    ManifestShardingSpec,
     RequiredBuildMeta,
     RequiredShardMeta,
 )
 from slatedb_spark_sharded.reader import SlateShardedReader
-from slatedb_spark_sharded.sharding import ShardingSpec, ShardingStrategy
+from slatedb_spark_sharded.sharding import ShardingStrategy
 
 
 def test_reader_loads_current_and_manifest_from_local_s3(
@@ -53,7 +53,7 @@ def test_reader_loads_current_and_manifest_from_local_s3(
         s3_prefix=s3_prefix,
         key_col="id",
         key_encoding="u64be",
-        sharding=ShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=[10]),
+        sharding=ManifestShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=[10]),
         db_path_template="db={db_id:05d}",
         tmp_prefix="_tmp",
     )
@@ -81,22 +81,20 @@ def test_reader_loads_current_and_manifest_from_local_s3(
     ]
     manifest_payload = json.dumps(
         {
-            "required": asdict(required),
-            "shards": [asdict(shard) for shard in shards],
+            "required": required.model_dump(mode="json"),
+            "shards": [shard.model_dump(mode="json") for shard in shards],
             "custom": {},
         },
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
     current_payload = json.dumps(
-        asdict(
-            CurrentPointer(
-                manifest_ref=manifest_ref,
-                manifest_content_type="application/json",
-                run_id="reader-local",
-                updated_at="2026-01-01T00:00:00+00:00",
-            )
-        ),
+        CurrentPointer(
+            manifest_ref=manifest_ref,
+            manifest_content_type="application/json",
+            run_id="reader-local",
+            updated_at="2026-01-01T00:00:00+00:00",
+        ).model_dump(mode="json"),
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")

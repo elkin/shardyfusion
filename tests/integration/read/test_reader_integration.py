@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 
 import slatedb
 
 from slatedb_spark_sharded.manifest import (
     CurrentPointer,
+    ManifestShardingSpec,
     ParsedManifest,
     RequiredBuildMeta,
     RequiredShardMeta,
 )
 from slatedb_spark_sharded.manifest_readers import ManifestReader, parse_json_manifest
 from slatedb_spark_sharded.reader import SlateShardedReader
-from slatedb_spark_sharded.sharding import ShardingSpec, ShardingStrategy
+from slatedb_spark_sharded.sharding import ShardingStrategy
 
 
 class InMemoryManifestReader(ManifestReader):
@@ -33,13 +33,7 @@ class InMemoryManifestReader(ManifestReader):
         if payload is None:
             return None
         obj = json.loads(payload.decode("utf-8"))
-        return CurrentPointer(
-            manifest_ref=obj["manifest_ref"],
-            manifest_content_type=obj["manifest_content_type"],
-            run_id=obj["run_id"],
-            updated_at=obj["updated_at"],
-            format_version=int(obj.get("format_version", 1)),
-        )
+        return CurrentPointer.model_validate(obj)
 
     def load_manifest(
         self, ref: str, content_type: str | None = None
@@ -92,7 +86,9 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding="u64be",
-        sharding=ShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=[10, 20]),
+        sharding=ManifestShardingSpec(
+            strategy=ShardingStrategy.RANGE, boundaries=[10, 20]
+        ),
         db_path_template="db={db_id:05d}",
         tmp_prefix="_tmp",
     )
@@ -131,8 +127,8 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
 
     manifest_payload = json.dumps(
         {
-            "required": asdict(required),
-            "shards": [asdict(shard) for shard in shards],
+            "required": required.model_dump(mode="json"),
+            "shards": [shard.model_dump(mode="json") for shard in shards],
             "custom": {},
         },
         sort_keys=True,

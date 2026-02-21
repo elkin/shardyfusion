@@ -32,6 +32,7 @@ from .manifest import (
     CurrentPointer,
     JsonManifestBuilder,
     ManifestArtifact,
+    ManifestShardingSpec,
     RequiredBuildMeta,
     RequiredShardMeta,
 )
@@ -660,9 +661,9 @@ def _build_current_artifact(
         run_id=run_id,
         updated_at=_utc_now_iso(),
     )
-    payload = json.dumps(asdict(pointer), sort_keys=True, separators=(",", ":")).encode(
-        "utf-8"
-    )
+    payload = json.dumps(
+        pointer.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
     return ManifestArtifact(payload=payload, content_type="application/json")
 
 
@@ -670,15 +671,14 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _manifest_safe_sharding(sharding: ShardingSpec) -> ShardingSpec:
-    return ShardingSpec(
+def _manifest_safe_sharding(sharding: ShardingSpec) -> ManifestShardingSpec:
+    return ManifestShardingSpec(
         strategy=sharding.strategy,
         boundaries=list(sharding.boundaries)
         if sharding.boundaries is not None
         else None,
         approx_quantile_rel_error=sharding.approx_quantile_rel_error,
         custom_expr=sharding.custom_expr,
-        custom_column_builder=None,
     )
 
 

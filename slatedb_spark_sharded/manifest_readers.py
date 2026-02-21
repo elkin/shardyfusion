@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
-from typing import Callable, Protocol, cast
+from typing import Callable, Protocol
+
+from pydantic import ValidationError
 
 from .errors import ManifestParseError
 from .manifest import (
@@ -12,9 +14,8 @@ from .manifest import (
     RequiredBuildMeta,
     RequiredShardMeta,
 )
-from .sharding import ShardingSpec, ShardingStrategy
 from .storage import create_s3_client, get_bytes, try_get_bytes
-from .type_defs import JsonObject, S3ClientConfig
+from .type_defs import S3ClientConfig
 
 ManifestRef = str
 
@@ -80,32 +81,12 @@ class DefaultS3ManifestReader:
                 "CURRENT pointer payload is not valid JSON or not valid UTF-8"
             ) from exc
 
-        manifest_ref = obj.get("manifest_ref")
-        if not manifest_ref:
+        try:
+            return CurrentPointer.model_validate(obj)
+        except ValidationError as exc:
             raise ManifestParseError(
-                "CURRENT pointer missing required field `manifest_ref`"
-            )
-
-        manifest_content_type = obj.get("manifest_content_type")
-        if manifest_content_type is None:
-            raise ManifestParseError(
-                "CURRENT pointer missing required field `manifest_content_type`"
-            )
-
-        run_id = obj.get("run_id")
-        updated_at = obj.get("updated_at")
-        if run_id is None or updated_at is None:
-            raise ManifestParseError(
-                "CURRENT pointer missing required fields `run_id` or `updated_at`"
-            )
-
-        return CurrentPointer(
-            manifest_ref=str(manifest_ref),
-            manifest_content_type=str(manifest_content_type),
-            run_id=str(run_id),
-            updated_at=str(updated_at),
-            format_version=int(obj.get("format_version", 1)),
-        )
+                f"CURRENT pointer validation failed: {exc}"
+            ) from exc
 
     def load_manifest(
         self, ref: str, content_type: str | None = None
@@ -133,6 +114,9 @@ def parse_json_manifest(payload: bytes) -> ParsedManifest:
             "Manifest payload is not valid JSON or not valid UTF-8"
         ) from exc
 
+    if not isinstance(obj, dict):
+        raise ManifestParseError("Manifest payload must be a JSON object")
+
     required_raw = obj.get("required")
     shards_raw = obj.get("shards")
     custom_raw = obj.get("custom", {})
@@ -143,68 +127,22 @@ def parse_json_manifest(payload: bytes) -> ParsedManifest:
         raise ManifestParseError("Manifest missing required array `shards`")
     if not isinstance(custom_raw, dict):
         raise ManifestParseError("Manifest field `custom` must be an object")
-    custom = cast(JsonObject, custom_raw)
 
-    sharding_raw = required_raw.get("sharding")
-    if not isinstance(sharding_raw, dict):
-        raise ManifestParseError("Manifest required metadata missing `sharding` object")
     try:
-        strategy = ShardingStrategy.from_value(sharding_raw.get("strategy", "hash"))
-    except ValueError as exc:
-        raise ManifestParseError("Manifest sharding.strategy is invalid") from exc
-
-    sharding = ShardingSpec(
-        strategy=strategy,
-        boundaries=sharding_raw.get("boundaries"),
-        approx_quantile_rel_error=float(
-            sharding_raw.get("approx_quantile_rel_error", 0.01)
-        ),
-        custom_expr=sharding_raw.get("custom_expr"),
-    )
-
-    required_build = RequiredBuildMeta(
-        run_id=str(required_raw["run_id"]),
-        created_at=str(required_raw["created_at"]),
-        num_dbs=int(required_raw["num_dbs"]),
-        s3_prefix=str(required_raw["s3_prefix"]),
-        key_col=str(required_raw["key_col"]),
-        sharding=sharding,
-        db_path_template=str(required_raw["db_path_template"]),
-        tmp_prefix=str(required_raw["tmp_prefix"]),
-        format_version=int(required_raw.get("format_version", 1)),
-        key_encoding=str(required_raw.get("key_encoding", "u64be")),
-    )
-
-    shards: list[RequiredShardMeta] = []
-    for item in shards_raw:
-        if not isinstance(item, dict):
-            raise ManifestParseError("Manifest shards entries must be objects")
-        shard = RequiredShardMeta(
-            db_id=int(item["db_id"]),
-            db_url=str(item["db_url"]),
-            attempt=int(item["attempt"]),
-            row_count=int(item["row_count"]),
-            min_key=item.get("min_key"),
-            max_key=item.get("max_key"),
-            checkpoint_id=(
-                None
-                if item.get("checkpoint_id") is None
-                else str(item.get("checkpoint_id"))
-            ),
-            writer_info=cast(JsonObject, dict(item.get("writer_info") or {})),
+        parsed = ParsedManifest.model_validate(
+            {"required_build": required_raw, "shards": shards_raw, "custom": custom_raw}
         )
-        shards.append(shard)
+    except ValidationError as exc:
+        raise ManifestParseError(f"Manifest validation failed: {exc}") from exc
 
-    _validate_manifest(required_build, shards)
-    return ParsedManifest(required_build=required_build, shards=shards, custom=custom)
+    _validate_manifest(parsed.required_build, parsed.shards)
+    return parsed
 
 
 def _validate_manifest(
     required_build: RequiredBuildMeta, shards: list[RequiredShardMeta]
 ) -> None:
     num_dbs = required_build.num_dbs
-    if num_dbs <= 0:
-        raise ManifestParseError("Manifest required.num_dbs must be > 0")
     if len(shards) != num_dbs:
         raise ManifestParseError(
             f"Manifest shard count mismatch: expected {num_dbs}, got {len(shards)}"

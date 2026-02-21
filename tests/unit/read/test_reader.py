@@ -9,12 +9,13 @@ import pytest
 from slatedb_spark_sharded.errors import ReaderStateError, SlateDbApiError
 from slatedb_spark_sharded.manifest import (
     CurrentPointer,
+    ManifestShardingSpec,
     ParsedManifest,
     RequiredBuildMeta,
     RequiredShardMeta,
 )
 from slatedb_spark_sharded.reader import SlateShardedReader, _open_slatedb_reader
-from slatedb_spark_sharded.sharding import ShardingSpec, ShardingStrategy
+from slatedb_spark_sharded.sharding import ShardingStrategy
 
 
 class _MutableManifestReader:
@@ -56,7 +57,7 @@ def _required_build() -> RequiredBuildMeta:
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding="u64be",
-        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
+        sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
         db_path_template="db={db_id:05d}",
         tmp_prefix="_tmp",
     )
@@ -218,7 +219,7 @@ def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding="u64be",
-        sharding=ShardingSpec(strategy=ShardingStrategy.RANGE),
+        sharding=ManifestShardingSpec(strategy=ShardingStrategy.RANGE),
         db_path_template="db={db_id:05d}",
         tmp_prefix="_tmp",
     )

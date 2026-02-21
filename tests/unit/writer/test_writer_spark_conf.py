@@ -175,6 +175,8 @@ def test_write_sharded_slatedb_wraps_input_df_when_cache_enabled(monkeypatch) ->
 
 
 def test_manifest_safe_sharding_preserves_boundaries_for_custom_expr() -> None:
+    from slatedb_spark_sharded.manifest import ManifestShardingSpec
+
     spec = ShardingSpec(
         strategy=ShardingStrategy.CUSTOM_EXPR,
         boundaries=[10, 20],
@@ -183,7 +185,8 @@ def test_manifest_safe_sharding_preserves_boundaries_for_custom_expr() -> None:
 
     manifest_spec = _manifest_safe_sharding(spec)
 
+    assert isinstance(manifest_spec, ManifestShardingSpec)
     assert manifest_spec.strategy == ShardingStrategy.CUSTOM_EXPR
     assert manifest_spec.boundaries == [10, 20]
     assert manifest_spec.custom_expr == "id % 2"
-    assert manifest_spec.custom_column_builder is None
+    assert not hasattr(manifest_spec, "custom_column_builder")
