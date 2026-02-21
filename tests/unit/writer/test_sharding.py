@@ -65,18 +65,13 @@ def test_range_sharding_with_boundaries(spark) -> None:
     assert got == [(1, 0), (5, 0), (10, 1), (15, 1), (20, 2)]
 
 
-def test_range_sharding_accepts_float_key_type(spark) -> None:
+def test_range_sharding_rejects_float_key_type(spark) -> None:
     df = spark.createDataFrame([(0.1,), (1.2,), (2.8,)], ["id"])
     spec = ShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=[1.0])
-    with_db_id, _ = add_db_id_column(df, key_col="id", num_dbs=2, sharding=spec)
-
-    got = {
-        row["id"]: row[DB_ID_COL]
-        for row in with_db_id.select("id", DB_ID_COL).collect()
-    }
-    assert got[0.1] == 0
-    assert got[1.2] == 1
-    assert got[2.8] == 1
+    with pytest.raises(
+        ShardAssignmentError, match="Range sharding requires key column type one of"
+    ):
+        add_db_id_column(df, key_col="id", num_dbs=2, sharding=spec)
 
 
 def test_range_sharding_rejects_boolean_key_type(spark) -> None:

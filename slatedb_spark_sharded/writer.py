@@ -572,7 +572,7 @@ def _write_one_shard_partition(
             f"Shard write failed for db_id={db_id}, attempt={attempt}: {exc}"
         ) from exc
 
-    writer_info = {
+    writer_info: JsonObject = {
         "stage_id": stage_id,
         "task_attempt_id": task_attempt_id,
         "attempt": attempt,
@@ -584,8 +584,8 @@ def _write_one_shard_partition(
         db_url=db_url,
         attempt=attempt,
         row_count=row_count,
-        min_key=_normalize_key(min_key),
-        max_key=_normalize_key(max_key),
+        min_key=min_key,
+        max_key=max_key,
         checkpoint_id=checkpoint_id,
         writer_info=writer_info,
     )
@@ -594,9 +594,9 @@ def _write_one_shard_partition(
 def _update_min_max(
     min_key: KeyLike | None,
     max_key: KeyLike | None,
-    key: object,
+    key: KeyLike | None,
 ) -> tuple[KeyLike | None, KeyLike | None]:
-    normalized_key = _normalize_key(key)
+    normalized_key = key
     if normalized_key is None:
         return min_key, max_key
 
@@ -627,12 +627,8 @@ def _update_min_max(
     return min_key, max_key
 
 
-def _normalize_key(key: object) -> KeyLike | None:
-    if key is None:
-        return None
-    if isinstance(key, (int, str)):
-        return key
-    return str(key)
+def _normalize_key(key: KeyLike | None) -> KeyLike | None:
+    return key
 
 
 def _parse_attempt_line(line: str) -> _ShardAttemptResult:

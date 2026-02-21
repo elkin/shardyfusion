@@ -7,7 +7,7 @@ from pyspark import RDD
 from pyspark.ml.feature import Bucketizer
 from pyspark.sql import Column, DataFrame, Row
 from pyspark.sql import functions as F
-from pyspark.sql.types import DoubleType, FloatType, IntegerType, LongType, StringType
+from pyspark.sql.types import IntegerType, LongType, StringType
 
 from .errors import ShardAssignmentError
 from .ordering import compare_ordered
@@ -120,11 +120,11 @@ def _validate_key_col_type(
             return
 
         case ShardingStrategy.RANGE:
-            allowed_range = (IntegerType, LongType, FloatType, DoubleType, StringType)
+            allowed_range = (IntegerType, LongType, StringType)
             if not isinstance(dtype, allowed_range):
                 raise ShardAssignmentError(
                     "Range sharding requires key column type one of "
-                    "IntegerType, LongType, FloatType, DoubleType, StringType; "
+                    "IntegerType, LongType, StringType; "
                     f"got {type(dtype).__name__} for `{key_col}`"
                 )
             return
