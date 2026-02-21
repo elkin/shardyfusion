@@ -622,10 +622,6 @@ def _update_min_max(
     return min_key, max_key
 
 
-def _normalize_key(key: KeyLike | None) -> KeyLike | None:
-    return key
-
-
 def _select_winners(
     attempts: list[_ShardAttemptResult],
     *,
