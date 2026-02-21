@@ -247,17 +247,17 @@ def _resolve_boundaries(
         return boundaries
 
     probabilities = [idx / num_dbs for idx in range(1, num_dbs)]
-    boundaries = df.approxQuantile(
+    quantiles = df.approxQuantile(
         key_col,
         probabilities,
         sharding.approx_quantile_rel_error,
     )
-    if len(boundaries) != expected:
+    if len(quantiles) != expected:
         raise ShardAssignmentError(
             "Range sharding could not derive the expected number of boundaries from "
-            f"approxQuantile: expected {expected}, got {len(boundaries)}"
+            f"approxQuantile: expected {expected}, got {len(quantiles)}"
         )
-    resolved: list[BoundaryValue] = list(boundaries)
+    resolved: list[BoundaryValue] = list(quantiles)
     _validate_boundaries(resolved)
     return resolved
 
