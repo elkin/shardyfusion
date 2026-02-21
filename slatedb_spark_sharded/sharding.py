@@ -206,8 +206,8 @@ def _validate_key_col_type(
         ) from exc
 
     if strategy == ShardingStrategy.HASH:
-        allowed = (IntegerType, LongType)
-        if not isinstance(dtype, allowed):
+        allowed_hash = (IntegerType, LongType)
+        if not isinstance(dtype, allowed_hash):
             raise ShardAssignmentError(
                 "Hash sharding requires key column type IntegerType or LongType; "
                 f"got {type(dtype).__name__} for `{key_col}`"
@@ -215,8 +215,8 @@ def _validate_key_col_type(
         return
 
     if strategy == ShardingStrategy.RANGE:
-        allowed = (IntegerType, LongType, FloatType, DoubleType, StringType)
-        if not isinstance(dtype, allowed):
+        allowed_range = (IntegerType, LongType, FloatType, DoubleType, StringType)
+        if not isinstance(dtype, allowed_range):
             raise ShardAssignmentError(
                 "Range sharding requires key column type one of "
                 "IntegerType, LongType, FloatType, DoubleType, StringType; "
