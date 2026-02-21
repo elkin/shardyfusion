@@ -15,6 +15,9 @@ uv sync --extra read
 # Writer-side only
 uv sync --extra writer
 
+# CLI only (no Spark/Java required)
+uv sync --extra cli
+
 # Full install
 uv sync --all-extras
 ```

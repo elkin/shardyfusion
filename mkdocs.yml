@@ -27,6 +27,7 @@ nav:
   - Getting Started: getting-started.md
   - Writer Side: writer.md
   - Reader Side: reader.md
+  - CLI (slate-reader): cli.md
   - Architecture: how-it-works.md
   - Operations: operations.md
   - Release Process: release.md
