@@ -13,7 +13,7 @@ from slatedb_spark_sharded.manifest import (
 )
 from slatedb_spark_sharded.manifest_readers import ManifestReader, parse_json_manifest
 from slatedb_spark_sharded.reader import SlateShardedReader
-from slatedb_spark_sharded.sharding import ShardingStrategy
+from slatedb_spark_sharded.sharding_types import ShardingStrategy
 
 
 class InMemoryManifestReader(ManifestReader):

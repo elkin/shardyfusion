@@ -11,7 +11,7 @@ from slatedb_spark_sharded.manifest import (
     RequiredShardMeta,
 )
 from slatedb_spark_sharded.reader import SlateShardedReader
-from slatedb_spark_sharded.sharding import ShardingStrategy
+from slatedb_spark_sharded.sharding_types import ShardingStrategy
 
 
 def test_reader_loads_current_and_manifest_from_local_s3(
