@@ -113,6 +113,13 @@ class TestCoerceCliKey:
     def test_utf8_passthrough(self) -> None:
         assert coerce_cli_key("hello", "utf8") == "hello"
 
+    def test_u32be_int_string(self) -> None:
+        assert coerce_cli_key("42", "u32be") == 42
+
+    def test_u32be_non_numeric_raises(self) -> None:
+        with pytest.raises(ValueError, match="not a valid integer"):
+            coerce_cli_key("abc", "u32be")
+
     def test_other_encoding_passthrough(self) -> None:
         assert coerce_cli_key("42", "raw") == "42"
 

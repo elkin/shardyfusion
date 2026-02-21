@@ -34,6 +34,7 @@ def test_config_accepts_valid_values() -> None:
         {"output": OutputOptions(tmp_prefix="../tmp")},
         {"manifest": ManifestOptions(manifest_name="bad/name")},
         {"sharding": ShardingSpec()},
+        {"key_encoding": "u16be"},
     ],
 )
 def test_config_rejects_invalid_values(kwargs: dict[str, object]) -> None:
@@ -47,3 +48,24 @@ def test_config_rejects_invalid_values(kwargs: dict[str, object]) -> None:
 
     with pytest.raises(ConfigValidationError):
         SlateDbConfig(**base)
+
+
+def test_config_accepts_u32be_key_encoding() -> None:
+    config = SlateDbConfig(
+        num_dbs=4,
+        s3_prefix="s3://bucket/prefix",
+        key_col="id",
+        value_spec=ValueSpec.binary_col("payload"),
+        key_encoding="u32be",
+    )
+    assert config.key_encoding == "u32be"
+
+
+def test_config_defaults_to_u64be_key_encoding() -> None:
+    config = SlateDbConfig(
+        num_dbs=4,
+        s3_prefix="s3://bucket/prefix",
+        key_col="id",
+        value_spec=ValueSpec.binary_col("payload"),
+    )
+    assert config.key_encoding == "u64be"

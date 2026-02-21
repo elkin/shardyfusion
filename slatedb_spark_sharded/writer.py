@@ -42,8 +42,6 @@ from .sharding import ShardingSpec, add_db_id_column, prepare_partitioned_rdd
 from .slatedb_adapter import SlateDbAdapterFactory, default_adapter_factory
 from .type_defs import JsonObject, KeyLike
 
-KEY_ENCODING = "u64be"
-
 
 @dataclass(slots=True)
 class _PartitionWriteConfig:
@@ -53,6 +51,7 @@ class _PartitionWriteConfig:
     db_path_template: str
     local_root: str
     key_col: str
+    key_encoding: str
     value_spec: ValueSpec
     batch_size: int
     slate_env_file: str | None
@@ -305,6 +304,7 @@ def _build_partition_write_runtime(
         db_path_template=config.output.db_path_template,
         local_root=config.output.local_root,
         key_col=config.key_col,
+        key_encoding=config.key_encoding,
         value_spec=config.value_spec,
         batch_size=config.engine.batch_size,
         slate_env_file=config.engine.slate_env_file,
@@ -357,7 +357,7 @@ def _build_manifest_artifact(
         sharding=_manifest_safe_sharding(resolved_sharding),
         db_path_template=config.output.db_path_template,
         tmp_prefix=config.output.tmp_prefix,
-        key_encoding=KEY_ENCODING,
+        key_encoding=config.key_encoding,
     )
 
     builder = config.manifest.manifest_builder or JsonManifestBuilder()
@@ -501,7 +501,7 @@ def _write_one_shard_partition(
         ) as adapter:
             for _, row in rows_iter:
                 key_value = row[runtime.key_col]
-                key_bytes = encode_key(key_value, encoding=KEY_ENCODING)
+                key_bytes = encode_key(key_value, encoding=runtime.key_encoding)
                 value_bytes = runtime.value_spec.encode(row)
 
                 batch.append((key_bytes, value_bytes))

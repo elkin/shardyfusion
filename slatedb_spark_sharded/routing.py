@@ -70,6 +70,15 @@ class SnapshotRouter:
                 raise ValueError("u64be key encoding requires integer lookup keys")
             return encode_key(key, encoding="u64be")
 
+        if self.key_encoding == "u32be":
+            if isinstance(key, bytes):
+                if len(key) != 4:
+                    raise ValueError("u32be key bytes must have length 4")
+                return key
+            if not isinstance(key, int):
+                raise ValueError("u32be key encoding requires integer lookup keys")
+            return encode_key(key, encoding="u32be")
+
         if isinstance(key, bytes):
             return key
         if isinstance(key, str):
@@ -124,6 +133,10 @@ class SnapshotRouter:
                 if len(key) != 8:
                     raise ValueError("u64be key bytes must have length 8")
                 return int.from_bytes(key, byteorder="big", signed=False)
+            if self.key_encoding == "u32be":
+                if len(key) != 4:
+                    raise ValueError("u32be key bytes must have length 4")
+                return int.from_bytes(key, byteorder="big", signed=False)
             try:
                 return key.decode("utf-8")
             except UnicodeDecodeError as exc:
@@ -174,6 +187,7 @@ class SnapshotRouter:
 
 
 _XXHASH64_SEED = 42
+_UINT32_MAX = (1 << 32) - 1
 _UINT64_MAX = (1 << 64) - 1
 _INT64_MAX = (1 << 63) - 1
 _INT64_MOD = 1 << 64
@@ -198,6 +212,20 @@ def _xxhash64_payload(key: KeyInput, key_encoding: str) -> bytes:
             raise ValueError("u64be hash routing requires integer lookup keys")
         if key < 0 or key > _UINT64_MAX:
             raise ValueError("u64be hash routing requires key in [0, 2^64-1]")
+        return key.to_bytes(8, byteorder="little", signed=False)
+
+    if key_encoding == "u32be":
+        # Zero-extend to 8-byte little-endian to match Spark's xxhash64(cast(key as long))
+        if isinstance(key, bytes):
+            if len(key) != 4:
+                raise ValueError("u32be key bytes must have length 4")
+            numeric_key = int.from_bytes(key, byteorder="big", signed=False)
+            return numeric_key.to_bytes(8, byteorder="little", signed=False)
+
+        if not isinstance(key, int):
+            raise ValueError("u32be hash routing requires integer lookup keys")
+        if key < 0 or key > _UINT32_MAX:
+            raise ValueError("u32be hash routing requires key in [0, 2^32-1]")
         return key.to_bytes(8, byteorder="little", signed=False)
 
     if isinstance(key, bytes):

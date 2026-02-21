@@ -72,6 +72,7 @@ def _make_runtime(
     *,
     adapter: _FakeAdapter | None = None,
     batch_size: int = 100,
+    key_encoding: str = "u64be",
 ) -> _PartitionWriteConfig:
     if adapter is None:
         adapter = _FakeAdapter()
@@ -82,6 +83,7 @@ def _make_runtime(
         db_path_template="db={db_id:05d}",
         local_root=str(tmp_path),
         key_col="key",
+        key_encoding=key_encoding,
         value_spec=ValueSpec.binary_col("val"),
         batch_size=batch_size,
         slate_env_file=None,
@@ -213,3 +215,13 @@ def test_batch_flushing(tmp_path) -> None:
         (b"\x00\x00\x00\x00\x00\x00\x00\x01", b"v"),
         (b"\x00\x00\x00\x00\x00\x00\x00\x02", b"v"),
     ]
+
+
+def test_u32be_produces_4_byte_keys(tmp_path) -> None:
+    adapter = _FakeAdapter()
+    runtime = _make_runtime(tmp_path, adapter=adapter, key_encoding="u32be")
+    _run(0, _rows(1, 256), runtime)
+    written = adapter.write_calls[0]
+    # u32be keys should be 4 bytes
+    assert written[0][0] == b"\x00\x00\x00\x01"
+    assert written[1][0] == b"\x00\x00\x01\x00"

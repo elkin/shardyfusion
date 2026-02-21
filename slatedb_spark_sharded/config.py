@@ -72,6 +72,7 @@ class SlateDbConfig:
     s3_prefix: str
     key_col: str
     value_spec: ValueSpec
+    key_encoding: str = "u64be"
 
     sharding: ShardingOptions = field(default_factory=ShardingOptions)
     output: OutputOptions = field(default_factory=OutputOptions)
@@ -87,6 +88,11 @@ class SlateDbConfig:
             raise ConfigValidationError("manifest must be ManifestOptions")
         if not isinstance(self.engine, EngineOptions):
             raise ConfigValidationError("engine must be EngineOptions")
+
+        if self.key_encoding not in ("u64be", "u32be"):
+            raise ConfigValidationError(
+                f"key_encoding must be 'u64be' or 'u32be', got {self.key_encoding!r}"
+            )
 
         if self.num_dbs <= 0:
             raise ConfigValidationError("num_dbs must be > 0")

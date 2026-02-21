@@ -208,7 +208,7 @@ def coerce_cli_key(key: str, key_encoding: str) -> int | str:
     For ``u64be`` encoding the key must be a valid integer; for other
     encodings the raw string is returned unchanged.
     """
-    if key_encoding == "u64be":
+    if key_encoding in ("u64be", "u32be"):
         try:
             return int(key)
         except ValueError:

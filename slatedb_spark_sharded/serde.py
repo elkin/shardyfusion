@@ -20,16 +20,25 @@ class _AsDictRow(Protocol):
 def encode_key(key: object, *, encoding: str = "u64be") -> bytes:
     """Encode a key into bytes for SlateDB."""
 
-    if encoding != "u64be":
-        raise ConfigValidationError(f"Unsupported key encoding: {encoding}")
+    if encoding == "u64be":
+        if not isinstance(key, int):
+            raise ConfigValidationError(
+                f"u64be encoding expects int key, got {type(key)!r}"
+            )
+        if key < 0 or key > (2**64 - 1):
+            raise ConfigValidationError("u64be encoding requires value in [0, 2^64-1]")
+        return key.to_bytes(8, byteorder="big", signed=False)
 
-    if not isinstance(key, int):
-        raise ConfigValidationError(
-            f"u64be encoding expects int key, got {type(key)!r}"
-        )
-    if key < 0 or key > (2**64 - 1):
-        raise ConfigValidationError("u64be encoding requires value in [0, 2^64-1]")
-    return key.to_bytes(8, byteorder="big", signed=False)
+    if encoding == "u32be":
+        if not isinstance(key, int):
+            raise ConfigValidationError(
+                f"u32be encoding expects int key, got {type(key)!r}"
+            )
+        if key < 0 or key > (2**32 - 1):
+            raise ConfigValidationError("u32be encoding requires value in [0, 2^32-1]")
+        return key.to_bytes(4, byteorder="big", signed=False)
+
+    raise ConfigValidationError(f"Unsupported key encoding: {encoding}")
 
 
 @dataclass(slots=True)
