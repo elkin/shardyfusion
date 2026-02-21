@@ -1,7 +1,5 @@
 """Manifest publishing protocols and default S3 implementation."""
 
-from __future__ import annotations
-
 from typing import Protocol
 
 from .manifest import ManifestArtifact

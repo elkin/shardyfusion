@@ -1,14 +1,12 @@
 """Testing helpers that must be importable from Spark worker processes."""
 
-from __future__ import annotations
-
 import base64
 import json
 import os
 import types
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TypedDict
+from typing import Self, TypedDict
 from urllib.parse import quote
 
 from .storage import parse_s3_url
@@ -38,7 +36,7 @@ class FakeSlateDbAdapter:
     def db(self) -> FakeDb:
         return self._db
 
-    def __enter__(self) -> "FakeSlateDbAdapter":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(
@@ -107,7 +105,7 @@ class FileBackedSlateDbAdapter:
     def db(self) -> FileBackedDb:
         return self._db
 
-    def __enter__(self) -> "FileBackedSlateDbAdapter":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(
@@ -254,7 +252,7 @@ class RealSlateDbFileAdapter:
     def db(self) -> object:
         return self._db
 
-    def __enter__(self) -> "RealSlateDbFileAdapter":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(

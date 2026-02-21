@@ -1,7 +1,5 @@
 """Configuration loading, resolution, and S3 client factory for the reader CLI."""
 
-from __future__ import annotations
-
 import os
 import stat
 import sys

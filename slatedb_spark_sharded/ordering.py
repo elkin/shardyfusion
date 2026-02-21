@@ -1,7 +1,5 @@
 """Shared helpers for deterministic ordered comparisons."""
 
-from __future__ import annotations
-
 from typing import Any, cast
 
 

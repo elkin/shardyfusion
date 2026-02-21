@@ -1,10 +1,8 @@
 """Thin adapter around official SlateDB Python bindings."""
 
-from __future__ import annotations
-
 import json
 import types
-from typing import Iterable, Protocol
+from typing import Iterable, Protocol, Self
 
 from .errors import SlateDbApiError
 from .logging import FailureSeverity, log_failure
@@ -14,7 +12,7 @@ from .type_defs import JsonObject
 class SlateDbAdapter(Protocol):
     """Adapter protocol used by partition writers."""
 
-    def __enter__(self) -> "SlateDbAdapter":
+    def __enter__(self) -> Self:
         """Enter adapter context."""
         ...
 
@@ -103,7 +101,7 @@ class DefaultSlateDbAdapter:
     def db(self) -> object:
         return self._db
 
-    def __enter__(self) -> "DefaultSlateDbAdapter":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(

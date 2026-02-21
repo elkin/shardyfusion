@@ -1,7 +1,5 @@
 """Manifest models and extensibility protocols."""
 
-from __future__ import annotations
-
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -9,7 +7,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .sharding import BoundaryValue, ShardingStrategy
+from .sharding_types import BoundaryValue, ShardingStrategy
 from .type_defs import JsonObject, JsonValue
 
 

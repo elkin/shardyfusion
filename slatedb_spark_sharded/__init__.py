@@ -34,7 +34,7 @@ from .publish import DefaultS3Publisher, ManifestPublisher
 from .reader import SlateShardedReader
 from .routing import SnapshotRouter
 from .serde import ValueSpec
-from .sharding import ShardingSpec, ShardingStrategy
+from .sharding_types import ShardingSpec, ShardingStrategy
 
 _writer_exports: list[str] = []
 try:

@@ -1,7 +1,5 @@
 """Service-side sharded SlateDB reader helpers."""
 
-from __future__ import annotations
-
 import os
 import threading
 from collections.abc import Iterator
@@ -32,7 +30,7 @@ class _ReaderState:
 class _ShardHandle:
     mode: str
     reader: ShardReader | None = None
-    lock: threading.Lock | None = None
+    lock: "threading.Lock | None" = None
     pool: "_ReaderPool | None" = None
 
 

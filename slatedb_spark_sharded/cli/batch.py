@@ -1,7 +1,5 @@
 """Batch / script execution for the slate-reader CLI."""
 
-from __future__ import annotations
-
 import sys
 from typing import IO, Any
 

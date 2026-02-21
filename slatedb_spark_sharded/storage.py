@@ -1,7 +1,5 @@
 """S3 small-object helpers used by the default publisher."""
 
-from __future__ import annotations
-
 import os
 import time
 from collections.abc import Callable

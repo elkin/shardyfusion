@@ -1,7 +1,5 @@
 """Public sharded snapshot writer entrypoint."""
 
-from __future__ import annotations
-
 import json
 import logging
 import os
@@ -11,7 +9,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import cast
+from typing import Self, cast
 from uuid import uuid4
 
 from pyspark import RDD, StorageLevel, TaskContext
@@ -101,7 +99,7 @@ class SparkConfOverrideContext:
         self._overrides = dict(overrides or {})
         self._original_values: dict[str, str | None] = {}
 
-    def __enter__(self) -> "SparkConfOverrideContext":
+    def __enter__(self) -> Self:
         for key, value in self._overrides.items():
             self._original_values[key] = self._get_conf_or_none(key)
             try:

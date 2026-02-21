@@ -1,7 +1,5 @@
 """Manifest loading interfaces and default S3-backed implementation."""
 
-from __future__ import annotations
-
 import json
 from typing import Callable, Protocol
 

@@ -1,10 +1,8 @@
 """Key/value serialization utilities."""
 
-from __future__ import annotations
-
 import json
 from dataclasses import dataclass
-from typing import Callable, Mapping, Protocol, cast
+from typing import Callable, Mapping, Protocol, Self, cast
 
 from .errors import ConfigValidationError
 
@@ -54,7 +52,7 @@ class ValueSpec:
         return self.encoder(row)
 
     @classmethod
-    def binary_col(cls, col_name: str) -> "ValueSpec":
+    def binary_col(cls, col_name: str) -> Self:
         """Use one column directly as bytes payload."""
 
         def _encode(row: object) -> bytes:
@@ -74,7 +72,7 @@ class ValueSpec:
         return cls(encoder=_encode, description=f"binary_col:{col_name}")
 
     @classmethod
-    def json_cols(cls, cols: list[str] | None = None) -> "ValueSpec":
+    def json_cols(cls, cols: list[str] | None = None) -> Self:
         """Encode selected columns (or full row) as UTF-8 JSON."""
 
         def _encode(row: object) -> bytes:
@@ -92,7 +90,7 @@ class ValueSpec:
         return cls(encoder=_encode, description=f"json_cols:{detail}")
 
     @classmethod
-    def callable_encoder(cls, fn: Callable[[object], bytes]) -> "ValueSpec":
+    def callable_encoder(cls, fn: Callable[[object], bytes]) -> Self:
         """Use a custom callable encoder."""
 
         return cls(encoder=fn, description=getattr(fn, "__name__", "callable_encoder"))

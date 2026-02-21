@@ -1,7 +1,5 @@
 """Snapshot routing helpers for sharded SlateDB manifests."""
 
-from __future__ import annotations
-
 from bisect import bisect_right
 from dataclasses import dataclass
 from typing import Callable
@@ -11,7 +9,7 @@ import xxhash
 from .manifest import RequiredBuildMeta, RequiredShardMeta
 from .ordering import compare_ordered
 from .serde import encode_key
-from .sharding import ShardingStrategy
+from .sharding_types import ShardingStrategy
 from .type_defs import KeyInput
 
 RangeValue = int | float | str

@@ -1,21 +1,15 @@
 """Configuration models for sharded SlateDB writes."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from .errors import ConfigValidationError
+from .manifest import ManifestBuilder
+from .publish import ManifestPublisher
 from .serde import ValueSpec
-from .sharding import ShardingSpec
+from .sharding_types import ShardingSpec
+from .slatedb_adapter import SlateDbAdapterFactory
 from .type_defs import JsonObject, S3ClientConfig
-
-if TYPE_CHECKING:
-    from .manifest import ManifestBuilder
-    from .publish import ManifestPublisher
-    from .slatedb_adapter import SlateDbAdapterFactory
-
 
 _SAFE_SEGMENT_CHARS = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"

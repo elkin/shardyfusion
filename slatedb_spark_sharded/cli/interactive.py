@@ -1,7 +1,5 @@
 """Interactive REPL for the slate-reader CLI, backed by SlateShardedReader."""
 
-from __future__ import annotations
-
 import cmd
 import shlex
 import sys

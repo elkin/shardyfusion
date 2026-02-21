@@ -1,7 +1,5 @@
 """Shared type aliases and protocols used across the package."""
 
-from __future__ import annotations
-
 from typing import Protocol, TypeAlias, TypedDict
 
 JsonScalar: TypeAlias = None | bool | int | float | str
