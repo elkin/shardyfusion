@@ -24,7 +24,7 @@ from .errors import (
     ShardCoverageError,
     SlatedbSparkShardedError,
 )
-from .logging import log_event
+from .logging import FailureSeverity, log_event, log_failure
 from .manifest import (
     BuildDurations,
     BuildResult,
@@ -372,6 +372,14 @@ def _build_manifest_artifact(
             custom_fields=config.manifest.custom_manifest_fields,
         )
     except Exception as exc:  # pragma: no cover - custom builder surface
+        log_failure(
+            "manifest_build_failed",
+            severity=FailureSeverity.ERROR,
+            error=exc,
+            run_id=run_id,
+            builder_type=type(builder).__name__,
+            include_traceback=True,
+        )
         raise ManifestBuildError("Failed to build manifest artifact") from exc
 
 
@@ -381,7 +389,12 @@ def _publish_manifest_and_current(
     run_id: str,
     artifact: ManifestArtifact,
 ) -> _PublishResult:
-    """Publish manifest and CURRENT pointer, enforcing publish ordering semantics."""
+    """Publish manifest and CURRENT pointer, enforcing publish ordering semantics.
+
+    Both publish steps already benefit from per-request S3 retries in
+    ``storage.put_bytes``.  This function additionally logs failures at
+    severity-appropriate levels before re-raising.
+    """
 
     publisher = config.manifest.publisher or DefaultS3Publisher(
         config.s3_prefix,
@@ -397,6 +410,14 @@ def _publish_manifest_and_current(
             run_id=run_id,
         )
     except Exception as exc:  # pragma: no cover - runtime publisher failures
+        log_failure(
+            "manifest_publish_failed",
+            severity=FailureSeverity.ERROR,
+            error=exc,
+            run_id=run_id,
+            s3_prefix=config.s3_prefix,
+            include_traceback=True,
+        )
         raise PublishManifestError("Failed to publish manifest") from exc
 
     current_artifact = _build_current_artifact(
@@ -411,6 +432,14 @@ def _publish_manifest_and_current(
             artifact=current_artifact,
         )
     except Exception as exc:  # pragma: no cover - runtime publisher failures
+        log_failure(
+            "current_publish_failed",
+            severity=FailureSeverity.CRITICAL,
+            error=exc,
+            run_id=run_id,
+            manifest_ref=manifest_ref,
+            include_traceback=True,
+        )
         raise PublishCurrentError(
             f"Manifest already published at {manifest_ref}; failed publishing CURRENT"
         ) from exc
@@ -520,6 +549,16 @@ def _write_one_shard_partition(
             adapter.flush_wal_if_supported()
             checkpoint_id = adapter.create_checkpoint_if_supported()
     except Exception as exc:  # pragma: no cover - worker runtime failure surface
+        log_failure(
+            "shard_write_failed",
+            severity=FailureSeverity.ERROR,
+            error=exc,
+            db_id=db_id,
+            attempt=attempt,
+            db_url=db_url,
+            rows_written=row_count,
+            include_traceback=True,
+        )
         raise SlatedbSparkShardedError(
             f"Shard write failed for db_id={db_id}, attempt={attempt}: {exc}"
         ) from exc
@@ -588,17 +627,40 @@ def _normalize_key(key: object) -> KeyLike | None:
 
 
 def _parse_attempt_line(line: str) -> _ShardAttemptResult:
-    payload = json.loads(line)
-    return _ShardAttemptResult(
-        db_id=int(payload["db_id"]),
-        db_url=str(payload["db_url"]),
-        attempt=int(payload["attempt"]),
-        row_count=int(payload.get("row_count", 0)),
-        min_key=payload.get("min_key"),
-        max_key=payload.get("max_key"),
-        checkpoint_id=payload.get("checkpoint_id"),
-        writer_info=cast(JsonObject, dict(payload.get("writer_info") or {})),
-    )
+    try:
+        payload = json.loads(line)
+    except (json.JSONDecodeError, ValueError) as exc:
+        log_failure(
+            "attempt_result_parse_failed",
+            severity=FailureSeverity.CRITICAL,
+            error=exc,
+            line_preview=line[:200],
+        )
+        raise SlatedbSparkShardedError(
+            f"Worker emitted unparseable attempt result: {exc}"
+        ) from exc
+
+    try:
+        return _ShardAttemptResult(
+            db_id=int(payload["db_id"]),
+            db_url=str(payload["db_url"]),
+            attempt=int(payload["attempt"]),
+            row_count=int(payload.get("row_count", 0)),
+            min_key=payload.get("min_key"),
+            max_key=payload.get("max_key"),
+            checkpoint_id=payload.get("checkpoint_id"),
+            writer_info=cast(JsonObject, dict(payload.get("writer_info") or {})),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        log_failure(
+            "attempt_result_field_error",
+            severity=FailureSeverity.CRITICAL,
+            error=exc,
+            payload_keys=sorted(payload.keys()) if isinstance(payload, dict) else None,
+        )
+        raise SlatedbSparkShardedError(
+            f"Worker attempt result missing required fields: {exc}"
+        ) from exc
 
 
 def _select_winners(
@@ -615,6 +677,14 @@ def _select_winners(
     if got_ids != expected_ids:
         missing = sorted(expected_ids - got_ids)
         extra = sorted(got_ids - expected_ids)
+        log_failure(
+            "shard_coverage_mismatch",
+            severity=FailureSeverity.CRITICAL,
+            missing_shards=missing,
+            extra_shards=extra,
+            expected_count=num_dbs,
+            got_count=len(got_ids),
+        )
         raise ShardCoverageError(
             f"Shard coverage mismatch; missing={missing}, extra={extra}"
         )

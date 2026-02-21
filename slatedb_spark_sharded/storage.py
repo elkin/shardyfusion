@@ -3,11 +3,108 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Mapping, TypedDict
 from urllib.parse import urlparse
 
 from .errors import PublishManifestError
+from .logging import FailureSeverity, log_failure
 from .type_defs import S3ClientConfig
+
+# Retry defaults for transient S3 errors.
+_DEFAULT_MAX_RETRIES = 3
+_DEFAULT_INITIAL_BACKOFF_S = 1.0
+_DEFAULT_BACKOFF_MULTIPLIER = 2.0
+
+# S3 error codes considered transient and safe to retry.
+_TRANSIENT_S3_CODES: frozenset[str] = frozenset(
+    {
+        "RequestTimeout",
+        "RequestTimeoutException",
+        "InternalError",
+        "ServiceUnavailable",
+        "SlowDown",
+        "Throttling",
+        "ThrottlingException",
+        "TooManyRequestsException",
+        "RequestLimitExceeded",
+        "BandwidthLimitExceeded",
+        "503",
+        "500",
+        "429",
+    }
+)
+
+
+def _is_transient_s3_error(exc: BaseException) -> bool:
+    """Return True when *exc* looks like a transient/retryable S3 error."""
+
+    # Check boto3/botocore ClientError response codes.
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        code = response.get("Error", {}).get("Code")
+        if code in _TRANSIENT_S3_CODES:
+            return True
+        http_code = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if http_code in {429, 500, 502, 503}:
+            return True
+
+    # Check common transient network/connection error types by name.
+    exc_type_name = type(exc).__name__
+    if exc_type_name in {
+        "ConnectionError",
+        "EndpointConnectionError",
+        "ConnectTimeoutError",
+        "ReadTimeoutError",
+        "ConnectionClosedError",
+    }:
+        return True
+
+    return False
+
+
+def _retry_s3_operation(operation, *, operation_name: str, url: str):
+    """Execute *operation* with exponential-backoff retries on transient S3 errors.
+
+    Returns the result of *operation()* on success, or re-raises the last
+    exception after exhausting all retries.
+    """
+
+    last_exc: BaseException | None = None
+    delay = _DEFAULT_INITIAL_BACKOFF_S
+
+    for attempt in range(_DEFAULT_MAX_RETRIES + 1):
+        try:
+            return operation()
+        except Exception as exc:
+            last_exc = exc
+            if not _is_transient_s3_error(exc) or attempt == _DEFAULT_MAX_RETRIES:
+                if attempt > 0:
+                    log_failure(
+                        "s3_operation_failed_after_retries",
+                        severity=FailureSeverity.ERROR,
+                        error=exc,
+                        operation=operation_name,
+                        url=url,
+                        attempts=attempt + 1,
+                    )
+                raise
+
+            log_failure(
+                "s3_transient_failure",
+                severity=FailureSeverity.TRANSIENT,
+                error=exc,
+                operation=operation_name,
+                url=url,
+                attempt=attempt + 1,
+                max_retries=_DEFAULT_MAX_RETRIES,
+                retry_delay_s=delay,
+            )
+            time.sleep(delay)
+            delay *= _DEFAULT_BACKOFF_MULTIPLIER
+
+    # Unreachable, but makes the type checker happy.
+    raise last_exc  # type: ignore[misc]
 
 
 def parse_s3_url(url: str) -> tuple[str, str]:
@@ -132,7 +229,7 @@ def put_bytes(
     *,
     s3_client=None,
 ) -> None:
-    """PUT bytes to S3 URL."""
+    """PUT bytes to S3 URL with automatic retry on transient S3 errors."""
 
     client = s3_client or create_s3_client()
     bucket, key = parse_s3_url(url)
@@ -148,31 +245,46 @@ def put_bytes(
         # Map optional artifact headers into S3 user metadata to preserve context.
         put_kwargs["Metadata"] = {str(k): str(v) for k, v in headers.items()}
 
-    client.put_object(**put_kwargs)
+    _retry_s3_operation(
+        lambda: client.put_object(**put_kwargs),
+        operation_name="put_object",
+        url=url,
+    )
 
 
 def get_bytes(url: str, *, s3_client=None) -> bytes:
-    """Read object bytes from S3 URL."""
+    """Read object bytes from S3 URL with automatic retry on transient errors."""
 
     client = s3_client or create_s3_client()
     bucket, key = parse_s3_url(url)
-    obj = client.get_object(Bucket=bucket, Key=key)
-    return obj["Body"].read()
+
+    def _do_get():
+        obj = client.get_object(Bucket=bucket, Key=key)
+        return obj["Body"].read()
+
+    return _retry_s3_operation(_do_get, operation_name="get_object", url=url)
 
 
 def try_get_bytes(url: str, *, s3_client=None) -> bytes | None:
-    """Read object bytes and return None when object is not found."""
+    """Read object bytes and return None when object is not found.
+
+    Transient S3 errors (throttling, timeouts) are retried automatically.
+    """
 
     client = s3_client or create_s3_client()
     bucket, key = parse_s3_url(url)
-    try:
-        obj = client.get_object(Bucket=bucket, Key=key)
-    except Exception as exc:  # pragma: no cover - broad catch intentional: supports duck-typed S3-compatible clients whose error types vary
-        code = None
-        response = getattr(exc, "response", None)
-        if isinstance(response, dict):
-            code = response.get("Error", {}).get("Code")
-        if code in {"NoSuchKey", "404", "NotFound"}:
-            return None
-        raise
-    return obj["Body"].read()
+
+    def _do_get():
+        try:
+            obj = client.get_object(Bucket=bucket, Key=key)
+        except Exception as exc:  # broad catch intentional: supports duck-typed S3-compatible clients whose error types vary
+            code = None
+            response = getattr(exc, "response", None)
+            if isinstance(response, dict):
+                code = response.get("Error", {}).get("Code")
+            if code in {"NoSuchKey", "404", "NotFound"}:
+                return None
+            raise
+        return obj["Body"].read()
+
+    return _retry_s3_operation(_do_get, operation_name="try_get_object", url=url)

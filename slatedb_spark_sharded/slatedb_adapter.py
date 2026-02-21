@@ -6,6 +6,7 @@ import json
 from typing import Iterable, Protocol
 
 from .errors import SlateDbApiError
+from .logging import FailureSeverity, log_failure
 from .type_defs import JsonObject
 
 
@@ -125,7 +126,15 @@ class DefaultSlateDbAdapter:
         return checkpoint["id"]
 
     def close(self) -> None:
-        self._db.close()
+        try:
+            self._db.close()
+        except Exception as exc:
+            log_failure(
+                "slatedb_adapter_close_failed",
+                severity=FailureSeverity.ERROR,
+                error=exc,
+            )
+            raise
 
 
 def default_adapter_factory(
