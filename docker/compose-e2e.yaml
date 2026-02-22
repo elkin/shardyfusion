@@ -1,0 +1,41 @@
+services:
+  garage:
+    build:
+      context: ..
+      dockerfile: docker/garage-e2e.Dockerfile
+    image: slatedb-e2e-garage
+    environment:
+      GARAGE_ADMIN_TOKEN: "e2e-admin-token-for-testing"
+      GARAGE_RPC_SECRET: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/garage-ready"]
+      interval: 1s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  tests:
+    image: ${CONTAINER_IMAGE:-slatedb-spark-sharded-ci}
+    depends_on:
+      garage:
+        condition: service_healthy
+    working_dir: /workspace
+    environment:
+      UV_PROJECT_ENVIRONMENT: /opt/slatedb-venv
+      GARAGE_E2E_ENDPOINT: "http://garage:3900"
+      GARAGE_E2E_ADMIN_URL: "http://garage:3903"
+      GARAGE_E2E_ADMIN_TOKEN: "e2e-admin-token-for-testing"
+      GARAGE_E2E_REGION: "garage"
+      E2E_TOX_ARGS: "${E2E_TOX_ARGS:--m e2e}"
+    volumes:
+      - ..:/workspace
+      - uv-cache:/root/.cache/uv
+      - uv-venv:/opt/slatedb-venv
+    command: >-
+      /bin/bash -lc "uv sync --all-extras --dev --quiet && uv run tox $$E2E_TOX_ARGS"
+
+volumes:
+  uv-cache:
+    name: slatedb-spark-sharded-uv-cache
+  uv-venv:
+    name: slatedb-spark-sharded-uv-venv

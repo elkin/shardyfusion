@@ -79,6 +79,7 @@ just d-unit          # unit tests in container
 just d-unit-p        # unit tests in container, parallel
 just d-integration   # integration tests in container
 just d-integration-p # integration tests in container, parallel
+just d-e2e           # e2e tests against Garage (via compose)
 just d-ci            # quality → unit → integration in container
 
 # Arbitrary command in container
@@ -274,8 +275,25 @@ The `SnapshotRouter` in `routing.py` mirrors the writer's sharding logic exactly
 - `tests/unit/` — fast, no Spark; use pytest-xdist parallelism
   - `tests/unit/cli/` — CLI unit tests (Click CliRunner with mocked reader, config/output helpers)
 - `tests/integration/` — requires S3 emulation via `moto`; writer tests additionally require Spark + Java
+- `tests/e2e/` — end-to-end tests against a real S3-compatible server (Garage via compose); run with `just d-e2e`
+- `tests/helpers/` — shared test scenarios used by both integration (moto) and e2e (Garage) suites
 - `@pytest.mark.spark` marks tests requiring a local PySpark session
+- `@pytest.mark.e2e` marks end-to-end tests requiring a container engine
 - For behavior changes: add/adjust unit tests first, then integration tests where routing/publishing or Spark behavior is affected
+
+### E2E Tests
+
+E2e tests run against a Garage S3 server via compose (`podman compose` or `docker compose`). The compose stack (`docker/compose-e2e.yaml`) starts a Garage service and a test runner on a shared network:
+
+```bash
+# Via just (recommended)
+just d-e2e
+
+# Use Docker instead of Podman
+CONTAINER_ENGINE=docker just d-e2e
+```
+
+The Garage image is built from `docker/garage-e2e.Dockerfile` (Alpine wrapper around the official `dxflrs/garage` image). The test runner connects to Garage at `http://garage:3900` via compose networking — no ports are exposed to the host.
 
 ## Coding Conventions
 

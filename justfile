@@ -98,6 +98,10 @@ d-integration:
 d-integration-p:
     just d uv run tox p -m integration -p 2
 
+# End-to-end tests against Garage (in container via compose)
+d-e2e:
+    docker/run-e2e.sh {{engine}}
+
 # Quality + unit + integration in sequence (in container)
 d-ci:
     just d-quality && just d-unit && just d-integration

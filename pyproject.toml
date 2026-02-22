@@ -126,4 +126,5 @@ addopts = "-ra"
 testpaths = ["tests"]
 markers = [
   "spark: tests requiring local pyspark session",
+  "e2e: end-to-end tests requiring a container engine (podman/docker)",
 ]
