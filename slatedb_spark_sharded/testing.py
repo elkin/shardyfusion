@@ -56,11 +56,6 @@ class FakeSlateDbAdapter:
     def close(self) -> None:
         return None
 
-    # Backward-compatible aliases
-    write_pairs = write_batch
-    flush_wal_if_supported = flush
-    create_checkpoint_if_supported = checkpoint
-
 
 def fake_adapter_factory(
     *,
@@ -131,11 +126,6 @@ class FileBackedSlateDbAdapter:
 
     def close(self) -> None:
         return None
-
-    # Backward-compatible aliases
-    write_pairs = write_batch
-    flush_wal_if_supported = flush
-    create_checkpoint_if_supported = checkpoint
 
 
 @dataclass(slots=True)
@@ -269,11 +259,6 @@ class RealSlateDbFileAdapter:
 
     def close(self) -> None:
         self._db.close()
-
-    # Backward-compatible aliases
-    write_pairs = write_batch
-    flush_wal_if_supported = flush
-    create_checkpoint_if_supported = checkpoint
 
 
 @dataclass(slots=True)

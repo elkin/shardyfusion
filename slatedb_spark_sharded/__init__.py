@@ -1,11 +1,8 @@
 """Public API for slatedb_spark_sharded."""
 
 from .config import (
-    EngineOptions,
     ManifestOptions,
     OutputOptions,
-    ShardingOptions,
-    SlateDbConfig,
     WriteConfig,
 )
 from .errors import (
@@ -39,8 +36,6 @@ from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
 from .slatedb_adapter import (
     DbAdapter,
     DbAdapterFactory,
-    SlateDbAdapter,
-    SlateDbAdapterFactory,
     SlateDbFactory,
 )
 from .type_defs import ShardReaderFactory
@@ -50,14 +45,12 @@ try:
     from .writer import (
         DataFrameCacheContext,
         SparkConfOverrideContext,
-        write_sharded_slatedb,
         write_sharded_spark,
     )
 
     _writer_exports = [
         "DataFrameCacheContext",
         "SparkConfOverrideContext",
-        "write_sharded_slatedb",
         "write_sharded_spark",
     ]
 except ImportError:
@@ -103,13 +96,8 @@ __all__ = [
     "SlateDbFactory",
     "SnapshotRouter",
     "ShardingSpec",
-    "ShardingOptions",
     "ShardingStrategy",
-    "SlateDbConfig",
-    "SlateDbAdapter",
-    "SlateDbAdapterFactory",
     "WriteConfig",
-    "EngineOptions",
     "ValueSpec",
     "parse_json_manifest",
 ]

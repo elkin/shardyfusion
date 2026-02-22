@@ -22,7 +22,7 @@ from ._writer_core import (
     _ShardAttemptResult,
     _update_min_max,
 )
-from .config import SlateDbConfig, WriteConfig
+from .config import WriteConfig
 from .errors import SlatedbSparkShardedError
 from .logging import FailureSeverity, log_event, log_failure
 from .manifest import BuildResult, RequiredShardMeta
@@ -207,31 +207,6 @@ def write_sharded_spark(
             sort_within_partitions=sort_within_partitions,
             max_writes_per_second=max_writes_per_second,
         )
-
-
-def write_sharded_slatedb(
-    df: DataFrame,
-    config: SlateDbConfig,
-    spark_conf_overrides: dict[str, str] | None = None,
-    cache_input: bool = False,
-    storage_level: StorageLevel | None = None,
-) -> BuildResult:
-    """Legacy entry point.
-
-    .. deprecated:: Use ``write_sharded_spark`` with ``WriteConfig``.
-    """
-
-    write_config = config.to_write_config()
-    return write_sharded_spark(
-        df,
-        write_config,
-        key_col=config.key_col,
-        value_spec=config.value_spec,
-        sort_within_partitions=config.sharding.sort_within_partitions,
-        spark_conf_overrides=spark_conf_overrides,
-        cache_input=cache_input,
-        storage_level=storage_level,
-    )
 
 
 def _write_sharded_spark_impl(

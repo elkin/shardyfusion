@@ -15,7 +15,7 @@ Core behavior:
 
 Public entrypoint:
 
-- `write_sharded_slatedb(df, config, spark_conf_overrides=None, cache_input=False, storage_level=None)`
+- `write_sharded_spark(df, config, *, key_col, value_spec, sort_within_partitions=False, spark_conf_overrides=None, cache_input=False, storage_level=None, max_writes_per_second=None)`
 
 ### Write-side pipeline
 
@@ -71,20 +71,23 @@ Notes:
 
 ## Configuration
 
-Top-level writer config model: `SlateDbConfig`
+Top-level writer config model: `WriteConfig`
 
 Required fields:
 
 - `num_dbs`
 - `s3_prefix`
-- `key_col`
-- `value_spec`
+
+Direct fields:
+
+- `key_encoding` (default `u64be`)
+- `batch_size` (default 50,000)
+- `adapter_factory` (default `SlateDbFactory()`)
 
 Grouped options:
 
-- `sharding: ShardingOptions`
-  - `spec: ShardingSpec(strategy, boundaries, approx_quantile_rel_error, custom_expr, custom_column_builder)`
-  - `sort_within_partitions`
+- `sharding: ShardingSpec`
+  - `strategy`, `boundaries`, `approx_quantile_rel_error`, `custom_expr`, `custom_column_builder`
 - `output: OutputOptions`
   - `run_id`
   - `db_path_template`
@@ -102,17 +105,16 @@ Grouped options:
     - `access_key_id`
     - `secret_access_key`
     - `session_token`
-- `engine: EngineOptions`
-  - `slate_env_file`
-  - `slate_settings`
-  - `batch_size`
-  - `slatedb_adapter_factory`
 
-Extra runtime controls on `write_sharded_slatedb`:
+Extra runtime controls on `write_sharded_spark`:
 
+- `key_col`: name of the key column
+- `value_spec`: how to serialize row values
+- `sort_within_partitions`: sort rows within each partition before writing
 - `spark_conf_overrides`: temporary Spark settings for one call
 - `cache_input`: persist input DataFrame for the call
 - `storage_level`: Spark `StorageLevel` passed to `persist(...)`
+- `max_writes_per_second`: rate-limit batch writes
 
 ### Key type contracts
 
@@ -174,7 +176,7 @@ Primary class:
 
 ```mermaid
 flowchart TD
-    A[DataFrame + SlateDbConfig] --> B[SparkConfOverrideContext]
+    A[DataFrame + WriteConfig] --> B[SparkConfOverrideContext]
     B --> C{cache_input?}
     C -->|yes| D[DataFrameCacheContext.persist]
     C -->|no| E[Use input DataFrame]

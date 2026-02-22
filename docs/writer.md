@@ -2,7 +2,7 @@
 
 Primary entrypoint:
 
-- `write_sharded_slatedb(df, config, spark_conf_overrides=None, cache_input=False, storage_level=None)`
+- `write_sharded_spark(df, config, *, key_col, value_spec, sort_within_partitions=False, spark_conf_overrides=None, cache_input=False, storage_level=None, max_writes_per_second=None)`
 
 Key guarantees:
 
@@ -13,18 +13,18 @@ Key guarantees:
 Typical usage:
 
 ```python
-from slatedb_spark_sharded import SlateDbConfig, ValueSpec, write_sharded_slatedb
+from slatedb_spark_sharded import WriteConfig, ValueSpec, write_sharded_spark
 
-config = SlateDbConfig(
+config = WriteConfig(
     num_dbs=8,
     s3_prefix="s3://bucket/prefix",
-    key_col="id",
-    value_spec=ValueSpec.binary_col("payload"),
 )
 
-result = write_sharded_slatedb(
+result = write_sharded_spark(
     df,
     config,
+    key_col="id",
+    value_spec=ValueSpec.binary_col("payload"),
     spark_conf_overrides={"spark.speculation": "false"},
 )
 ```

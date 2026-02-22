@@ -112,7 +112,7 @@ The library is split into three independent paths that share config and manifest
 
 ### Write Pipeline
 
-1. `write_sharded_slatedb(df, config)` in `writer.py` is the entry point.
+1. `write_sharded_spark(df, config, *, key_col, value_spec)` in `writer.py` is the entry point.
 2. `sharding.py` adds a `_slatedb_db_id` column via Spark SQL expressions (hash, range, or custom), then converts the DataFrame to a pair RDD partitioned so partition index = db_id.
 3. Each partition writes one shard to S3 at a temporary path (`_tmp/run_id=.../db=XXXXX/attempt=YY/`).
 4. The driver collects results and selects deterministic winners (lowest attempt → task_attempt_id → URL).
@@ -254,7 +254,7 @@ These are all Protocols, allowing user-provided implementations:
 
 ### Key Encodings
 
-The `key_encoding` field on `SlateDbConfig` (default `"u64be"`) controls how keys are serialized to bytes in SlateDB:
+The `key_encoding` field on `WriteConfig` (default `"u64be"`) controls how keys are serialized to bytes in SlateDB:
 
 - **`u64be`** (default): 8-byte big-endian unsigned integer. Supports keys in `[0, 2^64-1]`.
 - **`u32be`**: 4-byte big-endian unsigned integer. Supports keys in `[0, 2^32-1]`. Cuts key storage in half for datasets with sequential keys up to ~4.3B.

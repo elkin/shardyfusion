@@ -56,11 +56,6 @@ class DbAdapterFactory(Protocol):
         ...
 
 
-# Keep old names as aliases for backward compatibility during transition.
-SlateDbAdapter = DbAdapter
-SlateDbAdapterFactory = DbAdapterFactory
-
-
 @dataclass(slots=True)
 class SlateDbFactory:
     """Picklable factory that captures SlateDB-specific config at construction time."""
@@ -159,11 +154,6 @@ class DefaultSlateDbAdapter:
                 error=exc,
             )
             raise
-
-    # Keep old method names as aliases for backward compatibility.
-    write_pairs = write_batch
-    flush_wal_if_supported = flush
-    create_checkpoint_if_supported = checkpoint
 
 
 def default_adapter_factory(
