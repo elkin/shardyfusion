@@ -18,24 +18,7 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 compose_file="$repo_root/docker/compose-e2e.yaml"
 
-# Detect whether the runtime is actually podman (even when invoked as
-# "docker").  The docker-compose-v2 plugin doesn't set up podman's DNS
-# networking correctly, so we must use podman-compose for podman runtimes.
-is_podman=false
-if [[ "$engine" == "podman" ]] || "${engine}" --version 2>&1 | grep -qi podman; then
-    is_podman=true
-fi
-
-# Resolve the compose command.
-if "$is_podman"; then
-    if command -v podman-compose &>/dev/null; then
-        compose=(podman-compose -f "$compose_file")
-    else
-        compose=(podman compose -f "$compose_file")
-    fi
-else
-    compose=(docker compose -f "$compose_file")
-fi
+compose=("${engine}" compose -f "$compose_file")
 
 "${compose[@]}" build
 
