@@ -25,14 +25,12 @@ services:
       GARAGE_E2E_ENDPOINT: "http://garage:3900"
       GARAGE_E2E_ADMIN_URL: "http://garage:3903"
       GARAGE_E2E_ADMIN_TOKEN: "e2e-admin-token-for-testing"
-      GARAGE_E2E_REGION: "garage"
-      E2E_TOX_ARGS: "${E2E_TOX_ARGS:--m e2e}"
     volumes:
       - ..:/workspace
       - uv-cache:/root/.cache/uv
       - uv-venv:/opt/slatedb-venv
     command: >-
-      /bin/bash -lc "uv sync --all-extras --dev --quiet && uv run tox $$E2E_TOX_ARGS"
+      /bin/bash -lc "uv sync --all-extras --dev --quiet && uv run tox -m e2e"
 
 volumes:
   uv-cache:

@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
 # Run e2e tests via compose, returning the test exit code.
 #
-# Usage: docker/run-e2e.sh [ENGINE] [TOX_ARGS...]
+# Usage: docker/run-e2e.sh [ENGINE]
 #   ENGINE defaults to "podman"
-#   TOX_ARGS defaults to "-m e2e"
 #
 # Works around podman rootless teardown errors that pollute the exit
 # code from "compose up --exit-code-from".
 set -uo pipefail
 
 engine="${1:-podman}"
-shift 2>/dev/null || true
-export E2E_TOX_ARGS="${*:--m e2e}"
 
 # Resolve paths relative to the repo root (where the justfile lives).
 script_dir="$(cd "$(dirname "$0")" && pwd)"
