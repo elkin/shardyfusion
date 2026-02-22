@@ -10,7 +10,6 @@ from typing import Self, TypedDict
 from urllib.parse import quote
 
 from .storage import parse_s3_url
-from .type_defs import JsonObject
 
 
 @dataclass(slots=True)
@@ -24,12 +23,10 @@ class FakeSlateDbAdapter:
     def __init__(
         self,
         *,
-        local_dir: str,
         db_url: str,
-        env_file: str | None,
-        settings: JsonObject | None,
+        local_dir: str,
     ) -> None:
-        _ = (local_dir, db_url, env_file, settings)
+        _ = (local_dir, db_url)
         self._db = FakeDb()
 
     @property
@@ -47,33 +44,34 @@ class FakeSlateDbAdapter:
     ) -> None:
         self.close()
 
-    def write_pairs(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
+    def write_batch(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
         self._db.writes += len(list(pairs))
 
-    def flush_wal_if_supported(self) -> None:
+    def flush(self) -> None:
         return None
 
-    def create_checkpoint_if_supported(self) -> str | None:
+    def checkpoint(self) -> str | None:
         return "fake-checkpoint"
 
     def close(self) -> None:
         return None
 
+    # Backward-compatible aliases
+    write_pairs = write_batch
+    flush_wal_if_supported = flush
+    create_checkpoint_if_supported = checkpoint
+
 
 def fake_adapter_factory(
     *,
-    local_dir: str,
     db_url: str,
-    env_file: str | None,
-    settings: JsonObject | None,
+    local_dir: str,
 ) -> FakeSlateDbAdapter:
     """Return a worker-serializable fake adapter instance."""
 
     return FakeSlateDbAdapter(
-        local_dir=local_dir,
         db_url=db_url,
-        env_file=env_file,
-        settings=settings,
+        local_dir=local_dir,
     )
 
 
@@ -91,12 +89,10 @@ class FileBackedSlateDbAdapter:
         self,
         root_dir: str,
         *,
-        local_dir: str,
         db_url: str,
-        env_file: str | None,
-        settings: JsonObject | None,
+        local_dir: str,
     ) -> None:
-        _ = (local_dir, env_file, settings)
+        _ = local_dir
         self._root_dir = root_dir
         os.makedirs(self._root_dir, exist_ok=True)
         self._db = FileBackedDb(file_path=_file_path_for_db_url(self._root_dir, db_url))
@@ -116,7 +112,7 @@ class FileBackedSlateDbAdapter:
     ) -> None:
         self.close()
 
-    def write_pairs(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
+    def write_batch(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
         os.makedirs(os.path.dirname(self._db.file_path), exist_ok=True)
         with open(self._db.file_path, "ab") as handle:
             for key, value in pairs:
@@ -127,14 +123,19 @@ class FileBackedSlateDbAdapter:
                 handle.write(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
                 handle.write(b"\n")
 
-    def flush_wal_if_supported(self) -> None:
+    def flush(self) -> None:
         return None
 
-    def create_checkpoint_if_supported(self) -> str | None:
+    def checkpoint(self) -> str | None:
         return "file-backed-checkpoint"
 
     def close(self) -> None:
         return None
+
+    # Backward-compatible aliases
+    write_pairs = write_batch
+    flush_wal_if_supported = flush
+    create_checkpoint_if_supported = checkpoint
 
 
 @dataclass(slots=True)
@@ -146,17 +147,13 @@ class FileBackedSlateDbAdapterFactory:
     def __call__(
         self,
         *,
-        local_dir: str,
         db_url: str,
-        env_file: str | None,
-        settings: JsonObject | None,
+        local_dir: str,
     ) -> FileBackedSlateDbAdapter:
         return FileBackedSlateDbAdapter(
             self.root_dir,
-            local_dir=local_dir,
             db_url=db_url,
-            env_file=env_file,
-            settings=settings,
+            local_dir=local_dir,
         )
 
 
@@ -229,10 +226,8 @@ class RealSlateDbFileAdapter:
         self,
         object_store_root: str,
         *,
-        local_dir: str,
         db_url: str,
-        env_file: str | None,
-        settings: JsonObject | None,
+        local_dir: str,
     ) -> None:
         self._object_store_root = object_store_root
 
@@ -240,12 +235,6 @@ class RealSlateDbFileAdapter:
 
         mapped_url = map_s3_db_url_to_file_url(db_url, self._object_store_root)
         kwargs: _SlateDbOpenKwargs = {"url": mapped_url}
-        if env_file is not None:
-            kwargs["env_file"] = env_file
-        if settings is not None:
-            kwargs["settings"] = json.dumps(
-                settings, sort_keys=True, separators=(",", ":")
-            )
         self._db = SlateDB(local_dir, **kwargs)
 
     @property
@@ -263,7 +252,7 @@ class RealSlateDbFileAdapter:
     ) -> None:
         self.close()
 
-    def write_pairs(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
+    def write_batch(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
         from slatedb import WriteBatch
 
         wb = WriteBatch()
@@ -271,15 +260,20 @@ class RealSlateDbFileAdapter:
             wb.put(bytes(key), bytes(value))
         self._db.write(wb)
 
-    def flush_wal_if_supported(self) -> None:
+    def flush(self) -> None:
         self._db.flush_with_options("wal")
 
-    def create_checkpoint_if_supported(self) -> str | None:
+    def checkpoint(self) -> str | None:
         checkpoint = self._db.create_checkpoint(scope="durable")
         return checkpoint["id"]
 
     def close(self) -> None:
         self._db.close()
+
+    # Backward-compatible aliases
+    write_pairs = write_batch
+    flush_wal_if_supported = flush
+    create_checkpoint_if_supported = checkpoint
 
 
 @dataclass(slots=True)
@@ -291,17 +285,13 @@ class RealSlateDbFileAdapterFactory:
     def __call__(
         self,
         *,
-        local_dir: str,
         db_url: str,
-        env_file: str | None,
-        settings: JsonObject | None,
+        local_dir: str,
     ) -> RealSlateDbFileAdapter:
         return RealSlateDbFileAdapter(
             self.object_store_root,
-            local_dir=local_dir,
             db_url=db_url,
-            env_file=env_file,
-            settings=settings,
+            local_dir=local_dir,
         )
 
 

@@ -1,45 +1,35 @@
 """Public sharded snapshot writer entrypoint."""
 
-import json
 import logging
 import os
 import time
 import types
-from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Self
 from uuid import uuid4
 
 from pyspark import RDD, StorageLevel, TaskContext
 from pyspark.sql import DataFrame, Row, SparkSession
 
-from .config import SlateDbConfig
-from .errors import (
-    ManifestBuildError,
-    PublishCurrentError,
-    PublishManifestError,
-    ShardCoverageError,
-    SlatedbSparkShardedError,
+from ._rate_limiter import TokenBucket
+from ._writer_core import (
+    _assemble_build_result,
+    _build_manifest_artifact,
+    _join_s3,
+    _publish_manifest_and_current,
+    _select_winners,
+    _ShardAttemptResult,
+    _update_min_max,
 )
+from .config import SlateDbConfig, WriteConfig
+from .errors import SlatedbSparkShardedError
 from .logging import FailureSeverity, log_event, log_failure
-from .manifest import (
-    BuildDurations,
-    BuildResult,
-    BuildStats,
-    CurrentPointer,
-    JsonManifestBuilder,
-    ManifestArtifact,
-    ManifestShardingSpec,
-    RequiredBuildMeta,
-    RequiredShardMeta,
-)
-from .ordering import compare_ordered
-from .publish import DefaultS3Publisher
+from .manifest import BuildResult, RequiredShardMeta
 from .serde import ValueSpec, encode_key
 from .sharding import ShardingSpec, add_db_id_column, prepare_partitioned_rdd
-from .slatedb_adapter import SlateDbAdapterFactory, default_adapter_factory
+from .sharding_types import KeyEncoding
+from .slatedb_adapter import DbAdapterFactory, default_adapter_factory
 from .type_defs import JsonObject, KeyLike
 
 
@@ -51,24 +41,11 @@ class _PartitionWriteConfig:
     db_path_template: str
     local_root: str
     key_col: str
-    key_encoding: str
+    key_encoding: KeyEncoding
     value_spec: ValueSpec
     batch_size: int
-    slate_env_file: str | None
-    slate_settings: JsonObject | None
-    slatedb_adapter_factory: SlateDbAdapterFactory | None
-
-
-@dataclass(slots=True)
-class _ShardAttemptResult:
-    db_id: int
-    db_url: str
-    attempt: int
-    row_count: int
-    min_key: int | str | None
-    max_key: int | str | None
-    checkpoint_id: str | None
-    writer_info: JsonObject
+    adapter_factory: DbAdapterFactory | None
+    max_writes_per_second: float | None
 
 
 @dataclass(slots=True)
@@ -83,12 +60,6 @@ class _PartitionWriteOutcome:
     attempts: list[_ShardAttemptResult]
     winners: list[RequiredShardMeta]
     write_duration_ms: int
-
-
-@dataclass(slots=True)
-class _PublishResult:
-    manifest_ref: str
-    current_ref: str | None
 
 
 class SparkConfOverrideContext:
@@ -196,14 +167,19 @@ class DataFrameCacheContext:
             )
 
 
-def write_sharded_slatedb(
+def write_sharded_spark(
     df: DataFrame,
-    config: SlateDbConfig,
+    config: WriteConfig,
+    *,
+    key_col: str,
+    value_spec: ValueSpec,
+    sort_within_partitions: bool = False,
     spark_conf_overrides: dict[str, str] | None = None,
     cache_input: bool = False,
     storage_level: StorageLevel | None = None,
+    max_writes_per_second: float | None = None,
 ) -> BuildResult:
-    """Write a DataFrame into N independent SlateDB shards and publish manifest metadata."""
+    """Write a DataFrame into N independent sharded databases and publish manifest metadata."""
 
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
@@ -211,33 +187,78 @@ def write_sharded_slatedb(
     with SparkConfOverrideContext(spark, spark_conf_overrides):
         if cache_input:
             with DataFrameCacheContext(df, storage_level=storage_level) as cached_df:
-                return _write_sharded_slatedb_impl(
+                return _write_sharded_spark_impl(
                     df=cached_df,
                     config=config,
                     run_id=run_id,
                     started=started,
+                    key_col=key_col,
+                    value_spec=value_spec,
+                    sort_within_partitions=sort_within_partitions,
+                    max_writes_per_second=max_writes_per_second,
                 )
-        return _write_sharded_slatedb_impl(
+        return _write_sharded_spark_impl(
             df=df,
             config=config,
             run_id=run_id,
             started=started,
+            key_col=key_col,
+            value_spec=value_spec,
+            sort_within_partitions=sort_within_partitions,
+            max_writes_per_second=max_writes_per_second,
         )
 
 
-def _write_sharded_slatedb_impl(
-    *,
+def write_sharded_slatedb(
     df: DataFrame,
     config: SlateDbConfig,
+    spark_conf_overrides: dict[str, str] | None = None,
+    cache_input: bool = False,
+    storage_level: StorageLevel | None = None,
+) -> BuildResult:
+    """Legacy entry point.
+
+    .. deprecated:: Use ``write_sharded_spark`` with ``WriteConfig``.
+    """
+
+    write_config = config.to_write_config()
+    return write_sharded_spark(
+        df,
+        write_config,
+        key_col=config.key_col,
+        value_spec=config.value_spec,
+        sort_within_partitions=config.sharding.sort_within_partitions,
+        spark_conf_overrides=spark_conf_overrides,
+        cache_input=cache_input,
+        storage_level=storage_level,
+    )
+
+
+def _write_sharded_spark_impl(
+    *,
+    df: DataFrame,
+    config: WriteConfig,
     run_id: str,
     started: float,
+    key_col: str,
+    value_spec: ValueSpec,
+    sort_within_partitions: bool,
+    max_writes_per_second: float | None,
 ) -> BuildResult:
-    """Implementation for write_sharded_slatedb assuming Spark conf already prepared."""
+    """Implementation assuming Spark conf already prepared."""
     prepared_rows = _prepare_partitioned_rows(
         df=df,
         config=config,
+        key_col=key_col,
+        sort_within_partitions=sort_within_partitions,
     )
-    runtime = _build_partition_write_runtime(config=config, run_id=run_id)
+    runtime = _build_partition_write_runtime(
+        config=config,
+        run_id=run_id,
+        key_col=key_col,
+        value_spec=value_spec,
+        max_writes_per_second=max_writes_per_second,
+    )
     write_outcome = _run_partition_writes(
         partitioned_rdd=prepared_rows.partitioned_rdd,
         runtime=runtime,
@@ -250,6 +271,7 @@ def _write_sharded_slatedb_impl(
         run_id=run_id,
         resolved_sharding=prepared_rows.resolved_sharding,
         winners=write_outcome.winners,
+        key_col=key_col,
     )
     publish_result = _publish_manifest_and_current(
         config=config,
@@ -275,22 +297,24 @@ def _write_sharded_slatedb_impl(
 def _prepare_partitioned_rows(
     *,
     df: DataFrame,
-    config: SlateDbConfig,
+    config: WriteConfig,
+    key_col: str,
+    sort_within_partitions: bool,
 ) -> _PreparedPartitionRows:
     """Assign shard ids and build the one-writer-per-db partitioned RDD."""
 
     shard_started = time.perf_counter()
     df_with_db_id, resolved_sharding = add_db_id_column(
         df,
-        key_col=config.key_col,
+        key_col=key_col,
         num_dbs=config.num_dbs,
-        sharding=config.sharding.spec,
+        sharding=config.sharding,
     )
     partitioned_rdd = prepare_partitioned_rdd(
         df_with_db_id,
         num_dbs=config.num_dbs,
-        key_col=config.key_col,
-        sort_within_partitions=config.sharding.sort_within_partitions,
+        key_col=key_col,
+        sort_within_partitions=sort_within_partitions,
     )
     shard_duration_ms = int((time.perf_counter() - shard_started) * 1000)
     return _PreparedPartitionRows(
@@ -302,8 +326,11 @@ def _prepare_partitioned_rows(
 
 def _build_partition_write_runtime(
     *,
-    config: SlateDbConfig,
+    config: WriteConfig,
     run_id: str,
+    key_col: str,
+    value_spec: ValueSpec,
+    max_writes_per_second: float | None,
 ) -> _PartitionWriteConfig:
     """Construct immutable worker-side runtime config for partition shard writers."""
 
@@ -313,13 +340,12 @@ def _build_partition_write_runtime(
         tmp_prefix=config.output.tmp_prefix,
         db_path_template=config.output.db_path_template,
         local_root=config.output.local_root,
-        key_col=config.key_col,
+        key_col=key_col,
         key_encoding=config.key_encoding,
-        value_spec=config.value_spec,
-        batch_size=config.engine.batch_size,
-        slate_env_file=config.engine.slate_env_file,
-        slate_settings=config.engine.slate_settings,
-        slatedb_adapter_factory=config.engine.slatedb_adapter_factory,
+        value_spec=value_spec,
+        batch_size=config.batch_size,
+        adapter_factory=config.adapter_factory,
+        max_writes_per_second=max_writes_per_second,
     )
 
 
@@ -341,151 +367,6 @@ def _run_partition_writes(
         attempts=attempts,
         winners=winners,
         write_duration_ms=write_duration_ms,
-    )
-
-
-def _build_manifest_artifact(
-    *,
-    config: SlateDbConfig,
-    run_id: str,
-    resolved_sharding: ShardingSpec,
-    winners: list[RequiredShardMeta],
-) -> ManifestArtifact:
-    """Build manifest bytes using configured builder and custom fields."""
-
-    required_build = RequiredBuildMeta(
-        run_id=run_id,
-        created_at=_utc_now_iso(),
-        num_dbs=config.num_dbs,
-        s3_prefix=config.s3_prefix,
-        key_col=config.key_col,
-        sharding=_manifest_safe_sharding(resolved_sharding),
-        db_path_template=config.output.db_path_template,
-        tmp_prefix=config.output.tmp_prefix,
-        key_encoding=config.key_encoding,
-    )
-
-    builder = config.manifest.manifest_builder or JsonManifestBuilder()
-    for key, value in config.manifest.custom_manifest_fields.items():
-        builder.add_custom_field(key, value)
-
-    try:
-        return builder.build(
-            required_build=required_build,
-            shards=winners,
-            custom_fields=config.manifest.custom_manifest_fields,
-        )
-    except Exception as exc:  # pragma: no cover - custom builder surface
-        log_failure(
-            "manifest_build_failed",
-            severity=FailureSeverity.ERROR,
-            error=exc,
-            run_id=run_id,
-            builder_type=type(builder).__name__,
-            include_traceback=True,
-        )
-        raise ManifestBuildError("Failed to build manifest artifact") from exc
-
-
-def _publish_manifest_and_current(
-    *,
-    config: SlateDbConfig,
-    run_id: str,
-    artifact: ManifestArtifact,
-) -> _PublishResult:
-    """Publish manifest and CURRENT pointer, enforcing publish ordering semantics.
-
-    Both publish steps already benefit from per-request S3 retries in
-    ``storage.put_bytes``.  This function additionally logs failures at
-    severity-appropriate levels before re-raising.
-    """
-
-    publisher = config.manifest.publisher or DefaultS3Publisher(
-        config.s3_prefix,
-        manifest_name=config.manifest.manifest_name,
-        current_name=config.manifest.current_name,
-        s3_client_config=config.manifest.s3_client_config,
-    )
-
-    try:
-        manifest_ref = publisher.publish_manifest(
-            name=config.manifest.manifest_name,
-            artifact=artifact,
-            run_id=run_id,
-        )
-    except Exception as exc:  # pragma: no cover - runtime publisher failures
-        log_failure(
-            "manifest_publish_failed",
-            severity=FailureSeverity.ERROR,
-            error=exc,
-            run_id=run_id,
-            s3_prefix=config.s3_prefix,
-            include_traceback=True,
-        )
-        raise PublishManifestError("Failed to publish manifest") from exc
-
-    current_artifact = _build_current_artifact(
-        manifest_ref=manifest_ref,
-        manifest_content_type=artifact.content_type,
-        run_id=run_id,
-    )
-
-    try:
-        current_ref = publisher.publish_current(
-            name=config.manifest.current_name,
-            artifact=current_artifact,
-        )
-    except Exception as exc:  # pragma: no cover - runtime publisher failures
-        log_failure(
-            "current_publish_failed",
-            severity=FailureSeverity.CRITICAL,
-            error=exc,
-            run_id=run_id,
-            manifest_ref=manifest_ref,
-            include_traceback=True,
-        )
-        raise PublishCurrentError(
-            f"Manifest already published at {manifest_ref}; failed publishing CURRENT"
-        ) from exc
-
-    return _PublishResult(manifest_ref=manifest_ref, current_ref=current_ref)
-
-
-def _assemble_build_result(
-    *,
-    run_id: str,
-    winners: list[RequiredShardMeta],
-    artifact: ManifestArtifact,
-    manifest_ref: str,
-    current_ref: str | None,
-    attempts: list[_ShardAttemptResult],
-    shard_duration_ms: int,
-    write_duration_ms: int,
-    manifest_duration_ms: int,
-    started: float,
-) -> BuildResult:
-    """Assemble final BuildResult and fixed-schema BuildStats."""
-
-    total_duration_ms = int((time.perf_counter() - started) * 1000)
-    stats = BuildStats(
-        durations=BuildDurations(
-            sharding_ms=shard_duration_ms,
-            write_ms=write_duration_ms,
-            manifest_ms=manifest_duration_ms,
-            total_ms=total_duration_ms,
-        ),
-        num_attempt_results=len(attempts),
-        num_winners=len(winners),
-        rows_written=sum(winner.row_count for winner in winners),
-    )
-
-    return BuildResult(
-        run_id=run_id,
-        winners=winners,
-        manifest_artifact=artifact,
-        manifest_ref=manifest_ref,
-        current_ref=current_ref,
-        stats=stats,
     )
 
 
@@ -517,7 +398,11 @@ def _write_one_shard_partition(
     )
     os.makedirs(local_dir, exist_ok=True)
 
-    adapter_factory = runtime.slatedb_adapter_factory or default_adapter_factory
+    factory = runtime.adapter_factory or default_adapter_factory
+
+    bucket: TokenBucket | None = None
+    if runtime.max_writes_per_second is not None:
+        bucket = TokenBucket(runtime.max_writes_per_second)
 
     partition_started = time.perf_counter()
     row_count = 0
@@ -527,11 +412,9 @@ def _write_one_shard_partition(
     batch: list[tuple[bytes, bytes]] = []
 
     try:
-        with adapter_factory(
-            local_dir=local_dir,
+        with factory(
             db_url=db_url,
-            env_file=runtime.slate_env_file,
-            settings=runtime.slate_settings,
+            local_dir=local_dir,
         ) as adapter:
             for _, row in rows_iter:
                 key_value = row[runtime.key_col]
@@ -543,15 +426,19 @@ def _write_one_shard_partition(
                 min_key, max_key = _update_min_max(min_key, max_key, key_value)
 
                 if len(batch) >= runtime.batch_size:
-                    adapter.write_pairs(batch)
+                    if bucket is not None:
+                        bucket.acquire(1)
+                    adapter.write_batch(batch)
                     batch.clear()
 
             if batch:
-                adapter.write_pairs(batch)
+                if bucket is not None:
+                    bucket.acquire(1)
+                adapter.write_batch(batch)
                 batch.clear()
 
-            adapter.flush_wal_if_supported()
-            checkpoint_id = adapter.create_checkpoint_if_supported()
+            adapter.flush()
+            checkpoint_id = adapter.checkpoint()
     except Exception as exc:  # pragma: no cover - worker runtime failure surface
         log_failure(
             "shard_write_failed",
@@ -584,134 +471,3 @@ def _write_one_shard_partition(
         checkpoint_id=checkpoint_id,
         writer_info=writer_info,
     )
-
-
-def _update_min_max(
-    min_key: KeyLike | None,
-    max_key: KeyLike | None,
-    key: KeyLike | None,
-) -> tuple[KeyLike | None, KeyLike | None]:
-    normalized_key = key
-    if normalized_key is None:
-        return min_key, max_key
-
-    if min_key is None:
-        min_key = normalized_key
-    elif (
-        compare_ordered(
-            normalized_key,
-            min_key,
-            mismatch_message="Shard key type changed within partition: mixed int/str keys",
-        )
-        < 0
-    ):
-        min_key = normalized_key
-
-    if max_key is None:
-        max_key = normalized_key
-    elif (
-        compare_ordered(
-            normalized_key,
-            max_key,
-            mismatch_message="Shard key type changed within partition: mixed int/str keys",
-        )
-        > 0
-    ):
-        max_key = normalized_key
-
-    return min_key, max_key
-
-
-def _select_winners(
-    attempts: list[_ShardAttemptResult],
-    *,
-    num_dbs: int,
-) -> list[RequiredShardMeta]:
-    grouped: dict[int, list[_ShardAttemptResult]] = defaultdict(list)
-    for item in attempts:
-        grouped[item.db_id].append(item)
-
-    expected_ids = set(range(num_dbs))
-    got_ids = set(grouped.keys())
-    if got_ids != expected_ids:
-        missing = sorted(expected_ids - got_ids)
-        extra = sorted(got_ids - expected_ids)
-        log_failure(
-            "shard_coverage_mismatch",
-            severity=FailureSeverity.CRITICAL,
-            missing_shards=missing,
-            extra_shards=extra,
-            expected_count=num_dbs,
-            got_count=len(got_ids),
-        )
-        raise ShardCoverageError(
-            f"Shard coverage mismatch; missing={missing}, extra={extra}"
-        )
-
-    winners: list[RequiredShardMeta] = []
-    for db_id in range(num_dbs):
-        winner = sorted(grouped[db_id], key=_winner_sort_key)[0]
-        winners.append(
-            RequiredShardMeta(
-                db_id=winner.db_id,
-                db_url=winner.db_url,
-                attempt=winner.attempt,
-                row_count=winner.row_count,
-                min_key=winner.min_key,
-                max_key=winner.max_key,
-                checkpoint_id=winner.checkpoint_id,
-                writer_info=winner.writer_info,
-            )
-        )
-
-    return winners
-
-
-def _winner_sort_key(item: _ShardAttemptResult) -> tuple[int, int, str]:
-    task_attempt_id = item.writer_info.get("task_attempt_id")
-    if task_attempt_id is None:
-        normalized_task_attempt_id = 2**63 - 1
-    elif isinstance(task_attempt_id, (int, float, str)):
-        normalized_task_attempt_id = int(task_attempt_id)
-    else:
-        normalized_task_attempt_id = 2**63 - 1
-    return (item.attempt, normalized_task_attempt_id, item.db_url)
-
-
-def _build_current_artifact(
-    *,
-    manifest_ref: str,
-    manifest_content_type: str,
-    run_id: str,
-) -> ManifestArtifact:
-    pointer = CurrentPointer(
-        manifest_ref=manifest_ref,
-        manifest_content_type=manifest_content_type,
-        run_id=run_id,
-        updated_at=_utc_now_iso(),
-    )
-    payload = json.dumps(
-        pointer.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
-    return ManifestArtifact(payload=payload, content_type="application/json")
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _manifest_safe_sharding(sharding: ShardingSpec) -> ManifestShardingSpec:
-    return ManifestShardingSpec(
-        strategy=sharding.strategy,
-        boundaries=list(sharding.boundaries)
-        if sharding.boundaries is not None
-        else None,
-        approx_quantile_rel_error=sharding.approx_quantile_rel_error,
-        custom_expr=sharding.custom_expr,
-    )
-
-
-def _join_s3(base: str, *parts: str) -> str:
-    clean = [base.rstrip("/")]
-    clean.extend(part.strip("/") for part in parts if part)
-    return "/".join(clean)

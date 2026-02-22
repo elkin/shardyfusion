@@ -14,7 +14,32 @@ from .logging import FailureSeverity, log_failure
 from .manifest import ParsedManifest
 from .manifest_readers import DefaultS3ManifestReader, ManifestReader
 from .routing import SnapshotRouter
-from .type_defs import KeyInput, ShardReader
+from .sharding_types import KeyEncoding
+from .type_defs import KeyInput, ShardReader, ShardReaderFactory
+
+
+@dataclass(slots=True)
+class SlateDbReaderFactory:
+    """Picklable reader factory that captures SlateDB-specific config."""
+
+    env_file: str | None = None
+
+    def __call__(
+        self, *, db_url: str, local_dir: str, checkpoint_id: str | None
+    ) -> ShardReader:
+        try:
+            from slatedb import SlateDBReader
+        except ImportError as exc:  # pragma: no cover - runtime dependent
+            raise SlateDbApiError(
+                "slatedb package is required for SlateShardedReader"
+            ) from exc
+
+        return SlateDBReader(
+            local_dir,
+            url=db_url,
+            env_file=self.env_file,
+            checkpoint_id=checkpoint_id,
+        )
 
 
 @dataclass(slots=True)
@@ -73,6 +98,7 @@ class SlateShardedReader:
         local_root: str,
         manifest_reader: ManifestReader | None = None,
         current_name: str = "_CURRENT",
+        reader_factory: ShardReaderFactory | None = None,
         slate_env_file: str | None = None,
         thread_safety: str = "lock",
         max_workers: int | None = None,
@@ -82,9 +108,14 @@ class SlateShardedReader:
 
         self.s3_prefix = s3_prefix
         self.local_root = local_root
-        self.slate_env_file = slate_env_file
         self.thread_safety = thread_safety
         self.max_workers = max_workers
+
+        # Resolve reader factory: explicit > legacy env_file > default
+        if reader_factory is not None:
+            self._reader_factory: ShardReaderFactory = reader_factory
+        else:
+            self._reader_factory = SlateDbReaderFactory(env_file=slate_env_file)
 
         if manifest_reader is not None:
             self._manifest_reader = manifest_reader
@@ -99,9 +130,9 @@ class SlateShardedReader:
         self._state = self._load_initial_state()
 
     @property
-    def key_encoding(self) -> str:
-        """The key encoding used by the loaded manifest (e.g. ``u64be``)."""
-        return self._state.router.key_encoding
+    def key_encoding(self) -> KeyEncoding:
+        """The key encoding used by the loaded manifest."""
+        return KeyEncoding.from_value(self._state.router.key_encoding)
 
     def snapshot_info(self) -> dict[str, Any]:
         """Return a dict of manifest metadata for the current snapshot."""
@@ -248,11 +279,10 @@ class SlateShardedReader:
                 os.makedirs(local_path, exist_ok=True)
 
                 if self.thread_safety == "lock":
-                    reader = _open_slatedb_reader(
-                        local_path=local_path,
+                    reader = self._reader_factory(
                         db_url=shard.db_url,
+                        local_dir=local_path,
                         checkpoint_id=shard.checkpoint_id,
-                        env_file=self.slate_env_file,
                     )
                     handles[shard.db_id] = _ShardHandle(
                         mode="lock",
@@ -262,11 +292,10 @@ class SlateShardedReader:
                 else:
                     pool_size = self.max_workers or 4
                     readers = [
-                        _open_slatedb_reader(
-                            local_path=local_path,
+                        self._reader_factory(
                             db_url=shard.db_url,
+                            local_dir=local_path,
                             checkpoint_id=shard.checkpoint_id,
-                            env_file=self.slate_env_file,
                         )
                         for _ in range(pool_size)
                     ]
@@ -339,17 +368,10 @@ def _open_slatedb_reader(
     checkpoint_id: str | None,
     env_file: str | None,
 ) -> ShardReader:
-    try:
-        from slatedb import SlateDBReader
-    except ImportError as exc:  # pragma: no cover - runtime dependent
-        raise SlateDbApiError(
-            "slatedb package is required for SlateShardedReader"
-        ) from exc
-
-    return SlateDBReader(
-        local_path,
-        url=db_url,
-        env_file=env_file,
+    """Legacy helper kept for backward-compatible monkeypatching in tests."""
+    return SlateDbReaderFactory(env_file=env_file)(
+        db_url=db_url,
+        local_dir=local_path,
         checkpoint_id=checkpoint_id,
     )
 

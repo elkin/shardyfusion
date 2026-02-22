@@ -9,7 +9,7 @@ import xxhash
 from .manifest import RequiredBuildMeta, RequiredShardMeta
 from .ordering import compare_ordered
 from .serde import encode_key
-from .sharding_types import ShardingStrategy
+from .sharding_types import KeyEncoding, ShardingStrategy
 from .type_defs import KeyInput
 
 RangeValue = int | float | str
@@ -59,23 +59,23 @@ class SnapshotRouter:
     def encode_lookup_key(self, key: KeyInput) -> bytes:
         """Encode lookup key for SlateDB read calls."""
 
-        if self.key_encoding == "u64be":
+        if self.key_encoding == KeyEncoding.U64BE:
             if isinstance(key, bytes):
                 if len(key) != 8:
                     raise ValueError("u64be key bytes must have length 8")
                 return key
             if not isinstance(key, int):
                 raise ValueError("u64be key encoding requires integer lookup keys")
-            return encode_key(key, encoding="u64be")
+            return encode_key(key, encoding=KeyEncoding.U64BE)
 
-        if self.key_encoding == "u32be":
+        if self.key_encoding == KeyEncoding.U32BE:
             if isinstance(key, bytes):
                 if len(key) != 4:
                     raise ValueError("u32be key bytes must have length 4")
                 return key
             if not isinstance(key, int):
                 raise ValueError("u32be key encoding requires integer lookup keys")
-            return encode_key(key, encoding="u32be")
+            return encode_key(key, encoding=KeyEncoding.U32BE)
 
         if isinstance(key, bytes):
             return key
@@ -127,11 +127,11 @@ class SnapshotRouter:
             return key
 
         if isinstance(key, bytes):
-            if self.key_encoding == "u64be":
+            if self.key_encoding == KeyEncoding.U64BE:
                 if len(key) != 8:
                     raise ValueError("u64be key bytes must have length 8")
                 return int.from_bytes(key, byteorder="big", signed=False)
-            if self.key_encoding == "u32be":
+            if self.key_encoding == KeyEncoding.U32BE:
                 if len(key) != 4:
                     raise ValueError("u32be key bytes must have length 4")
                 return int.from_bytes(key, byteorder="big", signed=False)
@@ -191,15 +191,15 @@ _INT64_MAX = (1 << 63) - 1
 _INT64_MOD = 1 << 64
 
 
-def _xxhash64_db_id(key: KeyInput, num_dbs: int, key_encoding: str) -> int:
+def _xxhash64_db_id(key: KeyInput, num_dbs: int, key_encoding: KeyEncoding) -> int:
     """Route key with `pmod(xxhash64(...), num_dbs)` semantics."""
 
     digest = _xxhash64_signed(_xxhash64_payload(key, key_encoding))
     return digest % num_dbs
 
 
-def _xxhash64_payload(key: KeyInput, key_encoding: str) -> bytes:
-    if key_encoding == "u64be":
+def _xxhash64_payload(key: KeyInput, key_encoding: KeyEncoding) -> bytes:
+    if key_encoding == KeyEncoding.U64BE:
         if isinstance(key, bytes):
             if len(key) != 8:
                 raise ValueError("u64be key bytes must have length 8")
@@ -212,7 +212,7 @@ def _xxhash64_payload(key: KeyInput, key_encoding: str) -> bytes:
             raise ValueError("u64be hash routing requires key in [0, 2^64-1]")
         return key.to_bytes(8, byteorder="little", signed=False)
 
-    if key_encoding == "u32be":
+    if key_encoding == KeyEncoding.U32BE:
         # Zero-extend to 8-byte little-endian to match Spark's xxhash64(cast(key as long))
         if isinstance(key, bytes):
             if len(key) != 4:

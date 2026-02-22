@@ -5,11 +5,12 @@ from unittest.mock import MagicMock, patch
 
 from pyspark.sql import Row
 
+from slatedb_spark_sharded._writer_core import _ShardAttemptResult
 from slatedb_spark_sharded.serde import ValueSpec
-from slatedb_spark_sharded.slatedb_adapter import SlateDbAdapter, SlateDbAdapterFactory
+from slatedb_spark_sharded.sharding_types import KeyEncoding
+from slatedb_spark_sharded.slatedb_adapter import DbAdapterFactory
 from slatedb_spark_sharded.writer import (
     _PartitionWriteConfig,
-    _ShardAttemptResult,
     _write_one_shard_partition,
 )
 
@@ -36,28 +37,26 @@ class _FakeAdapter:
     def db(self) -> object:
         return self
 
-    def write_pairs(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
+    def write_batch(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
         self.write_calls.append(list(pairs))
 
-    def flush_wal_if_supported(self) -> None:
+    def flush(self) -> None:
         self.flushed = True
 
-    def create_checkpoint_if_supported(self) -> str | None:
+    def checkpoint(self) -> str | None:
         return self._checkpoint_id
 
     def close(self) -> None:
         pass
 
 
-def _make_factory(adapter: _FakeAdapter) -> SlateDbAdapterFactory:
+def _make_factory(adapter: _FakeAdapter) -> DbAdapterFactory:
     def factory(
         *,
-        local_dir: str,
         db_url: str,
-        env_file: str | None,
-        settings: object,
-    ) -> SlateDbAdapter:
-        return adapter  # type: ignore[return-value]
+        local_dir: str,
+    ) -> _FakeAdapter:
+        return adapter
 
     return factory  # type: ignore[return-value]
 
@@ -72,7 +71,7 @@ def _make_runtime(
     *,
     adapter: _FakeAdapter | None = None,
     batch_size: int = 100,
-    key_encoding: str = "u64be",
+    key_encoding: KeyEncoding = KeyEncoding.U64BE,
 ) -> _PartitionWriteConfig:
     if adapter is None:
         adapter = _FakeAdapter()
@@ -86,9 +85,8 @@ def _make_runtime(
         key_encoding=key_encoding,
         value_spec=ValueSpec.binary_col("val"),
         batch_size=batch_size,
-        slate_env_file=None,
-        slate_settings=None,
-        slatedb_adapter_factory=_make_factory(adapter),
+        adapter_factory=_make_factory(adapter),
+        max_writes_per_second=None,
     )
 
 
@@ -219,7 +217,7 @@ def test_batch_flushing(tmp_path) -> None:
 
 def test_u32be_produces_4_byte_keys(tmp_path) -> None:
     adapter = _FakeAdapter()
-    runtime = _make_runtime(tmp_path, adapter=adapter, key_encoding="u32be")
+    runtime = _make_runtime(tmp_path, adapter=adapter, key_encoding=KeyEncoding.U32BE)
     _run(0, _rows(1, 256), runtime)
     written = adapter.write_calls[0]
     # u32be keys should be 4 bytes

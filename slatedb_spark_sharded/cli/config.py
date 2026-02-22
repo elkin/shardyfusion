@@ -188,15 +188,22 @@ def coerce_s3_option(key: str, value: str) -> bool | int | str:
 def coerce_cli_key(key: str, key_encoding: str) -> int | str:
     """Coerce a CLI key string to the type expected by the reader.
 
-    For ``u64be`` encoding the key must be a valid integer; for other
-    encodings the raw string is returned unchanged.
+    For ``u64be`` / ``u32be`` encoding the key must be a valid integer; for
+    other encodings the raw string is returned unchanged.
     """
-    if key_encoding in ("u64be", "u32be"):
+    from ..sharding_types import KeyEncoding
+
+    try:
+        enc = KeyEncoding.from_value(key_encoding)
+    except ValueError:
+        return key
+
+    if enc in (KeyEncoding.U64BE, KeyEncoding.U32BE):
         try:
             return int(key)
         except ValueError:
             raise ValueError(
-                f"Key {key!r} is not a valid integer (required by u64be encoding)"
+                f"Key {key!r} is not a valid integer (required by {enc.value} encoding)"
             ) from None
     return key
 

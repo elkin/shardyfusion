@@ -7,7 +7,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .sharding_types import BoundaryValue, ShardingStrategy
+from .sharding_types import BoundaryValue, KeyEncoding, ShardingStrategy
 from .type_defs import JsonObject, JsonValue
 
 
@@ -42,7 +42,7 @@ class RequiredBuildMeta(BaseModel):
     db_path_template: str
     tmp_prefix: str
     format_version: int = 1
-    key_encoding: str = "u64be"
+    key_encoding: KeyEncoding = KeyEncoding.U64BE
 
 
 class RequiredShardMeta(BaseModel):

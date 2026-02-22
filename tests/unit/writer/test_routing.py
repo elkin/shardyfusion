@@ -9,7 +9,7 @@ from slatedb_spark_sharded.manifest import (
     RequiredShardMeta,
 )
 from slatedb_spark_sharded.routing import SnapshotRouter
-from slatedb_spark_sharded.sharding import ShardingStrategy
+from slatedb_spark_sharded.sharding_types import KeyEncoding, ShardingStrategy
 
 
 def _build_required(
@@ -21,7 +21,7 @@ def _build_required(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/prefix",
         key_col="id",
-        key_encoding="u64be",
+        key_encoding=KeyEncoding.U64BE,
         sharding=ManifestShardingSpec(strategy=strategy, boundaries=boundaries),
         db_path_template="db={db_id:05d}",
         tmp_prefix="_tmp",
@@ -244,7 +244,7 @@ def _build_required_u32be(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/prefix",
         key_col="id",
-        key_encoding="u32be",
+        key_encoding=KeyEncoding.U32BE,
         sharding=ManifestShardingSpec(strategy=strategy, boundaries=boundaries),
         db_path_template="db={db_id:05d}",
         tmp_prefix="_tmp",

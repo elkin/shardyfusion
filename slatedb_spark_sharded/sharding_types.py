@@ -9,6 +9,27 @@ DB_ID_COL = "_slatedb_db_id"
 BoundaryValue = int | float | str
 
 
+class KeyEncoding(str, Enum):
+    """Supported key serialization encodings."""
+
+    U64BE = "u64be"
+    U32BE = "u32be"
+
+    @classmethod
+    def from_value(cls, value: "KeyEncoding | str") -> Self:
+        """Parse an encoding value from enum or string input."""
+
+        if isinstance(value, cls):
+            return value
+        try:
+            return cls(str(value))
+        except ValueError as exc:
+            allowed = ", ".join(item.value for item in cls)
+            raise ValueError(
+                f"Unsupported key encoding: {value!r}. Allowed: {allowed}"
+            ) from exc
+
+
 class ShardingStrategy(str, Enum):
     """Supported sharding strategies."""
 

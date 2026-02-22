@@ -11,7 +11,7 @@ from slatedb_spark_sharded.manifest import (
     RequiredShardMeta,
 )
 from slatedb_spark_sharded.reader import SlateShardedReader
-from slatedb_spark_sharded.sharding_types import ShardingStrategy
+from slatedb_spark_sharded.sharding_types import KeyEncoding, ShardingStrategy
 
 
 def test_reader_loads_current_and_manifest_from_local_s3(
@@ -52,7 +52,7 @@ def test_reader_loads_current_and_manifest_from_local_s3(
         num_dbs=2,
         s3_prefix=s3_prefix,
         key_col="id",
-        key_encoding="u64be",
+        key_encoding=KeyEncoding.U64BE,
         sharding=ManifestShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=[10]),
         db_path_template="db={db_id:05d}",
         tmp_prefix="_tmp",

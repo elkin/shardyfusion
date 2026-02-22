@@ -2,6 +2,7 @@
 
 import json
 import types
+from dataclasses import dataclass
 from typing import Iterable, Protocol, Self
 
 from .errors import SlateDbApiError
@@ -9,7 +10,7 @@ from .logging import FailureSeverity, log_failure
 from .type_defs import JsonObject
 
 
-class SlateDbAdapter(Protocol):
+class DbAdapter(Protocol):
     """Adapter protocol used by partition writers."""
 
     def __enter__(self) -> Self:
@@ -25,20 +26,15 @@ class SlateDbAdapter(Protocol):
         """Exit adapter context and release resources."""
         ...
 
-    @property
-    def db(self) -> object:
-        """Underlying db handle (for advanced/testing access)."""
-        ...
-
-    def write_pairs(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
+    def write_batch(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
         """Write one batch of key/value pairs."""
         ...
 
-    def flush_wal_if_supported(self) -> None:
+    def flush(self) -> None:
         """Flush WAL if supported by binding."""
         ...
 
-    def create_checkpoint_if_supported(self) -> str | None:
+    def checkpoint(self) -> str | None:
         """Create a durable checkpoint if supported."""
         ...
 
@@ -47,19 +43,38 @@ class SlateDbAdapter(Protocol):
         ...
 
 
-class SlateDbAdapterFactory(Protocol):
+class DbAdapterFactory(Protocol):
     """Factory protocol for opening one shard writer adapter."""
 
     def __call__(
         self,
         *,
-        local_dir: str,
         db_url: str,
-        env_file: str | None,
-        settings: JsonObject | None,
-    ) -> SlateDbAdapter:
+        local_dir: str,
+    ) -> DbAdapter:
         """Construct an opened adapter instance."""
         ...
+
+
+# Keep old names as aliases for backward compatibility during transition.
+SlateDbAdapter = DbAdapter
+SlateDbAdapterFactory = DbAdapterFactory
+
+
+@dataclass(slots=True)
+class SlateDbFactory:
+    """Picklable factory that captures SlateDB-specific config at construction time."""
+
+    env_file: str | None = None
+    settings: JsonObject | None = None
+
+    def __call__(self, *, db_url: str, local_dir: str) -> "DefaultSlateDbAdapter":
+        return DefaultSlateDbAdapter(
+            local_dir=local_dir,
+            db_url=db_url,
+            env_file=self.env_file,
+            settings=self.settings,
+        )
 
 
 class DefaultSlateDbAdapter:
@@ -112,7 +127,7 @@ class DefaultSlateDbAdapter:
     ) -> None:
         self.close()
 
-    def write_pairs(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
+    def write_batch(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
         batch = list(pairs)
         if not batch:
             return
@@ -127,10 +142,10 @@ class DefaultSlateDbAdapter:
             wb.put(key, value)
         self._db.write(wb)
 
-    def flush_wal_if_supported(self) -> None:
+    def flush(self) -> None:
         self._db.flush_with_options("wal")
 
-    def create_checkpoint_if_supported(self) -> str | None:
+    def checkpoint(self) -> str | None:
         checkpoint = self._db.create_checkpoint(scope="durable")
         return checkpoint["id"]
 
@@ -145,19 +160,17 @@ class DefaultSlateDbAdapter:
             )
             raise
 
+    # Keep old method names as aliases for backward compatibility.
+    write_pairs = write_batch
+    flush_wal_if_supported = flush
+    create_checkpoint_if_supported = checkpoint
+
 
 def default_adapter_factory(
     *,
-    local_dir: str,
     db_url: str,
-    env_file: str | None,
-    settings: JsonObject | None,
-) -> SlateDbAdapter:
-    """Factory for default adapter instances."""
+    local_dir: str,
+) -> DbAdapter:
+    """Factory for default adapter instances (uses SlateDbFactory with no config)."""
 
-    return DefaultSlateDbAdapter(
-        local_dir=local_dir,
-        db_url=db_url,
-        env_file=env_file,
-        settings=settings,
-    )
+    return SlateDbFactory()(db_url=db_url, local_dir=local_dir)

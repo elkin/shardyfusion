@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Callable, Mapping, Protocol, Self, cast
 
 from .errors import ConfigValidationError
+from .sharding_types import KeyEncoding
 
 
 class _KeyedRow(Protocol):
@@ -15,10 +16,10 @@ class _AsDictRow(Protocol):
     def asDict(self, recursive: bool = False) -> dict[str, object]: ...
 
 
-def encode_key(key: object, *, encoding: str = "u64be") -> bytes:
+def encode_key(key: object, *, encoding: KeyEncoding = KeyEncoding.U64BE) -> bytes:
     """Encode a key into bytes for SlateDB."""
 
-    if encoding == "u64be":
+    if encoding == KeyEncoding.U64BE:
         if not isinstance(key, int):
             raise ConfigValidationError(
                 f"u64be encoding expects int key, got {type(key)!r}"
@@ -27,7 +28,7 @@ def encode_key(key: object, *, encoding: str = "u64be") -> bytes:
             raise ConfigValidationError("u64be encoding requires value in [0, 2^64-1]")
         return key.to_bytes(8, byteorder="big", signed=False)
 
-    if encoding == "u32be":
+    if encoding == KeyEncoding.U32BE:
         if not isinstance(key, int):
             raise ConfigValidationError(
                 f"u32be encoding expects int key, got {type(key)!r}"

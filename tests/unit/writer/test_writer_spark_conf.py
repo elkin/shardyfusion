@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from slatedb_spark_sharded.sharding import ShardingSpec, ShardingStrategy
+from slatedb_spark_sharded._writer_core import _manifest_safe_sharding
+from slatedb_spark_sharded.sharding_types import ShardingSpec, ShardingStrategy
 from slatedb_spark_sharded.writer import (
     DataFrameCacheContext,
     SparkConfOverrideContext,
-    _manifest_safe_sharding,
-    write_sharded_slatedb,
+    write_sharded_spark,
 )
 
 
@@ -84,7 +84,7 @@ def test_dataframe_cache_context_caches_and_unpersists() -> None:
     assert df.unpersist_calls == [False]
 
 
-def test_write_sharded_slatedb_uses_optional_spark_conf_overrides(monkeypatch) -> None:
+def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> None:
     calls: list[tuple[str, object]] = []
     fake_spark = _FakeSparkSession()
     fake_df = SimpleNamespace(sparkSession=fake_spark)
@@ -101,8 +101,24 @@ def test_write_sharded_slatedb_uses_optional_spark_conf_overrides(monkeypatch) -
         def __exit__(self, exc_type, exc, tb):
             calls.append(("ctx_exit", None))
 
-    def _fake_impl(*, df, config, run_id, started):
-        _ = started
+    def _fake_impl(
+        *,
+        df,
+        config,
+        run_id,
+        started,
+        key_col,
+        value_spec,
+        sort_within_partitions,
+        max_writes_per_second,
+    ):
+        _ = (
+            started,
+            key_col,
+            value_spec,
+            sort_within_partitions,
+            max_writes_per_second,
+        )
         calls.append(("impl", (df, config, run_id)))
         return "result-sentinel"
 
@@ -110,12 +126,16 @@ def test_write_sharded_slatedb_uses_optional_spark_conf_overrides(monkeypatch) -
         "slatedb_spark_sharded.writer.SparkConfOverrideContext", _RecordingCtx
     )
     monkeypatch.setattr(
-        "slatedb_spark_sharded.writer._write_sharded_slatedb_impl", _fake_impl
+        "slatedb_spark_sharded.writer._write_sharded_spark_impl", _fake_impl
     )
 
-    result = write_sharded_slatedb(
+    from slatedb_spark_sharded.serde import ValueSpec
+
+    result = write_sharded_spark(
         fake_df,  # type: ignore[arg-type]
         fake_config,  # type: ignore[arg-type]
+        key_col="id",
+        value_spec=ValueSpec.binary_col("payload"),
         spark_conf_overrides={"spark.speculation": "false"},
     )
 
@@ -126,7 +146,7 @@ def test_write_sharded_slatedb_uses_optional_spark_conf_overrides(monkeypatch) -
     assert calls[3][0] == "ctx_exit"
 
 
-def test_write_sharded_slatedb_wraps_input_df_when_cache_enabled(monkeypatch) -> None:
+def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> None:
     calls: list[tuple[str, object]] = []
     fake_spark = _FakeSparkSession()
     fake_df = _FakeDataFrame(fake_spark)
@@ -143,8 +163,24 @@ def test_write_sharded_slatedb_wraps_input_df_when_cache_enabled(monkeypatch) ->
         def __exit__(self, exc_type, exc, tb):
             calls.append(("ctx_exit", None))
 
-    def _fake_impl(*, df, config, run_id, started):
-        _ = started
+    def _fake_impl(
+        *,
+        df,
+        config,
+        run_id,
+        started,
+        key_col,
+        value_spec,
+        sort_within_partitions,
+        max_writes_per_second,
+    ):
+        _ = (
+            started,
+            key_col,
+            value_spec,
+            sort_within_partitions,
+            max_writes_per_second,
+        )
         calls.append(("impl", (df, config, run_id)))
         return "result-sentinel"
 
@@ -152,18 +188,24 @@ def test_write_sharded_slatedb_wraps_input_df_when_cache_enabled(monkeypatch) ->
         "slatedb_spark_sharded.writer.SparkConfOverrideContext", _RecordingCtx
     )
     monkeypatch.setattr(
-        "slatedb_spark_sharded.writer._write_sharded_slatedb_impl", _fake_impl
+        "slatedb_spark_sharded.writer._write_sharded_spark_impl", _fake_impl
     )
 
-    result1 = write_sharded_slatedb(
+    from slatedb_spark_sharded.serde import ValueSpec
+
+    result1 = write_sharded_spark(
         fake_df,  # type: ignore[arg-type]
         fake_config,  # type: ignore[arg-type]
+        key_col="id",
+        value_spec=ValueSpec.binary_col("payload"),
         cache_input=True,
         storage_level="test-level",  # type: ignore[arg-type]
     )
-    result2 = write_sharded_slatedb(
+    result2 = write_sharded_spark(
         fake_df,  # type: ignore[arg-type]
         fake_config,  # type: ignore[arg-type]
+        key_col="id",
+        value_spec=ValueSpec.binary_col("payload"),
         cache_input=True,
         storage_level="test-level",  # type: ignore[arg-type]
     )

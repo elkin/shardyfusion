@@ -83,7 +83,7 @@ class _FakeClosableDb:
         self.closed = True
 
 
-def test_write_pairs_uses_official_write_batch_api(monkeypatch) -> None:
+def test_write_batch_uses_official_write_batch_api(monkeypatch) -> None:
     fake_module = types.ModuleType("slatedb")
     fake_module.WriteBatch = _FakeWriteBatch
     monkeypatch.setitem(sys.modules, "slatedb", fake_module)
@@ -92,13 +92,13 @@ def test_write_pairs_uses_official_write_batch_api(monkeypatch) -> None:
     db = _FakeDb()
     adapter._db = db
 
-    adapter.write_pairs([(b"k1", b"v1"), (b"k2", b"v2")])
+    adapter.write_batch([(b"k1", b"v1"), (b"k2", b"v2")])
 
     assert len(db.writes) == 1
     assert db.writes[0].pairs == [(b"k1", b"v1"), (b"k2", b"v2")]
 
 
-def test_write_pairs_raises_when_official_write_api_missing(monkeypatch) -> None:
+def test_write_batch_raises_when_official_write_api_missing(monkeypatch) -> None:
     fake_module = types.ModuleType("slatedb")
     fake_module.WriteBatch = _FakeWriteBatch
     monkeypatch.setitem(sys.modules, "slatedb", fake_module)
@@ -107,7 +107,7 @@ def test_write_pairs_raises_when_official_write_api_missing(monkeypatch) -> None
     adapter._db = object()
 
     with pytest.raises(AttributeError):
-        adapter.write_pairs([(b"k", b"v")])
+        adapter.write_batch([(b"k", b"v")])
 
 
 def test_context_manager_closes_db() -> None:

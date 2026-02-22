@@ -22,6 +22,16 @@ class ShardReader(Protocol):
         ...
 
 
+class ShardReaderFactory(Protocol):
+    """Factory for opening one shard reader."""
+
+    def __call__(
+        self, *, db_url: str, local_dir: str, checkpoint_id: str | None
+    ) -> ShardReader:
+        """Construct an opened reader instance."""
+        ...
+
+
 class S3ClientConfig(TypedDict, total=False):
     """Supported explicit overrides for boto3 S3 client construction."""
 

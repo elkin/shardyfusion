@@ -6,6 +6,7 @@ from .config import (
     OutputOptions,
     ShardingOptions,
     SlateDbConfig,
+    WriteConfig,
 )
 from .errors import (
     ManifestParseError,
@@ -31,10 +32,18 @@ from .manifest_readers import (
     parse_json_manifest,
 )
 from .publish import DefaultS3Publisher, ManifestPublisher
-from .reader import SlateShardedReader
+from .reader import SlateDbReaderFactory, SlateShardedReader
 from .routing import SnapshotRouter
 from .serde import ValueSpec
-from .sharding_types import ShardingSpec, ShardingStrategy
+from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
+from .slatedb_adapter import (
+    DbAdapter,
+    DbAdapterFactory,
+    SlateDbAdapter,
+    SlateDbAdapterFactory,
+    SlateDbFactory,
+)
+from .type_defs import ShardReaderFactory
 
 _writer_exports: list[str] = []
 try:
@@ -42,16 +51,26 @@ try:
         DataFrameCacheContext,
         SparkConfOverrideContext,
         write_sharded_slatedb,
+        write_sharded_spark,
     )
 
     _writer_exports = [
         "DataFrameCacheContext",
         "SparkConfOverrideContext",
         "write_sharded_slatedb",
+        "write_sharded_spark",
     ]
 except ImportError:
     # Writer APIs are unavailable when optional writer dependencies
     # (notably pyspark) are not installed.
+    pass
+
+_python_writer_exports: list[str] = []
+try:
+    from .python_writer import write_sharded
+
+    _python_writer_exports = ["write_sharded"]
+except ImportError:
     pass
 
 __all__ = [
@@ -64,8 +83,11 @@ __all__ = [
     "CurrentPointer",
     "DefaultS3Publisher",
     "DefaultS3ManifestReader",
+    "DbAdapter",
+    "DbAdapterFactory",
     "FunctionManifestReader",
     "JsonManifestBuilder",
+    "KeyEncoding",
     "ManifestArtifact",
     "ManifestBuilder",
     "ManifestShardingSpec",
@@ -75,14 +97,21 @@ __all__ = [
     "OutputOptions",
     "RequiredBuildMeta",
     "RequiredShardMeta",
+    "ShardReaderFactory",
     "SlateShardedReader",
+    "SlateDbReaderFactory",
+    "SlateDbFactory",
     "SnapshotRouter",
     "ShardingSpec",
     "ShardingOptions",
     "ShardingStrategy",
     "SlateDbConfig",
+    "SlateDbAdapter",
+    "SlateDbAdapterFactory",
+    "WriteConfig",
     "EngineOptions",
     "ValueSpec",
     "parse_json_manifest",
 ]
 __all__.extend(_writer_exports)
+__all__.extend(_python_writer_exports)

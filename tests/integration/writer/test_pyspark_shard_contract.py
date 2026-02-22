@@ -4,17 +4,12 @@ import json
 
 import pytest
 
-from slatedb_spark_sharded.config import (
-    EngineOptions,
-    ManifestOptions,
-    OutputOptions,
-    SlateDbConfig,
-)
+from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteConfig
 from slatedb_spark_sharded.manifest import ManifestArtifact
 from slatedb_spark_sharded.publish import ManifestPublisher
 from slatedb_spark_sharded.serde import ValueSpec
 from slatedb_spark_sharded.testing import real_file_adapter_factory
-from slatedb_spark_sharded.writer import write_sharded_slatedb
+from slatedb_spark_sharded.writer import write_sharded_spark
 
 
 class InMemoryPublisher(ManifestPublisher):
@@ -40,21 +35,20 @@ def test_sharded_writer_contract_holds_for_pyspark(spark, tmp_path) -> None:
     df = spark.createDataFrame(rows, ["id", "payload"])
 
     publisher = InMemoryPublisher()
-    config = SlateDbConfig(
+    config = WriteConfig(
         num_dbs=5,
         s3_prefix="s3://bucket/prefix",
-        key_col="id",
-        value_spec=ValueSpec.binary_col("payload"),
         manifest=ManifestOptions(publisher=publisher),
-        engine=EngineOptions(
-            slatedb_adapter_factory=real_file_adapter_factory(
-                str(tmp_path / "object-store")
-            )
-        ),
+        adapter_factory=real_file_adapter_factory(str(tmp_path / "object-store")),
         output=OutputOptions(run_id="run-contract-1"),
     )
 
-    result = write_sharded_slatedb(df, config)
+    result = write_sharded_spark(
+        df,
+        config,
+        key_col="id",
+        value_spec=ValueSpec.binary_col("payload"),
+    )
 
     assert len(result.winners) == 5
     assert [winner.db_id for winner in result.winners] == [0, 1, 2, 3, 4]

@@ -14,8 +14,8 @@ from slatedb_spark_sharded.manifest import (
     RequiredBuildMeta,
     RequiredShardMeta,
 )
-from slatedb_spark_sharded.reader import SlateShardedReader, _open_slatedb_reader
-from slatedb_spark_sharded.sharding_types import ShardingStrategy
+from slatedb_spark_sharded.reader import SlateDbReaderFactory, SlateShardedReader
+from slatedb_spark_sharded.sharding_types import KeyEncoding, ShardingStrategy
 
 
 class _MutableManifestReader:
@@ -49,6 +49,16 @@ class _FakeReader:
         return None
 
 
+def _fake_reader_factory(stores: dict[str, dict[bytes, bytes]]):
+    """Return a ShardReaderFactory that routes db_url → in-memory store."""
+
+    def factory(*, db_url: str, local_dir: str, checkpoint_id: str | None):
+        _ = (local_dir, checkpoint_id)
+        return _FakeReader(stores[db_url])
+
+    return factory
+
+
 def _required_build() -> RequiredBuildMeta:
     return RequiredBuildMeta(
         run_id="run",
@@ -56,7 +66,7 @@ def _required_build() -> RequiredBuildMeta:
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
         key_col="id",
-        key_encoding="u64be",
+        key_encoding=KeyEncoding.U64BE,
         sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
         db_path_template="db={db_id:05d}",
         tmp_prefix="_tmp",
@@ -82,7 +92,7 @@ def _manifest(db_url: str) -> ParsedManifest:
     )
 
 
-def test_refresh_swaps_manifest_ref_and_readers(monkeypatch, tmp_path) -> None:
+def test_refresh_swaps_manifest_ref_and_readers(tmp_path) -> None:
     manifests = {
         "mem://manifest/one": _manifest("mem://db/one"),
         "mem://manifest/two": _manifest("mem://db/two"),
@@ -94,18 +104,11 @@ def test_refresh_swaps_manifest_ref_and_readers(monkeypatch, tmp_path) -> None:
         "mem://db/two": {(1).to_bytes(8, "big", signed=False): b"two"},
     }
 
-    def fake_open_reader(*, local_path, db_url, checkpoint_id, env_file):
-        _ = (local_path, checkpoint_id, env_file)
-        return _FakeReader(stores[db_url])
-
-    monkeypatch.setattr(
-        "slatedb_spark_sharded.reader._open_slatedb_reader", fake_open_reader
-    )
-
     with SlateShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_reader=manifest_reader,
+        reader_factory=_fake_reader_factory(stores),
     ) as reader:
         assert reader.get(1) == b"one"
         manifest_reader.current_ref = "mem://manifest/two"
@@ -118,7 +121,9 @@ def test_refresh_swaps_manifest_ref_and_readers(monkeypatch, tmp_path) -> None:
         assert unchanged is False
 
 
-def test_open_slatedb_reader_uses_official_slatedbreader_signature(monkeypatch) -> None:
+def test_slate_db_reader_factory_uses_official_slatedbreader_signature(
+    monkeypatch,
+) -> None:
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
     sentinel = _FakeReader({})
 
@@ -130,11 +135,11 @@ def test_open_slatedb_reader_uses_official_slatedbreader_signature(monkeypatch) 
     fake_module.SlateDBReader = fake_reader_ctor
     monkeypatch.setitem(sys.modules, "slatedb", fake_module)
 
-    reader = _open_slatedb_reader(
-        local_path="/tmp/local",
+    factory = SlateDbReaderFactory(env_file="slatedb.env")
+    reader = factory(
         db_url="s3://bucket/db",
+        local_dir="/tmp/local",
         checkpoint_id="ckpt-1",
-        env_file="slatedb.env",
     )
 
     assert reader is sentinel
@@ -167,19 +172,15 @@ def test_load_initial_state_raises_reader_state_error_when_no_current() -> None:
         )
 
 
-def test_closed_reader_get_raises_reader_state_error(monkeypatch, tmp_path) -> None:
+def test_closed_reader_get_raises_reader_state_error(tmp_path) -> None:
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
     manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
-
-    monkeypatch.setattr(
-        "slatedb_spark_sharded.reader._open_slatedb_reader",
-        lambda *, local_path, db_url, checkpoint_id, env_file: _FakeReader({}),
-    )
 
     reader = SlateShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_reader=manifest_reader,
+        reader_factory=lambda *, db_url, local_dir, checkpoint_id: _FakeReader({}),
     )
     reader.close()
 
@@ -187,19 +188,15 @@ def test_closed_reader_get_raises_reader_state_error(monkeypatch, tmp_path) -> N
         reader.get(1)
 
 
-def test_closed_reader_refresh_raises_reader_state_error(monkeypatch, tmp_path) -> None:
+def test_closed_reader_refresh_raises_reader_state_error(tmp_path) -> None:
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
     manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
-
-    monkeypatch.setattr(
-        "slatedb_spark_sharded.reader._open_slatedb_reader",
-        lambda *, local_path, db_url, checkpoint_id, env_file: _FakeReader({}),
-    )
 
     reader = SlateShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_reader=manifest_reader,
+        reader_factory=lambda *, db_url, local_dir, checkpoint_id: _FakeReader({}),
     )
     reader.close()
 
@@ -207,19 +204,15 @@ def test_closed_reader_refresh_raises_reader_state_error(monkeypatch, tmp_path) 
         reader.refresh()
 
 
-def test_context_manager_returns_self_and_calls_close(monkeypatch, tmp_path) -> None:
+def test_context_manager_returns_self_and_calls_close(tmp_path) -> None:
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
     manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
-
-    monkeypatch.setattr(
-        "slatedb_spark_sharded.reader._open_slatedb_reader",
-        lambda *, local_path, db_url, checkpoint_id, env_file: _FakeReader({}),
-    )
 
     reader = SlateShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_reader=manifest_reader,
+        reader_factory=lambda *, db_url, local_dir, checkpoint_id: _FakeReader({}),
     )
 
     with reader as ctx:
@@ -238,7 +231,7 @@ def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
         num_dbs=2,
         s3_prefix="s3://bucket/prefix",
         key_col="id",
-        key_encoding="u64be",
+        key_encoding=KeyEncoding.U64BE,
         sharding=ManifestShardingSpec(strategy=ShardingStrategy.RANGE),
         db_path_template="db={db_id:05d}",
         tmp_prefix="_tmp",
@@ -271,9 +264,7 @@ def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
     )
 
 
-def test_multi_get_shard_failure_raises_slate_db_api_error(
-    monkeypatch, tmp_path
-) -> None:
+def test_multi_get_shard_failure_raises_slate_db_api_error(tmp_path) -> None:
     manifests = {
         "mem://manifest/one": _manifest_2shard("mem://db/zero", "mem://db/one")
     }
@@ -286,15 +277,11 @@ def test_multi_get_shard_failure_raises_slate_db_api_error(
         def close(self) -> None:
             pass
 
-    monkeypatch.setattr(
-        "slatedb_spark_sharded.reader._open_slatedb_reader",
-        lambda *, local_path, db_url, checkpoint_id, env_file: _BrokenReader(),
-    )
-
     with SlateShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_reader=manifest_reader,
+        reader_factory=lambda *, db_url, local_dir, checkpoint_id: _BrokenReader(),
         max_workers=2,
     ) as reader:
         # key=1 routes to shard 0, key=6 routes to shard 1 → both shards in executor

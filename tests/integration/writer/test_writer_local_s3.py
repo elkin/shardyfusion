@@ -5,21 +5,15 @@ import json
 import pytest
 import slatedb
 
-from slatedb_spark_sharded.config import (
-    EngineOptions,
-    ManifestOptions,
-    OutputOptions,
-    ShardingOptions,
-    SlateDbConfig,
-)
+from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteConfig
 from slatedb_spark_sharded.serde import ValueSpec
-from slatedb_spark_sharded.sharding import ShardingSpec, ShardingStrategy
+from slatedb_spark_sharded.sharding_types import ShardingSpec, ShardingStrategy
 from slatedb_spark_sharded.testing import (
     map_s3_db_url_to_file_url,
     real_file_adapter_factory,
     writer_local_dir_for_db_url,
 )
-from slatedb_spark_sharded.writer import write_sharded_slatedb
+from slatedb_spark_sharded.writer import write_sharded_spark
 
 
 @pytest.mark.spark
@@ -35,20 +29,14 @@ def test_writer_publishes_manifest_and_current_to_local_s3(
     local_root = str(tmp_path / "writer-local")
     object_store_root = str(tmp_path / "object-store")
 
-    config = SlateDbConfig(
+    config = WriteConfig(
         num_dbs=4,
         s3_prefix=s3_prefix,
-        key_col="id",
-        value_spec=ValueSpec.binary_col("payload"),
-        sharding=ShardingOptions(
-            spec=ShardingSpec(
-                strategy=ShardingStrategy.RANGE,
-                boundaries=[6, 12, 18],
-            )
+        sharding=ShardingSpec(
+            strategy=ShardingStrategy.RANGE,
+            boundaries=[6, 12, 18],
         ),
-        engine=EngineOptions(
-            slatedb_adapter_factory=real_file_adapter_factory(object_store_root),
-        ),
+        adapter_factory=real_file_adapter_factory(object_store_root),
         manifest=ManifestOptions(
             s3_client_config={
                 "endpoint_url": endpoint_url,
@@ -63,7 +51,12 @@ def test_writer_publishes_manifest_and_current_to_local_s3(
         ),
     )
 
-    result = write_sharded_slatedb(df, config)
+    result = write_sharded_spark(
+        df,
+        config,
+        key_col="id",
+        value_spec=ValueSpec.binary_col("payload"),
+    )
 
     assert len(result.winners) == 4
     assert result.manifest_ref.startswith(f"s3://{bucket}/writer-only/manifests/")
