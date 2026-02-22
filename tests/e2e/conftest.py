@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-import time
-import urllib.error
 import urllib.request
 from collections.abc import Generator
 from typing import TYPE_CHECKING, Any
@@ -50,22 +48,6 @@ def _admin_request(
         return None
 
 
-def _wait_for_admin_api(admin_url: str, *, token: str, timeout: float = 30.0) -> None:
-    """Poll Garage admin API until it responds (layout may not exist yet)."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            req = urllib.request.Request(
-                f"{admin_url}/v2/GetClusterStatus", method="GET"
-            )
-            req.add_header("Authorization", f"Bearer {token}")
-            with urllib.request.urlopen(req, timeout=2):
-                return
-        except (urllib.error.URLError, OSError, TimeoutError):
-            time.sleep(0.5)
-    raise TimeoutError(f"Garage admin API did not respond within {timeout}s")
-
-
 @pytest.fixture(scope="session")
 def garage_s3_service() -> Generator[LocalS3Service, None, None]:
     """Create an API key and bucket on the compose-managed Garage instance."""
@@ -79,9 +61,6 @@ def garage_s3_service() -> Generator[LocalS3Service, None, None]:
         pytest.skip(
             "GARAGE_E2E_ENDPOINT / GARAGE_E2E_ADMIN_URL not set (run via 'just d-e2e')"
         )
-
-    # Wait for admin API (should already be healthy via compose, but belt-and-suspenders)
-    _wait_for_admin_api(admin_url, token=admin_token)
 
     admin_v2 = f"{admin_url}/v2"
     bucket = f"slatedb-e2e-{uuid4().hex[:8]}"
@@ -127,12 +106,6 @@ def garage_s3_service() -> Generator[LocalS3Service, None, None]:
     )
 
     # Set env vars for implicit boto3 / slatedb client construction
-    previous_env = {
-        "SLATEDB_S3_ENDPOINT_URL": os.environ.get("SLATEDB_S3_ENDPOINT_URL"),
-        "AWS_REGION": os.environ.get("AWS_REGION"),
-        "AWS_ACCESS_KEY_ID": os.environ.get("AWS_ACCESS_KEY_ID"),
-        "AWS_SECRET_ACCESS_KEY": os.environ.get("AWS_SECRET_ACCESS_KEY"),
-    }
     os.environ["SLATEDB_S3_ENDPOINT_URL"] = endpoint_url
     os.environ["AWS_REGION"] = region_name
     os.environ["AWS_ACCESS_KEY_ID"] = access_key_id
@@ -158,13 +131,6 @@ def garage_s3_service() -> Generator[LocalS3Service, None, None]:
         "bucket": bucket,
         "client": client,
     }
-
-    # Restore env vars
-    for key, value in previous_env.items():
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = value
 
 
 def s3_client_config_from_service(service: LocalS3Service) -> S3ClientConfig:
