@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pathlib
 import time
 from collections.abc import Iterable
 from typing import Self
@@ -9,14 +10,22 @@ from typing import Self
 import pytest
 
 from slatedb_spark_sharded._rate_limiter import TokenBucket
+from slatedb_spark_sharded._writer_core import _route_key
 from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteConfig
 from slatedb_spark_sharded.errors import ConfigValidationError
 from slatedb_spark_sharded.manifest import BuildResult, ManifestArtifact
 from slatedb_spark_sharded.publish import ManifestPublisher
+from slatedb_spark_sharded.serde import encode_key
 from slatedb_spark_sharded.sharding_types import (
     KeyEncoding,
     ShardingSpec,
     ShardingStrategy,
+)
+from slatedb_spark_sharded.slatedb_adapter import DbAdapterFactory
+from slatedb_spark_sharded.testing import (
+    fake_adapter_factory,
+    file_backed_adapter_factory,
+    file_backed_load_db,
 )
 from slatedb_spark_sharded.writer.python import write_sharded
 
@@ -262,3 +271,267 @@ def test_rate_limited_write() -> None:
     )
 
     assert result.stats.rows_written == 5
+
+
+# ---------------------------------------------------------------------------
+# Parallel writer tests
+# ---------------------------------------------------------------------------
+
+
+def _make_parallel_config(
+    tmp_path: pathlib.Path,
+    adapter_factory: DbAdapterFactory,
+    *,
+    num_dbs: int = 4,
+    batch_size: int = 50_000,
+    sharding: ShardingSpec | None = None,
+    key_encoding: KeyEncoding = KeyEncoding.U64BE,
+) -> WriteConfig:
+    return WriteConfig(
+        num_dbs=num_dbs,
+        s3_prefix="s3://bucket/prefix",
+        key_encoding=key_encoding,
+        batch_size=batch_size,
+        adapter_factory=adapter_factory,
+        sharding=sharding or ShardingSpec(),
+        output=OutputOptions(
+            run_id="test-run",
+            local_root=str(tmp_path / "local"),
+        ),
+        manifest=ManifestOptions(publisher=InMemoryPublisher()),
+    )
+
+
+def test_parallel_hash_routing_round_trip(tmp_path: pathlib.Path) -> None:
+    root_dir = str(tmp_path / "file_backed")
+    factory = file_backed_adapter_factory(root_dir)
+    config = _make_parallel_config(tmp_path, factory, num_dbs=4)
+
+    records = list(range(40))
+    result = write_sharded(
+        records,
+        config,
+        key_fn=lambda r: r,
+        value_fn=lambda r: f"v{r}".encode(),
+        parallel=True,
+    )
+
+    assert isinstance(result, BuildResult)
+    assert len(result.winners) == 4
+    assert sorted(w.db_id for w in result.winners) == [0, 1, 2, 3]
+    assert sum(w.row_count for w in result.winners) == 40
+    assert result.manifest_ref.startswith("mem://manifests/")
+    assert result.current_ref == "mem://_CURRENT"
+
+    # Verify data integrity via file-backed reads
+    all_kv: dict[bytes, bytes] = {}
+    for winner in result.winners:
+        shard_data = file_backed_load_db(root_dir, winner.db_url)
+        all_kv.update(shard_data)
+    for r in records:
+        key_bytes = encode_key(r, encoding=config.key_encoding)
+        assert key_bytes in all_kv
+        assert all_kv[key_bytes] == f"v{r}".encode()
+
+
+def test_parallel_range_explicit_boundaries(tmp_path: pathlib.Path) -> None:
+    root_dir = str(tmp_path / "file_backed")
+    factory = file_backed_adapter_factory(root_dir)
+    config = _make_parallel_config(
+        tmp_path,
+        factory,
+        num_dbs=3,
+        sharding=ShardingSpec(
+            strategy=ShardingStrategy.RANGE,
+            boundaries=[10, 20],
+        ),
+    )
+
+    records = list(range(30))
+    result = write_sharded(
+        records,
+        config,
+        key_fn=lambda r: r,
+        value_fn=lambda r: b"v",
+        parallel=True,
+    )
+
+    assert len(result.winners) == 3
+    assert result.winners[0].row_count == 10
+    assert result.winners[1].row_count == 10
+    assert result.winners[2].row_count == 10
+
+
+def test_parallel_empty_input(tmp_path: pathlib.Path) -> None:
+    config = _make_parallel_config(tmp_path, fake_adapter_factory, num_dbs=4)
+
+    result = write_sharded(
+        [],
+        config,
+        key_fn=lambda r: r,
+        value_fn=lambda r: b"v",
+        parallel=True,
+    )
+
+    assert len(result.winners) == 4
+    assert all(w.row_count == 0 for w in result.winners)
+
+
+def test_parallel_min_max_key_tracking(tmp_path: pathlib.Path) -> None:
+    config = _make_parallel_config(
+        tmp_path,
+        fake_adapter_factory,
+        num_dbs=2,
+        sharding=ShardingSpec(
+            strategy=ShardingStrategy.RANGE,
+            boundaries=[50],
+        ),
+    )
+
+    records = [10, 20, 30, 60, 70, 80]
+    result = write_sharded(
+        records,
+        config,
+        key_fn=lambda r: r,
+        value_fn=lambda r: b"v",
+        parallel=True,
+    )
+
+    shard0 = next(w for w in result.winners if w.db_id == 0)
+    shard1 = next(w for w in result.winners if w.db_id == 1)
+    assert shard0.min_key == 10
+    assert shard0.max_key == 30
+    assert shard1.min_key == 60
+    assert shard1.max_key == 80
+
+
+def test_parallel_batch_flushing(tmp_path: pathlib.Path) -> None:
+    root_dir = str(tmp_path / "file_backed")
+    factory = file_backed_adapter_factory(root_dir)
+    config = _make_parallel_config(tmp_path, factory, num_dbs=1, batch_size=3)
+
+    records = list(range(7))
+    result = write_sharded(
+        records,
+        config,
+        key_fn=lambda r: r,
+        value_fn=lambda r: f"v{r}".encode(),
+        parallel=True,
+    )
+
+    assert result.stats.rows_written == 7
+
+    all_kv: dict[bytes, bytes] = {}
+    for winner in result.winners:
+        shard_data = file_backed_load_db(root_dir, winner.db_url)
+        all_kv.update(shard_data)
+    assert len(all_kv) == 7
+
+
+def test_parallel_data_integrity(tmp_path: pathlib.Path) -> None:
+    root_dir = str(tmp_path / "file_backed")
+    factory = file_backed_adapter_factory(root_dir)
+    config = _make_parallel_config(tmp_path, factory, num_dbs=4)
+
+    records = list(range(100))
+    result = write_sharded(
+        records,
+        config,
+        key_fn=lambda r: r,
+        value_fn=lambda r: f"value-{r}".encode(),
+        parallel=True,
+    )
+
+    assert result.stats.rows_written == 100
+
+    # Collect all written data across all shards
+    all_kv: dict[bytes, bytes] = {}
+    for winner in result.winners:
+        shard_data = file_backed_load_db(root_dir, winner.db_url)
+        all_kv.update(shard_data)
+
+    assert len(all_kv) == 100
+    for r in records:
+        key_bytes = encode_key(r, encoding=config.key_encoding)
+        assert key_bytes in all_kv
+        assert all_kv[key_bytes] == f"value-{r}".encode()
+
+    # Verify each key is in the correct shard
+    for winner in result.winners:
+        shard_data = file_backed_load_db(root_dir, winner.db_url)
+        for key_bytes in shard_data:
+            key_int = int.from_bytes(key_bytes, byteorder="big", signed=False)
+            expected_db_id = _route_key(
+                key_int,
+                num_dbs=config.num_dbs,
+                sharding=config.sharding,
+                key_encoding=config.key_encoding,
+            )
+            assert expected_db_id == winner.db_id
+
+
+def test_parallel_single_shard(tmp_path: pathlib.Path) -> None:
+    root_dir = str(tmp_path / "file_backed")
+    factory = file_backed_adapter_factory(root_dir)
+    config = _make_parallel_config(tmp_path, factory, num_dbs=1)
+
+    records = list(range(20))
+    result = write_sharded(
+        records,
+        config,
+        key_fn=lambda r: r,
+        value_fn=lambda r: f"v{r}".encode(),
+        parallel=True,
+    )
+
+    assert len(result.winners) == 1
+    assert result.winners[0].db_id == 0
+    assert result.winners[0].row_count == 20
+
+    shard_data = file_backed_load_db(root_dir, result.winners[0].db_url)
+    assert len(shard_data) == 20
+
+
+def test_parallel_uneven_distribution(tmp_path: pathlib.Path) -> None:
+    root_dir = str(tmp_path / "file_backed")
+    factory = file_backed_adapter_factory(root_dir)
+    config = _make_parallel_config(tmp_path, factory, num_dbs=8)
+
+    records = list(range(5))
+    result = write_sharded(
+        records,
+        config,
+        key_fn=lambda r: r,
+        value_fn=lambda r: f"v{r}".encode(),
+        parallel=True,
+    )
+
+    assert len(result.winners) == 8
+    assert sum(w.row_count for w in result.winners) == 5
+
+    # Some shards should be empty
+    empty_shards = [w for w in result.winners if w.row_count == 0]
+    assert len(empty_shards) >= 1
+
+    # Verify all 5 records are recoverable
+    all_kv: dict[bytes, bytes] = {}
+    for winner in result.winners:
+        shard_data = file_backed_load_db(root_dir, winner.db_url)
+        all_kv.update(shard_data)
+    assert len(all_kv) == 5
+
+
+def test_parallel_rate_limited_write(tmp_path: pathlib.Path) -> None:
+    config = _make_parallel_config(tmp_path, fake_adapter_factory, num_dbs=2)
+
+    records = list(range(10))
+    result = write_sharded(
+        records,
+        config,
+        key_fn=lambda r: r,
+        value_fn=lambda r: b"v",
+        parallel=True,
+        max_writes_per_second=1000.0,
+    )
+
+    assert result.stats.rows_written == 10
