@@ -9,17 +9,14 @@ from pyspark.sql import Column, DataFrame, Row
 from pyspark.sql import functions as F
 from pyspark.sql.types import IntegerType, LongType, StringType
 
-from .errors import ShardAssignmentError
-from .ordering import compare_ordered
-from .sharding_types import (
+from slatedb_spark_sharded.errors import ShardAssignmentError
+from slatedb_spark_sharded.ordering import compare_ordered
+from slatedb_spark_sharded.sharding_types import (
     DB_ID_COL,
     BoundaryValue,
     ShardingSpec,
     ShardingStrategy,
 )
-
-# Re-export for backward compatibility
-__all__ = ["BoundaryValue", "DB_ID_COL", "ShardingSpec", "ShardingStrategy"]
 
 
 def add_db_id_column(

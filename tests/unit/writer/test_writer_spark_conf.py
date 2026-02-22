@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from slatedb_spark_sharded._writer_core import _manifest_safe_sharding
 from slatedb_spark_sharded.sharding_types import ShardingSpec, ShardingStrategy
-from slatedb_spark_sharded.writer import (
+from slatedb_spark_sharded.writer.spark.writer import (
     DataFrameCacheContext,
     SparkConfOverrideContext,
     write_sharded_spark,
@@ -123,10 +123,12 @@ def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> 
         return "result-sentinel"
 
     monkeypatch.setattr(
-        "slatedb_spark_sharded.writer.SparkConfOverrideContext", _RecordingCtx
+        "slatedb_spark_sharded.writer.spark.writer.SparkConfOverrideContext",
+        _RecordingCtx,
     )
     monkeypatch.setattr(
-        "slatedb_spark_sharded.writer._write_sharded_spark_impl", _fake_impl
+        "slatedb_spark_sharded.writer.spark.writer._write_sharded_spark_impl",
+        _fake_impl,
     )
 
     from slatedb_spark_sharded.serde import ValueSpec
@@ -185,10 +187,12 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
         return "result-sentinel"
 
     monkeypatch.setattr(
-        "slatedb_spark_sharded.writer.SparkConfOverrideContext", _RecordingCtx
+        "slatedb_spark_sharded.writer.spark.writer.SparkConfOverrideContext",
+        _RecordingCtx,
     )
     monkeypatch.setattr(
-        "slatedb_spark_sharded.writer._write_sharded_spark_impl", _fake_impl
+        "slatedb_spark_sharded.writer.spark.writer._write_sharded_spark_impl",
+        _fake_impl,
     )
 
     from slatedb_spark_sharded.serde import ValueSpec

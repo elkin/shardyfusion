@@ -42,7 +42,7 @@ from .type_defs import ShardReaderFactory
 
 _writer_exports: list[str] = []
 try:
-    from .writer import (
+    from .writer.spark import (
         DataFrameCacheContext,
         SparkConfOverrideContext,
         write_sharded_spark,
@@ -60,7 +60,7 @@ except ImportError:
 
 _python_writer_exports: list[str] = []
 try:
-    from .python_writer import write_sharded
+    from .writer.python import write_sharded
 
     _python_writer_exports = ["write_sharded"]
 except ImportError:

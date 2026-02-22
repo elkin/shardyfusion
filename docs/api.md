@@ -6,11 +6,15 @@
 
 ## Sharding
 
-::: slatedb_spark_sharded.sharding
+::: slatedb_spark_sharded.writer.spark.sharding
 
-## Writer
+## Writer (Spark)
 
-::: slatedb_spark_sharded.writer
+::: slatedb_spark_sharded.writer.spark.writer
+
+## Writer (Python)
+
+::: slatedb_spark_sharded.writer.python.writer
 
 ## Manifest Models and Builders
 
@@ -30,7 +34,7 @@
 
 ::: slatedb_spark_sharded.routing
 
-::: slatedb_spark_sharded.reader
+::: slatedb_spark_sharded.reader.reader
 
 ## Serde
 

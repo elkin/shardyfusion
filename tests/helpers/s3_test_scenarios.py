@@ -187,7 +187,7 @@ def run_writer_publishes_manifest_scenario(
         real_file_adapter_factory,
         writer_local_dir_for_db_url,
     )
-    from slatedb_spark_sharded.writer import write_sharded_spark
+    from slatedb_spark_sharded.writer.spark import write_sharded_spark
 
     rows = [(i, f"v{i}".encode("utf-8")) for i in range(24)]
     df = spark.createDataFrame(rows, ["id", "payload"])
@@ -287,7 +287,7 @@ def run_writer_reader_refresh_scenario(
         real_file_adapter_factory,
         writer_local_dir_for_db_url,
     )
-    from slatedb_spark_sharded.writer import write_sharded_spark
+    from slatedb_spark_sharded.writer.spark import write_sharded_spark
 
     bucket = s3_service["bucket"]
     endpoint_url = s3_service["endpoint_url"]

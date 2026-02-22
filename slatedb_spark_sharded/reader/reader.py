@@ -9,13 +9,20 @@ from dataclasses import dataclass
 from queue import Queue
 from typing import Any, Sequence
 
-from .errors import ReaderStateError, SlateDbApiError, SlatedbSparkShardedError
-from .logging import FailureSeverity, log_failure
-from .manifest import ParsedManifest
-from .manifest_readers import DefaultS3ManifestReader, ManifestReader
-from .routing import SnapshotRouter
-from .sharding_types import KeyEncoding
-from .type_defs import KeyInput, ShardReader, ShardReaderFactory
+from slatedb_spark_sharded.errors import (
+    ReaderStateError,
+    SlateDbApiError,
+    SlatedbSparkShardedError,
+)
+from slatedb_spark_sharded.logging import FailureSeverity, log_failure
+from slatedb_spark_sharded.manifest import ParsedManifest
+from slatedb_spark_sharded.manifest_readers import (
+    DefaultS3ManifestReader,
+    ManifestReader,
+)
+from slatedb_spark_sharded.routing import SnapshotRouter
+from slatedb_spark_sharded.sharding_types import KeyEncoding
+from slatedb_spark_sharded.type_defs import KeyInput, ShardReader, ShardReaderFactory
 
 
 @dataclass(slots=True)

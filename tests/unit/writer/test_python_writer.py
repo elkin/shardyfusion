@@ -13,12 +13,12 @@ from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteCo
 from slatedb_spark_sharded.errors import ConfigValidationError
 from slatedb_spark_sharded.manifest import BuildResult, ManifestArtifact
 from slatedb_spark_sharded.publish import ManifestPublisher
-from slatedb_spark_sharded.python_writer import write_sharded
 from slatedb_spark_sharded.sharding_types import (
     KeyEncoding,
     ShardingSpec,
     ShardingStrategy,
 )
+from slatedb_spark_sharded.writer.python import write_sharded
 
 # ---------------------------------------------------------------------------
 # Test infrastructure

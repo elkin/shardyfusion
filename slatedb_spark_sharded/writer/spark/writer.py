@@ -12,8 +12,8 @@ from uuid import uuid4
 from pyspark import RDD, StorageLevel, TaskContext
 from pyspark.sql import DataFrame, Row, SparkSession
 
-from ._rate_limiter import TokenBucket
-from ._writer_core import (
+from slatedb_spark_sharded._rate_limiter import TokenBucket
+from slatedb_spark_sharded._writer_core import (
     _assemble_build_result,
     _build_manifest_artifact,
     _join_s3,
@@ -22,15 +22,19 @@ from ._writer_core import (
     _ShardAttemptResult,
     _update_min_max,
 )
-from .config import WriteConfig
-from .errors import SlatedbSparkShardedError
-from .logging import FailureSeverity, log_event, log_failure
-from .manifest import BuildResult, RequiredShardMeta
-from .serde import ValueSpec, encode_key
+from slatedb_spark_sharded.config import WriteConfig
+from slatedb_spark_sharded.errors import SlatedbSparkShardedError
+from slatedb_spark_sharded.logging import FailureSeverity, log_event, log_failure
+from slatedb_spark_sharded.manifest import BuildResult, RequiredShardMeta
+from slatedb_spark_sharded.serde import ValueSpec, encode_key
+from slatedb_spark_sharded.sharding_types import KeyEncoding
+from slatedb_spark_sharded.slatedb_adapter import (
+    DbAdapterFactory,
+    default_adapter_factory,
+)
+from slatedb_spark_sharded.type_defs import JsonObject, KeyLike
+
 from .sharding import ShardingSpec, add_db_id_column, prepare_partitioned_rdd
-from .sharding_types import KeyEncoding
-from .slatedb_adapter import DbAdapterFactory, default_adapter_factory
-from .type_defs import JsonObject, KeyLike
 
 
 @dataclass(slots=True)

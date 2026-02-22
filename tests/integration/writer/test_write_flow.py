@@ -9,7 +9,7 @@ from slatedb_spark_sharded.manifest import BuildStats, ManifestArtifact
 from slatedb_spark_sharded.publish import ManifestPublisher
 from slatedb_spark_sharded.serde import ValueSpec
 from slatedb_spark_sharded.testing import real_file_adapter_factory
-from slatedb_spark_sharded.writer import write_sharded_spark
+from slatedb_spark_sharded.writer.spark import write_sharded_spark
 
 
 class InMemoryPublisher(ManifestPublisher):

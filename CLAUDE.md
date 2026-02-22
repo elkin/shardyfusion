@@ -103,9 +103,11 @@ uv run mkdocs build --strict
 
 The library is split into three independent paths that share config and manifest models:
 
-**Writer path** (requires PySpark + Java): `writer.py` → `sharding.py` → `serde.py` → `slatedb_adapter.py`
+**Writer path (Spark)** (requires PySpark + Java): `writer/spark/writer.py` → `writer/spark/sharding.py` → `serde.py` → `slatedb_adapter.py`
 
-**Reader path** (no Spark/Java needed): `reader.py` → `routing.py` → `manifest_readers.py`
+**Writer path (Python)** (no Spark/Java needed): `writer/python/writer.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
+
+**Reader path** (no Spark/Java needed): `reader/reader.py` → `routing.py` → `manifest_readers.py`
 
 **CLI path** (requires click + pyyaml): `cli/app.py` → `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
 
@@ -113,15 +115,15 @@ The library is split into three independent paths that share config and manifest
 
 ### Write Pipeline
 
-1. `write_sharded_spark(df, config, *, key_col, value_spec)` in `writer.py` is the entry point.
-2. `sharding.py` adds a `_slatedb_db_id` column via Spark SQL expressions (hash, range, or custom), then converts the DataFrame to a pair RDD partitioned so partition index = db_id.
+1. `write_sharded_spark(df, config, *, key_col, value_spec)` in `writer/spark/writer.py` is the entry point.
+2. `writer/spark/sharding.py` adds a `_slatedb_db_id` column via Spark SQL expressions (hash, range, or custom), then converts the DataFrame to a pair RDD partitioned so partition index = db_id.
 3. Each partition writes one shard to S3 at a temporary path (`_tmp/run_id=.../db=XXXXX/attempt=YY/`).
 4. The driver collects results and selects deterministic winners (lowest attempt → task_attempt_id → URL).
 5. A manifest artifact is built and published, then the `_CURRENT` pointer is updated.
 
 ### Read Pipeline
 
-1. `SlateShardedReader` in `reader.py` loads the `_CURRENT` pointer from S3 and dereferences the manifest.
+1. `SlateShardedReader` in `reader/reader.py` loads the `_CURRENT` pointer from S3 and dereferences the manifest.
 2. Builds a `SnapshotRouter` from the manifest sharding metadata (mirrors write-time sharding logic).
 3. `get(key)` / `multi_get(keys)` routes keys to shard IDs, then reads from the appropriate shard.
 4. `refresh()` atomically swaps readers using reference counting for safe cleanup of in-flight operations.
