@@ -17,6 +17,7 @@ from slatedb_spark_sharded._writer_core import (
     _assemble_build_result,
     _build_manifest_artifact,
     _join_s3,
+    _PartitionWriteOutcome,
     _publish_manifest_and_current,
     _select_winners,
     _ShardAttemptResult,
@@ -25,7 +26,7 @@ from slatedb_spark_sharded._writer_core import (
 from slatedb_spark_sharded.config import WriteConfig
 from slatedb_spark_sharded.errors import SlatedbSparkShardedError
 from slatedb_spark_sharded.logging import FailureSeverity, log_event, log_failure
-from slatedb_spark_sharded.manifest import BuildResult, RequiredShardMeta
+from slatedb_spark_sharded.manifest import BuildResult
 from slatedb_spark_sharded.serde import ValueSpec, encode_key
 from slatedb_spark_sharded.sharding_types import KeyEncoding
 from slatedb_spark_sharded.slatedb_adapter import (
@@ -57,13 +58,6 @@ class _PreparedPartitionRows:
     partitioned_rdd: RDD[tuple[int, Row]]
     resolved_sharding: ShardingSpec
     shard_duration_ms: int
-
-
-@dataclass(slots=True)
-class _PartitionWriteOutcome:
-    attempts: list[_ShardAttemptResult]
-    winners: list[RequiredShardMeta]
-    write_duration_ms: int
 
 
 class SparkConfOverrideContext:
