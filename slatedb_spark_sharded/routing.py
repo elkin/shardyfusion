@@ -184,6 +184,9 @@ class SnapshotRouter:
         return sorted_intervals
 
 
+# SHARDING INVARIANT: This seed MUST match Spark's xxhash64 default seed (42).
+# See: org.apache.spark.sql.catalyst.expressions.XxHash64, default seed = 42.
+# Cross-checked by: tests/unit/writer/test_routing_contract.py
 _XXHASH64_SEED = 42
 _UINT32_MAX = (1 << 32) - 1
 _UINT64_MAX = (1 << 64) - 1
@@ -192,7 +195,16 @@ _INT64_MOD = 1 << 64
 
 
 def _xxhash64_db_id(key: KeyInput, num_dbs: int, key_encoding: KeyEncoding) -> int:
-    """Route key with `pmod(xxhash64(...), num_dbs)` semantics."""
+    """Route key with ``pmod(xxhash64(...), num_dbs)`` semantics.
+
+    SHARDING INVARIANT: This function replicates Spark's
+    ``pmod(xxhash64(cast(key as long)), num_dbs)``.  The payload is
+    8-byte little-endian (matching JVM Long.reverseBytes), the digest
+    is converted to signed int64 (matching JVM's signed long), and
+    Python ``%`` with positive ``num_dbs`` equals Spark ``pmod``.
+    Verified at runtime by ``writer.spark.writer._verify_routing_agreement``
+    and cross-checked by ``tests/unit/writer/test_routing_contract.py``.
+    """
 
     digest = _xxhash64_signed(_xxhash64_payload(key, key_encoding))
     return digest % num_dbs

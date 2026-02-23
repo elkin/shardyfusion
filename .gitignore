@@ -42,5 +42,8 @@ metastore_db/
 Thumbs.db
 uv.lock
 
+# Hypothesis cache
+.hypothesis/
+
 # Worktrees
 .worktrees/

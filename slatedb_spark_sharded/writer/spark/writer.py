@@ -24,11 +24,11 @@ from slatedb_spark_sharded._writer_core import (
     _update_min_max,
 )
 from slatedb_spark_sharded.config import WriteConfig
-from slatedb_spark_sharded.errors import SlatedbSparkShardedError
+from slatedb_spark_sharded.errors import ShardAssignmentError, SlatedbSparkShardedError
 from slatedb_spark_sharded.logging import FailureSeverity, log_event, log_failure
 from slatedb_spark_sharded.manifest import BuildResult
 from slatedb_spark_sharded.serde import ValueSpec, encode_key
-from slatedb_spark_sharded.sharding_types import KeyEncoding
+from slatedb_spark_sharded.sharding_types import DB_ID_COL, KeyEncoding
 from slatedb_spark_sharded.slatedb_adapter import (
     DbAdapterFactory,
     default_adapter_factory,
@@ -176,6 +176,7 @@ def write_sharded_spark(
     cache_input: bool = False,
     storage_level: StorageLevel | None = None,
     max_writes_per_second: float | None = None,
+    verify_routing: bool = True,
 ) -> BuildResult:
     """Write a DataFrame into N independent sharded databases and publish manifest metadata."""
 
@@ -194,6 +195,7 @@ def write_sharded_spark(
                     value_spec=value_spec,
                     sort_within_partitions=sort_within_partitions,
                     max_writes_per_second=max_writes_per_second,
+                    verify_routing=verify_routing,
                 )
         return _write_sharded_spark_impl(
             df=df,
@@ -204,6 +206,7 @@ def write_sharded_spark(
             value_spec=value_spec,
             sort_within_partitions=sort_within_partitions,
             max_writes_per_second=max_writes_per_second,
+            verify_routing=verify_routing,
         )
 
 
@@ -217,6 +220,7 @@ def _write_sharded_spark_impl(
     value_spec: ValueSpec,
     sort_within_partitions: bool,
     max_writes_per_second: float | None,
+    verify_routing: bool,
 ) -> BuildResult:
     """Implementation assuming Spark conf already prepared."""
     prepared_rows = _prepare_partitioned_rows(
@@ -224,6 +228,7 @@ def _write_sharded_spark_impl(
         config=config,
         key_col=key_col,
         sort_within_partitions=sort_within_partitions,
+        verify_routing=verify_routing,
     )
     runtime = _build_partition_write_runtime(
         config=config,
@@ -267,12 +272,64 @@ def _write_sharded_spark_impl(
     )
 
 
+def _verify_routing_agreement(
+    df_with_db_id: DataFrame,
+    *,
+    key_col: str,
+    num_dbs: int,
+    resolved_sharding: ShardingSpec,
+    key_encoding: KeyEncoding,
+    sample_size: int = 20,
+) -> None:
+    """Sample rows and verify Spark-computed db_id matches Python routing.
+
+    Raises ShardAssignmentError if any sampled row disagrees between the
+    Spark SQL expression and the equivalent Python routing function.
+    """
+    from bisect import bisect_right
+
+    from slatedb_spark_sharded.routing import _xxhash64_db_id
+    from slatedb_spark_sharded.sharding_types import ShardingStrategy
+
+    sampled = df_with_db_id.select(key_col, DB_ID_COL).limit(sample_size).collect()
+    if not sampled:
+        return
+
+    mismatches: list[tuple[object, int, int]] = []
+    for row in sampled:
+        key = row[key_col]
+        spark_db_id = int(row[DB_ID_COL])
+
+        if resolved_sharding.strategy == ShardingStrategy.HASH:
+            python_db_id = _xxhash64_db_id(key, num_dbs, key_encoding)
+        elif (
+            resolved_sharding.strategy == ShardingStrategy.RANGE
+            and resolved_sharding.boundaries is not None
+        ):
+            python_db_id = bisect_right(resolved_sharding.boundaries, key)
+        else:
+            return  # cannot verify custom_expr or range without boundaries
+
+        if python_db_id != spark_db_id:
+            mismatches.append((key, spark_db_id, python_db_id))
+
+    if mismatches:
+        details = "; ".join(
+            f"key={k}, spark={s}, python={p}" for k, s, p in mismatches[:5]
+        )
+        raise ShardAssignmentError(
+            f"Spark/Python routing mismatch in {len(mismatches)}/{len(sampled)} "
+            f"sampled rows. First mismatches: {details}"
+        )
+
+
 def _prepare_partitioned_rows(
     *,
     df: DataFrame,
     config: WriteConfig,
     key_col: str,
     sort_within_partitions: bool,
+    verify_routing: bool = True,
 ) -> _PreparedPartitionRows:
     """Assign shard ids and build the one-writer-per-db partitioned RDD."""
 
@@ -283,6 +340,14 @@ def _prepare_partitioned_rows(
         num_dbs=config.num_dbs,
         sharding=config.sharding,
     )
+    if verify_routing:
+        _verify_routing_agreement(
+            df_with_db_id,
+            key_col=key_col,
+            num_dbs=config.num_dbs,
+            resolved_sharding=resolved_sharding,
+            key_encoding=config.key_encoding,
+        )
     partitioned_rdd = prepare_partitioned_rdd(
         df_with_db_id,
         num_dbs=config.num_dbs,

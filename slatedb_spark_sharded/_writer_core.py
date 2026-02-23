@@ -29,7 +29,7 @@ from .manifest import (
 )
 from .ordering import compare_ordered
 from .publish import DefaultS3Publisher
-from .routing import _xxhash64_db_id
+from .routing import _xxhash64_db_id  # SHARDING INVARIANT: direct import, not reimpl.
 from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
 from .type_defs import JsonObject, KeyLike
 
