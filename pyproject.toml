@@ -25,12 +25,18 @@ writer = [
   "slatedb",
   "boto3>=1.28",
 ]
+dask = [
+  "dask[dataframe]>=2024.1.0",
+  "slatedb",
+  "boto3>=1.28",
+]
 cli = [
   "click>=8.0",
   "pyyaml>=6.0",
 ]
 all = [
   "pyspark>=3.3",
+  "dask[dataframe]>=2024.1.0",
   "slatedb",
   "boto3>=1.28",
   "click>=8.0",
@@ -92,7 +98,7 @@ select = [
 ignore = [
   "E501",
 ]
-per-file-ignores = { "slatedb_spark_sharded/__init__.py" = ["F401"], "slatedb_spark_sharded/writer/spark/__init__.py" = ["F401"], "slatedb_spark_sharded/writer/python/__init__.py" = ["F401"], "slatedb_spark_sharded/reader/__init__.py" = ["F401"] }
+per-file-ignores = { "slatedb_spark_sharded/__init__.py" = ["F401"], "slatedb_spark_sharded/writer/spark/__init__.py" = ["F401"], "slatedb_spark_sharded/writer/python/__init__.py" = ["F401"], "slatedb_spark_sharded/writer/dask/__init__.py" = ["F401"], "slatedb_spark_sharded/reader/__init__.py" = ["F401"], "tests/unit/writer/test_dask_writer.py" = ["E402"] }
 
 [tool.ruff.format]
 quote-style = "double"
