@@ -111,6 +111,7 @@ def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> 
         value_spec,
         sort_within_partitions,
         max_writes_per_second,
+        verify_routing,
     ):
         _ = (
             started,
@@ -118,6 +119,7 @@ def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> 
             value_spec,
             sort_within_partitions,
             max_writes_per_second,
+            verify_routing,
         )
         calls.append(("impl", (df, config, run_id)))
         return "result-sentinel"
@@ -175,6 +177,7 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
         value_spec,
         sort_within_partitions,
         max_writes_per_second,
+        verify_routing,
     ):
         _ = (
             started,
@@ -182,6 +185,7 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
             value_spec,
             sort_within_partitions,
             max_writes_per_second,
+            verify_routing,
         )
         calls.append(("impl", (df, config, run_id)))
         return "result-sentinel"
