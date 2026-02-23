@@ -311,12 +311,6 @@ def _manifest_safe_sharding(sharding: ShardingSpec) -> ManifestShardingSpec:
     )
 
 
-def _join_s3(base: str, *parts: str) -> str:
-    clean = [base.rstrip("/")]
-    clean.extend(part.strip("/") for part in parts if part)
-    return "/".join(clean)
-
-
 def _update_min_max(
     min_key: KeyLike | None,
     max_key: KeyLike | None,

@@ -11,7 +11,6 @@ from slatedb_spark_sharded._rate_limiter import TokenBucket
 from slatedb_spark_sharded._writer_core import (
     _assemble_build_result,
     _build_manifest_artifact,
-    _join_s3,
     _publish_manifest_and_current,
     _route_key,
     _select_winners,
@@ -28,6 +27,7 @@ from slatedb_spark_sharded.manifest import BuildResult
 from slatedb_spark_sharded.serde import encode_key
 from slatedb_spark_sharded.sharding_types import ShardingStrategy
 from slatedb_spark_sharded.slatedb_adapter import DbAdapterFactory, SlateDbFactory
+from slatedb_spark_sharded.storage import _join_s3
 from slatedb_spark_sharded.type_defs import JsonObject, KeyLike
 
 T = TypeVar("T")

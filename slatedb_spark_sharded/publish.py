@@ -3,7 +3,7 @@
 from typing import Protocol
 
 from .manifest import ManifestArtifact
-from .storage import create_s3_client, put_bytes
+from .storage import _join_s3, create_s3_client, put_bytes
 from .type_defs import S3ClientConfig
 
 
@@ -67,9 +67,3 @@ class DefaultS3Publisher:
             s3_client=self._s3_client,
         )
         return current_url
-
-
-def _join_s3(base: str, *parts: str) -> str:
-    clean = [base.rstrip("/")]
-    clean.extend(part.strip("/") for part in parts if part)
-    return "/".join(clean)
