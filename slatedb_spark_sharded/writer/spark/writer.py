@@ -16,7 +16,6 @@ from slatedb_spark_sharded._rate_limiter import TokenBucket
 from slatedb_spark_sharded._writer_core import (
     _assemble_build_result,
     _build_manifest_artifact,
-    _join_s3,
     _PartitionWriteOutcome,
     _publish_manifest_and_current,
     _select_winners,
@@ -33,6 +32,7 @@ from slatedb_spark_sharded.slatedb_adapter import (
     DbAdapterFactory,
     default_adapter_factory,
 )
+from slatedb_spark_sharded.storage import _join_s3
 from slatedb_spark_sharded.type_defs import JsonObject, KeyLike
 
 from .sharding import ShardingSpec, add_db_id_column, prepare_partitioned_rdd

@@ -2,7 +2,6 @@
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -166,9 +165,3 @@ class JsonManifestBuilder:
             separators=(",", ":"),
         ).encode("utf-8")
         return ManifestArtifact(payload=payload, content_type="application/json")
-
-
-def iso_now() -> str:
-    """Return ISO-8601 UTC timestamp suitable for manifests."""
-
-    return datetime.now(timezone.utc).isoformat()
