@@ -15,7 +15,7 @@ from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteCo
 from slatedb_spark_sharded.errors import ConfigValidationError
 from slatedb_spark_sharded.manifest import BuildResult, ManifestArtifact
 from slatedb_spark_sharded.publish import ManifestPublisher
-from slatedb_spark_sharded.serde import encode_key
+from slatedb_spark_sharded.serde import make_key_encoder
 from slatedb_spark_sharded.sharding_types import (
     KeyEncoding,
     ShardingSpec,
@@ -329,7 +329,7 @@ def test_parallel_hash_routing_round_trip(tmp_path: pathlib.Path) -> None:
         shard_data = file_backed_load_db(root_dir, winner.db_url)
         all_kv.update(shard_data)
     for r in records:
-        key_bytes = encode_key(r, encoding=config.key_encoding)
+        key_bytes = make_key_encoder(config.key_encoding)(r)
         assert key_bytes in all_kv
         assert all_kv[key_bytes] == f"v{r}".encode()
 
@@ -452,7 +452,7 @@ def test_parallel_data_integrity(tmp_path: pathlib.Path) -> None:
 
     assert len(all_kv) == 100
     for r in records:
-        key_bytes = encode_key(r, encoding=config.key_encoding)
+        key_bytes = make_key_encoder(config.key_encoding)(r)
         assert key_bytes in all_kv
         assert all_kv[key_bytes] == f"value-{r}".encode()
 

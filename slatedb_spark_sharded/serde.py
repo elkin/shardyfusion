@@ -7,6 +7,12 @@ from typing import Callable, Mapping, Protocol, Self, cast
 from .errors import ConfigValidationError
 from .sharding_types import KeyEncoding
 
+KeyEncoder = Callable[[object], bytes]
+"""Callable that encodes a key into bytes for SlateDB."""
+
+_UINT64_MAX = (1 << 64) - 1
+_UINT32_MAX = (1 << 32) - 1
+
 
 class _KeyedRow(Protocol):
     def __getitem__(self, key: str) -> object: ...
@@ -16,27 +22,41 @@ class _AsDictRow(Protocol):
     def asDict(self, recursive: bool = False) -> dict[str, object]: ...
 
 
-def encode_key(key: object, *, encoding: KeyEncoding = KeyEncoding.U64BE) -> bytes:
-    """Encode a key into bytes for SlateDB."""
+def _encode_key_u64be(key: object) -> bytes:
+    """Encode key as 8-byte big-endian unsigned integer."""
+
+    if not isinstance(key, int):
+        raise ConfigValidationError(
+            f"u64be encoding expects int key, got {type(key)!r}"
+        )
+    if key < 0 or key > _UINT64_MAX:
+        raise ConfigValidationError("u64be encoding requires value in [0, 2^64-1]")
+    return key.to_bytes(8, byteorder="big", signed=False)
+
+
+def _encode_key_u32be(key: object) -> bytes:
+    """Encode key as 4-byte big-endian unsigned integer."""
+
+    if not isinstance(key, int):
+        raise ConfigValidationError(
+            f"u32be encoding expects int key, got {type(key)!r}"
+        )
+    if key < 0 or key > _UINT32_MAX:
+        raise ConfigValidationError("u32be encoding requires value in [0, 2^32-1]")
+    return key.to_bytes(4, byteorder="big", signed=False)
+
+
+def make_key_encoder(encoding: KeyEncoding) -> KeyEncoder:
+    """Return a key encoder for the given encoding.
+
+    Resolves the encoding branch once at setup time so hot loops
+    can call the returned function without per-key dispatch.
+    """
 
     if encoding == KeyEncoding.U64BE:
-        if not isinstance(key, int):
-            raise ConfigValidationError(
-                f"u64be encoding expects int key, got {type(key)!r}"
-            )
-        if key < 0 or key > (2**64 - 1):
-            raise ConfigValidationError("u64be encoding requires value in [0, 2^64-1]")
-        return key.to_bytes(8, byteorder="big", signed=False)
-
+        return _encode_key_u64be
     if encoding == KeyEncoding.U32BE:
-        if not isinstance(key, int):
-            raise ConfigValidationError(
-                f"u32be encoding expects int key, got {type(key)!r}"
-            )
-        if key < 0 or key > (2**32 - 1):
-            raise ConfigValidationError("u32be encoding requires value in [0, 2^32-1]")
-        return key.to_bytes(4, byteorder="big", signed=False)
-
+        return _encode_key_u32be
     raise ConfigValidationError(f"Unsupported key encoding: {encoding}")
 
 

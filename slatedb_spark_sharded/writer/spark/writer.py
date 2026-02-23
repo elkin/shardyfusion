@@ -26,7 +26,7 @@ from slatedb_spark_sharded.config import WriteConfig
 from slatedb_spark_sharded.errors import ShardAssignmentError, SlatedbSparkShardedError
 from slatedb_spark_sharded.logging import FailureSeverity, log_event, log_failure
 from slatedb_spark_sharded.manifest import BuildResult
-from slatedb_spark_sharded.serde import ValueSpec, encode_key
+from slatedb_spark_sharded.serde import KeyEncoder, ValueSpec, make_key_encoder
 from slatedb_spark_sharded.sharding_types import DB_ID_COL, KeyEncoding
 from slatedb_spark_sharded.slatedb_adapter import (
     DbAdapterFactory,
@@ -47,6 +47,7 @@ class _PartitionWriteConfig:
     local_root: str
     key_col: str
     key_encoding: KeyEncoding
+    key_encoder: KeyEncoder
     value_spec: ValueSpec
     batch_size: int
     adapter_factory: DbAdapterFactory | None
@@ -380,6 +381,7 @@ def _build_partition_write_runtime(
         local_root=config.output.local_root,
         key_col=key_col,
         key_encoding=config.key_encoding,
+        key_encoder=make_key_encoder(config.key_encoding),
         value_spec=value_spec,
         batch_size=config.batch_size,
         adapter_factory=config.adapter_factory,
@@ -456,7 +458,7 @@ def _write_one_shard_partition(
         ) as adapter:
             for _, row in rows_iter:
                 key_value = row[runtime.key_col]
-                key_bytes = encode_key(key_value, encoding=runtime.key_encoding)
+                key_bytes = runtime.key_encoder(key_value)
                 value_bytes = runtime.value_spec.encode(row)
 
                 batch.append((key_bytes, value_bytes))

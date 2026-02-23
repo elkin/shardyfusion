@@ -24,7 +24,7 @@ from slatedb_spark_sharded.errors import (
 )
 from slatedb_spark_sharded.logging import FailureSeverity, log_failure
 from slatedb_spark_sharded.manifest import BuildResult
-from slatedb_spark_sharded.serde import encode_key
+from slatedb_spark_sharded.serde import make_key_encoder
 from slatedb_spark_sharded.sharding_types import ShardingStrategy
 from slatedb_spark_sharded.slatedb_adapter import DbAdapterFactory, SlateDbFactory
 from slatedb_spark_sharded.storage import _join_s3
@@ -175,6 +175,7 @@ def _write_single_process(
         row_counts = [0] * num_dbs
         min_keys: list[KeyLike | None] = [None] * num_dbs
         max_keys: list[KeyLike | None] = [None] * num_dbs
+        key_encoder = make_key_encoder(config.key_encoding)
 
         for record in records:
             key = key_fn(record)
@@ -184,7 +185,7 @@ def _write_single_process(
                 sharding=config.sharding,
                 key_encoding=config.key_encoding,
             )
-            key_bytes = encode_key(key, encoding=config.key_encoding)
+            key_bytes = key_encoder(key)
             value_bytes = value_fn(record)
 
             batches[db_id].append((key_bytes, value_bytes))
@@ -370,6 +371,7 @@ def _write_parallel(
     # Track min/max in main process for parallel mode
     min_keys: list[KeyLike | None] = [None] * num_dbs
     max_keys: list[KeyLike | None] = [None] * num_dbs
+    key_encoder = make_key_encoder(config.key_encoding)
 
     try:
         for record in records:
@@ -380,7 +382,7 @@ def _write_parallel(
                 sharding=config.sharding,
                 key_encoding=config.key_encoding,
             )
-            key_bytes = encode_key(key, encoding=config.key_encoding)
+            key_bytes = key_encoder(key)
             value_bytes = value_fn(record)
             chunk_bufs[db_id].append((key_bytes, value_bytes))
             min_keys[db_id], max_keys[db_id] = _update_min_max(

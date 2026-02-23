@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 from pyspark.sql import Row
 
 from slatedb_spark_sharded._writer_core import _ShardAttemptResult
-from slatedb_spark_sharded.serde import ValueSpec
+from slatedb_spark_sharded.serde import ValueSpec, make_key_encoder
 from slatedb_spark_sharded.sharding_types import KeyEncoding
 from slatedb_spark_sharded.slatedb_adapter import DbAdapterFactory
 from slatedb_spark_sharded.writer.spark.writer import (
@@ -83,6 +83,7 @@ def _make_runtime(
         local_root=str(tmp_path),
         key_col="key",
         key_encoding=key_encoding,
+        key_encoder=make_key_encoder(key_encoding),
         value_spec=ValueSpec.binary_col("val"),
         batch_size=batch_size,
         adapter_factory=_make_factory(adapter),

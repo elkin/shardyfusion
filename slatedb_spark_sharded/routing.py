@@ -8,7 +8,7 @@ import xxhash
 
 from .manifest import RequiredBuildMeta, RequiredShardMeta
 from .ordering import compare_ordered
-from .serde import encode_key
+from .serde import make_key_encoder
 from .sharding_types import KeyEncoding, ShardingStrategy
 from .type_defs import KeyInput
 
@@ -41,6 +41,7 @@ class SnapshotRouter:
         self._boundaries = list(required_build.sharding.boundaries or [])
         self._range_intervals = self._build_range_intervals(self.shards)
         self._route_one_impl = self._build_route_one_impl()
+        self._lookup_key_encoder = self._build_lookup_key_encoder()
 
     def route_one(self, key: KeyInput) -> int:
         """Route one key to db_id."""
@@ -59,32 +60,47 @@ class SnapshotRouter:
     def encode_lookup_key(self, key: KeyInput) -> bytes:
         """Encode lookup key for SlateDB read calls."""
 
+        return self._lookup_key_encoder(key)
+
+    def _build_lookup_key_encoder(self) -> Callable[[KeyInput], bytes]:
         if self.key_encoding == KeyEncoding.U64BE:
-            if isinstance(key, bytes):
-                if len(key) != 8:
-                    raise ValueError("u64be key bytes must have length 8")
-                return key
-            if not isinstance(key, int):
-                raise ValueError("u64be key encoding requires integer lookup keys")
-            return encode_key(key, encoding=KeyEncoding.U64BE)
+            encoder = make_key_encoder(KeyEncoding.U64BE)
+
+            def _encode_u64be(key: KeyInput) -> bytes:
+                if isinstance(key, bytes):
+                    if len(key) != 8:
+                        raise ValueError("u64be key bytes must have length 8")
+                    return key
+                if not isinstance(key, int):
+                    raise ValueError("u64be key encoding requires integer lookup keys")
+                return encoder(key)
+
+            return _encode_u64be
 
         if self.key_encoding == KeyEncoding.U32BE:
+            encoder = make_key_encoder(KeyEncoding.U32BE)
+
+            def _encode_u32be(key: KeyInput) -> bytes:
+                if isinstance(key, bytes):
+                    if len(key) != 4:
+                        raise ValueError("u32be key bytes must have length 4")
+                    return key
+                if not isinstance(key, int):
+                    raise ValueError("u32be key encoding requires integer lookup keys")
+                return encoder(key)
+
+            return _encode_u32be
+
+        def _encode_fallback(key: KeyInput) -> bytes:
             if isinstance(key, bytes):
-                if len(key) != 4:
-                    raise ValueError("u32be key bytes must have length 4")
                 return key
-            if not isinstance(key, int):
-                raise ValueError("u32be key encoding requires integer lookup keys")
-            return encode_key(key, encoding=KeyEncoding.U32BE)
+            if isinstance(key, str):
+                return key.encode("utf-8")
+            if isinstance(key, int):
+                return str(key).encode("utf-8")
+            raise ValueError(f"Unsupported key type for lookup: {type(key)!r}")
 
-        if isinstance(key, bytes):
-            return key
-        if isinstance(key, str):
-            return key.encode("utf-8")
-        if isinstance(key, int):
-            return str(key).encode("utf-8")
-
-        raise ValueError(f"Unsupported key type for lookup: {type(key)!r}")
+        return _encode_fallback
 
     def _route_range(self, key: KeyInput) -> int:
         key_value = self._normalize_range_key(key)
@@ -103,11 +119,9 @@ class SnapshotRouter:
 
     def _build_route_one_impl(self) -> Callable[[KeyInput], int]:
         if self.strategy == ShardingStrategy.HASH:
-            return lambda key: _xxhash64_db_id(
-                key,
-                self.num_dbs,
-                self.key_encoding,
-            )
+            payload_fn = _make_xxhash64_payload(self.key_encoding)
+            num_dbs = self.num_dbs
+            return lambda key: _xxhash64_signed(payload_fn(key)) % num_dbs
 
         if self.strategy == ShardingStrategy.RANGE:
             return self._route_range
@@ -194,6 +208,69 @@ _INT64_MAX = (1 << 63) - 1
 _INT64_MOD = 1 << 64
 
 
+def _xxhash64_payload_u64be(key: KeyInput) -> bytes:
+    """Build xxhash64 payload for u64be encoding (8-byte LE)."""
+
+    if isinstance(key, bytes):
+        if len(key) != 8:
+            raise ValueError("u64be key bytes must have length 8")
+        numeric_key = int.from_bytes(key, byteorder="big", signed=False)
+        return numeric_key.to_bytes(8, byteorder="little", signed=False)
+
+    if not isinstance(key, int):
+        raise ValueError("u64be hash routing requires integer lookup keys")
+    if key < 0 or key > _UINT64_MAX:
+        raise ValueError("u64be hash routing requires key in [0, 2^64-1]")
+    return key.to_bytes(8, byteorder="little", signed=False)
+
+
+def _xxhash64_payload_u32be(key: KeyInput) -> bytes:
+    """Build xxhash64 payload for u32be encoding (zero-extended to 8-byte LE)."""
+
+    # Zero-extend to 8-byte little-endian to match Spark's xxhash64(cast(key as long))
+    if isinstance(key, bytes):
+        if len(key) != 4:
+            raise ValueError("u32be key bytes must have length 4")
+        numeric_key = int.from_bytes(key, byteorder="big", signed=False)
+        return numeric_key.to_bytes(8, byteorder="little", signed=False)
+
+    if not isinstance(key, int):
+        raise ValueError("u32be hash routing requires integer lookup keys")
+    if key < 0 or key > _UINT32_MAX:
+        raise ValueError("u32be hash routing requires key in [0, 2^32-1]")
+    return key.to_bytes(8, byteorder="little", signed=False)
+
+
+def _xxhash64_payload_fallback(key: KeyInput) -> bytes:
+    """Build xxhash64 payload for generic key types (bytes/str/int)."""
+
+    if isinstance(key, bytes):
+        return key
+    if isinstance(key, str):
+        return key.encode("utf-8")
+    if isinstance(key, int):
+        return str(key).encode("utf-8")
+    raise ValueError(f"Unsupported key type for hash routing: {type(key)!r}")
+
+
+def _make_xxhash64_payload(
+    key_encoding: KeyEncoding,
+) -> Callable[[KeyInput], bytes]:
+    """Return the payload builder for the given key encoding."""
+
+    if key_encoding == KeyEncoding.U64BE:
+        return _xxhash64_payload_u64be
+    if key_encoding == KeyEncoding.U32BE:
+        return _xxhash64_payload_u32be
+    return _xxhash64_payload_fallback
+
+
+def _xxhash64_payload(key: KeyInput, key_encoding: KeyEncoding) -> bytes:
+    """Build xxhash64 payload — dispatch wrapper kept for test compatibility."""
+
+    return _make_xxhash64_payload(key_encoding)(key)
+
+
 def _xxhash64_db_id(key: KeyInput, num_dbs: int, key_encoding: KeyEncoding) -> int:
     """Route key with ``pmod(xxhash64(...), num_dbs)`` semantics.
 
@@ -208,44 +285,6 @@ def _xxhash64_db_id(key: KeyInput, num_dbs: int, key_encoding: KeyEncoding) -> i
 
     digest = _xxhash64_signed(_xxhash64_payload(key, key_encoding))
     return digest % num_dbs
-
-
-def _xxhash64_payload(key: KeyInput, key_encoding: KeyEncoding) -> bytes:
-    if key_encoding == KeyEncoding.U64BE:
-        if isinstance(key, bytes):
-            if len(key) != 8:
-                raise ValueError("u64be key bytes must have length 8")
-            numeric_key = int.from_bytes(key, byteorder="big", signed=False)
-            return numeric_key.to_bytes(8, byteorder="little", signed=False)
-
-        if not isinstance(key, int):
-            raise ValueError("u64be hash routing requires integer lookup keys")
-        if key < 0 or key > _UINT64_MAX:
-            raise ValueError("u64be hash routing requires key in [0, 2^64-1]")
-        return key.to_bytes(8, byteorder="little", signed=False)
-
-    if key_encoding == KeyEncoding.U32BE:
-        # Zero-extend to 8-byte little-endian to match Spark's xxhash64(cast(key as long))
-        if isinstance(key, bytes):
-            if len(key) != 4:
-                raise ValueError("u32be key bytes must have length 4")
-            numeric_key = int.from_bytes(key, byteorder="big", signed=False)
-            return numeric_key.to_bytes(8, byteorder="little", signed=False)
-
-        if not isinstance(key, int):
-            raise ValueError("u32be hash routing requires integer lookup keys")
-        if key < 0 or key > _UINT32_MAX:
-            raise ValueError("u32be hash routing requires key in [0, 2^32-1]")
-        return key.to_bytes(8, byteorder="little", signed=False)
-
-    if isinstance(key, bytes):
-        return key
-    if isinstance(key, str):
-        return key.encode("utf-8")
-    if isinstance(key, int):
-        return str(key).encode("utf-8")
-
-    raise ValueError(f"Unsupported key type for hash routing: {type(key)!r}")
 
 
 def _xxhash64_signed(payload: bytes) -> int:
