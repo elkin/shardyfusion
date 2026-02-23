@@ -41,3 +41,6 @@ metastore_db/
 .DS_Store
 Thumbs.db
 uv.lock
+
+# Worktrees
+.worktrees/
