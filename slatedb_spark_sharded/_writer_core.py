@@ -73,7 +73,7 @@ def _route_key(
     if sharding.strategy == ShardingStrategy.RANGE:
         if sharding.boundaries is None:
             raise ConfigValidationError(
-                "Range sharding without explicit boundaries requires Spark."
+                "Range sharding without explicit boundaries requires a framework writer (Spark or Dask)."
             )
         return bisect_right(sharding.boundaries, key)
     raise ConfigValidationError(

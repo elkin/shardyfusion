@@ -29,8 +29,14 @@ cli = [
   "click>=8.0",
   "pyyaml>=6.0",
 ]
+dask = [
+  "dask[dataframe]>=2024.1",
+  "slatedb",
+  "boto3>=1.28",
+]
 all = [
   "pyspark>=3.3",
+  "dask[dataframe]>=2024.1",
   "slatedb",
   "boto3>=1.28",
   "click>=8.0",
@@ -92,7 +98,7 @@ select = [
 ignore = [
   "E501",
 ]
-per-file-ignores = { "slatedb_spark_sharded/__init__.py" = ["F401"], "slatedb_spark_sharded/writer/spark/__init__.py" = ["F401"], "slatedb_spark_sharded/writer/python/__init__.py" = ["F401"], "slatedb_spark_sharded/reader/__init__.py" = ["F401"] }
+per-file-ignores = { "slatedb_spark_sharded/__init__.py" = ["F401"], "slatedb_spark_sharded/writer/spark/__init__.py" = ["F401"], "slatedb_spark_sharded/writer/python/__init__.py" = ["F401"], "slatedb_spark_sharded/writer/dask/__init__.py" = ["F401"], "slatedb_spark_sharded/reader/__init__.py" = ["F401"] }
 
 [tool.ruff.format]
 quote-style = "double"
@@ -127,5 +133,6 @@ addopts = "-ra"
 testpaths = ["tests"]
 markers = [
   "spark: tests requiring local pyspark session",
+  "dask: tests requiring dask",
   "e2e: end-to-end tests requiring a container engine (podman/docker)",
 ]

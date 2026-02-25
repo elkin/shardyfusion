@@ -66,6 +66,14 @@ try:
 except ImportError:
     pass
 
+_dask_writer_exports: list[str] = []
+try:
+    from .writer.dask import write_sharded_dask
+
+    _dask_writer_exports = ["write_sharded_dask"]
+except ImportError:
+    pass
+
 __all__ = [
     "FailureSeverity",
     "ManifestParseError",
@@ -103,3 +111,4 @@ __all__ = [
 ]
 __all__.extend(_writer_exports)
 __all__.extend(_python_writer_exports)
+__all__.extend(_dask_writer_exports)
