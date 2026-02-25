@@ -5,7 +5,6 @@
   "exclude": [
     "../slatedb_spark_sharded/writer/spark",
     "../slatedb_spark_sharded/writer/dask",
-    "../slatedb_spark_sharded/writer/python",
     "../slatedb_spark_sharded/cli"
   ],
   "extraPaths": [".."],
