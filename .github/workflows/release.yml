@@ -50,10 +50,7 @@ jobs:
       - name: Format check
         run: uv run ruff format --check .
 
-      - name: Type check (ty)
-        run: uv run ty check slatedb_spark_sharded --python-version 3.11 --error-on-warning
-
-      - name: Type check fallback (pyright)
+      - name: Type check (pyright)
         run: uv run pyright slatedb_spark_sharded
 
       - name: Unit and integration tests

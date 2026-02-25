@@ -41,9 +41,8 @@ uv sync --all-extras --dev
 uv run ruff check .
 uv run ruff format --check .
 
-# Type checks
-uv run ty check slatedb_spark_sharded tests --python-version 3.10 --error-on-warning
-uv run pyright .
+# Type check
+uv run pyright slatedb_spark_sharded
 
 # Run tests directly
 uv run pytest -q

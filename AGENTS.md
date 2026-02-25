@@ -27,12 +27,10 @@
 - Lint: `uv run ruff check .`
 - Format check: `uv run ruff format --check .`
 - Auto-fix: `just fix` (ruff check --fix + ruff format)
-- Type checks:
-  - `uv run ty check slatedb_spark_sharded --python-version 3.11 --error-on-warning`
-  - `uv run pyright slatedb_spark_sharded`
+- Type check: `uv run pyright slatedb_spark_sharded`
 - Package build: `uv build`
 - Tox labels:
-  - `uv run tox -m quality` — lint, format, type, type-fallback, package, docs-check
+  - `uv run tox -m quality` — lint, format, type, package, docs-check
   - `uv run tox -m unit` — unit tests across py311-py314 and Spark 3.5/4
   - `uv run tox -m integration` — integration tests across py311-py314
   - `uv run tox -m e2e` — end-to-end tests against Garage S3

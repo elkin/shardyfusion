@@ -30,7 +30,6 @@ uv sync --all-extras --dev     # Full dev environment
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run ty check slatedb_spark_sharded --python-version 3.11 --error-on-warning
 uv run pyright slatedb_spark_sharded
 ```
 
@@ -46,7 +45,7 @@ uv run pytest -q tests/integration/read
 uv run pytest -q tests/integration/writer
 
 # Tox labels
-uv run tox -m quality       # lint, format, type, type-fallback, package, docs-check
+uv run tox -m quality       # lint, format, type-all, package, docs-check
 uv run tox -m unit          # unit tests across py311-py314 and Spark 3.5/4
 uv run tox -m integration   # integration tests across py311-py314
 uv run tox -m e2e           # end-to-end tests against Garage S3
@@ -104,7 +103,7 @@ uv run mkdocs build --strict
 
 On every push/PR, CI runs in order: **quality → package → unit → integration** (all parallel within each stage).
 
-- **Quality**: lint + format + ty + pyright (Python 3.11 only)
+- **Quality**: lint + format + pyright (Python 3.11 only)
 - **Package**: `uv build` + wheel smoke-test import
 - **Unit**: matrix of py3.11–3.14 × Spark 3.5/4 (read-unit, writer-unit, all-unit)
 - **Integration**: matrix of py3.11–3.14 × Spark 3.5/4 (moto-backed S3)

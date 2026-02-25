@@ -3,7 +3,7 @@
 ## CI workflows
 
 - `CI` workflow:
-  - quality gates (`ruff`, `ty`, `pyright`)
+  - quality gates (`ruff`, `pyright`)
   - package build smoke checks
   - unit and integration test jobs
 - `Docs` workflow:

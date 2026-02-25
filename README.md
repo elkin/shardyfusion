@@ -98,7 +98,6 @@ uv run ruff format --check .
 ### Type checking
 
 ```bash
-uv run ty check slatedb_spark_sharded --python-version 3.10 --error-on-warning
 uv run pyright slatedb_spark_sharded
 ```
 
