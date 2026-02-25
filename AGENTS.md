@@ -19,7 +19,9 @@
 ## Build, Test, and Development Commands
 - Install dependencies:
   - Reader-only: `uv sync --extra read`
-  - Writer-only: `uv sync --extra writer`
+  - Spark writer: `uv sync --extra writer-spark`
+  - Python writer: `uv sync --extra writer-python`
+  - Dask writer: `uv sync --extra writer-dask`
   - CLI-only: `uv sync --extra cli`
   - Full dev: `uv sync --all-extras --dev`
 - Lint: `uv run ruff check .`

@@ -12,8 +12,14 @@
 # Reader-side only
 uv sync --extra read
 
-# Writer-side only
-uv sync --extra writer
+# Spark writer (includes PySpark, requires Java)
+uv sync --extra writer-spark
+
+# Python writer (no Spark/Java required)
+uv sync --extra writer-python
+
+# Dask writer (no Spark/Java required)
+uv sync --extra writer-dask
 
 # CLI only (no Spark/Java required)
 uv sync --extra cli

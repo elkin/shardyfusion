@@ -21,8 +21,14 @@ It provides:
 # Reader-side dependencies only (no Spark)
 uv sync --extra read
 
-# Writer-side dependencies (includes Spark)
-uv sync --extra writer
+# Spark writer (includes PySpark, requires Java)
+uv sync --extra writer-spark
+
+# Python writer (no Spark/Java required)
+uv sync --extra writer-python
+
+# Dask writer (no Spark/Java required)
+uv sync --extra writer-dask
 
 # Full install
 uv sync --all-extras
@@ -105,7 +111,7 @@ uv run pytest -q
 # Tox quality/stage targets
 uv run tox -e lint,format,type
 uv run tox -e py311-all-spark35-unit
-uv run tox -e py311-read-integration,py311-writer-spark4-integration
+uv run tox -e py311-read-integration,py311-sparkwriter-spark4-integration
 ```
 
 Parallel tox environments (cap env-level parallelism to avoid OOM):

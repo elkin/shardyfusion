@@ -20,19 +20,23 @@ read = [
   "slatedb",
   "boto3>=1.28",
 ]
-writer = [
+writer-spark = [
   "pyspark>=3.3",
+  "slatedb",
+  "boto3>=1.28",
+]
+writer-python = [
+  "slatedb",
+  "boto3>=1.28",
+]
+writer-dask = [
+  "dask[dataframe]>=2024.1",
   "slatedb",
   "boto3>=1.28",
 ]
 cli = [
   "click>=8.0",
   "pyyaml>=6.0",
-]
-dask = [
-  "dask[dataframe]>=2024.1",
-  "slatedb",
-  "boto3>=1.28",
 ]
 all = [
   "pyspark>=3.3",
@@ -133,6 +137,6 @@ addopts = "-ra"
 testpaths = ["tests"]
 markers = [
   "spark: tests requiring local pyspark session",
-  "dask: tests requiring dask",
+  "dask: tests requiring writer-dask extras",
   "e2e: end-to-end tests requiring a container engine (podman/docker)",
 ]

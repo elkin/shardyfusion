@@ -18,7 +18,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 uv sync --extra read           # Reader-only (no Spark/Java required)
-uv sync --extra writer         # Writer-side (includes Spark, requires Java)
+uv sync --extra writer-spark   # Spark writer (includes Spark, requires Java)
+uv sync --extra writer-python  # Python writer (no Spark/Java required)
+uv sync --extra writer-dask    # Dask writer (no Spark/Java required)
 uv sync --extra cli            # CLI only (click + pyyaml, no Spark/Java)
 uv sync --all-extras --dev     # Full dev environment
 ```
@@ -53,7 +55,7 @@ uv run tox -m e2e           # end-to-end tests against Garage S3
 uv run tox -e py311-all-spark35-unit
 uv run tox -e py314-read-unit
 uv run tox -e py311-read-integration
-uv run tox -e py311-writer-spark4-integration
+uv run tox -e py311-sparkwriter-spark4-integration
 uv run tox -e py311-read-e2e
 
 # Parallel tox (cap to avoid OOM)
@@ -287,7 +289,7 @@ Exported from `__init__.py` (conditional on installed extras):
 
 **Always available:** `WriteConfig`, `ManifestOptions`, `OutputOptions`, `ShardingSpec`, `ShardingStrategy`, `KeyEncoding`, `ValueSpec`, `ManifestArtifact`, `ManifestBuilder`, `JsonManifestBuilder`, `ManifestPublisher`, `DefaultS3Publisher`, `ManifestReader`, `DefaultS3ManifestReader`, `FunctionManifestReader`, `SnapshotRouter`, `SlateShardedReader`, `SlateDbReaderFactory`, `SlateDbFactory`, `DbAdapter`, `DbAdapterFactory`, `BuildResult`, `BuildStats`, `BuildDurations`, `CurrentPointer`, `RequiredBuildMeta`, `RequiredShardMeta`, `ManifestShardingSpec`, `ShardReaderFactory`, `parse_json_manifest`, `ManifestParseError`, `ReaderStateError`, `FailureSeverity`
 
-**With `writer` extra:** `write_sharded_spark`, `DataFrameCacheContext`, `SparkConfOverrideContext`
+**With `writer-spark` extra:** `write_sharded_spark`, `DataFrameCacheContext`, `SparkConfOverrideContext`
 
 **With base deps (no extra):** `write_sharded` (Python writer — `xxhash` + `pydantic` for import; needs `boto3` at publish time unless using a custom `ManifestPublisher`)
 
