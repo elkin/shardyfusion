@@ -1,6 +1,5 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
-pytest_workers := env_var_or_default("PYTEST_WORKERS", "2")
 engine := env_var_or_default("CONTAINER_ENGINE", "podman")
 image := env_var_or_default("CONTAINER_IMAGE", "slatedb-spark-sharded-ci")
 workspace := "/workspace"
@@ -23,38 +22,33 @@ fix:
     uv run ruff format .
 
 # Lint, format, type checks, package build, docs check
-quality:
-    uv run tox -m quality
-
-# Lint, format, type checks, package build, docs check (parallel)
-quality-p:
-    uv run tox p -m quality -p 4
+[arg('p', short='p', help='tox parallel envs')]
+quality p="2":
+    uv run tox p -m quality -p {{p}}
 
 # Unit tests
-unit n=pytest_workers:
-    PYTEST_WORKERS={{n}} uv run tox -m unit
-
-# Unit tests (parallel)
-unit-p n=pytest_workers:
-    PYTEST_WORKERS={{n}} uv run tox p -m unit -p 2
+[arg('n', short='n', help='pytest-xdist workers')]
+[arg('p', short='p', help='tox parallel envs')]
+unit n="4" p="2":
+    PYTEST_WORKERS={{n}} uv run tox p -m unit -p {{p}}
 
 # Integration tests
-integration:
-    uv run tox -m integration
-
-# Integration tests (parallel)
-integration-p:
-    uv run tox p -m integration -p 2
+[arg('p', short='p', help='tox parallel envs')]
+integration p="2":
+    uv run tox p -m integration -p {{p}}
 
 # Quality + unit + integration in sequence
-ci: quality unit integration
+[arg('n', short='n', help='pytest-xdist workers')]
+[arg('p', short='p', help='tox parallel envs')]
+ci n="4" p="2":
+    just quality -p {{p}} && just unit -n {{n}} -p {{p}} && just integration -p {{p}}
 
 # ── Docker ───────────────────────────────────────────────────────────────────
 
-docker-build:
+d-build:
     {{engine}} build -f docker/ci.Dockerfile -t {{image}} .
 
-docker-shell:
+d-shell:
     {{engine}} run --rm -it \
       -v "{{invocation_directory()}}:{{workspace}}" \
       -v "{{uv_cache_volume}}:/root/.cache/uv" \
@@ -76,33 +70,27 @@ d +cmd:
       /bin/bash -lc "uv sync --all-extras --dev --quiet && {{cmd}}"
 
 # Lint, format, type checks, package build, docs check (in container)
-d-quality:
-    just d uv run tox -m quality
-
-# Lint, format, type checks, package build, docs check (in container, parallel)
-d-quality-p:
-    just d uv run tox p -m quality -p 4
+[arg('p', short='p', help='tox parallel envs')]
+d-quality p="2":
+    just d "uv run tox p -m quality -p {{p}}"
 
 # Unit tests (in container)
-d-unit n=pytest_workers:
-    just d "PYTEST_WORKERS={{n}} uv run tox -m unit"
-
-# Unit tests (in container, parallel)
-d-unit-p n=pytest_workers:
-    just d "PYTEST_WORKERS={{n}} uv run tox p -m unit -p 2"
+[arg('n', short='n', help='pytest-xdist workers')]
+[arg('p', short='p', help='tox parallel envs')]
+d-unit n="4" p="2":
+    just d "PYTEST_WORKERS={{n}} uv run tox p -m unit -p {{p}}"
 
 # Integration tests (in container)
-d-integration:
-    just d uv run tox -m integration
-
-# Integration tests (in container, parallel)
-d-integration-p:
-    just d uv run tox p -m integration -p 2
+[arg('p', short='p', help='tox parallel envs')]
+d-integration p="2":
+    just d "uv run tox p -m integration -p {{p}}"
 
 # End-to-end tests against Garage (in container via compose)
 d-e2e:
     docker/run-e2e.sh {{engine}}
 
 # Quality + unit + integration in sequence (in container)
-d-ci:
-    just d-quality && just d-unit && just d-integration
+[arg('n', short='n', help='pytest-xdist workers')]
+[arg('p', short='p', help='tox parallel envs')]
+d-ci n="4" p="2":
+    just d-quality -p {{p}} && just d-unit -n {{n}} -p {{p}} && just d-integration -p {{p}}
