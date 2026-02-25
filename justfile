@@ -1,5 +1,6 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
+pytest_workers := env_var_or_default("PYTEST_WORKERS", "2")
 engine := env_var_or_default("CONTAINER_ENGINE", "podman")
 image := env_var_or_default("CONTAINER_IMAGE", "slatedb-spark-sharded-ci")
 workspace := "/workspace"
@@ -30,12 +31,12 @@ quality-p:
     uv run tox p -m quality -p 4
 
 # Unit tests
-unit:
-    uv run tox -m unit
+unit n=pytest_workers:
+    PYTEST_WORKERS={{n}} uv run tox -m unit
 
 # Unit tests (parallel)
-unit-p:
-    uv run tox p -m unit -p 2
+unit-p n=pytest_workers:
+    PYTEST_WORKERS={{n}} uv run tox p -m unit -p 2
 
 # Integration tests
 integration:
@@ -83,12 +84,12 @@ d-quality-p:
     just d uv run tox p -m quality -p 4
 
 # Unit tests (in container)
-d-unit:
-    just d uv run tox -m unit
+d-unit n=pytest_workers:
+    just d "PYTEST_WORKERS={{n}} uv run tox -m unit"
 
 # Unit tests (in container, parallel)
-d-unit-p:
-    just d uv run tox p -m unit -p 2
+d-unit-p n=pytest_workers:
+    just d "PYTEST_WORKERS={{n}} uv run tox p -m unit -p 2"
 
 # Integration tests (in container)
 d-integration:
