@@ -23,7 +23,10 @@ from slatedb_spark_sharded.sharding_types import (  # noqa: E402
 from slatedb_spark_sharded.writer.dask.sharding import add_db_id_column  # noqa: E402
 
 # Reuse edge-case keys from the main routing contract test suite.
-from .test_routing_contract import EDGE_CASE_KEYS, U32_EDGE_CASE_KEYS  # noqa: E402
+from tests.unit.writer.test_routing_contract import (  # noqa: E402
+    EDGE_CASE_KEYS,
+    U32_EDGE_CASE_KEYS,
+)
 
 
 @pytest.fixture(autouse=True)
