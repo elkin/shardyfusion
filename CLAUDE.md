@@ -6,11 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `slatedb_spark_sharded` is a sharded snapshot writer/reader library for SlateDB. It provides:
 - Writer-side Spark APIs to build `num_dbs` independent SlateDB shard databases
+- Dask DataFrame-based writer (no Spark/Java needed)
 - Pure-Python iterator-based writer (no Spark/Java needed)
 - Manifest + `_CURRENT` publishing protocol (default S3, pluggable interfaces)
 - Reader-side routing helpers for service-side `get` and `multi_get`
 - `slate-reader` CLI for interactive and batch lookups against published snapshots
-- Token-bucket rate limiter (`max_writes_per_second`) for both writer paths
+- Token-bucket rate limiter (`max_writes_per_second`) for all writer paths
 
 ## Commands
 
@@ -30,7 +31,11 @@ uv sync --all-extras --dev     # Full dev environment
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run pyright slatedb_spark_sharded
+uv run pyright slatedb_spark_sharded                      # all code (type-all)
+uv run pyright -p pyright/read.json                       # reader-only
+uv run pyright -p pyright/pythonwriter.json               # Python writer only
+uv run pyright -p pyright/daskwriter.json                 # Dask writer only
+uv run pyright -p pyright/sparkwriter.json                # Spark writer only
 ```
 
 ### Tests
@@ -45,16 +50,18 @@ uv run pytest -q tests/integration/read
 uv run pytest -q tests/integration/writer
 
 # Tox labels
-uv run tox -m quality       # lint, format, type-all, package, docs-check
-uv run tox -m unit          # unit tests across py311-py314 and Spark 3.5/4
+uv run tox -m quality       # lint, format, type-all, type-{read,pythonwriter,daskwriter,sparkwriter}, package, docs-check
+uv run tox -m unit          # unit tests across py311-py314, Spark 3.5/4, and Dask
 uv run tox -m integration   # integration tests across py311-py314
 uv run tox -m e2e           # end-to-end tests against Garage S3
 
 # Specific tox environments (examples — see `uv run tox -l` for full list)
 uv run tox -e py311-all-spark35-unit
 uv run tox -e py314-read-unit
+uv run tox -e py313-daskwriter-unit
 uv run tox -e py311-read-integration
 uv run tox -e py311-sparkwriter-spark4-integration
+uv run tox -e py313-daskwriter-integration
 uv run tox -e py311-read-e2e
 
 # Parallel tox (cap to avoid OOM)
@@ -64,22 +71,22 @@ uv run tox p -p 2
 ### Local Shortcuts (via justfile)
 
 ```bash
-just sync          # uv sync --all-extras --dev
-just fix           # ruff check --fix + ruff format (auto-fix)
-just quality       # tox -m quality
-just quality-p     # tox -m quality, parallel (-p 4)
-just unit          # tox -m unit
-just unit-p        # tox -m unit, parallel (-p 2)
-just integration   # tox -m integration
-just integration-p # tox -m integration, parallel (-p 2)
-just ci            # quality → unit → integration in sequence
+just sync               # uv sync --all-extras --dev
+just fix                # ruff check --fix + ruff format (auto-fix)
+just quality            # tox -m quality (parallel, default -p 2)
+just quality -p 4       # with 4 parallel tox envs
+just unit               # tox -m unit (default -n 4 pytest workers, -p 2 tox envs)
+just unit -n 4 -p 2     # explicit pytest workers and tox parallelism
+just integration        # tox -m integration (parallel, default -p 2)
+just integration -p 4   # with 4 parallel tox envs
+just ci                 # quality → unit → integration in sequence
 ```
 
 ### Container Workflows (via justfile)
 
 ```bash
-just docker-build    # build the CI image
-just docker-shell    # interactive shell inside the container
+just d-build         # build the CI image
+just d-shell         # interactive shell inside the container
 just d-quality       # quality checks in container
 just d-unit          # unit tests in container
 just d-e2e           # e2e tests against Garage (via compose)
@@ -87,7 +94,7 @@ just d-ci            # quality → unit → integration in container
 just d <command>     # arbitrary command in container
 
 # Use Docker instead of Podman (default is podman)
-CONTAINER_ENGINE=docker just docker-build
+CONTAINER_ENGINE=docker just d-build
 ```
 
 The container uses an isolated project venv at `/opt/slatedb-venv`, not the host `.venv`.
@@ -105,18 +112,21 @@ On every push/PR, CI runs in order: **quality → package → unit → integrati
 
 - **Quality**: lint + format + pyright (Python 3.11 only)
 - **Package**: `uv build` + wheel smoke-test import
-- **Unit**: matrix of py3.11–3.14 × Spark 3.5/4 (read-unit, writer-unit, all-unit)
-- **Integration**: matrix of py3.11–3.14 × Spark 3.5/4 (moto-backed S3)
+- **Unit**: matrix of py3.11–3.14 × Spark 3.5/4 (read-unit, sparkwriter-unit, pythonwriter-unit, all-unit). **Note:** Dask writer tox envs exist locally but are not yet in CI.
+- **Integration**: matrix of py3.11–3.14 × Spark 3.5/4 (read-integration, sparkwriter-integration, pythonwriter-integration; moto-backed S3)
 - **E2E**: runs via `just d-e2e` (not in GitHub Actions — local/container only)
 
 Java 17 (temurin) is used for all Spark-requiring CI jobs. Weekly scheduled build on Mondays at 06:00 UTC.
 
 ## Architecture
 
-The library is split into four independent paths that share config, manifest models, and core logic:
+The library is split into five independent paths that share config, manifest models, and core logic:
 
 **Writer path (Spark)** (requires PySpark + Java):
 `writer/spark/writer.py` → `writer/spark/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
+
+**Writer path (Dask)** (no Spark/Java needed):
+`writer/dask/writer.py` → `writer/dask/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
 
 **Writer path (Python)** (no Spark/Java needed):
 `writer/python/writer.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
@@ -145,12 +155,14 @@ Layer 2 — Storage, publish, routing, manifest:
   routing.py (→ manifest, serde, sharding_types, ordering)
   manifest_readers.py (→ manifest, storage)
 
-Layer 3 — Writer core (shared by Spark + Python writers):
+Layer 3 — Writer core (shared by Spark, Dask, and Python writers):
   _writer_core.py (→ config, manifest, publish, routing, serde, sharding_types, storage)
 
 Layer 4 — Entry points:
   writer/spark/sharding.py (→ config, sharding_types)
   writer/spark/writer.py (→ _writer_core, writer/spark/sharding, config, serde, slatedb_adapter)
+  writer/dask/sharding.py (→ _writer_core, sharding_types, errors)
+  writer/dask/writer.py (→ _writer_core, _rate_limiter, config, serde, slatedb_adapter, storage, writer/dask/sharding)
   writer/python/writer.py (→ _writer_core, _rate_limiter, config, serde, slatedb_adapter)
   reader/reader.py (→ manifest_readers, routing, sharding_types)
   cli/app.py → cli/config.py, cli/output.py, cli/interactive.py, cli/batch.py
@@ -168,6 +180,13 @@ Layer 5 — Adapters & testing:
 3. Each partition writes one shard to S3 at a temporary path (`_tmp/run_id=.../db=XXXXX/attempt=YY/`).
 4. The driver collects results and selects deterministic winners (lowest attempt → task_attempt_id → URL).
 5. A manifest artifact is built and published, then the `_CURRENT` pointer is updated.
+
+**Dask writer** (`write_sharded_dask`):
+1. Entry point in `writer/dask/writer.py`. Accepts `dd.DataFrame` with `key_col`/`value_spec`.
+2. `writer/dask/sharding.py` adds `_slatedb_db_id` column via Python routing function applied per partition (not Spark SQL). Range boundaries computed via Dask quantiles. `CUSTOM_EXPR` strategy is explicitly rejected.
+3. Shuffles by `_slatedb_db_id`, then `map_partitions` writes each shard. Empty shards get zero-row placeholder results.
+4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `_verify_routing_agreement()`.
+5. Uses the same `_writer_core.py` functions for winner selection, manifest building, and publishing.
 
 **Python writer** (`write_sharded`):
 1. Entry point in `writer/python/writer.py`. Accepts `Iterable[T]` with `key_fn`/`value_fn` callables.
@@ -244,7 +263,7 @@ Both encodings produce identical hash routing results for keys in `[0, 2^32-1]` 
 
 - **Hash** (default): `pmod(xxhash64(cast(key as long)), num_dbs)` — requires integer key column
 - **Range**: Explicit boundaries or computed via `approxQuantile` — supports int/float/string keys
-- **Custom**: User-provided Spark SQL expression or column builder callable (Spark writer only)
+- **Custom**: User-provided Spark SQL expression or column builder callable (Spark writer only; not supported in Dask or Python writers)
 
 The `SnapshotRouter` in `routing.py` mirrors the writer's sharding logic exactly for consistent key routing at read time.
 
@@ -261,9 +280,9 @@ The invariant: `pmod(xxhash64(payload, seed=42), num_dbs)` where:
 - **Modulo**: Python `%` with positive `num_dbs` equals Spark `pmod`
 
 **Safety mechanisms:**
-1. `_verify_routing_agreement()` in `writer/spark/writer.py` — runtime spot-check comparing Spark SQL vs Python routing on a sample of written rows. Controlled by `verify_routing=True` (default).
-2. `tests/unit/writer/test_routing_contract.py` — hypothesis property tests + Spark cross-checks covering ~200 edge-case keys × multiple `num_dbs` values.
-3. Single implementation in `routing.py:_xxhash64_db_id()` imported by both writer paths (never reimplemented).
+1. `_verify_routing_agreement()` in `writer/spark/writer.py` and `writer/dask/writer.py` — runtime spot-check comparing framework-assigned shard IDs vs Python routing on a sample of written rows. Controlled by `verify_routing=True` (default).
+2. `tests/unit/writer/test_routing_contract.py` — hypothesis property tests (Python-only). `tests/unit/writer/spark/test_routing_contract.py` — Spark-vs-Python cross-checks with ~200 edge-case keys. `tests/unit/writer/dask/test_dask_routing_contract.py` — Dask-vs-Python cross-checks.
+3. Single implementation in `routing.py:_xxhash64_db_id()` imported by all writer paths (never reimplemented).
 
 ### Error Hierarchy
 
@@ -290,25 +309,31 @@ Exported from `__init__.py` (conditional on installed extras):
 
 **With `writer-spark` extra:** `write_sharded_spark`, `DataFrameCacheContext`, `SparkConfOverrideContext`
 
-**With base deps (no extra):** `write_sharded` (Python writer — `xxhash` + `pydantic` for import; needs `boto3` at publish time unless using a custom `ManifestPublisher`)
+**With `writer-dask` extra:** `write_sharded_dask`
+
+**With `writer-python` extra:** `write_sharded`
 
 ## Testing Notes
 
 - **`tests/unit/`** — fast, no Spark; use pytest-xdist parallelism (`-n 2`)
   - `tests/unit/shared/` — config, manifest, publish tests
   - `tests/unit/read/` — reader, manifest_readers tests
-  - `tests/unit/writer/` — routing, serde, sharding, winner selection, python writer tests
+  - `tests/unit/writer/` — shared writer tests (routing contract, serde, slatedb_adapter, winner selection)
+    - `tests/unit/writer/spark/` — Spark-specific tests (routing, sharding, writer conf, partition writes)
+    - `tests/unit/writer/python/` — Python writer tests
+    - `tests/unit/writer/dask/` — Dask writer tests (writer, routing contract)
   - `tests/unit/cli/` — CLI unit tests (Click CliRunner with mocked reader)
-- **`tests/integration/`** — requires S3 emulation via `moto`; writer tests additionally require Spark + Java
+- **`tests/integration/`** — requires S3 emulation via `moto`; Spark writer tests additionally require Spark + Java
 - **`tests/e2e/`** — end-to-end tests against Garage S3 server via compose; run with `just d-e2e`
 - **`tests/helpers/`** — shared test scenarios (`s3_test_scenarios.py`) used by both integration (moto) and e2e (Garage) suites
 - `@pytest.mark.spark` marks tests requiring a local PySpark session
+- `@pytest.mark.dask` marks tests requiring `writer-dask` extras
 - `@pytest.mark.e2e` marks end-to-end tests requiring a container engine
-- For behavior changes: add/adjust unit tests first, then integration tests where routing/publishing or Spark behavior is affected
+- For behavior changes: add/adjust unit tests first, then integration tests where routing/publishing or framework behavior is affected
 
 ### Testing Patterns
 
-- **Contract tests** (`test_routing_contract.py`): hypothesis property tests verifying sharding invariant holds across random keys, plus Spark-vs-Python cross-checks with ~200 edge-case keys.
+- **Contract tests**: `tests/unit/writer/test_routing_contract.py` has hypothesis property tests (Python-only). Framework-specific cross-checks live in `tests/unit/writer/spark/test_routing_contract.py` (Spark-vs-Python, ~200 edge-case keys) and `tests/unit/writer/dask/test_dask_routing_contract.py` (Dask-vs-Python).
 - **Shared scenarios** (`tests/helpers/s3_test_scenarios.py`): backend-agnostic test functions accepting an `LocalS3Service` dict — reused across moto (integration) and Garage (e2e).
 - **Test adapters** (`testing.py`): `FakeSlateDbAdapter` (in-memory counter), `FileBackedSlateDbAdapter` (JSONL persistence), `RealSlateDbFileAdapter` (real SlateDB with `file://` URLs) — all implement `DbAdapter` protocol.
 
@@ -341,11 +366,12 @@ The Garage image is built from `docker/garage-e2e.Dockerfile`. The test runner c
 - **Garage requires path-style addressing**: E2E tests set `addressing_style: "path"` in `S3ClientConfig` because Garage doesn't support virtual-hosted-style.
 - **Session-scoped test fixtures**: PySpark and S3 (moto/Garage) fixtures are session-scoped for performance. Tests share the same Spark session and S3 service.
 - **Writer scenario imports are deferred**: `tests/helpers/s3_test_scenarios.py` imports writer modules inside function bodies so reader-only test collection doesn't fail.
+- **Dask writer rejects `CUSTOM_EXPR` sharding**: Unlike the Spark writer, the Dask writer raises `ConfigValidationError` for custom expression sharding. Only `HASH` and `RANGE` are supported.
 - **`OutputOptions.local_root` defaults to `/tmp/slatedb-spark`**: Not per-user; may cause permission issues in shared environments.
 
 ## Environment Notes
 
 - Spark-based writer flows require **Java 17** (`JAVA_HOME` or `PATH`). CI uses temurin distribution.
 - `SPARK_LOCAL_IP=127.0.0.1` is set in tox and devcontainer to avoid hostname resolution issues.
-- Reader-only and Python writer usage do not require Spark/Java.
+- Reader-only, Python writer, and Dask writer usage do not require Spark/Java.
 - CLI requires `click>=8.0` and `pyyaml>=6.0` (`uv sync --extra cli`).
