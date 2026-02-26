@@ -12,7 +12,7 @@ import pytest
 dd = pytest.importorskip("dask.dataframe")
 import dask  # noqa: E402
 
-from slatedb_spark_sharded._writer_core import _route_key  # noqa: E402
+from slatedb_spark_sharded._writer_core import route_key  # noqa: E402
 from slatedb_spark_sharded.config import (  # noqa: E402
     ManifestOptions,
     OutputOptions,
@@ -521,7 +521,7 @@ def test_data_integrity(tmp_path: pathlib.Path) -> None:
         shard_data = file_backed_load_db(root_dir, winner.db_url)
         for key_bytes in shard_data:
             key_int = int.from_bytes(key_bytes, byteorder="big", signed=False)
-            expected_db_id = _route_key(
+            expected_db_id = route_key(
                 key_int,
                 num_dbs=config.num_dbs,
                 sharding=config.sharding,

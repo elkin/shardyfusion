@@ -11,13 +11,13 @@ import pandas as pd
 
 from slatedb_spark_sharded._rate_limiter import TokenBucket
 from slatedb_spark_sharded._writer_core import (
-    _assemble_build_result,
-    _build_manifest_artifact,
-    _publish_manifest_and_current,
-    _route_key,
-    _select_winners,
-    _ShardAttemptResult,
-    _update_min_max,
+    ShardAttemptResult,
+    assemble_build_result,
+    build_manifest_artifact,
+    publish_manifest_and_current,
+    route_key,
+    select_winners,
+    update_min_max,
 )
 from slatedb_spark_sharded.config import WriteConfig
 from slatedb_spark_sharded.errors import (
@@ -38,7 +38,7 @@ from slatedb_spark_sharded.slatedb_adapter import (
     DbAdapterFactory,
     SlateDbFactory,
 )
-from slatedb_spark_sharded.storage import _join_s3
+from slatedb_spark_sharded.storage import join_s3
 from slatedb_spark_sharded.type_defs import JsonObject, KeyLike
 
 from .sharding import add_db_id_column, compute_range_boundaries
@@ -151,24 +151,24 @@ def write_sharded_dask(
     write_duration_ms = int((time.perf_counter() - write_started) * 1000)
 
     # --- Phase 3: Publish ---
-    winners = _select_winners(attempts, num_dbs=config.num_dbs)
+    winners = select_winners(attempts, num_dbs=config.num_dbs)
 
     manifest_started = time.perf_counter()
-    artifact = _build_manifest_artifact(
+    artifact = build_manifest_artifact(
         config=config,
         run_id=run_id,
         resolved_sharding=resolved_sharding,
         winners=winners,
         key_col=key_col,
     )
-    publish_result = _publish_manifest_and_current(
+    publish_result = publish_manifest_and_current(
         config=config,
         run_id=run_id,
         artifact=artifact,
     )
     manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
 
-    return _assemble_build_result(
+    return assemble_build_result(
         run_id=run_id,
         winners=winners,
         artifact=artifact,
@@ -241,7 +241,7 @@ def _verify_routing_agreement(
             key = key.item()
         computed_db_id = int(row[DB_ID_COL])
 
-        expected_db_id = _route_key(
+        expected_db_id = route_key(
             key,
             num_dbs=num_dbs,
             sharding=resolved_sharding,
@@ -332,12 +332,12 @@ def _write_one_shard(
     db_id: int,
     pdf: pd.DataFrame,
     runtime: _PartitionWriteRuntime,
-) -> _ShardAttemptResult:
+) -> ShardAttemptResult:
     """Write one shard from a pandas DataFrame group."""
 
     attempt = 0
     db_rel_path = runtime.db_path_template.format(db_id=db_id)
-    db_url = _join_s3(
+    db_url = join_s3(
         runtime.s3_prefix,
         runtime.tmp_prefix,
         f"run_id={runtime.run_id}",
@@ -378,7 +378,7 @@ def _write_one_shard(
 
                 batch.append((key_bytes, value_bytes))
                 row_count += 1
-                min_key, max_key = _update_min_max(min_key, max_key, key_value)
+                min_key, max_key = update_min_max(min_key, max_key, key_value)
 
                 if len(batch) >= runtime.batch_size:
                     if bucket is not None:
@@ -418,7 +418,7 @@ def _write_one_shard(
         "duration_ms": int((time.perf_counter() - partition_started) * 1000),
     }
 
-    return _ShardAttemptResult(
+    return ShardAttemptResult(
         db_id=db_id,
         db_url=db_url,
         attempt=attempt,
@@ -432,13 +432,13 @@ def _write_one_shard(
 
 def _results_pdf_to_attempts(
     results_pdf: pd.DataFrame,
-) -> list[_ShardAttemptResult]:
-    """Convert result pandas DataFrame to list of _ShardAttemptResult."""
+) -> list[ShardAttemptResult]:
+    """Convert result pandas DataFrame to list of ShardAttemptResult."""
 
     if results_pdf.empty:
         return []
 
-    attempts: list[_ShardAttemptResult] = []
+    attempts: list[ShardAttemptResult] = []
     for _, row in results_pdf.iterrows():
         # Extract pandas row values as Any to satisfy both ty and pyright
         r: Any = row
@@ -459,7 +459,7 @@ def _results_pdf_to_attempts(
             checkpoint_id = None
 
         attempts.append(
-            _ShardAttemptResult(
+            ShardAttemptResult(
                 db_id=int(r["db_id"]),
                 db_url=str(r["db_url"]),
                 attempt=int(r["attempt"]),
@@ -475,17 +475,17 @@ def _results_pdf_to_attempts(
 
 
 def _fill_empty_shards(
-    attempts: list[_ShardAttemptResult],
+    attempts: list[ShardAttemptResult],
     config: WriteConfig,
     run_id: str,
-) -> list[_ShardAttemptResult]:
+) -> list[ShardAttemptResult]:
     """Add zero-row results for any db_ids not covered by partition writes."""
 
     seen_db_ids = {a.db_id for a in attempts}
     for db_id in range(config.num_dbs):
         if db_id not in seen_db_ids:
             db_rel_path = config.output.db_path_template.format(db_id=db_id)
-            db_url = _join_s3(
+            db_url = join_s3(
                 config.s3_prefix,
                 config.output.tmp_prefix,
                 f"run_id={run_id}",
@@ -493,7 +493,7 @@ def _fill_empty_shards(
                 "attempt=00",
             )
             attempts.append(
-                _ShardAttemptResult(
+                ShardAttemptResult(
                     db_id=db_id,
                     db_url=db_url,
                     attempt=0,

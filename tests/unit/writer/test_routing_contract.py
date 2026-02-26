@@ -18,7 +18,7 @@ import random
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from slatedb_spark_sharded._writer_core import _route_key
+from slatedb_spark_sharded._writer_core import route_key
 from slatedb_spark_sharded.manifest import (
     ManifestShardingSpec,
     RequiredBuildMeta,
@@ -26,9 +26,9 @@ from slatedb_spark_sharded.manifest import (
 )
 from slatedb_spark_sharded.routing import (
     SnapshotRouter,
-    _xxhash64_db_id,
-    _xxhash64_payload,
-    _xxhash64_signed,
+    xxhash64_db_id,
+    xxhash64_payload,
+    xxhash64_signed,
 )
 from slatedb_spark_sharded.sharding_types import (
     KeyEncoding,
@@ -90,8 +90,8 @@ def _build_router(
 @settings(max_examples=500)
 def test_hash_routing_deterministic(key: int, num_dbs: int) -> None:
     """Same key + num_dbs always produces the same db_id."""
-    a = _xxhash64_db_id(key, num_dbs, KeyEncoding.U64BE)
-    b = _xxhash64_db_id(key, num_dbs, KeyEncoding.U64BE)
+    a = xxhash64_db_id(key, num_dbs, KeyEncoding.U64BE)
+    b = xxhash64_db_id(key, num_dbs, KeyEncoding.U64BE)
     assert a == b
 
 
@@ -99,15 +99,15 @@ def test_hash_routing_deterministic(key: int, num_dbs: int) -> None:
 @settings(max_examples=500)
 def test_hash_routing_in_valid_range(key: int, num_dbs: int) -> None:
     """Result is always in [0, num_dbs)."""
-    result = _xxhash64_db_id(key, num_dbs, KeyEncoding.U64BE)
+    result = xxhash64_db_id(key, num_dbs, KeyEncoding.U64BE)
     assert 0 <= result < num_dbs
 
 
 @given(payload=st.binary(min_size=1, max_size=64))
 @settings(max_examples=500)
-def test_xxhash64_signed_in_int64_range(payload: bytes) -> None:
+def testxxhash64_signed_in_int64_range(payload: bytes) -> None:
     """Signed conversion always stays within signed int64 range."""
-    result = _xxhash64_signed(payload)
+    result = xxhash64_signed(payload)
     assert _INT64_MIN <= result <= _INT64_MAX
 
 
@@ -115,7 +115,7 @@ def test_xxhash64_signed_in_int64_range(payload: bytes) -> None:
 @settings(max_examples=500)
 def test_signed_digest_mod_non_negative(payload: bytes, num_dbs: int) -> None:
     """Python % with positive num_dbs always returns non-negative (matches pmod)."""
-    digest = _xxhash64_signed(payload)
+    digest = xxhash64_signed(payload)
     assert digest % num_dbs >= 0
 
 
@@ -123,23 +123,23 @@ def test_signed_digest_mod_non_negative(payload: bytes, num_dbs: int) -> None:
 @settings(max_examples=500)
 def test_u32be_u64be_hash_equivalence(key: int, num_dbs: int) -> None:
     """Both encodings produce identical routes for keys in [0, 2^32-1]."""
-    u32 = _xxhash64_db_id(key, num_dbs, KeyEncoding.U32BE)
-    u64 = _xxhash64_db_id(key, num_dbs, KeyEncoding.U64BE)
+    u32 = xxhash64_db_id(key, num_dbs, KeyEncoding.U32BE)
+    u64 = xxhash64_db_id(key, num_dbs, KeyEncoding.U64BE)
     assert u32 == u64, f"key={key}, num_dbs={num_dbs}"
 
 
 @given(key=u64be_keys)
 @settings(max_examples=500)
 def test_payload_length_u64be(key: int) -> None:
-    """_xxhash64_payload returns exactly 8 bytes for u64be integer keys."""
-    assert len(_xxhash64_payload(key, KeyEncoding.U64BE)) == 8
+    """xxhash64_payload returns exactly 8 bytes for u64be integer keys."""
+    assert len(xxhash64_payload(key, KeyEncoding.U64BE)) == 8
 
 
 @given(key=u32be_keys)
 @settings(max_examples=500)
 def test_payload_length_u32be(key: int) -> None:
-    """_xxhash64_payload returns exactly 8 bytes for u32be integer keys."""
-    assert len(_xxhash64_payload(key, KeyEncoding.U32BE)) == 8
+    """xxhash64_payload returns exactly 8 bytes for u32be integer keys."""
+    assert len(xxhash64_payload(key, KeyEncoding.U32BE)) == 8
 
 
 @given(key=u64be_keys)
@@ -147,7 +147,7 @@ def test_payload_length_u32be(key: int) -> None:
 def test_bytes_key_matches_int_key_u64be(key: int) -> None:
     """Routing via int or big-endian bytes gives the same payload."""
     key_bytes = key.to_bytes(8, byteorder="big")
-    assert _xxhash64_payload(key_bytes, KeyEncoding.U64BE) == _xxhash64_payload(
+    assert xxhash64_payload(key_bytes, KeyEncoding.U64BE) == xxhash64_payload(
         key, KeyEncoding.U64BE
     )
 
@@ -157,7 +157,7 @@ def test_bytes_key_matches_int_key_u64be(key: int) -> None:
 def test_bytes_key_matches_int_key_u32be(key: int) -> None:
     """Routing via int or big-endian bytes gives the same payload for u32be."""
     key_bytes = key.to_bytes(4, byteorder="big")
-    assert _xxhash64_payload(key_bytes, KeyEncoding.U32BE) == _xxhash64_payload(
+    assert xxhash64_payload(key_bytes, KeyEncoding.U32BE) == xxhash64_payload(
         key, KeyEncoding.U32BE
     )
 
@@ -165,8 +165,8 @@ def test_bytes_key_matches_int_key_u32be(key: int) -> None:
 @given(key=u64be_keys, num_dbs=num_dbs_st)
 @settings(max_examples=500)
 def test_python_writer_reader_routing_identity(key: int, num_dbs: int) -> None:
-    """_route_key (writer) and SnapshotRouter.route_one (reader) must agree."""
-    writer_result = _route_key(
+    """route_key (writer) and SnapshotRouter.route_one (reader) must agree."""
+    writer_result = route_key(
         key,
         num_dbs=num_dbs,
         sharding=ShardingSpec(strategy=ShardingStrategy.HASH),

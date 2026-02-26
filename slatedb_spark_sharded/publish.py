@@ -3,7 +3,7 @@
 from typing import Protocol
 
 from .manifest import ManifestArtifact
-from .storage import _join_s3, create_s3_client, put_bytes
+from .storage import create_s3_client, join_s3, put_bytes
 from .type_defs import S3ClientConfig
 
 
@@ -41,7 +41,7 @@ class DefaultS3Publisher:
         self, *, name: str, artifact: ManifestArtifact, run_id: str
     ) -> str:
         manifest_name = name or self.manifest_name
-        manifest_url = _join_s3(
+        manifest_url = join_s3(
             self.s3_prefix,
             "manifests",
             f"run_id={run_id}",
@@ -58,7 +58,7 @@ class DefaultS3Publisher:
 
     def publish_current(self, *, name: str, artifact: ManifestArtifact) -> str | None:
         current_name = name or self.current_name
-        current_url = _join_s3(self.s3_prefix, current_name)
+        current_url = join_s3(self.s3_prefix, current_name)
         put_bytes(
             current_url,
             artifact.payload,

@@ -185,7 +185,7 @@ Layer 5 — Adapters & testing:
 1. Entry point in `writer/dask/writer.py`. Accepts `dd.DataFrame` with `key_col`/`value_spec`.
 2. `writer/dask/sharding.py` adds `_slatedb_db_id` column via Python routing function applied per partition (not Spark SQL). Range boundaries computed via Dask quantiles. `CUSTOM_EXPR` strategy is explicitly rejected.
 3. Shuffles by `_slatedb_db_id`, then `map_partitions` writes each shard. Empty shards get zero-row placeholder results.
-4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `_verify_routing_agreement()`.
+4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `verify_routing_agreement()`.
 5. Uses the same `_writer_core.py` functions for winner selection, manifest building, and publishing.
 
 **Python writer** (`write_sharded`):
@@ -280,9 +280,9 @@ The invariant: `pmod(xxhash64(payload, seed=42), num_dbs)` where:
 - **Modulo**: Python `%` with positive `num_dbs` equals Spark `pmod`
 
 **Safety mechanisms:**
-1. `_verify_routing_agreement()` in `writer/spark/writer.py` and `writer/dask/writer.py` — runtime spot-check comparing framework-assigned shard IDs vs Python routing on a sample of written rows. Controlled by `verify_routing=True` (default).
+1. `verify_routing_agreement()` in `writer/spark/writer.py` and `writer/dask/writer.py` — runtime spot-check comparing framework-assigned shard IDs vs Python routing on a sample of written rows. Controlled by `verify_routing=True` (default).
 2. `tests/unit/writer/test_routing_contract.py` — hypothesis property tests (Python-only). `tests/unit/writer/spark/test_routing_contract.py` — Spark-vs-Python cross-checks with ~200 edge-case keys. `tests/unit/writer/dask/test_dask_routing_contract.py` — Dask-vs-Python cross-checks.
-3. Single implementation in `routing.py:_xxhash64_db_id()` imported by all writer paths (never reimplemented).
+3. Single implementation in `routing.py:xxhash64_db_id()` imported by all writer paths (never reimplemented).
 
 ### Error Hierarchy
 

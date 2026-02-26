@@ -5,13 +5,13 @@ from unittest.mock import MagicMock, patch
 
 from pyspark.sql import Row
 
-from slatedb_spark_sharded._writer_core import _ShardAttemptResult
+from slatedb_spark_sharded._writer_core import ShardAttemptResult
 from slatedb_spark_sharded.serde import ValueSpec, make_key_encoder
 from slatedb_spark_sharded.sharding_types import KeyEncoding
 from slatedb_spark_sharded.slatedb_adapter import DbAdapterFactory
 from slatedb_spark_sharded.writer.spark.writer import (
-    _PartitionWriteConfig,
-    _write_one_shard_partition,
+    PartitionWriteConfig,
+    write_one_shard_partition,
 )
 
 # ---------------------------------------------------------------------------
@@ -72,10 +72,10 @@ def _make_runtime(
     adapter: _FakeAdapter | None = None,
     batch_size: int = 100,
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
-) -> _PartitionWriteConfig:
+) -> PartitionWriteConfig:
     if adapter is None:
         adapter = _FakeAdapter()
-    return _PartitionWriteConfig(
+    return PartitionWriteConfig(
         run_id="run-test",
         s3_prefix="s3://bucket/prefix",
         tmp_prefix="_tmp",
@@ -97,12 +97,12 @@ def _rows(*keys: int) -> list[tuple[int, Row]]:
 
 
 def _run(
-    db_id: int, rows: list[tuple[int, Row]], runtime: _PartitionWriteConfig
-) -> _ShardAttemptResult:
+    db_id: int, rows: list[tuple[int, Row]], runtime: PartitionWriteConfig
+) -> ShardAttemptResult:
     """Consume the generator and return the single yielded result."""
     with patch("slatedb_spark_sharded.writer.spark.writer.TaskContext") as mock_tc:
         mock_tc.get.return_value = None
-        results = list(_write_one_shard_partition(db_id, rows, runtime))
+        results = list(write_one_shard_partition(db_id, rows, runtime))
     assert len(results) == 1
     return results[0]
 
@@ -116,15 +116,15 @@ def test_result_is_dataclass_not_string(tmp_path) -> None:
     runtime = _make_runtime(tmp_path)
     with patch("slatedb_spark_sharded.writer.spark.writer.TaskContext") as mock_tc:
         mock_tc.get.return_value = None
-        results = list(_write_one_shard_partition(0, _rows(1), runtime))
+        results = list(write_one_shard_partition(0, _rows(1), runtime))
     assert len(results) == 1
-    assert isinstance(results[0], _ShardAttemptResult)
+    assert isinstance(results[0], ShardAttemptResult)
 
 
 def test_yields_one_result_per_partition(tmp_path) -> None:
     runtime = _make_runtime(tmp_path)
     result = _run(0, _rows(1, 2, 3), runtime)
-    assert isinstance(result, _ShardAttemptResult)
+    assert isinstance(result, ShardAttemptResult)
 
 
 def test_correct_db_id_and_url(tmp_path) -> None:
@@ -179,7 +179,7 @@ def test_no_task_context_uses_attempt_zero(tmp_path) -> None:
     runtime = _make_runtime(tmp_path)
     with patch("slatedb_spark_sharded.writer.spark.writer.TaskContext") as mock_tc:
         mock_tc.get.return_value = None
-        (result,) = _write_one_shard_partition(0, _rows(1), runtime)
+        (result,) = write_one_shard_partition(0, _rows(1), runtime)
     assert result.attempt == 0
     assert result.writer_info["stage_id"] is None
     assert result.writer_info["task_attempt_id"] is None
@@ -194,7 +194,7 @@ def test_task_context_fields_propagated(tmp_path) -> None:
 
     with patch("slatedb_spark_sharded.writer.spark.writer.TaskContext") as mock_tc:
         mock_tc.get.return_value = mock_ctx
-        (result,) = _write_one_shard_partition(0, _rows(1), runtime)
+        (result,) = write_one_shard_partition(0, _rows(1), runtime)
 
     assert result.attempt == 2
     assert result.writer_info["stage_id"] == 5

@@ -3,7 +3,7 @@
 import dask.dataframe as dd
 import pandas as pd
 
-from slatedb_spark_sharded._writer_core import _route_key
+from slatedb_spark_sharded._writer_core import route_key
 from slatedb_spark_sharded.errors import ShardAssignmentError
 from slatedb_spark_sharded.sharding_types import (
     DB_ID_COL,
@@ -23,13 +23,13 @@ def add_db_id_column(
 ) -> dd.DataFrame:
     """Add deterministic ``_slatedb_db_id`` column via Python routing function.
 
-    Uses the same ``_route_key()`` as the reader, guaranteeing the
+    Uses the same ``route_key()`` as the reader, guaranteeing the
     sharding invariant without reimplementation.
     """
 
     def _apply_routing(pdf: pd.DataFrame) -> pd.DataFrame:
         db_ids = pdf[key_col].apply(
-            lambda key: _route_key(
+            lambda key: route_key(
                 key,
                 num_dbs=num_dbs,
                 sharding=sharding,

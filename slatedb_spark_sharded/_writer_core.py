@@ -29,13 +29,13 @@ from .manifest import (
 )
 from .ordering import compare_ordered
 from .publish import DefaultS3Publisher
-from .routing import _xxhash64_db_id  # SHARDING INVARIANT: direct import, not reimpl.
+from .routing import xxhash64_db_id  # SHARDING INVARIANT: direct import, not reimpl.
 from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
 from .type_defs import JsonObject, KeyLike
 
 
 @dataclass(slots=True)
-class _ShardAttemptResult:
+class ShardAttemptResult:
     db_id: int
     db_url: str
     attempt: int
@@ -47,8 +47,8 @@ class _ShardAttemptResult:
 
 
 @dataclass(slots=True)
-class _PartitionWriteOutcome:
-    attempts: list[_ShardAttemptResult]
+class PartitionWriteOutcome:
+    attempts: list[ShardAttemptResult]
     winners: list[RequiredShardMeta]
     write_duration_ms: int
 
@@ -59,7 +59,7 @@ class _PublishResult:
     current_ref: str | None
 
 
-def _route_key(
+def route_key(
     key: KeyLike,
     *,
     num_dbs: int,
@@ -69,7 +69,7 @@ def _route_key(
     """Route a key to a shard db_id (non-Spark path)."""
 
     if sharding.strategy == ShardingStrategy.HASH:
-        return _xxhash64_db_id(key, num_dbs, key_encoding)
+        return xxhash64_db_id(key, num_dbs, key_encoding)
     if sharding.strategy == ShardingStrategy.RANGE:
         if sharding.boundaries is None:
             raise ConfigValidationError(
@@ -81,12 +81,12 @@ def _route_key(
     )
 
 
-def _select_winners(
-    attempts: list[_ShardAttemptResult],
+def select_winners(
+    attempts: list[ShardAttemptResult],
     *,
     num_dbs: int,
 ) -> list[RequiredShardMeta]:
-    grouped: dict[int, list[_ShardAttemptResult]] = defaultdict(list)
+    grouped: dict[int, list[ShardAttemptResult]] = defaultdict(list)
     for item in attempts:
         grouped[item.db_id].append(item)
 
@@ -126,7 +126,7 @@ def _select_winners(
     return winners
 
 
-def _winner_sort_key(item: _ShardAttemptResult) -> tuple[int, int, str]:
+def _winner_sort_key(item: ShardAttemptResult) -> tuple[int, int, str]:
     task_attempt_id = item.writer_info.get("task_attempt_id")
     if task_attempt_id is None:
         normalized_task_attempt_id = 2**63 - 1
@@ -137,7 +137,7 @@ def _winner_sort_key(item: _ShardAttemptResult) -> tuple[int, int, str]:
     return (item.attempt, normalized_task_attempt_id, item.db_url)
 
 
-def _build_manifest_artifact(
+def build_manifest_artifact(
     *,
     config: WriteConfig,
     run_id: str,
@@ -153,7 +153,7 @@ def _build_manifest_artifact(
         num_dbs=config.num_dbs,
         s3_prefix=config.s3_prefix,
         key_col=key_col,
-        sharding=_manifest_safe_sharding(resolved_sharding),
+        sharding=manifest_safe_sharding(resolved_sharding),
         db_path_template=config.output.db_path_template,
         tmp_prefix=config.output.tmp_prefix,
         key_encoding=config.key_encoding,
@@ -181,7 +181,7 @@ def _build_manifest_artifact(
         raise ManifestBuildError("Failed to build manifest artifact") from exc
 
 
-def _publish_manifest_and_current(
+def publish_manifest_and_current(
     *,
     config: WriteConfig,
     run_id: str,
@@ -240,14 +240,14 @@ def _publish_manifest_and_current(
     return _PublishResult(manifest_ref=manifest_ref, current_ref=current_ref)
 
 
-def _assemble_build_result(
+def assemble_build_result(
     *,
     run_id: str,
     winners: list[RequiredShardMeta],
     artifact: ManifestArtifact,
     manifest_ref: str,
     current_ref: str | None,
-    attempts: list[_ShardAttemptResult],
+    attempts: list[ShardAttemptResult],
     shard_duration_ms: int,
     write_duration_ms: int,
     manifest_duration_ms: int,
@@ -300,7 +300,7 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _manifest_safe_sharding(sharding: ShardingSpec) -> ManifestShardingSpec:
+def manifest_safe_sharding(sharding: ShardingSpec) -> ManifestShardingSpec:
     return ManifestShardingSpec(
         strategy=sharding.strategy,
         boundaries=list(sharding.boundaries)
@@ -311,7 +311,7 @@ def _manifest_safe_sharding(sharding: ShardingSpec) -> ManifestShardingSpec:
     )
 
 
-def _update_min_max(
+def update_min_max(
     min_key: KeyLike | None,
     max_key: KeyLike | None,
     key: KeyLike | None,

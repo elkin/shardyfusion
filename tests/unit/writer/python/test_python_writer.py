@@ -10,7 +10,7 @@ from typing import Self
 import pytest
 
 from slatedb_spark_sharded._rate_limiter import TokenBucket
-from slatedb_spark_sharded._writer_core import _route_key
+from slatedb_spark_sharded._writer_core import route_key
 from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteConfig
 from slatedb_spark_sharded.errors import ConfigValidationError
 from slatedb_spark_sharded.manifest import BuildResult, ManifestArtifact
@@ -461,7 +461,7 @@ def test_parallel_data_integrity(tmp_path: pathlib.Path) -> None:
         shard_data = file_backed_load_db(root_dir, winner.db_url)
         for key_bytes in shard_data:
             key_int = int.from_bytes(key_bytes, byteorder="big", signed=False)
-            expected_db_id = _route_key(
+            expected_db_id = route_key(
                 key_int,
                 num_dbs=config.num_dbs,
                 sharding=config.sharding,

@@ -118,7 +118,7 @@ def parse_s3_url(url: str) -> tuple[str, str]:
     return parsed.netloc, key
 
 
-def _join_s3(base: str, *parts: str) -> str:
+def join_s3(base: str, *parts: str) -> str:
     """Join S3 URL path segments, stripping redundant slashes."""
     clean = [base.rstrip("/")]
     clean.extend(part.strip("/") for part in parts if part)

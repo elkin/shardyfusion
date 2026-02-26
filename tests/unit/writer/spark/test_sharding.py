@@ -14,7 +14,7 @@ from slatedb_spark_sharded.writer.spark.sharding import (
     _resolve_boundaries,
     add_db_id_column,
 )
-from slatedb_spark_sharded.writer.spark.writer import _verify_routing_agreement
+from slatedb_spark_sharded.writer.spark.writer import verify_routing_agreement
 
 
 class _FakeApproxQuantileDf:
@@ -222,11 +222,11 @@ def test_resolve_boundaries_validates_quantile_order() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Runtime spot-check tests (_verify_routing_agreement)
+# Runtime spot-check tests (verify_routing_agreement)
 # ---------------------------------------------------------------------------
 
 
-def test_verify_routing_agreement_passes_for_hash(spark) -> None:
+def testverify_routing_agreement_passes_for_hash(spark) -> None:
     """Spot-check should pass for a correctly hash-sharded DataFrame."""
     df = spark.createDataFrame([(i,) for i in range(50)], ["id"])
     with_db_id, resolved = add_db_id_column(
@@ -236,7 +236,7 @@ def test_verify_routing_agreement_passes_for_hash(spark) -> None:
         sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
     )
     # Should not raise
-    _verify_routing_agreement(
+    verify_routing_agreement(
         with_db_id,
         key_col="id",
         num_dbs=8,
@@ -245,12 +245,12 @@ def test_verify_routing_agreement_passes_for_hash(spark) -> None:
     )
 
 
-def test_verify_routing_agreement_passes_for_range(spark) -> None:
+def testverify_routing_agreement_passes_for_range(spark) -> None:
     """Spot-check should pass for a correctly range-sharded DataFrame."""
     spec = ShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=[10, 20])
     df = spark.createDataFrame([(i,) for i in range(30)], ["id"])
     with_db_id, resolved = add_db_id_column(df, key_col="id", num_dbs=3, sharding=spec)
-    _verify_routing_agreement(
+    verify_routing_agreement(
         with_db_id,
         key_col="id",
         num_dbs=3,
@@ -259,7 +259,7 @@ def test_verify_routing_agreement_passes_for_range(spark) -> None:
     )
 
 
-def test_verify_routing_agreement_catches_wrong_db_ids(spark) -> None:
+def testverify_routing_agreement_catches_wrong_db_ids(spark) -> None:
     """Spot-check should raise when db_ids are deliberately wrong."""
     df = spark.createDataFrame([(i,) for i in range(20)], ["id"])
     # Assign wrong db_ids: use (num_dbs - 1 - correct) to invert shard assignment
@@ -269,7 +269,7 @@ def test_verify_routing_agreement_catches_wrong_db_ids(spark) -> None:
     )
     sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
     with pytest.raises(ShardAssignmentError, match="Spark/Python routing mismatch"):
-        _verify_routing_agreement(
+        verify_routing_agreement(
             wrong_df,
             key_col="id",
             num_dbs=8,

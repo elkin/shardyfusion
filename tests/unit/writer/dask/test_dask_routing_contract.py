@@ -1,6 +1,6 @@
 """Contract tests verifying Dask-computed db_id matches Python routing.
 
-Since the Dask writer uses ``_route_key()`` directly (not Spark SQL),
+Since the Dask writer uses ``route_key()`` directly (not Spark SQL),
 this verifies end-to-end correctness of the ``add_db_id_column()``
 function against the canonical routing function.
 """
@@ -13,7 +13,7 @@ import pytest
 dd = pytest.importorskip("dask.dataframe")
 import dask  # noqa: E402
 
-from slatedb_spark_sharded._writer_core import _route_key  # noqa: E402
+from slatedb_spark_sharded._writer_core import route_key  # noqa: E402
 from slatedb_spark_sharded.sharding_types import (  # noqa: E402
     DB_ID_COL,
     KeyEncoding,
@@ -37,7 +37,7 @@ def _synchronous_scheduler():
 
 @pytest.mark.parametrize("num_dbs", [1, 2, 3, 5, 7, 8, 16, 64, 128])
 def test_dask_python_hash_agreement_u64be(num_dbs: int) -> None:
-    """Dask add_db_id_column matches _route_key for u64be hash sharding."""
+    """Dask add_db_id_column matches route_key for u64be hash sharding."""
 
     pdf = pd.DataFrame({"id": EDGE_CASE_KEYS})
     ddf = dd.from_pandas(pdf, npartitions=4)
@@ -54,7 +54,7 @@ def test_dask_python_hash_agreement_u64be(num_dbs: int) -> None:
     for _, row in result.iterrows():
         key = int(row["id"])  # convert numpy scalar to Python int
         dask_db_id = int(row[DB_ID_COL])
-        python_db_id = _route_key(
+        python_db_id = route_key(
             key,
             num_dbs=num_dbs,
             sharding=sharding,
@@ -67,7 +67,7 @@ def test_dask_python_hash_agreement_u64be(num_dbs: int) -> None:
 
 @pytest.mark.parametrize("num_dbs", [1, 2, 3, 5, 8, 16, 64])
 def test_dask_python_hash_agreement_u32be(num_dbs: int) -> None:
-    """Dask add_db_id_column matches _route_key for u32be hash sharding."""
+    """Dask add_db_id_column matches route_key for u32be hash sharding."""
 
     pdf = pd.DataFrame({"id": U32_EDGE_CASE_KEYS})
     ddf = dd.from_pandas(pdf, npartitions=4)
@@ -84,7 +84,7 @@ def test_dask_python_hash_agreement_u32be(num_dbs: int) -> None:
     for _, row in result.iterrows():
         key = int(row["id"])  # convert numpy scalar to Python int
         dask_db_id = int(row[DB_ID_COL])
-        python_db_id = _route_key(
+        python_db_id = route_key(
             key,
             num_dbs=num_dbs,
             sharding=sharding,
@@ -104,8 +104,8 @@ def test_dask_python_hash_agreement_u32be(num_dbs: int) -> None:
         [0, 100, 200, 300, 400, 500, 600, 700, 800, 900],
     ],
 )
-def test_dask_range_sharding_matches_route_key(boundaries: list[int]) -> None:
-    """Dask add_db_id_column matches _route_key for range sharding."""
+def test_dask_range_sharding_matchesroute_key(boundaries: list[int]) -> None:
+    """Dask add_db_id_column matches route_key for range sharding."""
 
     num_dbs = len(boundaries) + 1
     sharding = ShardingSpec(
@@ -137,7 +137,7 @@ def test_dask_range_sharding_matches_route_key(boundaries: list[int]) -> None:
     for _, row in result.iterrows():
         key = int(row["id"])  # convert numpy scalar to Python int
         dask_db_id = int(row[DB_ID_COL])
-        python_db_id = _route_key(
+        python_db_id = route_key(
             key,
             num_dbs=num_dbs,
             sharding=sharding,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from slatedb_spark_sharded._writer_core import _manifest_safe_sharding
+from slatedb_spark_sharded._writer_core import manifest_safe_sharding
 from slatedb_spark_sharded.sharding_types import ShardingSpec, ShardingStrategy
 from slatedb_spark_sharded.writer.spark.writer import (
     DataFrameCacheContext,
@@ -224,7 +224,7 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
     assert fake_df.unpersist_calls == [False, False]
 
 
-def test_manifest_safe_sharding_preserves_boundaries_for_custom_expr() -> None:
+def testmanifest_safe_sharding_preserves_boundaries_for_custom_expr() -> None:
     from slatedb_spark_sharded.manifest import ManifestShardingSpec
 
     spec = ShardingSpec(
@@ -233,7 +233,7 @@ def test_manifest_safe_sharding_preserves_boundaries_for_custom_expr() -> None:
         custom_expr="id % 2",
     )
 
-    manifest_spec = _manifest_safe_sharding(spec)
+    manifest_spec = manifest_safe_sharding(spec)
 
     assert isinstance(manifest_spec, ManifestShardingSpec)
     assert manifest_spec.strategy == ShardingStrategy.CUSTOM_EXPR

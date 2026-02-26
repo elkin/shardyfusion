@@ -119,9 +119,9 @@ class SnapshotRouter:
 
     def _build_route_one_impl(self) -> Callable[[KeyInput], int]:
         if self.strategy == ShardingStrategy.HASH:
-            payload_fn = _make_xxhash64_payload(self.key_encoding)
+            payload_fn = _makexxhash64_payload(self.key_encoding)
             num_dbs = self.num_dbs
-            return lambda key: _xxhash64_signed(payload_fn(key)) % num_dbs
+            return lambda key: xxhash64_signed(payload_fn(key)) % num_dbs
 
         if self.strategy == ShardingStrategy.RANGE:
             return self._route_range
@@ -253,7 +253,7 @@ def _xxhash64_payload_fallback(key: KeyInput) -> bytes:
     raise ValueError(f"Unsupported key type for hash routing: {type(key)!r}")
 
 
-def _make_xxhash64_payload(
+def _makexxhash64_payload(
     key_encoding: KeyEncoding,
 ) -> Callable[[KeyInput], bytes]:
     """Return the payload builder for the given key encoding."""
@@ -265,13 +265,13 @@ def _make_xxhash64_payload(
     return _xxhash64_payload_fallback
 
 
-def _xxhash64_payload(key: KeyInput, key_encoding: KeyEncoding) -> bytes:
+def xxhash64_payload(key: KeyInput, key_encoding: KeyEncoding) -> bytes:
     """Build xxhash64 payload — dispatch wrapper kept for test compatibility."""
 
-    return _make_xxhash64_payload(key_encoding)(key)
+    return _makexxhash64_payload(key_encoding)(key)
 
 
-def _xxhash64_db_id(key: KeyInput, num_dbs: int, key_encoding: KeyEncoding) -> int:
+def xxhash64_db_id(key: KeyInput, num_dbs: int, key_encoding: KeyEncoding) -> int:
     """Route key with ``pmod(xxhash64(...), num_dbs)`` semantics.
 
     SHARDING INVARIANT: This function replicates Spark's
@@ -279,15 +279,15 @@ def _xxhash64_db_id(key: KeyInput, num_dbs: int, key_encoding: KeyEncoding) -> i
     8-byte little-endian (matching JVM Long.reverseBytes), the digest
     is converted to signed int64 (matching JVM's signed long), and
     Python ``%`` with positive ``num_dbs`` equals Spark ``pmod``.
-    Verified at runtime by ``writer.spark.writer._verify_routing_agreement``
+    Verified at runtime by ``writer.spark.writer.verify_routing_agreement``
     and cross-checked by ``tests/unit/writer/test_routing_contract.py``.
     """
 
-    digest = _xxhash64_signed(_xxhash64_payload(key, key_encoding))
+    digest = xxhash64_signed(xxhash64_payload(key, key_encoding))
     return digest % num_dbs
 
 
-def _xxhash64_signed(payload: bytes) -> int:
+def xxhash64_signed(payload: bytes) -> int:
     digest = xxhash.xxh64_intdigest(payload, seed=_XXHASH64_SEED)
     return digest if digest <= _INT64_MAX else digest - _INT64_MOD
 

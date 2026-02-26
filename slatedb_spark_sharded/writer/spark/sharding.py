@@ -47,8 +47,8 @@ def add_db_id_column(
     match sharding.strategy:
         case ShardingStrategy.HASH:
             # SHARDING INVARIANT: This expression MUST produce identical results
-            # to routing._xxhash64_db_id(key, num_dbs, key_encoding).
-            # Verified at runtime by _verify_routing_agreement() and
+            # to routing.xxhash64_db_id(key, num_dbs, key_encoding).
+            # Verified at runtime by verify_routing_agreement() and
             # cross-checked by tests/unit/writer/test_routing_contract.py.
             db_expr = F.pmod(F.xxhash64(F.col(key_col).cast("long")), F.lit(num_dbs))
             df_with_db_id = df.withColumn(DB_ID_COL, db_expr.cast("int"))

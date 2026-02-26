@@ -14,13 +14,13 @@ from pyspark.sql import DataFrame, Row, SparkSession
 
 from slatedb_spark_sharded._rate_limiter import TokenBucket
 from slatedb_spark_sharded._writer_core import (
-    _assemble_build_result,
-    _build_manifest_artifact,
-    _PartitionWriteOutcome,
-    _publish_manifest_and_current,
-    _select_winners,
-    _ShardAttemptResult,
-    _update_min_max,
+    PartitionWriteOutcome,
+    ShardAttemptResult,
+    assemble_build_result,
+    build_manifest_artifact,
+    publish_manifest_and_current,
+    select_winners,
+    update_min_max,
 )
 from slatedb_spark_sharded.config import WriteConfig
 from slatedb_spark_sharded.errors import ShardAssignmentError, SlatedbSparkShardedError
@@ -32,14 +32,14 @@ from slatedb_spark_sharded.slatedb_adapter import (
     DbAdapterFactory,
     default_adapter_factory,
 )
-from slatedb_spark_sharded.storage import _join_s3
+from slatedb_spark_sharded.storage import join_s3
 from slatedb_spark_sharded.type_defs import JsonObject, KeyLike
 
 from .sharding import ShardingSpec, add_db_id_column, prepare_partitioned_rdd
 
 
 @dataclass(slots=True)
-class _PartitionWriteConfig:
+class PartitionWriteConfig:
     run_id: str
     s3_prefix: str
     tmp_prefix: str
@@ -245,21 +245,21 @@ def _write_sharded_spark_impl(
     )
 
     manifest_started = time.perf_counter()
-    artifact = _build_manifest_artifact(
+    artifact = build_manifest_artifact(
         config=config,
         run_id=run_id,
         resolved_sharding=prepared_rows.resolved_sharding,
         winners=write_outcome.winners,
         key_col=key_col,
     )
-    publish_result = _publish_manifest_and_current(
+    publish_result = publish_manifest_and_current(
         config=config,
         run_id=run_id,
         artifact=artifact,
     )
     manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
 
-    return _assemble_build_result(
+    return assemble_build_result(
         run_id=run_id,
         winners=write_outcome.winners,
         artifact=artifact,
@@ -273,7 +273,7 @@ def _write_sharded_spark_impl(
     )
 
 
-def _verify_routing_agreement(
+def verify_routing_agreement(
     df_with_db_id: DataFrame,
     *,
     key_col: str,
@@ -289,7 +289,7 @@ def _verify_routing_agreement(
     """
     from bisect import bisect_right
 
-    from slatedb_spark_sharded.routing import _xxhash64_db_id
+    from slatedb_spark_sharded.routing import xxhash64_db_id
     from slatedb_spark_sharded.sharding_types import ShardingStrategy
 
     sampled = df_with_db_id.select(key_col, DB_ID_COL).limit(sample_size).collect()
@@ -302,7 +302,7 @@ def _verify_routing_agreement(
         spark_db_id = int(row[DB_ID_COL])
 
         if resolved_sharding.strategy == ShardingStrategy.HASH:
-            python_db_id = _xxhash64_db_id(key, num_dbs, key_encoding)
+            python_db_id = xxhash64_db_id(key, num_dbs, key_encoding)
         elif (
             resolved_sharding.strategy == ShardingStrategy.RANGE
             and resolved_sharding.boundaries is not None
@@ -342,7 +342,7 @@ def _prepare_partitioned_rows(
         sharding=config.sharding,
     )
     if verify_routing:
-        _verify_routing_agreement(
+        verify_routing_agreement(
             df_with_db_id,
             key_col=key_col,
             num_dbs=config.num_dbs,
@@ -370,10 +370,10 @@ def _build_partition_write_runtime(
     key_col: str,
     value_spec: ValueSpec,
     max_writes_per_second: float | None,
-) -> _PartitionWriteConfig:
+) -> PartitionWriteConfig:
     """Construct immutable worker-side runtime config for partition shard writers."""
 
-    return _PartitionWriteConfig(
+    return PartitionWriteConfig(
         run_id=run_id,
         s3_prefix=config.s3_prefix,
         tmp_prefix=config.output.tmp_prefix,
@@ -392,30 +392,30 @@ def _build_partition_write_runtime(
 def _run_partition_writes(
     *,
     partitioned_rdd: RDD[tuple[int, Row]],
-    runtime: _PartitionWriteConfig,
+    runtime: PartitionWriteConfig,
     num_dbs: int,
-) -> _PartitionWriteOutcome:
+) -> PartitionWriteOutcome:
     """Execute partition writers and deterministically select winning shard attempts."""
 
     write_started = time.perf_counter()
-    attempts: list[_ShardAttemptResult] = partitioned_rdd.mapPartitionsWithIndex(
-        lambda db_id, items: _write_one_shard_partition(db_id, items, runtime)
+    attempts: list[ShardAttemptResult] = partitioned_rdd.mapPartitionsWithIndex(
+        lambda db_id, items: write_one_shard_partition(db_id, items, runtime)
     ).collect()
     write_duration_ms = int((time.perf_counter() - write_started) * 1000)
-    winners = _select_winners(attempts, num_dbs=num_dbs)
-    return _PartitionWriteOutcome(
+    winners = select_winners(attempts, num_dbs=num_dbs)
+    return PartitionWriteOutcome(
         attempts=attempts,
         winners=winners,
         write_duration_ms=write_duration_ms,
     )
 
 
-def _write_one_shard_partition(
+def write_one_shard_partition(
     db_id: int,
     rows_iter: Iterable[tuple[int, Row]],
-    runtime: _PartitionWriteConfig,
-) -> Iterator[_ShardAttemptResult]:
-    """Write exactly one shard from one partition and yield one _ShardAttemptResult."""
+    runtime: PartitionWriteConfig,
+) -> Iterator[ShardAttemptResult]:
+    """Write exactly one shard from one partition and yield one ShardAttemptResult."""
 
     ctx = TaskContext.get()
     attempt = int(ctx.attemptNumber()) if ctx else 0
@@ -423,7 +423,7 @@ def _write_one_shard_partition(
     task_attempt_id = int(ctx.taskAttemptId()) if ctx else None
 
     db_rel_path = runtime.db_path_template.format(db_id=db_id)
-    db_url = _join_s3(
+    db_url = join_s3(
         runtime.s3_prefix,
         runtime.tmp_prefix,
         f"run_id={runtime.run_id}",
@@ -463,7 +463,7 @@ def _write_one_shard_partition(
 
                 batch.append((key_bytes, value_bytes))
                 row_count += 1
-                min_key, max_key = _update_min_max(min_key, max_key, key_value)
+                min_key, max_key = update_min_max(min_key, max_key, key_value)
 
                 if len(batch) >= runtime.batch_size:
                     if bucket is not None:
@@ -501,7 +501,7 @@ def _write_one_shard_partition(
         "duration_ms": int((time.perf_counter() - partition_started) * 1000),
     }
 
-    yield _ShardAttemptResult(
+    yield ShardAttemptResult(
         db_id=db_id,
         db_url=db_url,
         attempt=attempt,

@@ -9,13 +9,13 @@ from uuid import uuid4
 
 from slatedb_spark_sharded._rate_limiter import TokenBucket
 from slatedb_spark_sharded._writer_core import (
-    _assemble_build_result,
-    _build_manifest_artifact,
-    _publish_manifest_and_current,
-    _route_key,
-    _select_winners,
-    _ShardAttemptResult,
-    _update_min_max,
+    ShardAttemptResult,
+    assemble_build_result,
+    build_manifest_artifact,
+    publish_manifest_and_current,
+    route_key,
+    select_winners,
+    update_min_max,
 )
 from slatedb_spark_sharded.config import WriteConfig
 from slatedb_spark_sharded.errors import (
@@ -27,7 +27,7 @@ from slatedb_spark_sharded.manifest import BuildResult
 from slatedb_spark_sharded.serde import make_key_encoder
 from slatedb_spark_sharded.sharding_types import ShardingStrategy
 from slatedb_spark_sharded.slatedb_adapter import DbAdapterFactory, SlateDbFactory
-from slatedb_spark_sharded.storage import _join_s3
+from slatedb_spark_sharded.storage import join_s3
 from slatedb_spark_sharded.type_defs import JsonObject, KeyLike
 
 T = TypeVar("T")
@@ -74,24 +74,24 @@ def write_sharded(
         )
 
     write_duration_ms = int((time.perf_counter() - started) * 1000)
-    winners = _select_winners(attempts, num_dbs=config.num_dbs)
+    winners = select_winners(attempts, num_dbs=config.num_dbs)
 
     manifest_started = time.perf_counter()
-    artifact = _build_manifest_artifact(
+    artifact = build_manifest_artifact(
         config=config,
         run_id=run_id,
         resolved_sharding=config.sharding,
         winners=winners,
         key_col="_key",
     )
-    publish_result = _publish_manifest_and_current(
+    publish_result = publish_manifest_and_current(
         config=config,
         run_id=run_id,
         artifact=artifact,
     )
     manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
 
-    return _assemble_build_result(
+    return assemble_build_result(
         run_id=run_id,
         winners=winners,
         artifact=artifact,
@@ -121,7 +121,7 @@ def _validate_sharding(config: WriteConfig) -> None:
 
 def _make_db_url(config: WriteConfig, run_id: str, db_id: int, attempt: int) -> str:
     db_rel_path = config.output.db_path_template.format(db_id=db_id)
-    return _join_s3(
+    return join_s3(
         config.s3_prefix,
         config.output.tmp_prefix,
         f"run_id={run_id}",
@@ -148,7 +148,7 @@ def _write_single_process(
     key_fn: Callable[[T], KeyLike],
     value_fn: Callable[[T], bytes],
     max_writes_per_second: float | None,
-) -> list[_ShardAttemptResult]:
+) -> list[ShardAttemptResult]:
     """Single-process mode: all adapters open simultaneously, single pass."""
 
     attempt = 0
@@ -179,7 +179,7 @@ def _write_single_process(
 
         for record in records:
             key = key_fn(record)
-            db_id = _route_key(
+            db_id = route_key(
                 key,
                 num_dbs=num_dbs,
                 sharding=config.sharding,
@@ -190,7 +190,7 @@ def _write_single_process(
 
             batches[db_id].append((key_bytes, value_bytes))
             row_counts[db_id] += 1
-            min_keys[db_id], max_keys[db_id] = _update_min_max(
+            min_keys[db_id], max_keys[db_id] = update_min_max(
                 min_keys[db_id], max_keys[db_id], key
             )
 
@@ -221,7 +221,7 @@ def _write_single_process(
             except Exception:
                 pass
 
-    results: list[_ShardAttemptResult] = []
+    results: list[ShardAttemptResult] = []
     for db_id in range(num_dbs):
         writer_info: JsonObject = {
             "stage_id": None,
@@ -230,7 +230,7 @@ def _write_single_process(
             "duration_ms": 0,
         }
         results.append(
-            _ShardAttemptResult(
+            ShardAttemptResult(
                 db_id=db_id,
                 db_url=db_urls[db_id],
                 attempt=attempt,
@@ -250,7 +250,7 @@ def _write_single_process(
 def _shard_worker(
     db_id: int,
     queue: "multiprocessing.Queue[list[tuple[bytes, bytes]] | None]",
-    result_queue: "multiprocessing.Queue[_ShardAttemptResult]",
+    result_queue: "multiprocessing.Queue[ShardAttemptResult]",
     config: WriteConfig,
     run_id: str,
     factory: DbAdapterFactory,
@@ -315,7 +315,7 @@ def _shard_worker(
     }
 
     result_queue.put(
-        _ShardAttemptResult(
+        ShardAttemptResult(
             db_id=db_id,
             db_url=db_url,
             attempt=attempt,
@@ -338,7 +338,7 @@ def _write_parallel(
     value_fn: Callable[[T], bytes],
     max_queue_size: int,
     max_writes_per_second: float | None,
-) -> list[_ShardAttemptResult]:
+) -> list[ShardAttemptResult]:
     """Multi-process mode: one worker per shard, main routes to queues."""
 
     num_dbs = config.num_dbs
@@ -348,7 +348,7 @@ def _write_parallel(
     queues: list[multiprocessing.Queue[list[tuple[bytes, bytes]] | None]] = [
         ctx.Queue(maxsize=max_queue_size) for _ in range(num_dbs)
     ]
-    result_queue: multiprocessing.Queue[_ShardAttemptResult] = ctx.Queue()
+    result_queue: multiprocessing.Queue[ShardAttemptResult] = ctx.Queue()
 
     workers: list[multiprocessing.Process] = []
     for db_id in range(num_dbs):
@@ -376,7 +376,7 @@ def _write_parallel(
     try:
         for record in records:
             key = key_fn(record)
-            db_id = _route_key(
+            db_id = route_key(
                 key,
                 num_dbs=num_dbs,
                 sharding=config.sharding,
@@ -385,7 +385,7 @@ def _write_parallel(
             key_bytes = key_encoder(key)
             value_bytes = value_fn(record)
             chunk_bufs[db_id].append((key_bytes, value_bytes))
-            min_keys[db_id], max_keys[db_id] = _update_min_max(
+            min_keys[db_id], max_keys[db_id] = update_min_max(
                 min_keys[db_id], max_keys[db_id], key
             )
 
@@ -413,7 +413,7 @@ def _write_parallel(
             p.join(timeout=60)
 
     # Collect results
-    results: list[_ShardAttemptResult] = []
+    results: list[ShardAttemptResult] = []
     for _ in range(num_dbs):
         result = result_queue.get(timeout=10)
         # Patch in min/max from main process tracking

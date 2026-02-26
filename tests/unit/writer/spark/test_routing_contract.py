@@ -14,7 +14,7 @@ from bisect import bisect_right
 
 import pytest
 
-from slatedb_spark_sharded.routing import _xxhash64_db_id
+from slatedb_spark_sharded.routing import xxhash64_db_id
 from slatedb_spark_sharded.sharding_types import KeyEncoding
 from tests.unit.writer.test_routing_contract import EDGE_CASE_KEYS, U32_EDGE_CASE_KEYS
 
@@ -35,7 +35,7 @@ def test_spark_python_hash_agreement_u64be(spark, num_dbs: int) -> None:
     }
 
     for key in EDGE_CASE_KEYS:
-        python_db_id = _xxhash64_db_id(key, num_dbs, KeyEncoding.U64BE)
+        python_db_id = xxhash64_db_id(key, num_dbs, KeyEncoding.U64BE)
         assert python_db_id == spark_results[key], (
             f"key={key}, num_dbs={num_dbs}: Python={python_db_id}, "
             f"Spark={spark_results[key]}"
@@ -58,7 +58,7 @@ def test_spark_python_hash_agreement_u32be(spark, num_dbs: int) -> None:
     }
 
     for key in U32_EDGE_CASE_KEYS:
-        python_db_id = _xxhash64_db_id(key, num_dbs, KeyEncoding.U32BE)
+        python_db_id = xxhash64_db_id(key, num_dbs, KeyEncoding.U32BE)
         assert python_db_id == spark_results[key], (
             f"key={key}, num_dbs={num_dbs}: Python(u32be)={python_db_id}, "
             f"Spark={spark_results[key]}"
