@@ -127,13 +127,20 @@ class DataFrameCacheContext:
     """Cache a DataFrame for the lifetime of the context and unpersist on exit."""
 
     def __init__(
-        self, df: DataFrame, storage_level: StorageLevel | None = None
+        self,
+        df: DataFrame,
+        storage_level: StorageLevel | None = None,
+        *,
+        enabled: bool = True,
     ) -> None:
         self._df = df
         self._storage_level = storage_level
+        self._enabled = enabled
         self._cached_df: DataFrame | None = None
 
     def __enter__(self) -> DataFrame:
+        if not self._enabled:
+            return self._df
         try:
             if self._storage_level is None:
                 self._cached_df = self._df.persist()
@@ -154,7 +161,7 @@ class DataFrameCacheContext:
         exc: BaseException | None,
         tb: types.TracebackType | None,
     ) -> None:
-        if self._cached_df is None:
+        if not self._enabled or self._cached_df is None:
             return
         try:
             self._cached_df.unpersist(blocking=False)

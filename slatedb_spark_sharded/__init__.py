@@ -46,12 +46,14 @@ try:
         DataFrameCacheContext,
         SparkConfOverrideContext,
         write_sharded_spark,
+        write_single_db_spark,
     )
 
     _writer_exports = [
         "DataFrameCacheContext",
         "SparkConfOverrideContext",
         "write_sharded_spark",
+        "write_single_db_spark",
     ]
 except ImportError:
     # Writer APIs are unavailable when optional writer dependencies
@@ -68,9 +70,13 @@ except ImportError:
 
 _dask_writer_exports: list[str] = []
 try:
-    from .writer.dask import write_sharded_dask
+    from .writer.dask import DaskCacheContext, write_sharded_dask, write_single_db_dask
 
-    _dask_writer_exports = ["write_sharded_dask"]
+    _dask_writer_exports = [
+        "DaskCacheContext",
+        "write_sharded_dask",
+        "write_single_db_dask",
+    ]
 except ImportError:
     pass
 
