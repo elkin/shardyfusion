@@ -29,7 +29,7 @@ from slatedb_spark_sharded.testing import (  # noqa: E402
 )
 from slatedb_spark_sharded.writer.dask.single_db_writer import (  # noqa: E402
     DaskCacheContext,
-    write_single_db_dask,
+    write_single_db,
 )
 from tests.helpers.tracking import (  # noqa: E402
     InMemoryPublisher,
@@ -93,7 +93,7 @@ def test_basic_sorted_write() -> None:
     records = [{"id": k} for k in [5, 3, 1, 4, 2]]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_single_db_dask(
+    result = write_single_db(
         ddf,
         config,
         key_col="id",
@@ -119,7 +119,7 @@ def test_sort_keys_false() -> None:
     records = [{"id": k} for k in [5, 3, 1, 4, 2]]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_single_db_dask(
+    result = write_single_db(
         ddf,
         config,
         key_col="id",
@@ -137,7 +137,7 @@ def test_validates_num_dbs_1() -> None:
     ddf = _make_dask_df(records, npartitions=1)
 
     with pytest.raises(ConfigValidationError, match="num_dbs=1"):
-        write_single_db_dask(
+        write_single_db(
             ddf,
             config,
             key_col="id",
@@ -152,7 +152,7 @@ def test_batch_size_controls_write_calls() -> None:
     records = [{"id": k} for k in range(7)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_single_db_dask(
+    write_single_db(
         ddf,
         config,
         key_col="id",
@@ -173,7 +173,7 @@ def test_rate_limiting() -> None:
     records = [{"id": k} for k in range(5)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_single_db_dask(
+    result = write_single_db(
         ddf,
         config,
         key_col="id",
@@ -206,7 +206,7 @@ def test_rate_limiter_bucket_created_with_correct_rate(
     records = [{"id": i} for i in range(5)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_single_db_dask(
+    write_single_db(
         ddf,
         config,
         key_col="id",
@@ -225,7 +225,7 @@ def test_rate_limiter_no_bucket_when_rate_is_none(
     records = [{"id": i} for i in range(5)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_single_db_dask(
+    write_single_db(
         ddf,
         config,
         key_col="id",
@@ -244,7 +244,7 @@ def test_rate_limiter_acquire_count_matches_batch_writes(
 
     # num_partitions=1 forces all rows through one _write_pdf_rows call,
     # giving deterministic batching (otherwise repartition splits data).
-    write_single_db_dask(
+    write_single_db(
         ddf,
         config,
         key_col="id",
@@ -268,7 +268,7 @@ def test_rate_limiter_single_batch_single_acquire(
     records = [{"id": i} for i in range(5)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_single_db_dask(
+    write_single_db(
         ddf,
         config,
         key_col="id",
@@ -289,7 +289,7 @@ def test_rate_limiter_exact_batch_boundary(
     records = [{"id": i} for i in range(6)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_single_db_dask(
+    write_single_db(
         ddf,
         config,
         key_col="id",
@@ -311,7 +311,7 @@ def test_empty_dataframe() -> None:
     pdf = pd.DataFrame({"id": pd.Series(dtype="int64")})
     ddf = dd.from_pandas(pdf, npartitions=1)
 
-    result = write_single_db_dask(
+    result = write_single_db(
         ddf,
         config,
         key_col="id",
@@ -330,7 +330,7 @@ def test_min_max_keys() -> None:
     records = [{"id": k} for k in [50, 10, 90, 30]]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_single_db_dask(
+    result = write_single_db(
         ddf,
         config,
         key_col="id",
@@ -354,7 +354,7 @@ def test_manifest_structure() -> None:
     records = [{"id": k} for k in range(5)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_single_db_dask(
+    result = write_single_db(
         ddf,
         config,
         key_col="id",
@@ -378,7 +378,7 @@ def test_key_encoding_u32be() -> None:
     records = [{"id": 1}, {"id": 256}]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_single_db_dask(
+    write_single_db(
         ddf,
         config,
         key_col="id",
@@ -399,7 +399,7 @@ def test_cache_input_false() -> None:
     records = [{"id": k} for k in range(5)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_single_db_dask(
+    result = write_single_db(
         ddf,
         config,
         key_col="id",
@@ -416,7 +416,7 @@ def test_prefetch_and_no_prefetch_same_result() -> None:
 
     factory1 = TrackingFactory()
     config1 = _make_config(factory=factory1)
-    result1 = write_single_db_dask(
+    result1 = write_single_db(
         ddf,
         config1,
         key_col="id",
@@ -426,7 +426,7 @@ def test_prefetch_and_no_prefetch_same_result() -> None:
 
     factory2 = TrackingFactory()
     config2 = _make_config(factory=factory2)
-    result2 = write_single_db_dask(
+    result2 = write_single_db(
         ddf,
         config2,
         key_col="id",
@@ -462,7 +462,7 @@ def test_checkpoint_id_in_result() -> None:
     records = [{"id": 1}]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_single_db_dask(
+    result = write_single_db(
         ddf,
         config,
         key_col="id",
@@ -480,7 +480,7 @@ def test_explicit_num_partitions_skips_count() -> None:
     records = [{"id": k} for k in range(10)]
     ddf = _make_dask_df(records, npartitions=2)
 
-    result = write_single_db_dask(
+    result = write_single_db(
         ddf,
         config,
         key_col="id",
@@ -499,7 +499,7 @@ def test_shard_duration_is_zero() -> None:
     records = [{"id": k} for k in range(5)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_single_db_dask(
+    result = write_single_db(
         ddf,
         config,
         key_col="id",
@@ -525,7 +525,7 @@ def test_data_integrity_file_backed(tmp_path: pathlib.Path) -> None:
     records = [{"id": i} for i in range(50)]
     ddf = _make_dask_df(records, npartitions=3)
 
-    result = write_single_db_dask(
+    result = write_single_db(
         ddf,
         config,
         key_col="id",
@@ -559,7 +559,7 @@ def test_sorted_write_multiple_partitions() -> None:
     ]
     ddf = _make_dask_df(records, npartitions=4)
 
-    result = write_single_db_dask(
+    result = write_single_db(
         ddf,
         config,
         key_col="id",
@@ -584,7 +584,7 @@ def test_validates_missing_key_col() -> None:
     ddf = _make_dask_df(records, npartitions=1)
 
     with pytest.raises(ConfigValidationError, match="nonexistent"):
-        write_single_db_dask(
+        write_single_db(
             ddf,
             config,
             key_col="nonexistent",
@@ -624,7 +624,7 @@ def test_unexpected_error_wrapped_in_slatedb_error() -> None:
     ddf = _make_dask_df(records, npartitions=1)
 
     with pytest.raises(SlatedbSparkShardedError, match="boom") as exc_info:
-        write_single_db_dask(
+        write_single_db(
             ddf,
             config,
             key_col="id",
@@ -643,7 +643,7 @@ def test_slatedb_error_passes_through() -> None:
     ddf = _make_dask_df(records, npartitions=1)
 
     with pytest.raises(SlatedbSparkShardedError, match="original error") as exc_info:
-        write_single_db_dask(
+        write_single_db(
             ddf,
             config,
             key_col="id",

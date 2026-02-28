@@ -21,7 +21,7 @@ from slatedb_spark_sharded.sharding_types import (  # noqa: E402
     ShardingStrategy,
 )
 from slatedb_spark_sharded.testing import file_backed_adapter_factory  # noqa: E402
-from slatedb_spark_sharded.writer.dask import write_sharded_dask  # noqa: E402
+from slatedb_spark_sharded.writer.dask import write_sharded  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -63,7 +63,7 @@ def test_dask_writer_publishes_manifest_and_current_to_local_s3(
     pdf = pd.DataFrame({"id": list(range(24)), "val": [f"v{i}" for i in range(24)]})
     ddf = dd.from_pandas(pdf, npartitions=2)
 
-    result = write_sharded_dask(
+    result = write_sharded(
         ddf,
         config,
         key_col="id",

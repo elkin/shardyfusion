@@ -34,7 +34,7 @@ from .sharding import validate_key_col_type
 from .util import DataFrameCacheContext, SparkConfOverrideContext
 
 
-def write_single_db_spark(
+def write_single_db(
     df: DataFrame,
     config: WriteConfig,
     *,
@@ -64,7 +64,7 @@ def write_single_db_spark(
 
     if config.num_dbs != 1:
         raise ConfigValidationError(
-            f"write_single_db_spark requires num_dbs=1, got {config.num_dbs}"
+            f"write_single_db requires num_dbs=1, got {config.num_dbs}"
         )
 
     validate_key_col_type(df=df, key_col=key_col, strategy=ShardingStrategy.HASH)

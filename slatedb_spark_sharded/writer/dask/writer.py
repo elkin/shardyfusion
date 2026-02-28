@@ -89,7 +89,7 @@ _RESULT_META = pd.DataFrame(
 )
 
 
-def write_sharded_dask(
+def write_sharded(
     ddf: dd.DataFrame,
     config: WriteConfig,
     *,

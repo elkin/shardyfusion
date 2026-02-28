@@ -502,7 +502,7 @@ def run_dask_writer_publishes_manifest_scenario(
         real_file_adapter_factory,
         writer_local_dir_for_db_url,
     )
-    from slatedb_spark_sharded.writer.dask import write_sharded_dask
+    from slatedb_spark_sharded.writer.dask import write_sharded
 
     bucket = s3_service["bucket"]
     endpoint_url = s3_service["endpoint_url"]
@@ -536,7 +536,7 @@ def run_dask_writer_publishes_manifest_scenario(
     ddf = dd.from_pandas(pdf, npartitions=4)
 
     with dask.config.set(scheduler="synchronous"):
-        result = write_sharded_dask(
+        result = write_sharded(
             ddf,
             config,
             key_col="id",
@@ -704,7 +704,7 @@ def run_dask_writer_reader_refresh_scenario(
         real_file_adapter_factory,
         writer_local_dir_for_db_url,
     )
-    from slatedb_spark_sharded.writer.dask import write_sharded_dask
+    from slatedb_spark_sharded.writer.dask import write_sharded
 
     bucket = s3_service["bucket"]
     endpoint_url = s3_service["endpoint_url"]
@@ -741,7 +741,7 @@ def run_dask_writer_reader_refresh_scenario(
         return dd.from_pandas(pdf, npartitions=4)
 
     with dask.config.set(scheduler="synchronous"):
-        result_v1 = write_sharded_dask(
+        result_v1 = write_sharded(
             make_ddf("old"),
             build_config("dask-refresh-run-1"),
             key_col="id",
@@ -772,7 +772,7 @@ def run_dask_writer_reader_refresh_scenario(
         assert reader.get(7) == b"old-7"
 
         with dask.config.set(scheduler="synchronous"):
-            result_v2 = write_sharded_dask(
+            result_v2 = write_sharded(
                 make_ddf("new"),
                 build_config("dask-refresh-run-2"),
                 key_col="id",

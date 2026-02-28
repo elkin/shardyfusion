@@ -13,7 +13,8 @@ Key guarantees:
 Typical usage:
 
 ```python
-from slatedb_spark_sharded import WriteConfig, ValueSpec, write_sharded
+from slatedb_spark_sharded import WriteConfig, ValueSpec
+from slatedb_spark_sharded.writer.spark import write_sharded
 
 config = WriteConfig(
     num_dbs=8,
@@ -68,9 +69,9 @@ the aggregate write rate:
 | Backend | Writer Function | Bucket Scope | Effective Meaning |
 |---------|----------------|--------------|-------------------|
 | Spark sharded | `write_sharded` | 1 bucket per partition (= per shard) | Each shard independently limited to `rate` rows/sec |
-| Spark single-db | `write_single_db_spark` | 1 shared bucket | All writes limited to `rate` rows/sec total |
-| Dask sharded | `write_sharded_dask` | 1 bucket per shard | Each shard independently limited to `rate` rows/sec |
-| Dask single-db | `write_single_db_dask` | 1 shared bucket | All writes limited to `rate` rows/sec total |
+| Spark single-db | `write_single_db` (spark) | 1 shared bucket | All writes limited to `rate` rows/sec total |
+| Dask sharded | `write_sharded` (dask) | 1 bucket per shard | Each shard independently limited to `rate` rows/sec |
+| Dask single-db | `write_single_db` (dask) | 1 shared bucket | All writes limited to `rate` rows/sec total |
 | Python sequential | `write_sharded` | 1 shared bucket for all shards | All shards collectively limited to `rate` rows/sec |
 | Python parallel | `write_sharded(parallel=True)` | 1 bucket per worker process | Each shard independently limited to `rate` rows/sec |
 
@@ -87,21 +88,21 @@ Key differences:
 ### Usage examples
 
 ```python
-# Spark: limit each shard to 10,000 rows/sec
+# Spark: from slatedb_spark_sharded.writer.spark import write_sharded
 result = write_sharded(
     df, config, key_col="id",
     value_spec=ValueSpec.binary_col("payload"),
     max_writes_per_second=10_000.0,
 )
 
-# Dask: same parameter
-result = write_sharded_dask(
+# Dask: from slatedb_spark_sharded.writer.dask import write_sharded
+result = write_sharded(
     ddf, config, key_col="id",
     value_spec=ValueSpec.binary_col("payload"),
     max_writes_per_second=10_000.0,
 )
 
-# Python: shared bucket across all shards in sequential mode
+# Python: from slatedb_spark_sharded.writer.python import write_sharded
 result = write_sharded(
     records, config, key_fn=lambda r: r["id"],
     value_fn=lambda r: r["payload"],

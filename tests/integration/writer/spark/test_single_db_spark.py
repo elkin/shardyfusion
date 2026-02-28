@@ -13,7 +13,7 @@ from slatedb_spark_sharded.config import (
 )
 from slatedb_spark_sharded.serde import ValueSpec
 from slatedb_spark_sharded.testing import file_backed_adapter_factory
-from slatedb_spark_sharded.writer.spark.single_db_writer import write_single_db_spark
+from slatedb_spark_sharded.writer.spark.single_db_writer import write_single_db
 
 
 @pytest.mark.spark
@@ -45,7 +45,7 @@ def test_single_db_spark_publishes_manifest_and_current(
 
     df = spark.createDataFrame([(i, f"val-{i}") for i in range(20)], ["key", "val"])
 
-    result = write_single_db_spark(
+    result = write_single_db(
         df,
         config,
         key_col="key",

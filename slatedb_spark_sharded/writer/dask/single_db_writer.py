@@ -60,7 +60,7 @@ class DaskCacheContext:
         self._persisted = None
 
 
-def write_single_db_dask(
+def write_single_db(
     ddf: dd.DataFrame,
     config: WriteConfig,
     *,
@@ -86,7 +86,7 @@ def write_single_db_dask(
 
     if config.num_dbs != 1:
         raise ConfigValidationError(
-            f"write_single_db_dask requires num_dbs=1, got {config.num_dbs}"
+            f"write_single_db requires num_dbs=1, got {config.num_dbs}"
         )
 
     if key_col not in ddf.columns:

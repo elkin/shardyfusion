@@ -16,7 +16,7 @@ from slatedb_spark_sharded.errors import ConfigValidationError, SlatedbSparkShar
 from slatedb_spark_sharded.manifest import BuildResult
 from slatedb_spark_sharded.serde import ValueSpec
 from slatedb_spark_sharded.sharding_types import KeyEncoding
-from slatedb_spark_sharded.writer.spark.single_db_writer import write_single_db_spark
+from slatedb_spark_sharded.writer.spark.single_db_writer import write_single_db
 from slatedb_spark_sharded.writer.spark.writer import DataFrameCacheContext
 from tests.helpers.tracking import (
     InMemoryPublisher,
@@ -76,7 +76,7 @@ def test_basic_sorted_write(spark: SparkSession) -> None:
     # Unsorted keys
     df = spark.createDataFrame([(k, f"v{k}") for k in [5, 3, 1, 4, 2]], ["key", "val"])
 
-    result = write_single_db_spark(
+    result = write_single_db(
         df,
         config,
         key_col="key",
@@ -135,7 +135,7 @@ def test_sorted_write_multiple_partitions(spark: SparkSession) -> None:
         ["key", "val"],
     )
 
-    result = write_single_db_spark(
+    result = write_single_db(
         df,
         config,
         key_col="key",
@@ -159,7 +159,7 @@ def test_sort_keys_false(spark: SparkSession) -> None:
 
     df = spark.createDataFrame([(k,) for k in [5, 3, 1, 4, 2]], ["key"])
 
-    result = write_single_db_spark(
+    result = write_single_db(
         df,
         config,
         key_col="key",
@@ -176,7 +176,7 @@ def test_validates_num_dbs_1(spark: SparkSession) -> None:
     df = spark.createDataFrame([(1,)], ["key"])
 
     with pytest.raises(ConfigValidationError, match="num_dbs=1"):
-        write_single_db_spark(
+        write_single_db(
             df,
             config,
             key_col="key",
@@ -192,7 +192,7 @@ def test_partition_sizing(spark: SparkSession) -> None:
 
     df = spark.createDataFrame([(k,) for k in range(10)], ["key"])
 
-    result = write_single_db_spark(
+    result = write_single_db(
         df,
         config,
         key_col="key",
@@ -209,7 +209,7 @@ def test_batch_size_controls_write_calls(spark: SparkSession) -> None:
 
     df = spark.createDataFrame([(k,) for k in range(7)], ["key"])
 
-    write_single_db_spark(
+    write_single_db(
         df,
         config,
         key_col="key",
@@ -230,7 +230,7 @@ def test_rate_limiting(spark: SparkSession) -> None:
 
     df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
 
-    result = write_single_db_spark(
+    result = write_single_db(
         df,
         config,
         key_col="key",
@@ -264,7 +264,7 @@ def test_rate_limiter_bucket_created_with_correct_rate(
     config = _make_config(batch_size=50_000)
     df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
 
-    write_single_db_spark(
+    write_single_db(
         df,
         config,
         key_col="key",
@@ -284,7 +284,7 @@ def test_rate_limiter_no_bucket_when_rate_is_none(
     config = _make_config(batch_size=50_000)
     df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
 
-    write_single_db_spark(
+    write_single_db(
         df,
         config,
         key_col="key",
@@ -302,7 +302,7 @@ def test_rate_limiter_acquire_count_matches_batch_writes(
     config = _make_config(batch_size=3)
     df = spark.createDataFrame([(k,) for k in range(7)], ["key"])
 
-    write_single_db_spark(
+    write_single_db(
         df,
         config,
         key_col="key",
@@ -326,7 +326,7 @@ def test_rate_limiter_single_batch_single_acquire(
     config = _make_config(batch_size=50_000)
     df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
 
-    write_single_db_spark(
+    write_single_db(
         df,
         config,
         key_col="key",
@@ -348,7 +348,7 @@ def test_rate_limiter_exact_batch_boundary(
     config = _make_config(batch_size=3)
     df = spark.createDataFrame([(k,) for k in range(6)], ["key"])
 
-    write_single_db_spark(
+    write_single_db(
         df,
         config,
         key_col="key",
@@ -369,7 +369,7 @@ def test_empty_dataframe(spark: SparkSession) -> None:
 
     df = spark.createDataFrame([], "key: long")
 
-    result = write_single_db_spark(
+    result = write_single_db(
         df,
         config,
         key_col="key",
@@ -388,7 +388,7 @@ def test_min_max_keys(spark: SparkSession) -> None:
 
     df = spark.createDataFrame([(k,) for k in [50, 10, 90, 30]], ["key"])
 
-    result = write_single_db_spark(
+    result = write_single_db(
         df,
         config,
         key_col="key",
@@ -412,7 +412,7 @@ def test_manifest_structure(spark: SparkSession) -> None:
 
     df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
 
-    result = write_single_db_spark(
+    result = write_single_db(
         df,
         config,
         key_col="key",
@@ -437,7 +437,7 @@ def test_key_encoding_u64be(spark: SparkSession) -> None:
 
     df = spark.createDataFrame([(1,), (256,)], ["key"])
 
-    write_single_db_spark(
+    write_single_db(
         df,
         config,
         key_col="key",
@@ -456,7 +456,7 @@ def test_key_encoding_u32be(spark: SparkSession) -> None:
 
     df = spark.createDataFrame([(1,), (256,)], ["key"])
 
-    write_single_db_spark(
+    write_single_db(
         df,
         config,
         key_col="key",
@@ -477,7 +477,7 @@ def test_cache_input_false(spark: SparkSession) -> None:
 
     df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
 
-    result = write_single_db_spark(
+    result = write_single_db(
         df,
         config,
         key_col="key",
@@ -511,7 +511,7 @@ def test_prefetch_disabled(spark: SparkSession) -> None:
 
     df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
 
-    result = write_single_db_spark(
+    result = write_single_db(
         df,
         config,
         key_col="key",
@@ -529,7 +529,7 @@ def test_checkpoint_id_in_result(spark: SparkSession) -> None:
 
     df = spark.createDataFrame([(1,)], ["key"])
 
-    result = write_single_db_spark(
+    result = write_single_db(
         df,
         config,
         key_col="key",
@@ -547,7 +547,7 @@ def test_explicit_num_partitions_skips_count(spark: SparkSession) -> None:
 
     df = spark.createDataFrame([(k,) for k in range(10)], ["key"])
 
-    result = write_single_db_spark(
+    result = write_single_db(
         df,
         config,
         key_col="key",
@@ -566,7 +566,7 @@ def test_shard_duration_is_zero(spark: SparkSession) -> None:
 
     df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
 
-    result = write_single_db_spark(
+    result = write_single_db(
         df,
         config,
         key_col="key",
@@ -607,7 +607,7 @@ def test_unexpected_error_wrapped_in_slatedb_error(spark: SparkSession) -> None:
     df = spark.createDataFrame([(1,)], ["key"])
 
     with pytest.raises(SlatedbSparkShardedError, match="boom") as exc_info:
-        write_single_db_spark(
+        write_single_db(
             df,
             config,
             key_col="key",
@@ -625,7 +625,7 @@ def test_slatedb_error_passes_through(spark: SparkSession) -> None:
     df = spark.createDataFrame([(1,)], ["key"])
 
     with pytest.raises(SlatedbSparkShardedError, match="original error") as exc_info:
-        write_single_db_spark(
+        write_single_db(
             df,
             config,
             key_col="key",

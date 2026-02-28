@@ -40,46 +40,6 @@ from .slatedb_adapter import (
 )
 from .type_defs import ShardReaderFactory
 
-_writer_exports: list[str] = []
-try:
-    from .writer.spark import (
-        DataFrameCacheContext,
-        SparkConfOverrideContext,
-        write_sharded,
-        write_single_db_spark,
-    )
-
-    _writer_exports = [
-        "DataFrameCacheContext",
-        "SparkConfOverrideContext",
-        "write_sharded",
-        "write_single_db_spark",
-    ]
-except ImportError:
-    # Writer APIs are unavailable when optional writer dependencies
-    # (notably pyspark) are not installed.
-    pass
-
-_python_writer_exports: list[str] = []
-try:
-    from .writer.python import write_sharded
-
-    _python_writer_exports = ["write_sharded"]
-except ImportError:
-    pass
-
-_dask_writer_exports: list[str] = []
-try:
-    from .writer.dask import DaskCacheContext, write_sharded_dask, write_single_db_dask
-
-    _dask_writer_exports = [
-        "DaskCacheContext",
-        "write_sharded_dask",
-        "write_single_db_dask",
-    ]
-except ImportError:
-    pass
-
 __all__ = [
     "FailureSeverity",
     "ManifestParseError",
@@ -115,6 +75,3 @@ __all__ = [
     "ValueSpec",
     "parse_json_manifest",
 ]
-__all__.extend(_writer_exports)
-__all__.extend(_python_writer_exports)
-__all__.extend(_dask_writer_exports)

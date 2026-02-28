@@ -18,7 +18,7 @@ from slatedb_spark_sharded.config import (  # noqa: E402
 from slatedb_spark_sharded.serde import ValueSpec  # noqa: E402
 from slatedb_spark_sharded.testing import file_backed_adapter_factory  # noqa: E402
 from slatedb_spark_sharded.writer.dask.single_db_writer import (  # noqa: E402
-    write_single_db_dask,
+    write_single_db,
 )
 
 
@@ -57,7 +57,7 @@ def test_single_db_dask_publishes_manifest_and_current(
     pdf = pd.DataFrame({"id": list(range(20)), "val": [f"val-{i}" for i in range(20)]})
     ddf = dd.from_pandas(pdf, npartitions=2)
 
-    result = write_single_db_dask(
+    result = write_single_db(
         ddf,
         config,
         key_col="id",

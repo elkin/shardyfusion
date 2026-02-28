@@ -43,7 +43,8 @@ uv sync --all-extras --dev
 ## Minimal Writer Usage
 
 ```python
-from slatedb_spark_sharded import WriteConfig, ValueSpec, write_sharded
+from slatedb_spark_sharded import WriteConfig, ValueSpec
+from slatedb_spark_sharded.writer.spark import write_sharded
 
 config = WriteConfig(
     num_dbs=8,

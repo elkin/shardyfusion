@@ -30,7 +30,7 @@ from slatedb_spark_sharded.testing import (  # noqa: E402
     file_backed_adapter_factory,
     file_backed_load_db,
 )
-from slatedb_spark_sharded.writer.dask import write_sharded_dask  # noqa: E402
+from slatedb_spark_sharded.writer.dask import write_sharded  # noqa: E402
 from tests.helpers.tracking import InMemoryPublisher, RecordingTokenBucket  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -155,7 +155,7 @@ def test_hash_routing_round_trip() -> None:
     records = [{"id": i} for i in range(40)]
     ddf = _make_dask_df(records, npartitions=2)
 
-    result = write_sharded_dask(
+    result = write_sharded(
         ddf,
         config,
         key_col="id",
@@ -184,7 +184,7 @@ def test_range_explicit_boundaries() -> None:
     records = [{"id": i} for i in range(30)]
     ddf = _make_dask_df(records, npartitions=2)
 
-    result = write_sharded_dask(
+    result = write_sharded(
         ddf,
         config,
         key_col="id",
@@ -216,7 +216,7 @@ def test_range_auto_computed_boundaries() -> None:
     records = [{"id": i} for i in range(90)]
     ddf = _make_dask_df(records, npartitions=3)
 
-    result = write_sharded_dask(
+    result = write_sharded(
         ddf,
         config,
         key_col="id",
@@ -239,7 +239,7 @@ def test_custom_expr_raises() -> None:
     ddf = _make_dask_df(records, npartitions=1)
 
     with pytest.raises(ConfigValidationError, match="Custom expression"):
-        write_sharded_dask(
+        write_sharded(
             ddf,
             config,
             key_col="id",
@@ -257,7 +257,7 @@ def test_empty_input() -> None:
     pdf = pd.DataFrame({"id": pd.Series(dtype="int64")})
     ddf = dd.from_pandas(pdf, npartitions=1)
 
-    result = write_sharded_dask(
+    result = write_sharded(
         ddf,
         config,
         key_col="id",
@@ -276,7 +276,7 @@ def test_batch_flushing() -> None:
     records = [{"id": i} for i in range(7)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_sharded_dask(
+    write_sharded(
         ddf,
         config,
         key_col="id",
@@ -304,7 +304,7 @@ def test_min_max_key_tracking() -> None:
     records = [{"id": k} for k in [10, 20, 30, 60, 70, 80]]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_sharded_dask(
+    result = write_sharded(
         ddf,
         config,
         key_col="id",
@@ -327,7 +327,7 @@ def test_rate_limited_write() -> None:
     records = [{"id": i} for i in range(5)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_sharded_dask(
+    result = write_sharded(
         ddf,
         config,
         key_col="id",
@@ -360,7 +360,7 @@ def test_rate_limiter_bucket_created_with_correct_rate(
     records = [{"id": i} for i in range(5)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_sharded_dask(
+    write_sharded(
         ddf,
         config,
         key_col="id",
@@ -379,7 +379,7 @@ def test_rate_limiter_no_bucket_when_rate_is_none(
     records = [{"id": i} for i in range(5)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_sharded_dask(
+    write_sharded(
         ddf,
         config,
         key_col="id",
@@ -396,7 +396,7 @@ def test_rate_limiter_acquire_count_matches_batch_writes(
     records = [{"id": i} for i in range(7)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_sharded_dask(
+    write_sharded(
         ddf,
         config,
         key_col="id",
@@ -419,7 +419,7 @@ def test_rate_limiter_single_batch_single_acquire(
     records = [{"id": i} for i in range(5)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_sharded_dask(
+    write_sharded(
         ddf,
         config,
         key_col="id",
@@ -440,7 +440,7 @@ def test_rate_limiter_exact_batch_boundary(
     records = [{"id": i} for i in range(6)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_sharded_dask(
+    write_sharded(
         ddf,
         config,
         key_col="id",
@@ -468,7 +468,7 @@ def test_rate_limiter_multiple_shards_independent_buckets(
     records = [{"id": k} for k in [10, 20, 30, 60, 70, 80]]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_sharded_dask(
+    write_sharded(
         ddf,
         config,
         key_col="id",
@@ -501,7 +501,7 @@ def test_rate_limiter_empty_shard_no_bucket(
     records = [{"id": 0}, {"id": 1}]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_sharded_dask(
+    write_sharded(
         ddf,
         config,
         key_col="id",
@@ -520,7 +520,7 @@ def test_value_spec_binary_col(tmp_path: pathlib.Path) -> None:
     records = [{"id": i, "payload": f"data-{i}".encode()} for i in range(10)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_sharded_dask(
+    result = write_sharded(
         ddf,
         config,
         key_col="id",
@@ -545,7 +545,7 @@ def test_value_spec_json_cols(tmp_path: pathlib.Path) -> None:
     records = [{"id": i, "name": f"user{i}"} for i in range(10)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_sharded_dask(
+    result = write_sharded(
         ddf,
         config,
         key_col="id",
@@ -582,7 +582,7 @@ def test_sort_within_partitions(tmp_path: pathlib.Path) -> None:
     records = [{"id": k} for k in [30, 10, 20, 80, 60, 70]]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_sharded_dask(
+    result = write_sharded(
         ddf,
         config,
         key_col="id",
@@ -607,7 +607,7 @@ def test_u32be_key_encoding(tmp_path: pathlib.Path) -> None:
     records = [{"id": i} for i in range(20)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_sharded_dask(
+    result = write_sharded(
         ddf,
         config,
         key_col="id",
@@ -632,7 +632,7 @@ def test_verify_routing_enabled() -> None:
     ddf = _make_dask_df(records, npartitions=2)
 
     # Should not raise — verification passes when routing is correct
-    result = write_sharded_dask(
+    result = write_sharded(
         ddf,
         config,
         key_col="id",
@@ -649,7 +649,7 @@ def test_data_integrity(tmp_path: pathlib.Path) -> None:
     records = [{"id": i} for i in range(100)]
     ddf = _make_dask_df(records, npartitions=4)
 
-    result = write_sharded_dask(
+    result = write_sharded(
         ddf,
         config,
         key_col="id",

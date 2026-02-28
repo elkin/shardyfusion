@@ -181,7 +181,7 @@ Layer 5 — Adapters & testing:
 4. The driver collects results and selects deterministic winners (lowest attempt → task_attempt_id → URL).
 5. A manifest artifact is built and published, then the `_CURRENT` pointer is updated.
 
-**Dask writer** (`write_sharded_dask`):
+**Dask writer** (`write_sharded`):
 1. Entry point in `writer/dask/writer.py`. Accepts `dd.DataFrame` with `key_col`/`value_spec`.
 2. `writer/dask/sharding.py` adds `_slatedb_db_id` column via Python routing function applied per partition (not Spark SQL). Range boundaries computed via Dask quantiles. `CUSTOM_EXPR` strategy is explicitly rejected.
 3. Shuffles by `_slatedb_db_id`, then `map_partitions` writes each shard. Empty shards get zero-row placeholder results.
@@ -303,15 +303,15 @@ All errors inherit from `SlatedbSparkShardedError` which carries a `retryable: b
 
 ## Public API Summary
 
-Exported from `__init__.py` (conditional on installed extras):
+Exported from `__init__.py` (always available, no optional extras required):
 
-**Always available:** `WriteConfig`, `ManifestOptions`, `OutputOptions`, `ShardingSpec`, `ShardingStrategy`, `KeyEncoding`, `ValueSpec`, `ManifestArtifact`, `ManifestBuilder`, `JsonManifestBuilder`, `ManifestPublisher`, `DefaultS3Publisher`, `ManifestReader`, `DefaultS3ManifestReader`, `FunctionManifestReader`, `SnapshotRouter`, `SlateShardedReader`, `SlateDbReaderFactory`, `SlateDbFactory`, `DbAdapter`, `DbAdapterFactory`, `BuildResult`, `BuildStats`, `BuildDurations`, `CurrentPointer`, `RequiredBuildMeta`, `RequiredShardMeta`, `ManifestShardingSpec`, `ShardReaderFactory`, `parse_json_manifest`, `ManifestParseError`, `ReaderStateError`, `FailureSeverity`
+`WriteConfig`, `ManifestOptions`, `OutputOptions`, `ShardingSpec`, `ShardingStrategy`, `KeyEncoding`, `ValueSpec`, `ManifestArtifact`, `ManifestBuilder`, `JsonManifestBuilder`, `ManifestPublisher`, `DefaultS3Publisher`, `ManifestReader`, `DefaultS3ManifestReader`, `FunctionManifestReader`, `SnapshotRouter`, `SlateShardedReader`, `SlateDbReaderFactory`, `SlateDbFactory`, `DbAdapter`, `DbAdapterFactory`, `BuildResult`, `BuildStats`, `BuildDurations`, `CurrentPointer`, `RequiredBuildMeta`, `RequiredShardMeta`, `ManifestShardingSpec`, `ShardReaderFactory`, `parse_json_manifest`, `ManifestParseError`, `ReaderStateError`, `FailureSeverity`
 
-**With `writer-spark` extra:** `write_sharded`, `DataFrameCacheContext`, `SparkConfOverrideContext`
+Writer functions are imported from subpackages (not re-exported at top level):
 
-**With `writer-dask` extra:** `write_sharded_dask`
-
-**With `writer-python` extra:** `write_sharded`
+- **Spark:** `from slatedb_spark_sharded.writer.spark import write_sharded, write_single_db, DataFrameCacheContext, SparkConfOverrideContext`
+- **Dask:** `from slatedb_spark_sharded.writer.dask import write_sharded, write_single_db, DaskCacheContext`
+- **Python:** `from slatedb_spark_sharded.writer.python import write_sharded`
 
 ## Testing Notes
 
