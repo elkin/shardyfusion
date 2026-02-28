@@ -154,6 +154,63 @@ def test_basic_sorted_write(spark: SparkSession) -> None:
 
 
 @pytest.mark.spark
+def test_sorted_write_multiple_partitions(spark: SparkSession) -> None:
+    """Regression: sort order must be preserved when coalesce produces >1 partition.
+
+    Previously repartition() was used, which destroys global order via hash shuffle.
+    coalesce() merges adjacent partitions without shuffling, preserving sorted order.
+    """
+    factory = _TrackingFactory()
+    # batch_size=2 with 20 rows → ceil(20/2)=10 partitions
+    config = _make_config(factory=factory, batch_size=2)
+
+    df = spark.createDataFrame(
+        [
+            (k, f"v{k}")
+            for k in [
+                19,
+                7,
+                13,
+                2,
+                18,
+                5,
+                11,
+                1,
+                15,
+                9,
+                17,
+                3,
+                14,
+                6,
+                12,
+                0,
+                16,
+                8,
+                10,
+                4,
+            ]
+        ],
+        ["key", "val"],
+    )
+
+    result = write_single_db_spark(
+        df,
+        config,
+        key_col="key",
+        value_spec=ValueSpec.binary_col("val"),
+    )
+
+    assert result.winners[0].row_count == 20
+
+    # Verify ALL keys arrive in globally sorted order across all batches
+    adapter = factory.adapters[0]
+    all_keys = [pair[0] for call in adapter.write_calls for pair in call]
+    assert all_keys == sorted(all_keys), (
+        f"Keys not globally sorted across {len(adapter.write_calls)} batches"
+    )
+
+
+@pytest.mark.spark
 def test_sort_keys_false(spark: SparkSession) -> None:
     factory = _TrackingFactory()
     config = _make_config(factory=factory, batch_size=100)

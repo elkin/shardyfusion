@@ -102,11 +102,14 @@ def _write_single_db_impl(
     total_rows = df.count()
     num_partitions = max(1, math.ceil(total_rows / config.batch_size))
 
-    # Phase 2: Sort and repartition
+    # Phase 2: Sort and resize partitions
+    # IMPORTANT: Use coalesce() after sort() — repartition() does a hash shuffle
+    # that destroys global ordering.  coalesce() merges adjacent partitions
+    # without shuffling, preserving the sorted order across partitions.
     if sort_keys:
-        df_prepared = df.sort(key_col).repartition(num_partitions)
+        df_prepared = df.sort(key_col).coalesce(num_partitions)
     else:
-        df_prepared = df.repartition(num_partitions)
+        df_prepared = df.coalesce(num_partitions)
 
     shard_duration_ms = int((time.perf_counter() - sort_started) * 1000)
 
