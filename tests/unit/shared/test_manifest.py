@@ -5,6 +5,7 @@ import json
 from slatedb_spark_sharded.manifest import (
     JsonManifestBuilder,
     ManifestShardingSpec,
+    ParsedManifest,
     RequiredBuildMeta,
     RequiredShardMeta,
 )
@@ -49,3 +50,42 @@ def test_json_manifest_builder_includes_required_shards_and_custom() -> None:
     assert set(payload.keys()) == {"required", "shards", "custom"}
     assert payload["required"]["run_id"] == "r1"
     assert payload["custom"] == {"source": "unit-test", "env": "test"}
+
+
+_REQUIRED_BUILD_DATA = {
+    "run_id": "r1",
+    "created_at": "2026-01-01T00:00:00+00:00",
+    "num_dbs": 1,
+    "s3_prefix": "s3://b/p",
+    "key_col": "id",
+    "sharding": {"strategy": "hash"},
+    "db_path_template": "db={db_id:05d}",
+    "tmp_prefix": "_tmp",
+}
+
+_SHARD_DATA = [
+    {"db_id": 0, "db_url": "s3://b/p/db=00000", "attempt": 0, "row_count": 1}
+]
+
+
+def test_parsed_manifest_accepts_wire_key() -> None:
+    """ParsedManifest accepts 'required' (the wire name) via validation_alias."""
+    parsed = ParsedManifest.model_validate(
+        {"required": _REQUIRED_BUILD_DATA, "shards": _SHARD_DATA}
+    )
+    assert parsed.required_build.run_id == "r1"
+
+
+def test_parsed_manifest_accepts_python_field_name() -> None:
+    """ParsedManifest still accepts 'required_build' via populate_by_name."""
+    parsed = ParsedManifest.model_validate(
+        {"required_build": _REQUIRED_BUILD_DATA, "shards": _SHARD_DATA}
+    )
+    assert parsed.required_build.run_id == "r1"
+
+
+def test_parsed_manifest_schema_uses_wire_name() -> None:
+    """model_json_schema(mode='serialization') emits 'required' as property."""
+    schema = ParsedManifest.model_json_schema(mode="serialization")
+    assert "required" in schema["properties"]
+    assert "required_build" not in schema["properties"]

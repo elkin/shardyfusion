@@ -60,7 +60,12 @@ class RequiredShardMeta(BaseModel):
 class ParsedManifest(BaseModel):
     """Typed representation of a parsed manifest payload."""
 
-    required_build: RequiredBuildMeta
+    model_config = ConfigDict(populate_by_name=True)
+
+    required_build: RequiredBuildMeta = Field(
+        validation_alias="required",
+        serialization_alias="required",
+    )
     shards: list[RequiredShardMeta]
     custom: dict[str, Any] = Field(default_factory=dict)
 

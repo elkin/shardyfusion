@@ -1,0 +1,241 @@
+{
+  "$defs": {
+    "KeyEncoding": {
+      "description": "Supported key serialization encodings.",
+      "enum": [
+        "u64be",
+        "u32be"
+      ],
+      "title": "KeyEncoding",
+      "type": "string"
+    },
+    "ManifestShardingSpec": {
+      "description": "Manifest-safe sharding specification (no Callable fields).\n\nThis is the Pydantic counterpart of :class:`ShardingSpec` for\nserialization and deserialization in manifests.  Writer-side\n``ShardingSpec`` (which carries a ``custom_column_builder`` callable)\nremains a plain dataclass.",
+      "properties": {
+        "strategy": {
+          "$ref": "#/$defs/ShardingStrategy",
+          "default": "hash"
+        },
+        "boundaries": {
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Boundaries"
+        },
+        "approx_quantile_rel_error": {
+          "default": 0.01,
+          "exclusiveMaximum": 1,
+          "exclusiveMinimum": 0,
+          "title": "Approx Quantile Rel Error",
+          "type": "number"
+        },
+        "custom_expr": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Custom Expr"
+        }
+      },
+      "title": "ManifestShardingSpec",
+      "type": "object"
+    },
+    "RequiredBuildMeta": {
+      "description": "Library-owned metadata required for all manifests.",
+      "properties": {
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "num_dbs": {
+          "exclusiveMinimum": 0,
+          "title": "Num Dbs",
+          "type": "integer"
+        },
+        "s3_prefix": {
+          "title": "S3 Prefix",
+          "type": "string"
+        },
+        "key_col": {
+          "title": "Key Col",
+          "type": "string"
+        },
+        "sharding": {
+          "$ref": "#/$defs/ManifestShardingSpec"
+        },
+        "db_path_template": {
+          "title": "Db Path Template",
+          "type": "string"
+        },
+        "tmp_prefix": {
+          "title": "Tmp Prefix",
+          "type": "string"
+        },
+        "format_version": {
+          "default": 1,
+          "title": "Format Version",
+          "type": "integer"
+        },
+        "key_encoding": {
+          "$ref": "#/$defs/KeyEncoding",
+          "default": "u64be"
+        }
+      },
+      "required": [
+        "run_id",
+        "created_at",
+        "num_dbs",
+        "s3_prefix",
+        "key_col",
+        "sharding",
+        "db_path_template",
+        "tmp_prefix"
+      ],
+      "title": "RequiredBuildMeta",
+      "type": "object"
+    },
+    "RequiredShardMeta": {
+      "description": "Winner shard metadata emitted by writer partitions.",
+      "properties": {
+        "db_id": {
+          "minimum": 0,
+          "title": "Db Id",
+          "type": "integer"
+        },
+        "db_url": {
+          "title": "Db Url",
+          "type": "string"
+        },
+        "attempt": {
+          "minimum": 0,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "row_count": {
+          "minimum": 0,
+          "title": "Row Count",
+          "type": "integer"
+        },
+        "min_key": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Key"
+        },
+        "max_key": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Key"
+        },
+        "checkpoint_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Checkpoint Id"
+        },
+        "writer_info": {
+          "additionalProperties": true,
+          "title": "Writer Info",
+          "type": "object"
+        }
+      },
+      "required": [
+        "db_id",
+        "db_url",
+        "attempt",
+        "row_count"
+      ],
+      "title": "RequiredShardMeta",
+      "type": "object"
+    },
+    "ShardingStrategy": {
+      "description": "Supported sharding strategies.",
+      "enum": [
+        "hash",
+        "range",
+        "custom_expr"
+      ],
+      "title": "ShardingStrategy",
+      "type": "string"
+    }
+  },
+  "description": "JSON manifest published to S3 by the sharded writer.",
+  "properties": {
+    "required": {
+      "$ref": "#/$defs/RequiredBuildMeta"
+    },
+    "shards": {
+      "items": {
+        "$ref": "#/$defs/RequiredShardMeta"
+      },
+      "title": "Shards",
+      "type": "array"
+    },
+    "custom": {
+      "additionalProperties": true,
+      "title": "Custom",
+      "type": "object"
+    }
+  },
+  "required": [
+    "required",
+    "shards"
+  ],
+  "title": "SlateDB Sharded Manifest",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/slatedb/slatedb-spark-sharded/schemas/manifest.schema.json"
+}
