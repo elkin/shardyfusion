@@ -216,6 +216,32 @@ def test_batch_flushing(tmp_path) -> None:
     ]
 
 
+def test_rate_limited_partition_write(tmp_path) -> None:
+    """Exercises the `bucket is not None` code path in write_one_shard_partition."""
+    adapter = _FakeAdapter()
+    runtime = _make_runtime(tmp_path, adapter=adapter, batch_size=2)
+    # Enable rate limiting (high rate so no real delay)
+    runtime = PartitionWriteConfig(
+        run_id=runtime.run_id,
+        s3_prefix=runtime.s3_prefix,
+        tmp_prefix=runtime.tmp_prefix,
+        db_path_template=runtime.db_path_template,
+        local_root=runtime.local_root,
+        key_col=runtime.key_col,
+        key_encoding=runtime.key_encoding,
+        key_encoder=runtime.key_encoder,
+        value_spec=runtime.value_spec,
+        batch_size=runtime.batch_size,
+        adapter_factory=runtime.adapter_factory,
+        max_writes_per_second=1000.0,
+    )
+    result = _run(0, _rows(1, 2, 3, 4, 5), runtime)
+
+    assert result.row_count == 5
+    total_pairs = sum(len(call) for call in adapter.write_calls)
+    assert total_pairs == 5
+
+
 def test_u32be_produces_4_byte_keys(tmp_path) -> None:
     adapter = _FakeAdapter()
     runtime = _make_runtime(tmp_path, adapter=adapter, key_encoding=KeyEncoding.U32BE)

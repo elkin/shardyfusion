@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import pathlib
-import time
 from collections.abc import Iterable
 from typing import Self
 
 import pytest
 
-from slatedb_spark_sharded._rate_limiter import TokenBucket
 from slatedb_spark_sharded._writer_core import route_key
 from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteConfig
 from slatedb_spark_sharded.errors import ConfigValidationError
@@ -242,17 +240,6 @@ def test_min_max_key_tracking() -> None:
     assert shard0.max_key == 30
     assert shard1.min_key == 60
     assert shard1.max_key == 80
-
-
-def test_rate_limiter() -> None:
-    """TokenBucket throttles correctly."""
-    bucket = TokenBucket(rate=100.0)
-
-    # Should acquire immediately when bucket is full
-    start = time.monotonic()
-    bucket.acquire(1)
-    elapsed = time.monotonic() - start
-    assert elapsed < 0.1
 
 
 def test_rate_limited_write() -> None:
