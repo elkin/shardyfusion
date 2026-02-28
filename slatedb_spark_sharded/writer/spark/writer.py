@@ -192,30 +192,20 @@ def write_sharded_spark(
     run_id = config.output.run_id or uuid4().hex
     spark = df.sparkSession
     with SparkConfOverrideContext(spark, spark_conf_overrides):
-        if cache_input:
-            with DataFrameCacheContext(df, storage_level=storage_level) as cached_df:
-                return _write_sharded_spark_impl(
-                    df=cached_df,
-                    config=config,
-                    run_id=run_id,
-                    started=started,
-                    key_col=key_col,
-                    value_spec=value_spec,
-                    sort_within_partitions=sort_within_partitions,
-                    max_writes_per_second=max_writes_per_second,
-                    verify_routing=verify_routing,
-                )
-        return _write_sharded_spark_impl(
-            df=df,
-            config=config,
-            run_id=run_id,
-            started=started,
-            key_col=key_col,
-            value_spec=value_spec,
-            sort_within_partitions=sort_within_partitions,
-            max_writes_per_second=max_writes_per_second,
-            verify_routing=verify_routing,
-        )
+        with DataFrameCacheContext(
+            df, storage_level=storage_level, enabled=cache_input
+        ) as cached_df:
+            return _write_sharded_spark_impl(
+                df=cached_df,
+                config=config,
+                run_id=run_id,
+                started=started,
+                key_col=key_col,
+                value_spec=value_spec,
+                sort_within_partitions=sort_within_partitions,
+                max_writes_per_second=max_writes_per_second,
+                verify_routing=verify_routing,
+            )
 
 
 def _write_sharded_spark_impl(
