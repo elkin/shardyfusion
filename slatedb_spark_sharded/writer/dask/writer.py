@@ -382,13 +382,13 @@ def _write_one_shard(
 
                 if len(batch) >= runtime.batch_size:
                     if bucket is not None:
-                        bucket.acquire(1)
+                        bucket.acquire(len(batch))
                     adapter.write_batch(batch)
                     batch.clear()
 
             if batch:
                 if bucket is not None:
-                    bucket.acquire(1)
+                    bucket.acquire(len(batch))
                 adapter.write_batch(batch)
                 batch.clear()
 

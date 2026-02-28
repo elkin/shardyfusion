@@ -59,6 +59,25 @@ class TrackingFactory:
         return adapter
 
 
+class RecordingTokenBucket:
+    """Fake TokenBucket that records __init__ and acquire calls without delay.
+
+    Class-level ``instances`` list collects all created instances.  Reset it
+    via ``RecordingTokenBucket.instances = []`` before each test (typically in
+    a fixture that also monkeypatches the real ``TokenBucket``).
+    """
+
+    instances: list[RecordingTokenBucket] = []
+
+    def __init__(self, rate: float) -> None:
+        self.rate = rate
+        self.acquire_calls: list[int] = []
+        RecordingTokenBucket.instances.append(self)
+
+    def acquire(self, tokens: int = 1) -> None:
+        self.acquire_calls.append(tokens)
+
+
 class InMemoryPublisher(ManifestPublisher):
     """Manifest publisher that stores artifacts in a plain dict."""
 

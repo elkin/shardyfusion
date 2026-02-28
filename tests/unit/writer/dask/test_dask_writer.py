@@ -31,7 +31,7 @@ from slatedb_spark_sharded.testing import (  # noqa: E402
     file_backed_load_db,
 )
 from slatedb_spark_sharded.writer.dask import write_sharded_dask  # noqa: E402
-from tests.helpers.tracking import InMemoryPublisher  # noqa: E402
+from tests.helpers.tracking import InMemoryPublisher, RecordingTokenBucket  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -336,6 +336,182 @@ def test_rate_limited_write() -> None:
     )
 
     assert result.stats.rows_written == 5
+
+
+# ---------------------------------------------------------------------------
+# Rate-limiter integration tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def _patch_token_bucket(monkeypatch: pytest.MonkeyPatch) -> list[RecordingTokenBucket]:
+    RecordingTokenBucket.instances = []
+    monkeypatch.setattr(
+        "slatedb_spark_sharded.writer.dask.writer.TokenBucket",
+        RecordingTokenBucket,
+    )
+    return RecordingTokenBucket.instances
+
+
+def test_rate_limiter_bucket_created_with_correct_rate(
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    config = _make_config(num_dbs=1, batch_size=50_000)
+    records = [{"id": i} for i in range(5)]
+    ddf = _make_dask_df(records, npartitions=1)
+
+    write_sharded_dask(
+        ddf,
+        config,
+        key_col="id",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+        max_writes_per_second=42.5,
+    )
+
+    assert len(_patch_token_bucket) == 1
+    assert _patch_token_bucket[0].rate == 42.5
+
+
+def test_rate_limiter_no_bucket_when_rate_is_none(
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    config = _make_config(num_dbs=1, batch_size=50_000)
+    records = [{"id": i} for i in range(5)]
+    ddf = _make_dask_df(records, npartitions=1)
+
+    write_sharded_dask(
+        ddf,
+        config,
+        key_col="id",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+    )
+
+    assert len(_patch_token_bucket) == 0
+
+
+def test_rate_limiter_acquire_count_matches_batch_writes(
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    config = _make_config(num_dbs=1, batch_size=3)
+    records = [{"id": i} for i in range(7)]
+    ddf = _make_dask_df(records, npartitions=1)
+
+    write_sharded_dask(
+        ddf,
+        config,
+        key_col="id",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+        max_writes_per_second=100.0,
+    )
+
+    assert len(_patch_token_bucket) == 1
+    bucket = _patch_token_bucket[0]
+    # 7 rows / batch_size 3 → batches of [3, 3, 1] → 3 acquire calls
+    assert len(bucket.acquire_calls) == 3
+    assert bucket.acquire_calls == [3, 3, 1]
+    assert sum(bucket.acquire_calls) == 7
+
+
+def test_rate_limiter_single_batch_single_acquire(
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    config = _make_config(num_dbs=1, batch_size=50_000)
+    records = [{"id": i} for i in range(5)]
+    ddf = _make_dask_df(records, npartitions=1)
+
+    write_sharded_dask(
+        ddf,
+        config,
+        key_col="id",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+        max_writes_per_second=100.0,
+    )
+
+    assert len(_patch_token_bucket) == 1
+    bucket = _patch_token_bucket[0]
+    # All 5 rows fit in one batch → single acquire for all 5
+    assert bucket.acquire_calls == [5]
+
+
+def test_rate_limiter_exact_batch_boundary(
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    config = _make_config(num_dbs=1, batch_size=3)
+    records = [{"id": i} for i in range(6)]
+    ddf = _make_dask_df(records, npartitions=1)
+
+    write_sharded_dask(
+        ddf,
+        config,
+        key_col="id",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+        max_writes_per_second=100.0,
+    )
+
+    assert len(_patch_token_bucket) == 1
+    bucket = _patch_token_bucket[0]
+    # 6 rows / batch_size 3 → exactly 2 full batches, no trailing partial
+    assert bucket.acquire_calls == [3, 3]
+
+
+def test_rate_limiter_multiple_shards_independent_buckets(
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    config = _make_config(
+        num_dbs=2,
+        batch_size=1,
+        sharding=ShardingSpec(
+            strategy=ShardingStrategy.RANGE,
+            boundaries=[50],
+        ),
+    )
+    records = [{"id": k} for k in [10, 20, 30, 60, 70, 80]]
+    ddf = _make_dask_df(records, npartitions=1)
+
+    write_sharded_dask(
+        ddf,
+        config,
+        key_col="id",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+        max_writes_per_second=100.0,
+    )
+
+    # Each shard gets its own bucket
+    assert len(_patch_token_bucket) == 2
+    # batch_size=1 → each row is its own batch → acquire(1) per row
+    total_acquires = sum(len(b.acquire_calls) for b in _patch_token_bucket)
+    assert total_acquires == 6
+    # Each shard has 3 rows
+    acquire_counts = sorted(len(b.acquire_calls) for b in _patch_token_bucket)
+    assert acquire_counts == [3, 3]
+
+
+def test_rate_limiter_empty_shard_no_bucket(
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    config = _make_config(
+        num_dbs=4,
+        batch_size=50_000,
+        sharding=ShardingSpec(
+            strategy=ShardingStrategy.RANGE,
+            boundaries=[100, 200, 300],
+        ),
+    )
+    # Both keys < 100, so all go to shard 0
+    records = [{"id": 0}, {"id": 1}]
+    ddf = _make_dask_df(records, npartitions=1)
+
+    write_sharded_dask(
+        ddf,
+        config,
+        key_col="id",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+        max_writes_per_second=100.0,
+    )
+
+    # Only 1 bucket created (only shard 0 has rows)
+    assert len(_patch_token_bucket) == 1
+    assert _patch_token_bucket[0].acquire_calls == [2]
 
 
 def test_value_spec_binary_col(tmp_path: pathlib.Path) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Iterable
 from unittest.mock import MagicMock, patch
 
+import pytest
 from pyspark.sql import Row
 
 from slatedb_spark_sharded._writer_core import ShardAttemptResult
@@ -13,6 +14,7 @@ from slatedb_spark_sharded.writer.spark.writer import (
     PartitionWriteConfig,
     write_one_shard_partition,
 )
+from tests.helpers.tracking import RecordingTokenBucket
 
 # ---------------------------------------------------------------------------
 # Fake adapter infrastructure
@@ -240,6 +242,110 @@ def test_rate_limited_partition_write(tmp_path) -> None:
     assert result.row_count == 5
     total_pairs = sum(len(call) for call in adapter.write_calls)
     assert total_pairs == 5
+
+
+# ---------------------------------------------------------------------------
+# Rate-limiter integration tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def _patch_token_bucket(monkeypatch: pytest.MonkeyPatch) -> list[RecordingTokenBucket]:
+    RecordingTokenBucket.instances = []
+    monkeypatch.setattr(
+        "slatedb_spark_sharded.writer.spark.writer.TokenBucket",
+        RecordingTokenBucket,
+    )
+    return RecordingTokenBucket.instances
+
+
+def _make_rate_limited_runtime(
+    tmp_path,
+    *,
+    adapter: _FakeAdapter | None = None,
+    batch_size: int = 100,
+    max_writes_per_second: float | None = 100.0,
+) -> PartitionWriteConfig:
+    if adapter is None:
+        adapter = _FakeAdapter()
+    return PartitionWriteConfig(
+        run_id="run-test",
+        s3_prefix="s3://bucket/prefix",
+        tmp_prefix="_tmp",
+        db_path_template="db={db_id:05d}",
+        local_root=str(tmp_path),
+        key_col="key",
+        key_encoding=KeyEncoding.U64BE,
+        key_encoder=make_key_encoder(KeyEncoding.U64BE),
+        value_spec=ValueSpec.binary_col("val"),
+        batch_size=batch_size,
+        adapter_factory=_make_factory(adapter),
+        max_writes_per_second=max_writes_per_second,
+    )
+
+
+def test_rate_limiter_bucket_created_with_correct_rate(
+    tmp_path,
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    runtime = _make_rate_limited_runtime(
+        tmp_path, batch_size=50_000, max_writes_per_second=42.5
+    )
+    _run(0, _rows(1, 2, 3, 4, 5), runtime)
+
+    assert len(_patch_token_bucket) == 1
+    assert _patch_token_bucket[0].rate == 42.5
+
+
+def test_rate_limiter_no_bucket_when_rate_is_none(
+    tmp_path,
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    runtime = _make_runtime(tmp_path)  # max_writes_per_second=None
+    _run(0, _rows(1, 2, 3, 4, 5), runtime)
+
+    assert len(_patch_token_bucket) == 0
+
+
+def test_rate_limiter_acquire_count_matches_batch_writes(
+    tmp_path,
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    runtime = _make_rate_limited_runtime(tmp_path, batch_size=3)
+    _run(0, _rows(1, 2, 3, 4, 5, 6, 7), runtime)
+
+    assert len(_patch_token_bucket) == 1
+    bucket = _patch_token_bucket[0]
+    # 7 rows / batch_size 3 → batches of [3, 3, 1] → 3 acquire calls
+    assert len(bucket.acquire_calls) == 3
+    assert bucket.acquire_calls == [3, 3, 1]
+    assert sum(bucket.acquire_calls) == 7
+
+
+def test_rate_limiter_single_batch_single_acquire(
+    tmp_path,
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    runtime = _make_rate_limited_runtime(tmp_path, batch_size=50_000)
+    _run(0, _rows(1, 2, 3, 4, 5), runtime)
+
+    assert len(_patch_token_bucket) == 1
+    bucket = _patch_token_bucket[0]
+    # All 5 rows fit in one batch → single acquire for all 5
+    assert bucket.acquire_calls == [5]
+
+
+def test_rate_limiter_exact_batch_boundary(
+    tmp_path,
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    runtime = _make_rate_limited_runtime(tmp_path, batch_size=3)
+    _run(0, _rows(1, 2, 3, 4, 5, 6), runtime)
+
+    assert len(_patch_token_bucket) == 1
+    bucket = _patch_token_bucket[0]
+    # 6 rows / batch_size 3 → exactly 2 full batches, no trailing partial
+    assert bucket.acquire_calls == [3, 3]
 
 
 def test_u32be_produces_4_byte_keys(tmp_path) -> None:

@@ -329,13 +329,13 @@ def _write_pdf_rows(
 
         if len(batch) >= batch_size:
             if bucket is not None:
-                bucket.acquire(1)
+                bucket.acquire(len(batch))
             adapter.write_batch(batch)
             batch.clear()
 
     if batch:
         if bucket is not None:
-            bucket.acquire(1)
+            bucket.acquire(len(batch))
         adapter.write_batch(batch)
 
     return row_count, min_key, max_key

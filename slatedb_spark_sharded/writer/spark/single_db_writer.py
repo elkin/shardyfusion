@@ -231,13 +231,13 @@ def _stream_to_single_db(
 
                 if len(batch) >= config.batch_size:
                     if bucket is not None:
-                        bucket.acquire(1)
+                        bucket.acquire(len(batch))
                     adapter.write_batch(batch)
                     batch.clear()
 
             if batch:
                 if bucket is not None:
-                    bucket.acquire(1)
+                    bucket.acquire(len(batch))
                 adapter.write_batch(batch)
                 batch.clear()
 

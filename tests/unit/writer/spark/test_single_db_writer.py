@@ -18,7 +18,12 @@ from slatedb_spark_sharded.serde import ValueSpec
 from slatedb_spark_sharded.sharding_types import KeyEncoding
 from slatedb_spark_sharded.writer.spark.single_db_writer import write_single_db_spark
 from slatedb_spark_sharded.writer.spark.writer import DataFrameCacheContext
-from tests.helpers.tracking import InMemoryPublisher, TrackingAdapter, TrackingFactory
+from tests.helpers.tracking import (
+    InMemoryPublisher,
+    RecordingTokenBucket,
+    TrackingAdapter,
+    TrackingFactory,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -234,6 +239,127 @@ def test_rate_limiting(spark: SparkSession) -> None:
     )
 
     assert result.stats.rows_written == 5
+
+
+# ---------------------------------------------------------------------------
+# Rate-limiter integration tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def _patch_token_bucket(monkeypatch: pytest.MonkeyPatch) -> list[RecordingTokenBucket]:
+    RecordingTokenBucket.instances = []
+    monkeypatch.setattr(
+        "slatedb_spark_sharded.writer.spark.single_db_writer.TokenBucket",
+        RecordingTokenBucket,
+    )
+    return RecordingTokenBucket.instances
+
+
+@pytest.mark.spark
+def test_rate_limiter_bucket_created_with_correct_rate(
+    spark: SparkSession,
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    config = _make_config(batch_size=50_000)
+    df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
+
+    write_single_db_spark(
+        df,
+        config,
+        key_col="key",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+        max_writes_per_second=42.5,
+    )
+
+    assert len(_patch_token_bucket) == 1
+    assert _patch_token_bucket[0].rate == 42.5
+
+
+@pytest.mark.spark
+def test_rate_limiter_no_bucket_when_rate_is_none(
+    spark: SparkSession,
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    config = _make_config(batch_size=50_000)
+    df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
+
+    write_single_db_spark(
+        df,
+        config,
+        key_col="key",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+    )
+
+    assert len(_patch_token_bucket) == 0
+
+
+@pytest.mark.spark
+def test_rate_limiter_acquire_count_matches_batch_writes(
+    spark: SparkSession,
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    config = _make_config(batch_size=3)
+    df = spark.createDataFrame([(k,) for k in range(7)], ["key"])
+
+    write_single_db_spark(
+        df,
+        config,
+        key_col="key",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+        max_writes_per_second=100.0,
+    )
+
+    assert len(_patch_token_bucket) == 1
+    bucket = _patch_token_bucket[0]
+    # 7 rows / batch_size 3 → batches of [3, 3, 1] → 3 acquire calls
+    assert len(bucket.acquire_calls) == 3
+    assert bucket.acquire_calls == [3, 3, 1]
+    assert sum(bucket.acquire_calls) == 7
+
+
+@pytest.mark.spark
+def test_rate_limiter_single_batch_single_acquire(
+    spark: SparkSession,
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    config = _make_config(batch_size=50_000)
+    df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
+
+    write_single_db_spark(
+        df,
+        config,
+        key_col="key",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+        max_writes_per_second=100.0,
+    )
+
+    assert len(_patch_token_bucket) == 1
+    bucket = _patch_token_bucket[0]
+    # All 5 rows fit in one batch → single acquire for all 5
+    assert bucket.acquire_calls == [5]
+
+
+@pytest.mark.spark
+def test_rate_limiter_exact_batch_boundary(
+    spark: SparkSession,
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    config = _make_config(batch_size=3)
+    df = spark.createDataFrame([(k,) for k in range(6)], ["key"])
+
+    write_single_db_spark(
+        df,
+        config,
+        key_col="key",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+        max_writes_per_second=100.0,
+    )
+
+    assert len(_patch_token_bucket) == 1
+    bucket = _patch_token_bucket[0]
+    # 6 rows / batch_size 3 → exactly 2 full batches, no trailing partial
+    assert bucket.acquire_calls == [3, 3]
 
 
 @pytest.mark.spark

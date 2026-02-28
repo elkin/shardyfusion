@@ -196,7 +196,7 @@ def _write_single_process(
 
             if len(batches[db_id]) >= config.batch_size:
                 if bucket is not None:
-                    bucket.acquire(1)
+                    bucket.acquire(len(batches[db_id]))
                 adapters[db_id].write_batch(batches[db_id])
                 batches[db_id].clear()
 
@@ -204,7 +204,7 @@ def _write_single_process(
         for db_id in range(num_dbs):
             if batches[db_id]:
                 if bucket is not None:
-                    bucket.acquire(1)
+                    bucket.acquire(len(batches[db_id]))
                 adapters[db_id].write_batch(batches[db_id])
                 batches[db_id].clear()
 
@@ -284,13 +284,13 @@ def _shard_worker(
 
                 while len(batch) >= config.batch_size:
                     if bucket is not None:
-                        bucket.acquire(1)
+                        bucket.acquire(config.batch_size)
                     adapter.write_batch(batch[: config.batch_size])
                     batch = batch[config.batch_size :]
 
             if batch:
                 if bucket is not None:
-                    bucket.acquire(1)
+                    bucket.acquire(len(batch))
                 adapter.write_batch(batch)
                 batch.clear()
 
