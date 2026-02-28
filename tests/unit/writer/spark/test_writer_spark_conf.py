@@ -4,10 +4,12 @@ from types import SimpleNamespace
 
 from slatedb_spark_sharded._writer_core import manifest_safe_sharding
 from slatedb_spark_sharded.sharding_types import ShardingSpec, ShardingStrategy
-from slatedb_spark_sharded.writer.spark.writer import (
+from slatedb_spark_sharded.writer.spark.util import (
     DataFrameCacheContext,
     SparkConfOverrideContext,
-    write_sharded_spark,
+)
+from slatedb_spark_sharded.writer.spark.writer import (
+    write_sharded,
 )
 
 
@@ -129,13 +131,13 @@ def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> 
         _RecordingCtx,
     )
     monkeypatch.setattr(
-        "slatedb_spark_sharded.writer.spark.writer._write_sharded_spark_impl",
+        "slatedb_spark_sharded.writer.spark.writer._write_sharded_impl",
         _fake_impl,
     )
 
     from slatedb_spark_sharded.serde import ValueSpec
 
-    result = write_sharded_spark(
+    result = write_sharded(
         fake_df,  # type: ignore[arg-type]
         fake_config,  # type: ignore[arg-type]
         key_col="id",
@@ -195,13 +197,13 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
         _RecordingCtx,
     )
     monkeypatch.setattr(
-        "slatedb_spark_sharded.writer.spark.writer._write_sharded_spark_impl",
+        "slatedb_spark_sharded.writer.spark.writer._write_sharded_impl",
         _fake_impl,
     )
 
     from slatedb_spark_sharded.serde import ValueSpec
 
-    result1 = write_sharded_spark(
+    result1 = write_sharded(
         fake_df,  # type: ignore[arg-type]
         fake_config,  # type: ignore[arg-type]
         key_col="id",
@@ -209,7 +211,7 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
         cache_input=True,
         storage_level="test-level",  # type: ignore[arg-type]
     )
-    result2 = write_sharded_spark(
+    result2 = write_sharded(
         fake_df,  # type: ignore[arg-type]
         fake_config,  # type: ignore[arg-type]
         key_col="id",

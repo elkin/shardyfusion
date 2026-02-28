@@ -111,7 +111,7 @@ class BuildStats:
 
 @dataclass(slots=True)
 class BuildResult:
-    """Result from `write_sharded_spark`."""
+    """Result from `write_sharded`."""
 
     run_id: str
     winners: list[RequiredShardMeta]

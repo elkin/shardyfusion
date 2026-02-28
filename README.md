@@ -43,14 +43,14 @@ uv sync --all-extras --dev
 ## Minimal Writer Usage
 
 ```python
-from slatedb_spark_sharded import WriteConfig, ValueSpec, write_sharded_spark
+from slatedb_spark_sharded import WriteConfig, ValueSpec, write_sharded
 
 config = WriteConfig(
     num_dbs=8,
     s3_prefix="s3://bucket/prefix",
 )
 
-result = write_sharded_spark(
+result = write_sharded(
     df,
     config,
     key_col="id",
@@ -61,7 +61,7 @@ result = write_sharded_spark(
 To apply temporary Spark config for the write call:
 
 ```python
-result = write_sharded_spark(
+result = write_sharded(
     df,
     config,
     key_col="id",

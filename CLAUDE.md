@@ -174,7 +174,7 @@ Layer 5 — Adapters & testing:
 
 ### Write Pipeline
 
-**Spark writer** (`write_sharded_spark`):
+**Spark writer** (`write_sharded`):
 1. Entry point in `writer/spark/writer.py`. Optionally applies Spark conf overrides via `SparkConfOverrideContext`.
 2. `writer/spark/sharding.py` adds `_slatedb_db_id` column via Spark SQL expressions (hash, range, or custom), then converts the DataFrame to a pair RDD partitioned so partition index = db_id.
 3. Each partition writes one shard to S3 at a temporary path (`_tmp/run_id=.../db=XXXXX/attempt=YY/`).
@@ -307,7 +307,7 @@ Exported from `__init__.py` (conditional on installed extras):
 
 **Always available:** `WriteConfig`, `ManifestOptions`, `OutputOptions`, `ShardingSpec`, `ShardingStrategy`, `KeyEncoding`, `ValueSpec`, `ManifestArtifact`, `ManifestBuilder`, `JsonManifestBuilder`, `ManifestPublisher`, `DefaultS3Publisher`, `ManifestReader`, `DefaultS3ManifestReader`, `FunctionManifestReader`, `SnapshotRouter`, `SlateShardedReader`, `SlateDbReaderFactory`, `SlateDbFactory`, `DbAdapter`, `DbAdapterFactory`, `BuildResult`, `BuildStats`, `BuildDurations`, `CurrentPointer`, `RequiredBuildMeta`, `RequiredShardMeta`, `ManifestShardingSpec`, `ShardReaderFactory`, `parse_json_manifest`, `ManifestParseError`, `ReaderStateError`, `FailureSeverity`
 
-**With `writer-spark` extra:** `write_sharded_spark`, `DataFrameCacheContext`, `SparkConfOverrideContext`
+**With `writer-spark` extra:** `write_sharded`, `DataFrameCacheContext`, `SparkConfOverrideContext`
 
 **With `writer-dask` extra:** `write_sharded_dask`
 

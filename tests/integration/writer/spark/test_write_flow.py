@@ -8,7 +8,7 @@ from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteCo
 from slatedb_spark_sharded.manifest import BuildStats
 from slatedb_spark_sharded.serde import ValueSpec
 from slatedb_spark_sharded.testing import real_file_adapter_factory
-from slatedb_spark_sharded.writer.spark import write_sharded_spark
+from slatedb_spark_sharded.writer.spark import write_sharded
 from tests.helpers.tracking import InMemoryPublisher
 
 
@@ -26,7 +26,7 @@ def test_write_sharded_flow_with_in_memory_publisher(spark, tmp_path) -> None:
         output=OutputOptions(run_id="run-test-1"),
     )
 
-    result = write_sharded_spark(
+    result = write_sharded(
         df,
         config,
         key_col="id",

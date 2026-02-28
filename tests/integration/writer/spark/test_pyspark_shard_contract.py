@@ -7,7 +7,7 @@ import pytest
 from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteConfig
 from slatedb_spark_sharded.serde import ValueSpec
 from slatedb_spark_sharded.testing import real_file_adapter_factory
-from slatedb_spark_sharded.writer.spark import write_sharded_spark
+from slatedb_spark_sharded.writer.spark import write_sharded
 from tests.helpers.tracking import InMemoryPublisher
 
 
@@ -25,7 +25,7 @@ def test_sharded_writer_contract_holds_for_pyspark(spark, tmp_path) -> None:
         output=OutputOptions(run_id="run-contract-1"),
     )
 
-    result = write_sharded_spark(
+    result = write_sharded(
         df,
         config,
         key_col="id",

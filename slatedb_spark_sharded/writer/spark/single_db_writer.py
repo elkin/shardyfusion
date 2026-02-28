@@ -31,7 +31,7 @@ from slatedb_spark_sharded.storage import join_s3
 from slatedb_spark_sharded.type_defs import JsonObject, KeyLike
 
 from .sharding import validate_key_col_type
-from .writer import DataFrameCacheContext, SparkConfOverrideContext
+from .util import DataFrameCacheContext, SparkConfOverrideContext
 
 
 def write_single_db_spark(

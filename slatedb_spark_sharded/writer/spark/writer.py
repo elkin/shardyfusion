@@ -1,16 +1,13 @@
 """Public sharded snapshot writer entrypoint."""
 
-import logging
 import os
 import time
-import types
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import Self
 from uuid import uuid4
 
 from pyspark import RDD, StorageLevel, TaskContext
-from pyspark.sql import DataFrame, Row, SparkSession
+from pyspark.sql import DataFrame, Row
 
 from slatedb_spark_sharded._rate_limiter import TokenBucket
 from slatedb_spark_sharded._writer_core import (
@@ -24,7 +21,7 @@ from slatedb_spark_sharded._writer_core import (
 )
 from slatedb_spark_sharded.config import WriteConfig
 from slatedb_spark_sharded.errors import ShardAssignmentError, SlatedbSparkShardedError
-from slatedb_spark_sharded.logging import FailureSeverity, log_event, log_failure
+from slatedb_spark_sharded.logging import FailureSeverity, log_failure
 from slatedb_spark_sharded.manifest import BuildResult
 from slatedb_spark_sharded.serde import KeyEncoder, ValueSpec, make_key_encoder
 from slatedb_spark_sharded.sharding_types import DB_ID_COL, KeyEncoding
@@ -34,6 +31,10 @@ from slatedb_spark_sharded.slatedb_adapter import (
 )
 from slatedb_spark_sharded.storage import join_s3
 from slatedb_spark_sharded.type_defs import JsonObject, KeyLike
+from slatedb_spark_sharded.writer.spark.util import (
+    DataFrameCacheContext,
+    SparkConfOverrideContext,
+)
 
 from .sharding import ShardingSpec, add_db_id_column, prepare_partitioned_rdd
 
@@ -61,119 +62,7 @@ class _PreparedPartitionRows:
     shard_duration_ms: int
 
 
-class SparkConfOverrideContext:
-    """Temporarily override Spark configuration values and restore them on exit."""
-
-    def __init__(self, spark: SparkSession, overrides: dict[str, str] | None) -> None:
-        self._spark = spark
-        self._overrides = dict(overrides or {})
-        self._original_values: dict[str, str | None] = {}
-
-    def __enter__(self) -> Self:
-        for key, value in self._overrides.items():
-            self._original_values[key] = self._get_conf_or_none(key)
-            try:
-                self._spark.conf.set(key, value)
-            except Exception as exc:  # pragma: no cover - Spark environment dependent
-                log_event(
-                    "spark_conf_override_failed",
-                    level=logging.WARNING,
-                    key=key,
-                    value=value,
-                    error=str(exc),
-                )
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: types.TracebackType | None,
-    ) -> None:
-        for key in reversed(list(self._overrides.keys())):
-            original = self._original_values.get(key)
-            try:
-                if original is None:
-                    self._unset_conf_if_supported(key)
-                else:
-                    self._spark.conf.set(key, original)
-            except (
-                Exception
-            ) as restore_exc:  # pragma: no cover - Spark environment dependent
-                log_event(
-                    "spark_conf_restore_failed",
-                    level=logging.WARNING,
-                    key=key,
-                    original_value=original,
-                    error=str(restore_exc),
-                )
-
-    def _get_conf_or_none(self, key: str) -> str | None:
-        try:
-            return self._spark.conf.get(key, None)
-        except Exception:  # pragma: no cover - Spark environment dependent
-            log_event(
-                "spark_conf_get_failed",
-                level=logging.WARNING,
-                key=key,
-            )
-            return None
-
-    def _unset_conf_if_supported(self, key: str) -> None:
-        self._spark.conf.unset(key)
-
-
-class DataFrameCacheContext:
-    """Cache a DataFrame for the lifetime of the context and unpersist on exit."""
-
-    def __init__(
-        self,
-        df: DataFrame,
-        storage_level: StorageLevel | None = None,
-        *,
-        enabled: bool = True,
-    ) -> None:
-        self._df = df
-        self._storage_level = storage_level
-        self._enabled = enabled
-        self._cached_df: DataFrame | None = None
-
-    def __enter__(self) -> DataFrame:
-        if not self._enabled:
-            return self._df
-        try:
-            if self._storage_level is None:
-                self._cached_df = self._df.persist()
-            else:
-                self._cached_df = self._df.persist(self._storage_level)
-        except Exception as exc:  # pragma: no cover - Spark environment dependent
-            log_event(
-                "dataframe_cache_failed",
-                level=logging.WARNING,
-                error=str(exc),
-            )
-            self._cached_df = self._df
-        return self._cached_df
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: types.TracebackType | None,
-    ) -> None:
-        if not self._enabled or self._cached_df is None:
-            return
-        try:
-            self._cached_df.unpersist(blocking=False)
-        except Exception as unpersist_exc:  # pragma: no cover - Spark env dependent
-            log_event(
-                "dataframe_unpersist_failed",
-                level=logging.WARNING,
-                error=str(unpersist_exc),
-            )
-
-
-def write_sharded_spark(
+def write_sharded(
     df: DataFrame,
     config: WriteConfig,
     *,
@@ -195,7 +84,7 @@ def write_sharded_spark(
         with DataFrameCacheContext(
             df, storage_level=storage_level, enabled=cache_input
         ) as cached_df:
-            return _write_sharded_spark_impl(
+            return _write_sharded_impl(
                 df=cached_df,
                 config=config,
                 run_id=run_id,
@@ -208,7 +97,7 @@ def write_sharded_spark(
             )
 
 
-def _write_sharded_spark_impl(
+def _write_sharded_impl(
     *,
     df: DataFrame,
     config: WriteConfig,

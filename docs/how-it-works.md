@@ -15,7 +15,7 @@ Core behavior:
 
 Public entrypoint:
 
-- `write_sharded_spark(df, config, *, key_col, value_spec, sort_within_partitions=False, spark_conf_overrides=None, cache_input=False, storage_level=None, max_writes_per_second=None)`
+- `write_sharded(df, config, *, key_col, value_spec, sort_within_partitions=False, spark_conf_overrides=None, cache_input=False, storage_level=None, max_writes_per_second=None)`
 
 ### Write-side pipeline
 
@@ -106,7 +106,7 @@ Grouped options:
     - `secret_access_key`
     - `session_token`
 
-Extra runtime controls on `write_sharded_spark`:
+Extra runtime controls on `write_sharded`:
 
 - `key_col`: name of the key column
 - `value_spec`: how to serialize row values

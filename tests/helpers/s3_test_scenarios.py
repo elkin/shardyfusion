@@ -187,7 +187,7 @@ def run_writer_publishes_manifest_scenario(
         real_file_adapter_factory,
         writer_local_dir_for_db_url,
     )
-    from slatedb_spark_sharded.writer.spark import write_sharded_spark
+    from slatedb_spark_sharded.writer.spark import write_sharded
 
     rows = [(i, f"v{i}".encode("utf-8")) for i in range(24)]
     df = spark.createDataFrame(rows, ["id", "payload"])
@@ -220,7 +220,7 @@ def run_writer_publishes_manifest_scenario(
         ),
     )
 
-    result = write_sharded_spark(
+    result = write_sharded(
         df,
         config,
         key_col="id",
@@ -287,7 +287,7 @@ def run_writer_reader_refresh_scenario(
         real_file_adapter_factory,
         writer_local_dir_for_db_url,
     )
-    from slatedb_spark_sharded.writer.spark import write_sharded_spark
+    from slatedb_spark_sharded.writer.spark import write_sharded
 
     bucket = s3_service["bucket"]
     endpoint_url = s3_service["endpoint_url"]
@@ -322,7 +322,7 @@ def run_writer_reader_refresh_scenario(
         [(i, f"old-{i}".encode("utf-8")) for i in range(32)],
         ["id", "payload"],
     )
-    result_v1 = write_sharded_spark(
+    result_v1 = write_sharded(
         df_v1,
         build_config("refresh-run-1"),
         key_col="id",
@@ -357,7 +357,7 @@ def run_writer_reader_refresh_scenario(
             [(i, f"new-{i}".encode("utf-8")) for i in range(32)],
             ["id", "payload"],
         )
-        result_v2 = write_sharded_spark(
+        result_v2 = write_sharded(
             df_v2,
             build_config("refresh-run-2"),
             key_col="id",

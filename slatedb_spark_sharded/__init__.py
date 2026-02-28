@@ -45,14 +45,14 @@ try:
     from .writer.spark import (
         DataFrameCacheContext,
         SparkConfOverrideContext,
-        write_sharded_spark,
+        write_sharded,
         write_single_db_spark,
     )
 
     _writer_exports = [
         "DataFrameCacheContext",
         "SparkConfOverrideContext",
-        "write_sharded_spark",
+        "write_sharded",
         "write_single_db_spark",
     ]
 except ImportError:

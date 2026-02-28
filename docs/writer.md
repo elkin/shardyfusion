@@ -2,7 +2,7 @@
 
 Primary entrypoint:
 
-- `write_sharded_spark(df, config, *, key_col, value_spec, sort_within_partitions=False, spark_conf_overrides=None, cache_input=False, storage_level=None, max_writes_per_second=None)`
+- `write_sharded(df, config, *, key_col, value_spec, sort_within_partitions=False, spark_conf_overrides=None, cache_input=False, storage_level=None, max_writes_per_second=None)`
 
 Key guarantees:
 
@@ -13,14 +13,14 @@ Key guarantees:
 Typical usage:
 
 ```python
-from slatedb_spark_sharded import WriteConfig, ValueSpec, write_sharded_spark
+from slatedb_spark_sharded import WriteConfig, ValueSpec, write_sharded
 
 config = WriteConfig(
     num_dbs=8,
     s3_prefix="s3://bucket/prefix",
 )
 
-result = write_sharded_spark(
+result = write_sharded(
     df,
     config,
     key_col="id",
@@ -67,7 +67,7 @@ the aggregate write rate:
 
 | Backend | Writer Function | Bucket Scope | Effective Meaning |
 |---------|----------------|--------------|-------------------|
-| Spark sharded | `write_sharded_spark` | 1 bucket per partition (= per shard) | Each shard independently limited to `rate` rows/sec |
+| Spark sharded | `write_sharded` | 1 bucket per partition (= per shard) | Each shard independently limited to `rate` rows/sec |
 | Spark single-db | `write_single_db_spark` | 1 shared bucket | All writes limited to `rate` rows/sec total |
 | Dask sharded | `write_sharded_dask` | 1 bucket per shard | Each shard independently limited to `rate` rows/sec |
 | Dask single-db | `write_single_db_dask` | 1 shared bucket | All writes limited to `rate` rows/sec total |
@@ -88,7 +88,7 @@ Key differences:
 
 ```python
 # Spark: limit each shard to 10,000 rows/sec
-result = write_sharded_spark(
+result = write_sharded(
     df, config, key_col="id",
     value_spec=ValueSpec.binary_col("payload"),
     max_writes_per_second=10_000.0,
