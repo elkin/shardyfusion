@@ -114,7 +114,7 @@ Extra runtime controls on `write_sharded_spark`:
 - `spark_conf_overrides`: temporary Spark settings for one call
 - `cache_input`: persist input DataFrame for the call
 - `storage_level`: Spark `StorageLevel` passed to `persist(...)`
-- `max_writes_per_second`: rate-limit batch writes
+- `max_writes_per_second`: rate-limit writes (see [Rate Limiting](writer.md#rate-limiting))
 
 ### Key type contracts
 
