@@ -67,6 +67,7 @@ def write_single_db_dask(
     key_col: str,
     value_spec: ValueSpec,
     sort_keys: bool = True,
+    num_partitions: int | None = None,
     prefetch_partitions: bool = True,
     cache_input: bool = True,
     max_writes_per_second: float | None = None,
@@ -75,6 +76,12 @@ def write_single_db_dask(
 
     Uses Dask for the expensive global sort, then streams sorted partitions to the
     local process where they are written into one SlateDB instance.
+
+    ``num_partitions`` controls how many partitions the sorted data is split
+    into before streaming.  When *None* (the default) the function calls
+    ``len(ddf)`` and derives ``ceil(rows / batch_size)`` partitions.  Pass an
+    explicit value to skip that count — useful when the DataFrame is large
+    and not cached.
     """
 
     if config.num_dbs != 1:
@@ -94,6 +101,7 @@ def write_single_db_dask(
             key_col=key_col,
             value_spec=value_spec,
             sort_keys=sort_keys,
+            num_partitions=num_partitions,
             prefetch_partitions=prefetch_partitions,
             max_writes_per_second=max_writes_per_second,
         )
@@ -108,23 +116,26 @@ def _write_single_db_impl(
     key_col: str,
     value_spec: ValueSpec,
     sort_keys: bool,
+    num_partitions: int | None,
     prefetch_partitions: bool,
     max_writes_per_second: float | None,
 ) -> BuildResult:
     """Implementation: sort, stream partitions, write, publish."""
 
-    # Phase 1: Count and compute partition count
-    sort_started = time.perf_counter()
-    total_rows = len(ddf)
-    num_partitions = max(1, math.ceil(total_rows / config.batch_size))
+    # Compute partition count (triggers a compute when num_partitions is None).
+    if num_partitions is None:
+        total_rows = len(ddf)
+        num_partitions = max(1, math.ceil(total_rows / config.batch_size))
 
-    # Phase 2: Sort and repartition
+    # Sort and repartition.
     if sort_keys:
         ddf_prepared = ddf.sort_values(key_col).repartition(npartitions=num_partitions)
     else:
         ddf_prepared = ddf.repartition(npartitions=num_partitions)
 
-    shard_duration_ms = int((time.perf_counter() - sort_started) * 1000)
+    # No sharding happens in single-db mode.  The sort task graph is lazy so
+    # its actual execution cost is included in write_duration_ms below.
+    shard_duration_ms = 0
 
     # Phase 3: Stream partitions to single writer
     write_started = time.perf_counter()

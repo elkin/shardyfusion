@@ -474,3 +474,40 @@ def test_checkpoint_id_in_result(spark: SparkSession) -> None:
     )
 
     assert result.winners[0].checkpoint_id == "fake-checkpoint"
+
+
+@pytest.mark.spark
+def test_explicit_num_partitions_skips_count(spark: SparkSession) -> None:
+    """When num_partitions is provided, df.count() is not called."""
+    factory = _TrackingFactory()
+    config = _make_config(factory=factory, batch_size=2)
+
+    df = spark.createDataFrame([(k,) for k in range(10)], ["key"])
+
+    result = write_single_db_spark(
+        df,
+        config,
+        key_col="key",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+        num_partitions=3,
+    )
+
+    assert result.winners[0].row_count == 10
+
+
+@pytest.mark.spark
+def test_shard_duration_is_zero(spark: SparkSession) -> None:
+    """Single-db mode has no sharding phase; shard_duration_ms must be 0."""
+    factory = _TrackingFactory()
+    config = _make_config(factory=factory)
+
+    df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
+
+    result = write_single_db_spark(
+        df,
+        config,
+        key_col="key",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+    )
+
+    assert result.stats.durations.sharding_ms == 0

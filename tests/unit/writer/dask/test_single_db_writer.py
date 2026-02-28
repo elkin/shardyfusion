@@ -407,6 +407,43 @@ def test_checkpoint_id_in_result() -> None:
     assert result.winners[0].checkpoint_id == "fake-checkpoint"
 
 
+def test_explicit_num_partitions_skips_count() -> None:
+    """When num_partitions is provided, len(ddf) is not called."""
+    factory = _TrackingFactory()
+    config = _make_config(factory=factory, batch_size=2)
+
+    records = [{"id": k} for k in range(10)]
+    ddf = _make_dask_df(records, npartitions=2)
+
+    result = write_single_db_dask(
+        ddf,
+        config,
+        key_col="id",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+        num_partitions=3,
+    )
+
+    assert result.winners[0].row_count == 10
+
+
+def test_shard_duration_is_zero() -> None:
+    """Single-db mode has no sharding phase; shard_duration_ms must be 0."""
+    factory = _TrackingFactory()
+    config = _make_config(factory=factory)
+
+    records = [{"id": k} for k in range(5)]
+    ddf = _make_dask_df(records, npartitions=1)
+
+    result = write_single_db_dask(
+        ddf,
+        config,
+        key_col="id",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+    )
+
+    assert result.stats.durations.sharding_ms == 0
+
+
 def test_data_integrity_file_backed(tmp_path: pathlib.Path) -> None:
     root_dir = str(tmp_path / "file_backed")
     config = WriteConfig(
