@@ -24,7 +24,7 @@ from slatedb_spark_sharded.config import WriteConfig
 from slatedb_spark_sharded.errors import ConfigValidationError, SlatedbSparkShardedError
 from slatedb_spark_sharded.logging import FailureSeverity, log_failure
 from slatedb_spark_sharded.manifest import BuildResult
-from slatedb_spark_sharded.serde import ValueSpec, make_key_encoder
+from slatedb_spark_sharded.serde import KeyEncoder, ValueSpec, make_key_encoder
 from slatedb_spark_sharded.sharding_types import ShardingSpec, ShardingStrategy
 from slatedb_spark_sharded.slatedb_adapter import (
     DbAdapter,
@@ -89,6 +89,11 @@ def write_single_db_dask(
             f"write_single_db_dask requires num_dbs=1, got {config.num_dbs}"
         )
 
+    if key_col not in ddf.columns:
+        raise ConfigValidationError(
+            f"Key column `{key_col}` not found in DataFrame columns: {list(ddf.columns)}"
+        )
+
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
 
@@ -139,7 +144,7 @@ def _write_single_db_impl(
 
     # Phase 3: Stream partitions to single writer
     write_started = time.perf_counter()
-    attempt_result = _stream_partitions_to_single_db(
+    attempt_result = _stream_to_single_db(
         ddf=ddf_prepared,
         config=config,
         run_id=run_id,
@@ -185,7 +190,7 @@ def _write_single_db_impl(
     )
 
 
-def _stream_partitions_to_single_db(
+def _stream_to_single_db(
     *,
     ddf: dd.DataFrame,
     config: WriteConfig,
@@ -297,7 +302,7 @@ def _write_pdf_rows(
     pdf: pd.DataFrame,
     adapter: DbAdapter,
     key_col: str,
-    key_encoder: Any,
+    key_encoder: KeyEncoder,
     value_spec: ValueSpec,
     batch_size: int,
     bucket: TokenBucket | None,
@@ -341,7 +346,7 @@ def _write_with_prefetch(
     partitions: list[Any],
     adapter: DbAdapter,
     key_col: str,
-    key_encoder: Any,
+    key_encoder: KeyEncoder,
     value_spec: ValueSpec,
     batch_size: int,
     bucket: TokenBucket | None,
@@ -381,7 +386,7 @@ def _write_sequential(
     partitions: list[Any],
     adapter: DbAdapter,
     key_col: str,
-    key_encoder: Any,
+    key_encoder: KeyEncoder,
     value_spec: ValueSpec,
     batch_size: int,
     bucket: TokenBucket | None,

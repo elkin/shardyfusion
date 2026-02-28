@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
-from typing import Self
 
 import pytest
 from pyspark.sql import SparkSession
@@ -14,74 +12,13 @@ from slatedb_spark_sharded.config import (
     OutputOptions,
     WriteConfig,
 )
-from slatedb_spark_sharded.errors import ConfigValidationError
-from slatedb_spark_sharded.manifest import BuildResult, ManifestArtifact
-from slatedb_spark_sharded.publish import ManifestPublisher
+from slatedb_spark_sharded.errors import ConfigValidationError, SlatedbSparkShardedError
+from slatedb_spark_sharded.manifest import BuildResult
 from slatedb_spark_sharded.serde import ValueSpec
 from slatedb_spark_sharded.sharding_types import KeyEncoding
 from slatedb_spark_sharded.writer.spark.single_db_writer import write_single_db_spark
 from slatedb_spark_sharded.writer.spark.writer import DataFrameCacheContext
-
-# ---------------------------------------------------------------------------
-# Test infrastructure
-# ---------------------------------------------------------------------------
-
-
-class _TrackingAdapter:
-    """In-memory adapter that records all write_batch calls."""
-
-    def __init__(self) -> None:
-        self.write_calls: list[list[tuple[bytes, bytes]]] = []
-        self.flushed = False
-        self.closed = False
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
-        self.close()
-
-    def write_batch(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
-        self.write_calls.append(list(pairs))
-
-    def flush(self) -> None:
-        self.flushed = True
-
-    def checkpoint(self) -> str | None:
-        return "fake-checkpoint"
-
-    def close(self) -> None:
-        self.closed = True
-
-
-class _TrackingFactory:
-    """Factory that creates tracking adapters and keeps references."""
-
-    def __init__(self) -> None:
-        self.adapters: list[_TrackingAdapter] = []
-
-    def __call__(self, *, db_url: str, local_dir: str) -> _TrackingAdapter:
-        adapter = _TrackingAdapter()
-        self.adapters.append(adapter)
-        return adapter
-
-
-class _InMemoryPublisher(ManifestPublisher):
-    def __init__(self) -> None:
-        self.objects: dict[str, ManifestArtifact] = {}
-
-    def publish_manifest(
-        self, *, name: str, artifact: ManifestArtifact, run_id: str
-    ) -> str:
-        ref = f"mem://manifests/run_id={run_id}/{name}"
-        self.objects[ref] = artifact
-        return ref
-
-    def publish_current(self, *, name: str, artifact: ManifestArtifact) -> str | None:
-        ref = f"mem://{name}"
-        self.objects[ref] = artifact
-        return ref
-
+from tests.helpers.tracking import InMemoryPublisher, TrackingAdapter, TrackingFactory
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -105,7 +42,7 @@ def spark() -> SparkSession:
 
 def _make_config(
     *,
-    factory: _TrackingFactory | None = None,
+    factory: TrackingFactory | None = None,
     batch_size: int = 50_000,
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
     num_dbs: int = 1,
@@ -115,9 +52,9 @@ def _make_config(
         s3_prefix="s3://bucket/prefix",
         key_encoding=key_encoding,
         batch_size=batch_size,
-        adapter_factory=factory or _TrackingFactory(),
+        adapter_factory=factory or TrackingFactory(),
         output=OutputOptions(run_id="test-run"),
-        manifest=ManifestOptions(publisher=_InMemoryPublisher()),
+        manifest=ManifestOptions(publisher=InMemoryPublisher()),
     )
 
 
@@ -128,7 +65,7 @@ def _make_config(
 
 @pytest.mark.spark
 def test_basic_sorted_write(spark: SparkSession) -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory, batch_size=100)
 
     # Unsorted keys
@@ -160,7 +97,7 @@ def test_sorted_write_multiple_partitions(spark: SparkSession) -> None:
     Previously repartition() was used, which destroys global order via hash shuffle.
     coalesce() merges adjacent partitions without shuffling, preserving sorted order.
     """
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     # batch_size=2 with 20 rows → ceil(20/2)=10 partitions
     config = _make_config(factory=factory, batch_size=2)
 
@@ -212,7 +149,7 @@ def test_sorted_write_multiple_partitions(spark: SparkSession) -> None:
 
 @pytest.mark.spark
 def test_sort_keys_false(spark: SparkSession) -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory, batch_size=100)
 
     df = spark.createDataFrame([(k,) for k in [5, 3, 1, 4, 2]], ["key"])
@@ -244,7 +181,7 @@ def test_validates_num_dbs_1(spark: SparkSession) -> None:
 
 @pytest.mark.spark
 def test_partition_sizing(spark: SparkSession) -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     # 10 rows, batch_size=3 → ceil(10/3)=4 partitions
     config = _make_config(factory=factory, batch_size=3)
 
@@ -262,7 +199,7 @@ def test_partition_sizing(spark: SparkSession) -> None:
 
 @pytest.mark.spark
 def test_batch_size_controls_write_calls(spark: SparkSession) -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory, batch_size=2)
 
     df = spark.createDataFrame([(k,) for k in range(7)], ["key"])
@@ -283,7 +220,7 @@ def test_batch_size_controls_write_calls(spark: SparkSession) -> None:
 
 @pytest.mark.spark
 def test_rate_limiting(spark: SparkSession) -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory, batch_size=2)
 
     df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
@@ -301,7 +238,7 @@ def test_rate_limiting(spark: SparkSession) -> None:
 
 @pytest.mark.spark
 def test_empty_dataframe(spark: SparkSession) -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory)
 
     df = spark.createDataFrame([], "key: long")
@@ -320,7 +257,7 @@ def test_empty_dataframe(spark: SparkSession) -> None:
 
 @pytest.mark.spark
 def test_min_max_keys(spark: SparkSession) -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory)
 
     df = spark.createDataFrame([(k,) for k in [50, 10, 90, 30]], ["key"])
@@ -338,11 +275,11 @@ def test_min_max_keys(spark: SparkSession) -> None:
 
 @pytest.mark.spark
 def test_manifest_structure(spark: SparkSession) -> None:
-    publisher = _InMemoryPublisher()
+    publisher = InMemoryPublisher()
     config = WriteConfig(
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
-        adapter_factory=_TrackingFactory(),
+        adapter_factory=TrackingFactory(),
         output=OutputOptions(run_id="test-manifest"),
         manifest=ManifestOptions(publisher=publisher),
     )
@@ -369,7 +306,7 @@ def test_manifest_structure(spark: SparkSession) -> None:
 
 @pytest.mark.spark
 def test_key_encoding_u64be(spark: SparkSession) -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory, key_encoding=KeyEncoding.U64BE)
 
     df = spark.createDataFrame([(1,), (256,)], ["key"])
@@ -388,7 +325,7 @@ def test_key_encoding_u64be(spark: SparkSession) -> None:
 
 @pytest.mark.spark
 def test_key_encoding_u32be(spark: SparkSession) -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory, key_encoding=KeyEncoding.U32BE)
 
     df = spark.createDataFrame([(1,), (256,)], ["key"])
@@ -409,7 +346,7 @@ def test_key_encoding_u32be(spark: SparkSession) -> None:
 
 @pytest.mark.spark
 def test_cache_input_false(spark: SparkSession) -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory)
 
     df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
@@ -443,7 +380,7 @@ def test_dataframe_cache_context_enabled_true(spark: SparkSession) -> None:
 
 @pytest.mark.spark
 def test_prefetch_disabled(spark: SparkSession) -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory)
 
     df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
@@ -461,7 +398,7 @@ def test_prefetch_disabled(spark: SparkSession) -> None:
 
 @pytest.mark.spark
 def test_checkpoint_id_in_result(spark: SparkSession) -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory)
 
     df = spark.createDataFrame([(1,)], ["key"])
@@ -479,7 +416,7 @@ def test_checkpoint_id_in_result(spark: SparkSession) -> None:
 @pytest.mark.spark
 def test_explicit_num_partitions_skips_count(spark: SparkSession) -> None:
     """When num_partitions is provided, df.count() is not called."""
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory, batch_size=2)
 
     df = spark.createDataFrame([(k,) for k in range(10)], ["key"])
@@ -498,7 +435,7 @@ def test_explicit_num_partitions_skips_count(spark: SparkSession) -> None:
 @pytest.mark.spark
 def test_shard_duration_is_zero(spark: SparkSession) -> None:
     """Single-db mode has no sharding phase; shard_duration_ms must be 0."""
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory)
 
     df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
@@ -511,3 +448,62 @@ def test_shard_duration_is_zero(spark: SparkSession) -> None:
     )
 
     assert result.stats.durations.sharding_ms == 0
+
+
+# ---------------------------------------------------------------------------
+# Error-wrapping tests
+# ---------------------------------------------------------------------------
+
+
+class _FailingAdapter(TrackingAdapter):
+    """Adapter that raises on write_batch."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self._error = error
+
+    def write_batch(self, pairs):  # type: ignore[override]
+        raise self._error
+
+
+class _FailingFactory:
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def __call__(self, *, db_url: str, local_dir: str) -> _FailingAdapter:
+        return _FailingAdapter(self._error)
+
+
+@pytest.mark.spark
+def test_unexpected_error_wrapped_in_slatedb_error(spark: SparkSession) -> None:
+    """Generic exceptions from the adapter are wrapped in SlatedbSparkShardedError."""
+    config = _make_config(factory=_FailingFactory(RuntimeError("boom")))  # type: ignore[arg-type]
+    df = spark.createDataFrame([(1,)], ["key"])
+
+    with pytest.raises(SlatedbSparkShardedError, match="boom") as exc_info:
+        write_single_db_spark(
+            df,
+            config,
+            key_col="key",
+            value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+        )
+
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+
+@pytest.mark.spark
+def test_slatedb_error_passes_through(spark: SparkSession) -> None:
+    """SlatedbSparkShardedError from the adapter is not double-wrapped."""
+    original = SlatedbSparkShardedError("original error")
+    config = _make_config(factory=_FailingFactory(original))  # type: ignore[arg-type]
+    df = spark.createDataFrame([(1,)], ["key"])
+
+    with pytest.raises(SlatedbSparkShardedError, match="original error") as exc_info:
+        write_single_db_spark(
+            df,
+            config,
+            key_col="key",
+            value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+        )
+
+    assert exc_info.value is original

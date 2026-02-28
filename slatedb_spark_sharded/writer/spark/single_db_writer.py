@@ -30,7 +30,7 @@ from slatedb_spark_sharded.slatedb_adapter import (
 from slatedb_spark_sharded.storage import join_s3
 from slatedb_spark_sharded.type_defs import JsonObject, KeyLike
 
-from .sharding import _validate_key_col_type
+from .sharding import validate_key_col_type
 from .writer import DataFrameCacheContext, SparkConfOverrideContext
 
 
@@ -67,7 +67,7 @@ def write_single_db_spark(
             f"write_single_db_spark requires num_dbs=1, got {config.num_dbs}"
         )
 
-    _validate_key_col_type(df=df, key_col=key_col, strategy=ShardingStrategy.HASH)
+    validate_key_col_type(df=df, key_col=key_col, strategy=ShardingStrategy.HASH)
 
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex

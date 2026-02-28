@@ -11,8 +11,7 @@ import pytest
 from slatedb_spark_sharded._writer_core import route_key
 from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteConfig
 from slatedb_spark_sharded.errors import ConfigValidationError
-from slatedb_spark_sharded.manifest import BuildResult, ManifestArtifact
-from slatedb_spark_sharded.publish import ManifestPublisher
+from slatedb_spark_sharded.manifest import BuildResult
 from slatedb_spark_sharded.serde import make_key_encoder
 from slatedb_spark_sharded.sharding_types import (
     KeyEncoding,
@@ -26,6 +25,7 @@ from slatedb_spark_sharded.testing import (
     file_backed_load_db,
 )
 from slatedb_spark_sharded.writer.python import write_sharded
+from tests.helpers.tracking import InMemoryPublisher
 
 # ---------------------------------------------------------------------------
 # Test infrastructure
@@ -71,23 +71,6 @@ class _TrackingFactory:
         self.adapters[self._call_count] = adapter
         self._call_count += 1
         return adapter
-
-
-class InMemoryPublisher(ManifestPublisher):
-    def __init__(self) -> None:
-        self.objects: dict[str, ManifestArtifact] = {}
-
-    def publish_manifest(
-        self, *, name: str, artifact: ManifestArtifact, run_id: str
-    ) -> str:
-        ref = f"mem://manifests/run_id={run_id}/{name}"
-        self.objects[ref] = artifact
-        return ref
-
-    def publish_current(self, *, name: str, artifact: ManifestArtifact) -> str | None:
-        ref = f"mem://{name}"
-        self.objects[ref] = artifact
-        return ref
 
 
 def _make_config(

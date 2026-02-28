@@ -37,7 +37,7 @@ def add_db_id_column(
     )
 
     # For HASH and RANGE strategies we can validate key column type and resolve any missing boundaries before adding the db_id column.
-    _validate_key_col_type(
+    validate_key_col_type(
         df=df,
         key_col=key_col,
         strategy=sharding.strategy,
@@ -96,7 +96,7 @@ def prepare_partitioned_rdd(
     return pair_rdd.partitionBy(num_dbs, lambda key: int(key))
 
 
-def _validate_key_col_type(
+def validate_key_col_type(
     *,
     df: DataFrame,
     key_col: str,

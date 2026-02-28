@@ -5,28 +5,11 @@ import json
 import pytest
 
 from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteConfig
-from slatedb_spark_sharded.manifest import BuildStats, ManifestArtifact
-from slatedb_spark_sharded.publish import ManifestPublisher
+from slatedb_spark_sharded.manifest import BuildStats
 from slatedb_spark_sharded.serde import ValueSpec
 from slatedb_spark_sharded.testing import real_file_adapter_factory
 from slatedb_spark_sharded.writer.spark import write_sharded_spark
-
-
-class InMemoryPublisher(ManifestPublisher):
-    def __init__(self) -> None:
-        self.objects: dict[str, ManifestArtifact] = {}
-
-    def publish_manifest(
-        self, *, name: str, artifact: ManifestArtifact, run_id: str
-    ) -> str:
-        ref = f"mem://manifests/run_id={run_id}/{name}"
-        self.objects[ref] = artifact
-        return ref
-
-    def publish_current(self, *, name: str, artifact: ManifestArtifact) -> str | None:
-        ref = f"mem://{name}"
-        self.objects[ref] = artifact
-        return ref
+from tests.helpers.tracking import InMemoryPublisher
 
 
 @pytest.mark.spark

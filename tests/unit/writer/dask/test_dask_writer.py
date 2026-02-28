@@ -19,11 +19,7 @@ from slatedb_spark_sharded.config import (  # noqa: E402
     WriteConfig,
 )
 from slatedb_spark_sharded.errors import ConfigValidationError  # noqa: E402
-from slatedb_spark_sharded.manifest import (  # noqa: E402
-    BuildResult,
-    ManifestArtifact,
-)
-from slatedb_spark_sharded.publish import ManifestPublisher  # noqa: E402
+from slatedb_spark_sharded.manifest import BuildResult  # noqa: E402
 from slatedb_spark_sharded.serde import ValueSpec, make_key_encoder  # noqa: E402
 from slatedb_spark_sharded.sharding_types import (  # noqa: E402
     KeyEncoding,
@@ -35,6 +31,7 @@ from slatedb_spark_sharded.testing import (  # noqa: E402
     file_backed_load_db,
 )
 from slatedb_spark_sharded.writer.dask import write_sharded_dask  # noqa: E402
+from tests.helpers.tracking import InMemoryPublisher  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -92,23 +89,6 @@ class _TrackingFactory:
         self.adapters[self._call_count] = adapter
         self._call_count += 1
         return adapter
-
-
-class InMemoryPublisher(ManifestPublisher):
-    def __init__(self) -> None:
-        self.objects: dict[str, ManifestArtifact] = {}
-
-    def publish_manifest(
-        self, *, name: str, artifact: ManifestArtifact, run_id: str
-    ) -> str:
-        ref = f"mem://manifests/run_id={run_id}/{name}"
-        self.objects[ref] = artifact
-        return ref
-
-    def publish_current(self, *, name: str, artifact: ManifestArtifact) -> str | None:
-        ref = f"mem://{name}"
-        self.objects[ref] = artifact
-        return ref
 
 
 def _make_config(

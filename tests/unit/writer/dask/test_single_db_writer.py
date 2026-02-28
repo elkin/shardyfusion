@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import pathlib
-from collections.abc import Iterable
-from typing import Self
 
 import pandas as pd
 import pytest
@@ -18,9 +16,11 @@ from slatedb_spark_sharded.config import (  # noqa: E402
     OutputOptions,
     WriteConfig,
 )
-from slatedb_spark_sharded.errors import ConfigValidationError  # noqa: E402
-from slatedb_spark_sharded.manifest import BuildResult, ManifestArtifact  # noqa: E402
-from slatedb_spark_sharded.publish import ManifestPublisher  # noqa: E402
+from slatedb_spark_sharded.errors import (  # noqa: E402
+    ConfigValidationError,
+    SlatedbSparkShardedError,
+)
+from slatedb_spark_sharded.manifest import BuildResult  # noqa: E402
 from slatedb_spark_sharded.serde import ValueSpec, make_key_encoder  # noqa: E402
 from slatedb_spark_sharded.sharding_types import KeyEncoding  # noqa: E402
 from slatedb_spark_sharded.testing import (  # noqa: E402
@@ -30,6 +30,11 @@ from slatedb_spark_sharded.testing import (  # noqa: E402
 from slatedb_spark_sharded.writer.dask.single_db_writer import (  # noqa: E402
     DaskCacheContext,
     write_single_db_dask,
+)
+from tests.helpers.tracking import (  # noqa: E402
+    InMemoryPublisher,
+    TrackingAdapter,
+    TrackingFactory,
 )
 
 # ---------------------------------------------------------------------------
@@ -45,74 +50,13 @@ def _synchronous_scheduler():
 
 
 # ---------------------------------------------------------------------------
-# Test infrastructure
-# ---------------------------------------------------------------------------
-
-
-class _TrackingAdapter:
-    """In-memory adapter that records all write_batch calls."""
-
-    def __init__(self) -> None:
-        self.write_calls: list[list[tuple[bytes, bytes]]] = []
-        self.flushed = False
-        self.closed = False
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
-        self.close()
-
-    def write_batch(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
-        self.write_calls.append(list(pairs))
-
-    def flush(self) -> None:
-        self.flushed = True
-
-    def checkpoint(self) -> str | None:
-        return "fake-checkpoint"
-
-    def close(self) -> None:
-        self.closed = True
-
-
-class _TrackingFactory:
-    """Factory that creates tracking adapters and keeps references."""
-
-    def __init__(self) -> None:
-        self.adapters: list[_TrackingAdapter] = []
-
-    def __call__(self, *, db_url: str, local_dir: str) -> _TrackingAdapter:
-        adapter = _TrackingAdapter()
-        self.adapters.append(adapter)
-        return adapter
-
-
-class _InMemoryPublisher(ManifestPublisher):
-    def __init__(self) -> None:
-        self.objects: dict[str, ManifestArtifact] = {}
-
-    def publish_manifest(
-        self, *, name: str, artifact: ManifestArtifact, run_id: str
-    ) -> str:
-        ref = f"mem://manifests/run_id={run_id}/{name}"
-        self.objects[ref] = artifact
-        return ref
-
-    def publish_current(self, *, name: str, artifact: ManifestArtifact) -> str | None:
-        ref = f"mem://{name}"
-        self.objects[ref] = artifact
-        return ref
-
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
 def _make_config(
     *,
-    factory: _TrackingFactory | None = None,
+    factory: TrackingFactory | None = None,
     batch_size: int = 50_000,
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
     num_dbs: int = 1,
@@ -122,9 +66,9 @@ def _make_config(
         s3_prefix="s3://bucket/prefix",
         key_encoding=key_encoding,
         batch_size=batch_size,
-        adapter_factory=factory or _TrackingFactory(),
+        adapter_factory=factory or TrackingFactory(),
         output=OutputOptions(run_id="test-run"),
-        manifest=ManifestOptions(publisher=_InMemoryPublisher()),
+        manifest=ManifestOptions(publisher=InMemoryPublisher()),
     )
 
 
@@ -141,7 +85,7 @@ def _make_dask_df(
 
 
 def test_basic_sorted_write() -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory, batch_size=100)
 
     # Unsorted keys
@@ -168,7 +112,7 @@ def test_basic_sorted_write() -> None:
 
 
 def test_sort_keys_false() -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory, batch_size=100)
 
     records = [{"id": k} for k in [5, 3, 1, 4, 2]]
@@ -201,7 +145,7 @@ def test_validates_num_dbs_1() -> None:
 
 
 def test_batch_size_controls_write_calls() -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory, batch_size=2)
 
     records = [{"id": k} for k in range(7)]
@@ -222,7 +166,7 @@ def test_batch_size_controls_write_calls() -> None:
 
 
 def test_rate_limiting() -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory, batch_size=2)
 
     records = [{"id": k} for k in range(5)]
@@ -240,7 +184,7 @@ def test_rate_limiting() -> None:
 
 
 def test_empty_dataframe() -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory)
 
     pdf = pd.DataFrame({"id": pd.Series(dtype="int64")})
@@ -259,7 +203,7 @@ def test_empty_dataframe() -> None:
 
 
 def test_min_max_keys() -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory)
 
     records = [{"id": k} for k in [50, 10, 90, 30]]
@@ -277,11 +221,11 @@ def test_min_max_keys() -> None:
 
 
 def test_manifest_structure() -> None:
-    publisher = _InMemoryPublisher()
+    publisher = InMemoryPublisher()
     config = WriteConfig(
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
-        adapter_factory=_TrackingFactory(),
+        adapter_factory=TrackingFactory(),
         output=OutputOptions(run_id="test-manifest"),
         manifest=ManifestOptions(publisher=publisher),
     )
@@ -307,7 +251,7 @@ def test_manifest_structure() -> None:
 
 
 def test_key_encoding_u32be() -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory, key_encoding=KeyEncoding.U32BE)
 
     records = [{"id": 1}, {"id": 256}]
@@ -328,7 +272,7 @@ def test_key_encoding_u32be() -> None:
 
 
 def test_cache_input_false() -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory)
 
     records = [{"id": k} for k in range(5)]
@@ -349,7 +293,7 @@ def test_prefetch_and_no_prefetch_same_result() -> None:
     records = [{"id": k} for k in range(20)]
     ddf = _make_dask_df(records, npartitions=4)
 
-    factory1 = _TrackingFactory()
+    factory1 = TrackingFactory()
     config1 = _make_config(factory=factory1)
     result1 = write_single_db_dask(
         ddf,
@@ -359,7 +303,7 @@ def test_prefetch_and_no_prefetch_same_result() -> None:
         prefetch_partitions=True,
     )
 
-    factory2 = _TrackingFactory()
+    factory2 = TrackingFactory()
     config2 = _make_config(factory=factory2)
     result2 = write_single_db_dask(
         ddf,
@@ -391,7 +335,7 @@ def test_dask_cache_context_enabled_true() -> None:
 
 
 def test_checkpoint_id_in_result() -> None:
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory)
 
     records = [{"id": 1}]
@@ -409,7 +353,7 @@ def test_checkpoint_id_in_result() -> None:
 
 def test_explicit_num_partitions_skips_count() -> None:
     """When num_partitions is provided, len(ddf) is not called."""
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory, batch_size=2)
 
     records = [{"id": k} for k in range(10)]
@@ -428,7 +372,7 @@ def test_explicit_num_partitions_skips_count() -> None:
 
 def test_shard_duration_is_zero() -> None:
     """Single-db mode has no sharding phase; shard_duration_ms must be 0."""
-    factory = _TrackingFactory()
+    factory = TrackingFactory()
     config = _make_config(factory=factory)
 
     records = [{"id": k} for k in range(5)]
@@ -454,7 +398,7 @@ def test_data_integrity_file_backed(tmp_path: pathlib.Path) -> None:
             run_id="test-run",
             local_root=str(tmp_path / "local"),
         ),
-        manifest=ManifestOptions(publisher=_InMemoryPublisher()),
+        manifest=ManifestOptions(publisher=InMemoryPublisher()),
     )
 
     records = [{"id": i} for i in range(50)]
@@ -480,3 +424,109 @@ def test_data_integrity_file_backed(tmp_path: pathlib.Path) -> None:
     for i in range(50):
         key_bytes = make_key_encoder(config.key_encoding)(i)
         assert all_kv[key_bytes] == f"value-{i}".encode()
+
+
+def test_sorted_write_multiple_partitions() -> None:
+    """Verify global sort order is preserved across multiple partitions."""
+    factory = TrackingFactory()
+    # batch_size=2 with 20 rows → ceil(20/2)=10 partitions
+    config = _make_config(factory=factory, batch_size=2)
+
+    records = [
+        {"id": k}
+        for k in [19, 7, 13, 2, 18, 5, 11, 1, 15, 9, 17, 3, 14, 6, 12, 0, 16, 8, 10, 4]
+    ]
+    ddf = _make_dask_df(records, npartitions=4)
+
+    result = write_single_db_dask(
+        ddf,
+        config,
+        key_col="id",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+    )
+
+    assert result.winners[0].row_count == 20
+
+    # Verify ALL keys arrive in globally sorted order across all batches
+    adapter = factory.adapters[0]
+    all_keys = [pair[0] for call in adapter.write_calls for pair in call]
+    assert all_keys == sorted(all_keys), (
+        f"Keys not globally sorted across {len(adapter.write_calls)} batches"
+    )
+
+
+def test_validates_missing_key_col() -> None:
+    """Passing a non-existent key column raises ConfigValidationError early."""
+    config = _make_config()
+
+    records = [{"id": 1}]
+    ddf = _make_dask_df(records, npartitions=1)
+
+    with pytest.raises(ConfigValidationError, match="nonexistent"):
+        write_single_db_dask(
+            ddf,
+            config,
+            key_col="nonexistent",
+            value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Error-wrapping tests
+# ---------------------------------------------------------------------------
+
+
+class _FailingAdapter(TrackingAdapter):
+    """Adapter that raises on write_batch."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self._error = error
+
+    def write_batch(self, pairs):  # type: ignore[override]
+        raise self._error
+
+
+class _FailingFactory:
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def __call__(self, *, db_url: str, local_dir: str) -> _FailingAdapter:
+        return _FailingAdapter(self._error)
+
+
+def test_unexpected_error_wrapped_in_slatedb_error() -> None:
+    """Generic exceptions from the adapter are wrapped in SlatedbSparkShardedError."""
+    config = _make_config(factory=_FailingFactory(RuntimeError("boom")))  # type: ignore[arg-type]
+
+    records = [{"id": 1}]
+    ddf = _make_dask_df(records, npartitions=1)
+
+    with pytest.raises(SlatedbSparkShardedError, match="boom") as exc_info:
+        write_single_db_dask(
+            ddf,
+            config,
+            key_col="id",
+            value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+        )
+
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+
+def test_slatedb_error_passes_through() -> None:
+    """SlatedbSparkShardedError from the adapter is not double-wrapped."""
+    original = SlatedbSparkShardedError("original error")
+    config = _make_config(factory=_FailingFactory(original))  # type: ignore[arg-type]
+
+    records = [{"id": 1}]
+    ddf = _make_dask_df(records, npartitions=1)
+
+    with pytest.raises(SlatedbSparkShardedError, match="original error") as exc_info:
+        write_single_db_dask(
+            ddf,
+            config,
+            key_col="id",
+            value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+        )
+
+    assert exc_info.value is original
