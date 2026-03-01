@@ -8,6 +8,8 @@ from urllib.parse import urlparse
 
 from .errors import PublishManifestError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
+from .metrics import MetricEvent, MetricsCollector
+from .metrics import emit as emit_metric
 from .type_defs import S3ClientConfig
 
 _logger = get_logger(__name__)
@@ -64,7 +66,13 @@ def _is_transient_s3_error(exc: BaseException) -> bool:
     return False
 
 
-def _retry_s3_operation(operation: Callable[[], Any], *, operation_name: str, url: str):
+def _retry_s3_operation(
+    operation: Callable[[], Any],
+    *,
+    operation_name: str,
+    url: str,
+    metrics_collector: MetricsCollector | None = None,
+):
     """Execute *operation* with exponential-backoff retries on transient S3 errors.
 
     Returns the result of *operation()* on success, or re-raises the last
@@ -99,6 +107,13 @@ def _retry_s3_operation(operation: Callable[[], Any], *, operation_name: str, ur
                         url=url,
                         attempts=attempt + 1,
                     )
+                    emit_metric(
+                        metrics_collector,
+                        MetricEvent.S3_RETRY_EXHAUSTED,
+                        {
+                            "attempts": attempt + 1,
+                        },
+                    )
                 raise
 
             log_failure(
@@ -111,6 +126,15 @@ def _retry_s3_operation(operation: Callable[[], Any], *, operation_name: str, ur
                 attempt=attempt + 1,
                 max_retries=_DEFAULT_MAX_RETRIES,
                 retry_delay_s=delay,
+            )
+            emit_metric(
+                metrics_collector,
+                MetricEvent.S3_RETRY,
+                {
+                    "attempt": attempt + 1,
+                    "max_retries": _DEFAULT_MAX_RETRIES,
+                    "delay_s": delay,
+                },
             )
             time.sleep(delay)
             delay *= _DEFAULT_BACKOFF_MULTIPLIER
@@ -247,6 +271,7 @@ def put_bytes(
     headers: Mapping[str, str] | None = None,
     *,
     s3_client: Any = None,
+    metrics_collector: MetricsCollector | None = None,
 ) -> None:
     """PUT bytes to S3 URL with automatic retry on transient S3 errors."""
 
@@ -268,10 +293,16 @@ def put_bytes(
         lambda: client.put_object(**put_kwargs),
         operation_name="put_object",
         url=url,
+        metrics_collector=metrics_collector,
     )
 
 
-def get_bytes(url: str, *, s3_client: Any = None) -> bytes:
+def get_bytes(
+    url: str,
+    *,
+    s3_client: Any = None,
+    metrics_collector: MetricsCollector | None = None,
+) -> bytes:
     """Read object bytes from S3 URL with automatic retry on transient errors."""
 
     client = s3_client or create_s3_client()
@@ -281,10 +312,20 @@ def get_bytes(url: str, *, s3_client: Any = None) -> bytes:
         obj = client.get_object(Bucket=bucket, Key=key)
         return obj["Body"].read()
 
-    return _retry_s3_operation(_do_get, operation_name="get_object", url=url)
+    return _retry_s3_operation(
+        _do_get,
+        operation_name="get_object",
+        url=url,
+        metrics_collector=metrics_collector,
+    )
 
 
-def try_get_bytes(url: str, *, s3_client: Any = None) -> bytes | None:
+def try_get_bytes(
+    url: str,
+    *,
+    s3_client: Any = None,
+    metrics_collector: MetricsCollector | None = None,
+) -> bytes | None:
     """Read object bytes and return None when object is not found.
 
     Transient S3 errors (throttling, timeouts) are retried automatically.
@@ -306,4 +347,9 @@ def try_get_bytes(url: str, *, s3_client: Any = None) -> bytes | None:
             raise
         return obj["Body"].read()
 
-    return _retry_s3_operation(_do_get, operation_name="try_get_object", url=url)
+    return _retry_s3_operation(
+        _do_get,
+        operation_name="try_get_object",
+        url=url,
+        metrics_collector=metrics_collector,
+    )

@@ -3,6 +3,7 @@
 from typing import Protocol
 
 from .manifest import ManifestArtifact
+from .metrics import MetricsCollector
 from .storage import create_s3_client, join_s3, put_bytes
 from .type_defs import S3ClientConfig
 
@@ -31,11 +32,13 @@ class DefaultS3Publisher:
         manifest_name: str = "manifest",
         current_name: str = "_CURRENT",
         s3_client_config: S3ClientConfig | None = None,
+        metrics_collector: MetricsCollector | None = None,
     ) -> None:
         self.s3_prefix = s3_prefix.rstrip("/")
         self.manifest_name = manifest_name
         self.current_name = current_name
         self._s3_client = create_s3_client(s3_client_config)
+        self._metrics = metrics_collector
 
     def publish_manifest(
         self, *, name: str, artifact: ManifestArtifact, run_id: str
@@ -53,6 +56,7 @@ class DefaultS3Publisher:
             artifact.content_type,
             artifact.headers,
             s3_client=self._s3_client,
+            metrics_collector=self._metrics,
         )
         return manifest_url
 
@@ -65,5 +69,6 @@ class DefaultS3Publisher:
             artifact.content_type,
             artifact.headers,
             s3_client=self._s3_client,
+            metrics_collector=self._metrics,
         )
         return current_url

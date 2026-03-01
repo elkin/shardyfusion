@@ -144,6 +144,7 @@ class SlateShardedReader:
             self._manifest_reader = DefaultS3ManifestReader(
                 s3_prefix,
                 current_name=current_name,
+                metrics_collector=metrics_collector,
             )
 
         self._state_lock = threading.Lock()

@@ -10,7 +10,15 @@ def test_default_s3_publisher_builds_expected_urls(monkeypatch) -> None:
     def fake_create_s3_client(_cfg=None):
         return object()
 
-    def fake_put_bytes(url, payload, content_type, headers=None, *, s3_client=None):
+    def fake_put_bytes(
+        url,
+        payload,
+        content_type,
+        headers=None,
+        *,
+        s3_client=None,
+        metrics_collector=None,
+    ):
         calls.append(
             {
                 "url": url,

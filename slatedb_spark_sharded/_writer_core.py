@@ -211,6 +211,7 @@ def publish_manifest_and_current(
         manifest_name=config.manifest.manifest_name,
         current_name=config.manifest.current_name,
         s3_client_config=config.manifest.s3_client_config,
+        metrics_collector=mc,
     )
 
     try:

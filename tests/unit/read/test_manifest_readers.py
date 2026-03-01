@@ -108,7 +108,7 @@ def test_parse_json_manifest_rejects_missing_required_field() -> None:
 
 
 def test_load_current_rejects_corrupt_json(monkeypatch) -> None:
-    def fake_try_get_bytes(url, *, s3_client=None):
+    def fake_try_get_bytes(url, *, s3_client=None, metrics_collector=None):
         return b"not-json{{{"
 
     monkeypatch.setattr(
@@ -120,7 +120,7 @@ def test_load_current_rejects_corrupt_json(monkeypatch) -> None:
 
 
 def test_load_current_rejects_missing_manifest_ref(monkeypatch) -> None:
-    def fake_try_get_bytes(url, *, s3_client=None):
+    def fake_try_get_bytes(url, *, s3_client=None, metrics_collector=None):
         return json.dumps(
             {
                 "manifest_content_type": "application/json",

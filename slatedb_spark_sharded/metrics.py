@@ -32,6 +32,8 @@ class MetricEvent(str, Enum):
     READER_CLOSED = "reader.closed"
 
     # Infrastructure
+    S3_RETRY = "s3.retry"
+    S3_RETRY_EXHAUSTED = "s3.retry_exhausted"
     RATE_LIMITER_THROTTLED = "rate_limiter.throttled"
 
 

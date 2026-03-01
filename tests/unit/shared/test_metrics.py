@@ -21,6 +21,8 @@ class TestMetricEvent:
         assert MetricEvent.READER_MULTI_GET == "reader.multi_get"
         assert MetricEvent.READER_REFRESHED == "reader.refreshed"
         assert MetricEvent.READER_CLOSED == "reader.closed"
+        assert MetricEvent.S3_RETRY == "s3.retry"
+        assert MetricEvent.S3_RETRY_EXHAUSTED == "s3.retry_exhausted"
         assert MetricEvent.RATE_LIMITER_THROTTLED == "rate_limiter.throttled"
 
 

@@ -13,6 +13,7 @@ from .manifest import (
     RequiredBuildMeta,
     RequiredShardMeta,
 )
+from .metrics import MetricsCollector
 from .storage import create_s3_client, get_bytes, try_get_bytes
 from .type_defs import S3ClientConfig
 
@@ -64,14 +65,18 @@ class DefaultS3ManifestReader:
         *,
         current_name: str = "_CURRENT",
         s3_client_config: S3ClientConfig | None = None,
+        metrics_collector: MetricsCollector | None = None,
     ) -> None:
         self.s3_prefix = s3_prefix.rstrip("/")
         self.current_name = current_name
         self._s3_client = create_s3_client(s3_client_config)
+        self._metrics = metrics_collector
 
     def load_current(self) -> CurrentPointer | None:
         current_url = f"{self.s3_prefix}/{self.current_name}"
-        payload = try_get_bytes(current_url, s3_client=self._s3_client)
+        payload = try_get_bytes(
+            current_url, s3_client=self._s3_client, metrics_collector=self._metrics
+        )
         if payload is None:
             return None
 
@@ -102,7 +107,9 @@ class DefaultS3ManifestReader:
             )
 
         try:
-            payload = get_bytes(ref, s3_client=self._s3_client)
+            payload = get_bytes(
+                ref, s3_client=self._s3_client, metrics_collector=self._metrics
+            )
         except Exception as exc:
             log_failure(
                 "manifest_s3_load_failed",
