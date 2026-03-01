@@ -45,13 +45,3 @@ class MetricsCollector(Protocol):
     """
 
     def emit(self, event: MetricEvent, payload: dict[str, Any]) -> None: ...
-
-
-def emit(
-    collector: MetricsCollector | None,
-    event: MetricEvent,
-    payload: dict[str, Any],
-) -> None:
-    """Emit a metric if a collector is configured.  No-op when *None*."""
-    if collector is not None:
-        collector.emit(event, payload)

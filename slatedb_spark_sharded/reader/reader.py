@@ -28,7 +28,6 @@ from slatedb_spark_sharded.manifest_readers import (
     ManifestReader,
 )
 from slatedb_spark_sharded.metrics import MetricEvent, MetricsCollector
-from slatedb_spark_sharded.metrics import emit as emit_metric
 from slatedb_spark_sharded.routing import SnapshotRouter
 from slatedb_spark_sharded.sharding_types import KeyEncoding
 from slatedb_spark_sharded.type_defs import KeyInput, ShardReader, ShardReaderFactory
@@ -158,7 +157,8 @@ class SlateShardedReader:
             num_shards=len(self._state.handles),
             manifest_ref=self._state.manifest_ref,
         )
-        emit_metric(self._metrics, MetricEvent.READER_INITIALIZED, {})
+        if self._metrics is not None:
+            self._metrics.emit(MetricEvent.READER_INITIALIZED, {})
 
     @property
     def key_encoding(self) -> KeyEncoding:
@@ -190,8 +190,7 @@ class SlateShardedReader:
             result = _read_one(handle, key_bytes)
 
         if mc is not None:
-            emit_metric(
-                mc,
+            mc.emit(
                 MetricEvent.READER_GET,
                 {
                     "duration_ms": int((time.perf_counter() - t0) * 1000),
@@ -241,8 +240,7 @@ class SlateShardedReader:
             ordered = {key: results.get(key) for key in key_list}
 
         if mc is not None:
-            emit_metric(
-                mc,
+            mc.emit(
                 MetricEvent.READER_MULTI_GET,
                 {
                     "duration_ms": int((time.perf_counter() - t0) * 1000),
@@ -275,9 +273,8 @@ class SlateShardedReader:
                     logger=_logger,
                     manifest_ref=current_ref,
                 )
-                emit_metric(
-                    self._metrics, MetricEvent.READER_REFRESHED, {"changed": False}
-                )
+                if self._metrics is not None:
+                    self._metrics.emit(MetricEvent.READER_REFRESHED, {"changed": False})
                 return False
 
         manifest = self._manifest_reader.load_manifest(
@@ -306,7 +303,8 @@ class SlateShardedReader:
             old_manifest_ref=old_state.manifest_ref,
             new_manifest_ref=current_ref,
         )
-        emit_metric(self._metrics, MetricEvent.READER_REFRESHED, {"changed": True})
+        if self._metrics is not None:
+            self._metrics.emit(MetricEvent.READER_REFRESHED, {"changed": True})
 
         return True
 
@@ -331,13 +329,13 @@ class SlateShardedReader:
             s3_prefix=self.s3_prefix,
             num_handles_closed=len(self._state.handles),
         )
-        emit_metric(
-            self._metrics,
-            MetricEvent.READER_CLOSED,
-            {
-                "num_handles": len(self._state.handles),
-            },
-        )
+        if self._metrics is not None:
+            self._metrics.emit(
+                MetricEvent.READER_CLOSED,
+                {
+                    "num_handles": len(self._state.handles),
+                },
+            )
 
     def __enter__(self) -> "SlateShardedReader":
         return self

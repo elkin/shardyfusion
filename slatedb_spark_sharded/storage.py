@@ -9,7 +9,6 @@ from urllib.parse import urlparse
 from .errors import PublishManifestError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
 from .metrics import MetricEvent, MetricsCollector
-from .metrics import emit as emit_metric
 from .type_defs import S3ClientConfig
 
 _logger = get_logger(__name__)
@@ -107,13 +106,13 @@ def _retry_s3_operation(
                         url=url,
                         attempts=attempt + 1,
                     )
-                    emit_metric(
-                        metrics_collector,
-                        MetricEvent.S3_RETRY_EXHAUSTED,
-                        {
-                            "attempts": attempt + 1,
-                        },
-                    )
+                    if metrics_collector is not None:
+                        metrics_collector.emit(
+                            MetricEvent.S3_RETRY_EXHAUSTED,
+                            {
+                                "attempts": attempt + 1,
+                            },
+                        )
                 raise
 
             log_failure(
@@ -127,15 +126,15 @@ def _retry_s3_operation(
                 max_retries=_DEFAULT_MAX_RETRIES,
                 retry_delay_s=delay,
             )
-            emit_metric(
-                metrics_collector,
-                MetricEvent.S3_RETRY,
-                {
-                    "attempt": attempt + 1,
-                    "max_retries": _DEFAULT_MAX_RETRIES,
-                    "delay_s": delay,
-                },
-            )
+            if metrics_collector is not None:
+                metrics_collector.emit(
+                    MetricEvent.S3_RETRY,
+                    {
+                        "attempt": attempt + 1,
+                        "max_retries": _DEFAULT_MAX_RETRIES,
+                        "delay_s": delay,
+                    },
+                )
             time.sleep(delay)
             delay *= _DEFAULT_BACKOFF_MULTIPLIER
 

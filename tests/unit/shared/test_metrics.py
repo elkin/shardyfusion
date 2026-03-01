@@ -1,6 +1,6 @@
 """Tests for slatedb_spark_sharded.metrics module."""
 
-from slatedb_spark_sharded.metrics import MetricEvent, emit
+from slatedb_spark_sharded.metrics import MetricEvent
 from slatedb_spark_sharded.testing import ListMetricsCollector
 
 
@@ -24,28 +24,6 @@ class TestMetricEvent:
         assert MetricEvent.S3_RETRY == "s3.retry"
         assert MetricEvent.S3_RETRY_EXHAUSTED == "s3.retry_exhausted"
         assert MetricEvent.RATE_LIMITER_THROTTLED == "rate_limiter.throttled"
-
-
-class TestEmit:
-    def test_noop_when_collector_is_none(self):
-        """emit() with None collector must not raise."""
-        emit(None, MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
-
-    def test_delegates_to_collector(self):
-        mc = ListMetricsCollector()
-        emit(mc, MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
-        assert len(mc.events) == 1
-        event, payload = mc.events[0]
-        assert event is MetricEvent.WRITE_STARTED
-        assert payload == {"elapsed_ms": 0}
-
-    def test_payload_is_copied(self):
-        """Collector receives a copy — mutating original doesn't affect stored."""
-        mc = ListMetricsCollector()
-        original = {"elapsed_ms": 100}
-        emit(mc, MetricEvent.WRITE_COMPLETED, original)
-        original["elapsed_ms"] = 999
-        assert mc.events[0][1]["elapsed_ms"] == 100
 
 
 class TestListMetricsCollector:

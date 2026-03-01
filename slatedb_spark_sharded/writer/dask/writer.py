@@ -33,7 +33,6 @@ from slatedb_spark_sharded.logging import (
 )
 from slatedb_spark_sharded.manifest import BuildResult
 from slatedb_spark_sharded.metrics import MetricEvent, MetricsCollector
-from slatedb_spark_sharded.metrics import emit as emit_metric
 from slatedb_spark_sharded.serde import KeyEncoder, ValueSpec, make_key_encoder
 from slatedb_spark_sharded.sharding_types import (
     DB_ID_COL,
@@ -127,7 +126,8 @@ def write_sharded(
         key_encoding=config.key_encoding.value,
         writer_type="dask",
     )
-    emit_metric(mc, MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
+    if mc is not None:
+        mc.emit(MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
 
     # --- Phase 1: Sharding ---
     shard_started = time.perf_counter()
@@ -158,14 +158,14 @@ def write_sharded(
         run_id=run_id,
         duration_ms=shard_duration_ms,
     )
-    emit_metric(
-        mc,
-        MetricEvent.SHARDING_COMPLETED,
-        {
-            "elapsed_ms": int((time.perf_counter() - started) * 1000),
-            "duration_ms": shard_duration_ms,
-        },
-    )
+    if mc is not None:
+        mc.emit(
+            MetricEvent.SHARDING_COMPLETED,
+            {
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                "duration_ms": shard_duration_ms,
+            },
+        )
 
     # --- Phase 2: Write ---
     runtime = _build_partition_write_runtime(
@@ -200,15 +200,15 @@ def write_sharded(
         rows_written=rows_written,
         duration_ms=write_duration_ms,
     )
-    emit_metric(
-        mc,
-        MetricEvent.SHARD_WRITES_COMPLETED,
-        {
-            "elapsed_ms": int((time.perf_counter() - started) * 1000),
-            "duration_ms": write_duration_ms,
-            "rows_written": rows_written,
-        },
-    )
+    if mc is not None:
+        mc.emit(
+            MetricEvent.SHARD_WRITES_COMPLETED,
+            {
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                "duration_ms": write_duration_ms,
+                "rows_written": rows_written,
+            },
+        )
 
     # --- Phase 3: Publish ---
     winners = select_winners(attempts, num_dbs=config.num_dbs)
@@ -249,14 +249,14 @@ def write_sharded(
         total_ms=result.stats.durations.total_ms,
         rows_written=result.stats.rows_written,
     )
-    emit_metric(
-        mc,
-        MetricEvent.WRITE_COMPLETED,
-        {
-            "elapsed_ms": int((time.perf_counter() - started) * 1000),
-            "rows_written": result.stats.rows_written,
-        },
-    )
+    if mc is not None:
+        mc.emit(
+            MetricEvent.WRITE_COMPLETED,
+            {
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                "rows_written": result.stats.rows_written,
+            },
+        )
 
     return result
 
@@ -443,13 +443,13 @@ def _write_one_shard(
         attempt=attempt,
         db_url=db_url,
     )
-    emit_metric(
-        mc,
-        MetricEvent.SHARD_WRITE_STARTED,
-        {
-            "elapsed_ms": int((time.perf_counter() - runtime.started) * 1000),
-        },
-    )
+    if mc is not None:
+        mc.emit(
+            MetricEvent.SHARD_WRITE_STARTED,
+            {
+                "elapsed_ms": int((time.perf_counter() - runtime.started) * 1000),
+            },
+        )
 
     factory: DbAdapterFactory = runtime.adapter_factory or SlateDbFactory()
 
@@ -483,8 +483,24 @@ def _write_one_shard(
                     if bucket is not None:
                         bucket.acquire(len(batch))
                     adapter.write_batch(batch)
-                    emit_metric(
-                        mc,
+                    if mc is not None:
+                        mc.emit(
+                            MetricEvent.BATCH_WRITTEN,
+                            {
+                                "elapsed_ms": int(
+                                    (time.perf_counter() - runtime.started) * 1000
+                                ),
+                                "batch_size": len(batch),
+                            },
+                        )
+                    batch.clear()
+
+            if batch:
+                if bucket is not None:
+                    bucket.acquire(len(batch))
+                adapter.write_batch(batch)
+                if mc is not None:
+                    mc.emit(
                         MetricEvent.BATCH_WRITTEN,
                         {
                             "elapsed_ms": int(
@@ -493,22 +509,6 @@ def _write_one_shard(
                             "batch_size": len(batch),
                         },
                     )
-                    batch.clear()
-
-            if batch:
-                if bucket is not None:
-                    bucket.acquire(len(batch))
-                adapter.write_batch(batch)
-                emit_metric(
-                    mc,
-                    MetricEvent.BATCH_WRITTEN,
-                    {
-                        "elapsed_ms": int(
-                            (time.perf_counter() - runtime.started) * 1000
-                        ),
-                        "batch_size": len(batch),
-                    },
-                )
                 batch.clear()
 
             adapter.flush()
@@ -540,15 +540,15 @@ def _write_one_shard(
         row_count=row_count,
         duration_ms=duration_ms,
     )
-    emit_metric(
-        mc,
-        MetricEvent.SHARD_WRITE_COMPLETED,
-        {
-            "elapsed_ms": int((time.perf_counter() - runtime.started) * 1000),
-            "duration_ms": duration_ms,
-            "row_count": row_count,
-        },
-    )
+    if mc is not None:
+        mc.emit(
+            MetricEvent.SHARD_WRITE_COMPLETED,
+            {
+                "elapsed_ms": int((time.perf_counter() - runtime.started) * 1000),
+                "duration_ms": duration_ms,
+                "row_count": row_count,
+            },
+        )
 
     writer_info: JsonObject = {
         "stage_id": None,

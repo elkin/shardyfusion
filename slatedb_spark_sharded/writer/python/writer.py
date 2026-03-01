@@ -30,7 +30,6 @@ from slatedb_spark_sharded.logging import (
 )
 from slatedb_spark_sharded.manifest import BuildResult
 from slatedb_spark_sharded.metrics import MetricEvent
-from slatedb_spark_sharded.metrics import emit as emit_metric
 from slatedb_spark_sharded.serde import make_key_encoder
 from slatedb_spark_sharded.sharding_types import ShardingStrategy
 from slatedb_spark_sharded.slatedb_adapter import DbAdapterFactory, SlateDbFactory
@@ -69,7 +68,8 @@ def write_sharded(
         key_encoding=config.key_encoding.value,
         writer_type="python",
     )
-    emit_metric(mc, MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
+    if mc is not None:
+        mc.emit(MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
 
     factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory()
 
@@ -105,15 +105,15 @@ def write_sharded(
         rows_written=rows_written,
         duration_ms=write_duration_ms,
     )
-    emit_metric(
-        mc,
-        MetricEvent.SHARD_WRITES_COMPLETED,
-        {
-            "elapsed_ms": int((time.perf_counter() - started) * 1000),
-            "duration_ms": write_duration_ms,
-            "rows_written": rows_written,
-        },
-    )
+    if mc is not None:
+        mc.emit(
+            MetricEvent.SHARD_WRITES_COMPLETED,
+            {
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                "duration_ms": write_duration_ms,
+                "rows_written": rows_written,
+            },
+        )
 
     winners = select_winners(attempts, num_dbs=config.num_dbs)
 
@@ -153,14 +153,14 @@ def write_sharded(
         total_ms=result.stats.durations.total_ms,
         rows_written=result.stats.rows_written,
     )
-    emit_metric(
-        mc,
-        MetricEvent.WRITE_COMPLETED,
-        {
-            "elapsed_ms": int((time.perf_counter() - started) * 1000),
-            "rows_written": result.stats.rows_written,
-        },
-    )
+    if mc is not None:
+        mc.emit(
+            MetricEvent.WRITE_COMPLETED,
+            {
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                "rows_written": result.stats.rows_written,
+            },
+        )
 
     return result
 

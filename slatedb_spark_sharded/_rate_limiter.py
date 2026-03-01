@@ -6,7 +6,6 @@ import time
 
 from .logging import get_logger, log_event
 from .metrics import MetricEvent, MetricsCollector
-from .metrics import emit as emit_metric
 
 _logger = get_logger(__name__)
 
@@ -46,11 +45,11 @@ class TokenBucket:
                 wait_seconds=wait,
                 tokens_requested=tokens,
             )
-            emit_metric(
-                self._metrics,
-                MetricEvent.RATE_LIMITER_THROTTLED,
-                {
-                    "wait_seconds": wait,
-                },
-            )
+            if self._metrics is not None:
+                self._metrics.emit(
+                    MetricEvent.RATE_LIMITER_THROTTLED,
+                    {
+                        "wait_seconds": wait,
+                    },
+                )
             time.sleep(wait)
