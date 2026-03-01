@@ -1,6 +1,6 @@
 ---
 name: validate
-description: Use when the user says "/validate", "validate changes", "check everything", or wants to verify that recent changes are consistent before committing. Also use when the user says they are "done" with changes and wants a final check.
+description: Run all validation checks (docs sync, CI/E2E tests, tox sync, infra sync, CI improvements) against recent changes before committing.
 ---
 
 # Post-Change Validation
