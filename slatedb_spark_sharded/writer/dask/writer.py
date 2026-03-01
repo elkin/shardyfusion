@@ -25,7 +25,12 @@ from slatedb_spark_sharded.errors import (
     ShardAssignmentError,
     SlatedbSparkShardedError,
 )
-from slatedb_spark_sharded.logging import FailureSeverity, log_failure
+from slatedb_spark_sharded.logging import (
+    FailureSeverity,
+    get_logger,
+    log_event,
+    log_failure,
+)
 from slatedb_spark_sharded.manifest import BuildResult
 from slatedb_spark_sharded.serde import KeyEncoder, ValueSpec, make_key_encoder
 from slatedb_spark_sharded.sharding_types import (
@@ -42,6 +47,8 @@ from slatedb_spark_sharded.storage import join_s3
 from slatedb_spark_sharded.type_defs import JsonObject, KeyLike
 
 from .sharding import add_db_id_column, compute_range_boundaries
+
+_logger = get_logger(__name__)
 
 
 @dataclass(slots=True)
@@ -104,6 +111,17 @@ def write_sharded(
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
 
+    log_event(
+        "write_started",
+        logger=_logger,
+        run_id=run_id,
+        num_dbs=config.num_dbs,
+        s3_prefix=config.s3_prefix,
+        strategy=config.sharding.strategy.value,
+        key_encoding=config.key_encoding.value,
+        writer_type="dask",
+    )
+
     # --- Phase 1: Sharding ---
     shard_started = time.perf_counter()
     resolved_sharding = _validate_and_resolve_sharding(config, ddf, key_col)
@@ -126,6 +144,13 @@ def write_sharded(
         )
 
     shard_duration_ms = int((time.perf_counter() - shard_started) * 1000)
+
+    log_event(
+        "sharding_completed",
+        logger=_logger,
+        run_id=run_id,
+        duration_ms=shard_duration_ms,
+    )
 
     # --- Phase 2: Write ---
     runtime = _build_partition_write_runtime(
@@ -150,6 +175,16 @@ def write_sharded(
     attempts = _fill_empty_shards(attempts, config, run_id)
     write_duration_ms = int((time.perf_counter() - write_started) * 1000)
 
+    rows_written = sum(a.row_count for a in attempts)
+    log_event(
+        "shard_writes_completed",
+        logger=_logger,
+        run_id=run_id,
+        num_winners=len(attempts),
+        rows_written=rows_written,
+        duration_ms=write_duration_ms,
+    )
+
     # --- Phase 3: Publish ---
     winners = select_winners(attempts, num_dbs=config.num_dbs)
 
@@ -168,7 +203,7 @@ def write_sharded(
     )
     manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
 
-    return assemble_build_result(
+    result = assemble_build_result(
         run_id=run_id,
         winners=winners,
         artifact=artifact,
@@ -180,6 +215,16 @@ def write_sharded(
         manifest_duration_ms=manifest_duration_ms,
         started=started,
     )
+
+    log_event(
+        "write_completed",
+        logger=_logger,
+        run_id=run_id,
+        total_ms=result.stats.durations.total_ms,
+        rows_written=result.stats.rows_written,
+    )
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +397,14 @@ def _write_one_shard(
     )
     os.makedirs(local_dir, exist_ok=True)
 
+    log_event(
+        "shard_write_started",
+        logger=_logger,
+        db_id=db_id,
+        attempt=attempt,
+        db_url=db_url,
+    )
+
     factory: DbAdapterFactory = runtime.adapter_factory or SlateDbFactory()
 
     bucket: TokenBucket | None = None
@@ -400,6 +453,7 @@ def _write_one_shard(
         log_failure(
             "dask_shard_write_failed",
             severity=FailureSeverity.ERROR,
+            logger=_logger,
             error=exc,
             db_id=db_id,
             attempt=attempt,
@@ -411,11 +465,21 @@ def _write_one_shard(
             f"Shard write failed for db_id={db_id}, attempt={attempt}: {exc}"
         ) from exc
 
+    duration_ms = int((time.perf_counter() - partition_started) * 1000)
+    log_event(
+        "shard_write_completed",
+        logger=_logger,
+        db_id=db_id,
+        attempt=attempt,
+        row_count=row_count,
+        duration_ms=duration_ms,
+    )
+
     writer_info: JsonObject = {
         "stage_id": None,
         "task_attempt_id": None,
         "attempt": attempt,
-        "duration_ms": int((time.perf_counter() - partition_started) * 1000),
+        "duration_ms": duration_ms,
     }
 
     return ShardAttemptResult(

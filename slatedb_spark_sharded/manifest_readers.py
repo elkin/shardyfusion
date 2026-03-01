@@ -6,7 +6,7 @@ from typing import Callable, Protocol
 from pydantic import ValidationError
 
 from .errors import ManifestParseError
-from .logging import FailureSeverity, log_failure
+from .logging import FailureSeverity, get_logger, log_failure
 from .manifest import (
     CurrentPointer,
     ParsedManifest,
@@ -15,6 +15,8 @@ from .manifest import (
 )
 from .storage import create_s3_client, get_bytes, try_get_bytes
 from .type_defs import S3ClientConfig
+
+_logger = get_logger(__name__)
 
 ManifestRef = str
 
@@ -105,6 +107,7 @@ class DefaultS3ManifestReader:
             log_failure(
                 "manifest_s3_load_failed",
                 severity=FailureSeverity.ERROR,
+                logger=_logger,
                 error=exc,
                 manifest_ref=ref,
             )
@@ -121,6 +124,7 @@ def parse_json_manifest(payload: bytes) -> ParsedManifest:
         log_failure(
             "manifest_payload_decode_failed",
             severity=FailureSeverity.ERROR,
+            logger=_logger,
             error=exc,
             payload_size=len(payload),
         )

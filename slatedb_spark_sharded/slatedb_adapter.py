@@ -1,13 +1,16 @@
 """Thin adapter around official SlateDB Python bindings."""
 
 import json
+import logging
 import types
 from dataclasses import dataclass
 from typing import Iterable, Protocol, Self
 
 from .errors import SlateDbApiError
-from .logging import FailureSeverity, log_failure
+from .logging import FailureSeverity, get_logger, log_event, log_failure
 from .type_defs import JsonObject
+
+_logger = get_logger(__name__)
 
 
 class DbAdapter(Protocol):
@@ -94,6 +97,8 @@ class DefaultSlateDbAdapter:
                 settings, sort_keys=True, separators=(",", ":")
             )
 
+        self._db_url = db_url
+
         try:
             self._db = SlateDB(
                 local_dir,
@@ -106,6 +111,13 @@ class DefaultSlateDbAdapter:
                 "Unable to construct SlateDB using the official Python binding "
                 "signature `SlateDB(path, url=..., env_file=..., settings=...)`."
             ) from exc
+
+        log_event(
+            "shard_adapter_opened",
+            level=logging.DEBUG,
+            logger=_logger,
+            db_url=db_url,
+        )
 
     @property
     def db(self) -> object:
@@ -139,10 +151,24 @@ class DefaultSlateDbAdapter:
 
     def flush(self) -> None:
         self._db.flush_with_options("wal")
+        log_event(
+            "shard_adapter_flushed",
+            level=logging.DEBUG,
+            logger=_logger,
+            db_url=getattr(self, "_db_url", "<unknown>"),
+        )
 
     def checkpoint(self) -> str | None:
         checkpoint = self._db.create_checkpoint(scope="durable")
-        return checkpoint["id"]
+        checkpoint_id = checkpoint["id"]
+        log_event(
+            "shard_adapter_checkpointed",
+            level=logging.DEBUG,
+            logger=_logger,
+            db_url=getattr(self, "_db_url", "<unknown>"),
+            checkpoint_id=checkpoint_id,
+        )
+        return checkpoint_id
 
     def close(self) -> None:
         try:
@@ -151,9 +177,16 @@ class DefaultSlateDbAdapter:
             log_failure(
                 "slatedb_adapter_close_failed",
                 severity=FailureSeverity.ERROR,
+                logger=_logger,
                 error=exc,
             )
             raise
+        log_event(
+            "shard_adapter_closed",
+            level=logging.DEBUG,
+            logger=_logger,
+            db_url=getattr(self, "_db_url", "<unknown>"),
+        )
 
 
 def default_adapter_factory(

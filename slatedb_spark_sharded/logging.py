@@ -1,6 +1,5 @@
 """Structured logging helpers."""
 
-import json
 import logging
 import traceback
 from enum import Enum
@@ -36,13 +35,36 @@ _SEVERITY_TO_LEVEL = {
 }
 
 
-def log_event(event: str, *, level: int = logging.INFO, **fields: Any) -> None:
-    """Emit a single structured log line."""
+def get_logger(name: str) -> logging.Logger:
+    """Return a logger in the ``slatedb_spark_sharded`` hierarchy.
 
-    if not LOGGER.isEnabledFor(level):
+    Strips the package prefix when *name* already starts with it so that
+    callers can pass ``__name__`` directly::
+
+        _logger = get_logger(__name__)
+    """
+    prefix = "slatedb_spark_sharded."
+    suffix = name[len(prefix) :] if name.startswith(prefix) else name
+    return logging.getLogger(f"slatedb_spark_sharded.{suffix}")
+
+
+def log_event(
+    event: str,
+    *,
+    level: int = logging.INFO,
+    logger: logging.Logger | None = None,
+    **fields: Any,
+) -> None:
+    """Emit a single structured log line.
+
+    Structured fields are attached via ``extra={"slatedb": fields}`` so
+    that handlers/formatters can access them without parsing the message
+    string.  The default stdlib formatter simply shows the *event* name.
+    """
+    _log = logger or LOGGER
+    if not _log.isEnabledFor(level):
         return
-    payload = json.dumps(fields, sort_keys=True, default=str)
-    LOGGER.log(level, "%s %s", event, payload)
+    _log.log(level, event, extra={"slatedb": fields})
 
 
 def log_failure(
@@ -51,6 +73,7 @@ def log_failure(
     severity: FailureSeverity,
     error: BaseException | None = None,
     include_traceback: bool = False,
+    logger: logging.Logger | None = None,
     **fields: Any,
 ) -> None:
     """Emit a structured log line for a failure, using severity-based level.
@@ -65,12 +88,14 @@ def log_failure(
         Optional exception whose ``repr`` is added as the ``error`` field.
     include_traceback:
         When *True*, the formatted traceback is included as ``traceback``.
+    logger:
+        Explicit logger instance; falls back to the package root logger.
     **fields:
-        Arbitrary key/value context appended to the JSON payload.
+        Arbitrary key/value context attached to the ``extra["slatedb"]`` dict.
     """
-
+    _log = logger or LOGGER
     level = _SEVERITY_TO_LEVEL[severity]
-    if not LOGGER.isEnabledFor(level):
+    if not _log.isEnabledFor(level):
         return
 
     merged: dict[str, Any] = {"severity": severity.value, **fields}
@@ -78,5 +103,4 @@ def log_failure(
         merged["error"] = repr(error)
         if include_traceback:
             merged["traceback"] = traceback.format_exception(error)
-    payload = json.dumps(merged, sort_keys=True, default=str)
-    LOGGER.log(level, "%s %s", event, payload)
+    _log.log(level, event, extra={"slatedb": merged})

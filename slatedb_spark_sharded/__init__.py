@@ -9,7 +9,7 @@ from .errors import (
     ManifestParseError,
     ReaderStateError,
 )
-from .logging import FailureSeverity
+from .logging import FailureSeverity, get_logger
 from .manifest import (
     BuildDurations,
     BuildResult,
@@ -42,6 +42,7 @@ from .type_defs import ShardReaderFactory
 
 __all__ = [
     "FailureSeverity",
+    "get_logger",
     "ManifestParseError",
     "ReaderStateError",
     "BuildResult",

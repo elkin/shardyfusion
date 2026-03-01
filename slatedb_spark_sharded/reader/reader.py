@@ -1,5 +1,6 @@
 """Service-side sharded SlateDB reader helpers."""
 
+import logging
 import os
 import threading
 from collections.abc import Iterator
@@ -14,7 +15,12 @@ from slatedb_spark_sharded.errors import (
     SlateDbApiError,
     SlatedbSparkShardedError,
 )
-from slatedb_spark_sharded.logging import FailureSeverity, log_failure
+from slatedb_spark_sharded.logging import (
+    FailureSeverity,
+    get_logger,
+    log_event,
+    log_failure,
+)
 from slatedb_spark_sharded.manifest import ParsedManifest
 from slatedb_spark_sharded.manifest_readers import (
     DefaultS3ManifestReader,
@@ -23,6 +29,8 @@ from slatedb_spark_sharded.manifest_readers import (
 from slatedb_spark_sharded.routing import SnapshotRouter
 from slatedb_spark_sharded.sharding_types import KeyEncoding
 from slatedb_spark_sharded.type_defs import KeyInput, ShardReader, ShardReaderFactory
+
+_logger = get_logger(__name__)
 
 
 @dataclass(slots=True)
@@ -91,6 +99,7 @@ class _ReaderPool:
                 log_failure(
                     "reader_pool_member_close_failed",
                     severity=FailureSeverity.ERROR,
+                    logger=_logger,
                     error=exc,
                 )
 
@@ -135,6 +144,14 @@ class SlateShardedReader:
         self._state_lock = threading.Lock()
         self._closed = False
         self._state = self._load_initial_state()
+
+        log_event(
+            "reader_initialized",
+            logger=_logger,
+            s3_prefix=self.s3_prefix,
+            num_shards=len(self._state.handles),
+            manifest_ref=self._state.manifest_ref,
+        )
 
     @property
     def key_encoding(self) -> KeyEncoding:
@@ -206,6 +223,7 @@ class SlateShardedReader:
             log_failure(
                 "reader_refresh_current_not_found",
                 severity=FailureSeverity.ERROR,
+                logger=_logger,
                 s3_prefix=self.s3_prefix,
             )
             raise ReaderStateError("CURRENT pointer not found during refresh")
@@ -215,6 +233,11 @@ class SlateShardedReader:
             if self._closed:
                 raise ReaderStateError("Reader is closed")
             if current_ref == self._state.manifest_ref:
+                log_event(
+                    "reader_refresh_unchanged",
+                    logger=_logger,
+                    manifest_ref=current_ref,
+                )
                 return False
 
         manifest = self._manifest_reader.load_manifest(
@@ -237,6 +260,13 @@ class SlateShardedReader:
         if should_close_old:
             _close_state(old_state)
 
+        log_event(
+            "reader_refreshed",
+            logger=_logger,
+            old_manifest_ref=old_state.manifest_ref,
+            new_manifest_ref=current_ref,
+        )
+
         return True
 
     def close(self) -> None:
@@ -254,6 +284,13 @@ class SlateShardedReader:
         if state_to_close is not None:
             _close_state(state_to_close)
 
+        log_event(
+            "reader_closed",
+            logger=_logger,
+            s3_prefix=self.s3_prefix,
+            num_handles_closed=len(self._state.handles),
+        )
+
     def __enter__(self) -> "SlateShardedReader":
         return self
 
@@ -266,6 +303,7 @@ class SlateShardedReader:
             log_failure(
                 "reader_current_not_found",
                 severity=FailureSeverity.ERROR,
+                logger=_logger,
                 s3_prefix=self.s3_prefix,
             )
             raise ReaderStateError("CURRENT pointer not found")
@@ -332,12 +370,24 @@ class SlateShardedReader:
                 raise ReaderStateError("Reader is closed")
             state = self._state
             state.refcount += 1
+            log_event(
+                "reader_state_acquired",
+                level=logging.DEBUG,
+                logger=_logger,
+                refcount=state.refcount,
+            )
             return state
 
     def _release_state(self, state: _ReaderState) -> None:
         should_close = False
         with self._state_lock:
             state.refcount -= 1
+            log_event(
+                "reader_state_released",
+                level=logging.DEBUG,
+                logger=_logger,
+                refcount=state.refcount,
+            )
             should_close = state.retired and state.refcount == 0
 
         if should_close:
@@ -393,6 +443,7 @@ def _close_state(state: _ReaderState) -> None:
             log_failure(
                 "reader_handle_close_failed",
                 severity=FailureSeverity.ERROR,
+                logger=_logger,
                 error=exc,
                 db_id=db_id,
                 manifest_ref=state.manifest_ref,
@@ -401,6 +452,7 @@ def _close_state(state: _ReaderState) -> None:
         log_failure(
             "reader_state_close_partial_failure",
             severity=FailureSeverity.ERROR,
+            logger=_logger,
             error=errors[0][1],
             failed_db_ids=[db_id for db_id, _ in errors],
             total_handles=len(state.handles),

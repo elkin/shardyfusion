@@ -1,6 +1,7 @@
 """Framework-agnostic core functions shared by all writer implementations."""
 
 import json
+import logging
 import time
 from bisect import bisect_right
 from collections import defaultdict
@@ -15,7 +16,7 @@ from .errors import (
     PublishManifestError,
     ShardCoverageError,
 )
-from .logging import FailureSeverity, log_failure
+from .logging import FailureSeverity, get_logger, log_event, log_failure
 from .manifest import (
     BuildDurations,
     BuildResult,
@@ -32,6 +33,8 @@ from .publish import DefaultS3Publisher
 from .routing import xxhash64_db_id  # SHARDING INVARIANT: direct import, not reimpl.
 from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
 from .type_defs import JsonObject, KeyLike
+
+_logger = get_logger(__name__)
 
 
 @dataclass(slots=True)
@@ -98,6 +101,7 @@ def select_winners(
         log_failure(
             "shard_coverage_mismatch",
             severity=FailureSeverity.CRITICAL,
+            logger=_logger,
             missing_shards=missing,
             extra_shards=extra,
             expected_count=num_dbs,
@@ -110,6 +114,14 @@ def select_winners(
     winners: list[RequiredShardMeta] = []
     for db_id in range(num_dbs):
         winner = sorted(grouped[db_id], key=_winner_sort_key)[0]
+        log_event(
+            "winner_selected",
+            level=logging.DEBUG,
+            logger=_logger,
+            db_id=winner.db_id,
+            attempt=winner.attempt,
+            db_url=winner.db_url,
+        )
         winners.append(
             RequiredShardMeta(
                 db_id=winner.db_id,
@@ -173,6 +185,7 @@ def build_manifest_artifact(
         log_failure(
             "manifest_build_failed",
             severity=FailureSeverity.ERROR,
+            logger=_logger,
             error=exc,
             run_id=run_id,
             builder_type=type(builder).__name__,
@@ -206,12 +219,20 @@ def publish_manifest_and_current(
         log_failure(
             "manifest_publish_failed",
             severity=FailureSeverity.ERROR,
+            logger=_logger,
             error=exc,
             run_id=run_id,
             s3_prefix=config.s3_prefix,
             include_traceback=True,
         )
         raise PublishManifestError("Failed to publish manifest") from exc
+
+    log_event(
+        "manifest_published",
+        logger=_logger,
+        run_id=run_id,
+        manifest_ref=manifest_ref,
+    )
 
     current_artifact = _build_current_artifact(
         manifest_ref=manifest_ref,
@@ -228,6 +249,7 @@ def publish_manifest_and_current(
         log_failure(
             "current_publish_failed",
             severity=FailureSeverity.CRITICAL,
+            logger=_logger,
             error=exc,
             run_id=run_id,
             manifest_ref=manifest_ref,
@@ -236,6 +258,14 @@ def publish_manifest_and_current(
         raise PublishCurrentError(
             f"Manifest already published at {manifest_ref}; failed publishing CURRENT"
         ) from exc
+
+    log_event(
+        "current_published",
+        logger=_logger,
+        run_id=run_id,
+        current_ref=current_ref,
+        manifest_ref=manifest_ref,
+    )
 
     return _PublishResult(manifest_ref=manifest_ref, current_ref=current_ref)
 

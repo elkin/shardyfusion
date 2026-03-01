@@ -7,8 +7,10 @@ from typing import Any, Mapping, TypedDict
 from urllib.parse import urlparse
 
 from .errors import PublishManifestError
-from .logging import FailureSeverity, log_failure
+from .logging import FailureSeverity, get_logger, log_event, log_failure
 from .type_defs import S3ClientConfig
+
+_logger = get_logger(__name__)
 
 # Retry defaults for transient S3 errors.
 _DEFAULT_MAX_RETRIES = 3
@@ -74,7 +76,16 @@ def _retry_s3_operation(operation: Callable[[], Any], *, operation_name: str, ur
 
     for attempt in range(_DEFAULT_MAX_RETRIES + 1):
         try:
-            return operation()
+            result = operation()
+            if attempt > 0:
+                log_event(
+                    "s3_retry_succeeded",
+                    logger=_logger,
+                    operation=operation_name,
+                    url=url,
+                    attempts=attempt + 1,
+                )
+            return result
         except Exception as exc:
             last_exc = exc
             if not _is_transient_s3_error(exc) or attempt == _DEFAULT_MAX_RETRIES:
@@ -82,6 +93,7 @@ def _retry_s3_operation(operation: Callable[[], Any], *, operation_name: str, ur
                     log_failure(
                         "s3_operation_failed_after_retries",
                         severity=FailureSeverity.ERROR,
+                        logger=_logger,
                         error=exc,
                         operation=operation_name,
                         url=url,
@@ -92,6 +104,7 @@ def _retry_s3_operation(operation: Callable[[], Any], *, operation_name: str, ur
             log_failure(
                 "s3_transient_failure",
                 severity=FailureSeverity.TRANSIENT,
+                logger=_logger,
                 error=exc,
                 operation=operation_name,
                 url=url,

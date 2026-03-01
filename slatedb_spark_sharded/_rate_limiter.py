@@ -1,7 +1,12 @@
 """Token-bucket rate limiter shared by all writers."""
 
+import logging
 import threading
 import time
+
+from .logging import get_logger, log_event
+
+_logger = get_logger(__name__)
 
 
 class TokenBucket:
@@ -27,4 +32,11 @@ class TokenBucket:
                     self._tokens -= tokens
                     return
                 wait = (tokens - self._tokens) / self._rate
+            log_event(
+                "rate_limiter_throttled",
+                level=logging.DEBUG,
+                logger=_logger,
+                wait_seconds=wait,
+                tokens_requested=tokens,
+            )
             time.sleep(wait)

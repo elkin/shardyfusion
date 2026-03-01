@@ -21,7 +21,12 @@ from slatedb_spark_sharded._writer_core import (
 )
 from slatedb_spark_sharded.config import WriteConfig
 from slatedb_spark_sharded.errors import ShardAssignmentError, SlatedbSparkShardedError
-from slatedb_spark_sharded.logging import FailureSeverity, log_failure
+from slatedb_spark_sharded.logging import (
+    FailureSeverity,
+    get_logger,
+    log_event,
+    log_failure,
+)
 from slatedb_spark_sharded.manifest import BuildResult
 from slatedb_spark_sharded.serde import KeyEncoder, ValueSpec, make_key_encoder
 from slatedb_spark_sharded.sharding_types import DB_ID_COL, KeyEncoding
@@ -37,6 +42,8 @@ from slatedb_spark_sharded.writer.spark.util import (
 )
 
 from .sharding import ShardingSpec, add_db_id_column, prepare_partitioned_rdd
+
+_logger = get_logger(__name__)
 
 
 @dataclass(slots=True)
@@ -110,6 +117,17 @@ def _write_sharded_impl(
     verify_routing: bool,
 ) -> BuildResult:
     """Implementation assuming Spark conf already prepared."""
+    log_event(
+        "write_started",
+        logger=_logger,
+        run_id=run_id,
+        num_dbs=config.num_dbs,
+        s3_prefix=config.s3_prefix,
+        strategy=config.sharding.strategy.value,
+        key_encoding=config.key_encoding.value,
+        writer_type="spark",
+    )
+
     prepared_rows = _prepare_partitioned_rows(
         df=df,
         config=config,
@@ -117,6 +135,13 @@ def _write_sharded_impl(
         sort_within_partitions=sort_within_partitions,
         verify_routing=verify_routing,
     )
+    log_event(
+        "sharding_completed",
+        logger=_logger,
+        run_id=run_id,
+        duration_ms=prepared_rows.shard_duration_ms,
+    )
+
     runtime = _build_partition_write_runtime(
         config=config,
         run_id=run_id,
@@ -128,6 +153,16 @@ def _write_sharded_impl(
         partitioned_rdd=prepared_rows.partitioned_rdd,
         runtime=runtime,
         num_dbs=config.num_dbs,
+    )
+
+    rows_written = sum(w.row_count for w in write_outcome.winners)
+    log_event(
+        "shard_writes_completed",
+        logger=_logger,
+        run_id=run_id,
+        num_winners=len(write_outcome.winners),
+        rows_written=rows_written,
+        duration_ms=write_outcome.write_duration_ms,
     )
 
     manifest_started = time.perf_counter()
@@ -145,7 +180,7 @@ def _write_sharded_impl(
     )
     manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
 
-    return assemble_build_result(
+    result = assemble_build_result(
         run_id=run_id,
         winners=write_outcome.winners,
         artifact=artifact,
@@ -157,6 +192,16 @@ def _write_sharded_impl(
         manifest_duration_ms=manifest_duration_ms,
         started=started,
     )
+
+    log_event(
+        "write_completed",
+        logger=_logger,
+        run_id=run_id,
+        total_ms=result.stats.durations.total_ms,
+        rows_written=result.stats.rows_written,
+    )
+
+    return result
 
 
 def verify_routing_agreement(
@@ -330,6 +375,14 @@ def write_one_shard_partition(
     if runtime.max_writes_per_second is not None:
         bucket = TokenBucket(runtime.max_writes_per_second)
 
+    log_event(
+        "shard_write_started",
+        logger=_logger,
+        db_id=db_id,
+        attempt=attempt,
+        db_url=db_url,
+    )
+
     partition_started = time.perf_counter()
     row_count = 0
     min_key: KeyLike | None = None
@@ -369,6 +422,7 @@ def write_one_shard_partition(
         log_failure(
             "shard_write_failed",
             severity=FailureSeverity.ERROR,
+            logger=_logger,
             error=exc,
             db_id=db_id,
             attempt=attempt,
@@ -380,11 +434,21 @@ def write_one_shard_partition(
             f"Shard write failed for db_id={db_id}, attempt={attempt}: {exc}"
         ) from exc
 
+    duration_ms = int((time.perf_counter() - partition_started) * 1000)
+    log_event(
+        "shard_write_completed",
+        logger=_logger,
+        db_id=db_id,
+        attempt=attempt,
+        row_count=row_count,
+        duration_ms=duration_ms,
+    )
+
     writer_info: JsonObject = {
         "stage_id": stage_id,
         "task_attempt_id": task_attempt_id,
         "attempt": attempt,
-        "duration_ms": int((time.perf_counter() - partition_started) * 1000),
+        "duration_ms": duration_ms,
     }
 
     yield ShardAttemptResult(

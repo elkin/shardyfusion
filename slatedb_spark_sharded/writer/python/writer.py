@@ -22,13 +22,20 @@ from slatedb_spark_sharded.errors import (
     ConfigValidationError,
     SlatedbSparkShardedError,
 )
-from slatedb_spark_sharded.logging import FailureSeverity, log_failure
+from slatedb_spark_sharded.logging import (
+    FailureSeverity,
+    get_logger,
+    log_event,
+    log_failure,
+)
 from slatedb_spark_sharded.manifest import BuildResult
 from slatedb_spark_sharded.serde import make_key_encoder
 from slatedb_spark_sharded.sharding_types import ShardingStrategy
 from slatedb_spark_sharded.slatedb_adapter import DbAdapterFactory, SlateDbFactory
 from slatedb_spark_sharded.storage import join_s3
 from slatedb_spark_sharded.type_defs import JsonObject, KeyLike
+
+_logger = get_logger(__name__)
 
 T = TypeVar("T")
 
@@ -48,6 +55,17 @@ def write_sharded(
     _validate_sharding(config)
     run_id = config.output.run_id or uuid4().hex
     started = time.perf_counter()
+
+    log_event(
+        "write_started",
+        logger=_logger,
+        run_id=run_id,
+        num_dbs=config.num_dbs,
+        s3_prefix=config.s3_prefix,
+        strategy=config.sharding.strategy.value,
+        key_encoding=config.key_encoding.value,
+        writer_type="python",
+    )
 
     factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory()
 
@@ -74,6 +92,16 @@ def write_sharded(
         )
 
     write_duration_ms = int((time.perf_counter() - started) * 1000)
+
+    rows_written = sum(a.row_count for a in attempts)
+    log_event(
+        "shard_writes_completed",
+        logger=_logger,
+        run_id=run_id,
+        rows_written=rows_written,
+        duration_ms=write_duration_ms,
+    )
+
     winners = select_winners(attempts, num_dbs=config.num_dbs)
 
     manifest_started = time.perf_counter()
@@ -91,7 +119,7 @@ def write_sharded(
     )
     manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
 
-    return assemble_build_result(
+    result = assemble_build_result(
         run_id=run_id,
         winners=winners,
         artifact=artifact,
@@ -103,6 +131,16 @@ def write_sharded(
         manifest_duration_ms=manifest_duration_ms,
         started=started,
     )
+
+    log_event(
+        "write_completed",
+        logger=_logger,
+        run_id=run_id,
+        total_ms=result.stats.durations.total_ms,
+        rows_written=result.stats.rows_written,
+    )
+
+    return result
 
 
 def _validate_sharding(config: WriteConfig) -> None:
@@ -300,6 +338,7 @@ def _shard_worker(
         log_failure(
             "python_shard_worker_failed",
             severity=FailureSeverity.ERROR,
+            logger=_logger,
             error=exc,
             db_id=db_id,
         )
