@@ -1,8 +1,9 @@
 """Key/value serialization utilities."""
 
 import json
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Callable, Mapping, Protocol, Self, cast
+from typing import Protocol, Self, cast
 
 from .errors import ConfigValidationError
 from .sharding_types import KeyEncoding

@@ -45,7 +45,7 @@ def test_python_writer_publishes_manifest_and_current_to_local_s3(
         records,
         config,
         key_fn=lambda r: r,
-        value_fn=lambda r: f"v{r}".encode("utf-8"),
+        value_fn=lambda r: f"v{r}".encode(),
     )
 
     assert len(result.winners) == 4

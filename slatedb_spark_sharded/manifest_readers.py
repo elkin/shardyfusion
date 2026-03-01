@@ -1,7 +1,8 @@
 """Manifest loading interfaces and default S3-backed implementation."""
 
 import json
-from typing import Callable, Protocol
+from collections.abc import Callable
+from typing import Protocol
 
 from pydantic import ValidationError
 

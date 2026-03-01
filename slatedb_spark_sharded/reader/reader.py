@@ -3,13 +3,12 @@
 import logging
 import os
 import threading
-import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from queue import Queue
-from typing import Any, Sequence
+from typing import Any
 
 from slatedb_spark_sharded.errors import (
     ReaderStateError,

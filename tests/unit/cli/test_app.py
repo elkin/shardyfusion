@@ -54,7 +54,7 @@ class _FakeReader:
     def close(self) -> None:
         pass
 
-    def __enter__(self) -> "_FakeReader":
+    def __enter__(self) -> _FakeReader:
         return self
 
     def __exit__(self, *args: object) -> None:

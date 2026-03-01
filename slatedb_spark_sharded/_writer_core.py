@@ -6,7 +6,7 @@ import time
 from bisect import bisect_right
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .config import WriteConfig
 from .errors import (
@@ -345,7 +345,7 @@ def _build_current_artifact(
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def manifest_safe_sharding(sharding: ShardingSpec) -> ManifestShardingSpec:

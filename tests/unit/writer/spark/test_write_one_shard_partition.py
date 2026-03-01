@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -31,7 +31,7 @@ class _FakeAdapter:
         self._checkpoint_id = checkpoint_id
         self.flushed = False
 
-    def __enter__(self) -> "_FakeAdapter":
+    def __enter__(self) -> _FakeAdapter:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:

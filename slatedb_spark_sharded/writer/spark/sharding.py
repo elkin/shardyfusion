@@ -1,7 +1,8 @@
 """Sharding specs and Spark sharding helpers."""
 
 import math
-from typing import Sequence, cast
+from collections.abc import Sequence
+from typing import cast
 
 from pyspark import RDD
 from pyspark.ml.feature import Bucketizer

@@ -15,9 +15,9 @@ RUN apt-get update \
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
 
-# Install Python 3.10, 3.12, 3.13, 3.14 so tox environments run (and are not skipped).
-RUN uv python install 3.10 3.12 3.13 3.14 \
-    && ln -sf "$(uv python find 3.10)" /usr/local/bin/python3.10 \
+# Install Python 3.12, 3.13, 3.14 so tox environments run (and are not skipped).
+# 3.11 is provided by the base image; 3.10 is below requires-python.
+RUN uv python install 3.12 3.13 3.14 \
     && ln -sf "$(uv python find 3.12)" /usr/local/bin/python3.12 \
     && ln -sf "$(uv python find 3.13)" /usr/local/bin/python3.13 \
     && ln -sf "$(uv python find 3.14)" /usr/local/bin/python3.14

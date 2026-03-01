@@ -3,8 +3,8 @@
 import multiprocessing
 import os
 import time
-from collections.abc import Iterable
-from typing import Callable, TypeVar
+from collections.abc import Callable, Iterable
+from typing import TypeVar
 from uuid import uuid4
 
 from slatedb_spark_sharded._rate_limiter import TokenBucket

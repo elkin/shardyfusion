@@ -189,7 +189,7 @@ def run_writer_publishes_manifest_scenario(
     )
     from slatedb_spark_sharded.writer.spark import write_sharded
 
-    rows = [(i, f"v{i}".encode("utf-8")) for i in range(24)]
+    rows = [(i, f"v{i}".encode()) for i in range(24)]
     df = spark.createDataFrame(rows, ["id", "payload"])
 
     bucket = s3_service["bucket"]
@@ -260,7 +260,7 @@ def run_writer_publishes_manifest_scenario(
         try:
             probe_key = winner.db_id * 6
             got = reader.get(probe_key.to_bytes(8, "big", signed=False))
-            assert got == f"v{probe_key}".encode("utf-8")
+            assert got == f"v{probe_key}".encode()
         finally:
             reader.close()
 
@@ -319,7 +319,7 @@ def run_writer_reader_refresh_scenario(
         )
 
     df_v1 = spark.createDataFrame(
-        [(i, f"old-{i}".encode("utf-8")) for i in range(32)],
+        [(i, f"old-{i}".encode()) for i in range(32)],
         ["id", "payload"],
     )
     result_v1 = write_sharded(
@@ -354,7 +354,7 @@ def run_writer_reader_refresh_scenario(
         assert reader.get(7) == b"old-7"
 
         df_v2 = spark.createDataFrame(
-            [(i, f"new-{i}".encode("utf-8")) for i in range(32)],
+            [(i, f"new-{i}".encode()) for i in range(32)],
             ["id", "payload"],
         )
         result_v2 = write_sharded(
@@ -432,7 +432,7 @@ def run_python_writer_publishes_manifest_scenario(
         records,
         config,
         key_fn=lambda r: r,
-        value_fn=lambda r: f"v{r}".encode("utf-8"),
+        value_fn=lambda r: f"v{r}".encode(),
         parallel=parallel,
     )
 
@@ -469,7 +469,7 @@ def run_python_writer_publishes_manifest_scenario(
         try:
             probe_key = winner.db_id * 6
             got = reader.get(probe_key.to_bytes(8, "big", signed=False))
-            assert got == f"v{probe_key}".encode("utf-8")
+            assert got == f"v{probe_key}".encode()
             total_rows += winner.row_count
         finally:
             reader.close()
@@ -574,7 +574,7 @@ def run_dask_writer_publishes_manifest_scenario(
         try:
             probe_key = winner.db_id * 6
             got = reader.get(probe_key.to_bytes(8, "big", signed=False))
-            assert got == f"v{probe_key}".encode("utf-8")
+            assert got == f"v{probe_key}".encode()
             total_rows += winner.row_count
         finally:
             reader.close()
@@ -635,7 +635,7 @@ def run_python_writer_reader_refresh_scenario(
         list(range(32)),
         build_config("python-refresh-run-1"),
         key_fn=lambda r: r,
-        value_fn=lambda r: f"old-{r}".encode("utf-8"),
+        value_fn=lambda r: f"old-{r}".encode(),
     )
 
     def open_real_reader(
@@ -665,7 +665,7 @@ def run_python_writer_reader_refresh_scenario(
             list(range(32)),
             build_config("python-refresh-run-2"),
             key_fn=lambda r: r,
-            value_fn=lambda r: f"new-{r}".encode("utf-8"),
+            value_fn=lambda r: f"new-{r}".encode(),
         )
 
         assert result_v1.manifest_ref != result_v2.manifest_ref

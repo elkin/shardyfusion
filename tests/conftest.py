@@ -49,7 +49,7 @@ def local_s3_service() -> Generator[LocalS3Service, None, None]:
     import boto3
     import moto.server as moto_server
 
-    ThreadedMotoServer = getattr(moto_server, "ThreadedMotoServer")
+    ThreadedMotoServer = moto_server.ThreadedMotoServer
 
     port = _pick_free_port()
     server = ThreadedMotoServer(ip_address="127.0.0.1", port=port, verbose=False)

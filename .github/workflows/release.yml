@@ -27,7 +27,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -37,9 +36,8 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v4
-
-      - name: Install tox
-        run: python -m pip install --upgrade pip tox
+        with:
+          enable-cache: true
 
       - name: Sync dependencies
         run: uv sync --all-extras --dev
@@ -54,10 +52,16 @@ jobs:
         run: uv run pyright slatedb_spark_sharded
 
       - name: Unit and integration tests
-        run: tox -e py311-all-spark4-unit,py311-read-integration,py311-writer-spark4-integration
+        run: uv run tox -e py311-all-spark4-unit,py311-read-integration,py311-sparkwriter-spark4-integration
 
       - name: Build distributions
         run: uv build
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
 
   publish:
     name: Publish to PyPI
@@ -67,9 +71,6 @@ jobs:
     environment: pypi
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -77,12 +78,14 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
 
-      - name: Sync dependencies
-        run: uv sync --all-extras --dev
-
-      - name: Build distributions
-        run: uv build
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
 
       - name: Publish distributions
         run: uv publish --trusted-publishing always

@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
   schedule:
     # Weekly build on Mondays at 06:00 UTC.
@@ -28,6 +29,8 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
 
       - name: Sync dependencies
         run: uv sync --all-extras --dev
@@ -38,8 +41,20 @@ jobs:
       - name: Format check
         run: uv run ruff format --check .
 
-      - name: Type check (pyright)
+      - name: Type check (pyright — all code)
         run: uv run pyright slatedb_spark_sharded
+
+      - name: Type check (pyright — reader)
+        run: uv run pyright -p pyright/read.json
+
+      - name: Type check (pyright — Python writer)
+        run: uv run pyright -p pyright/pythonwriter.json
+
+      - name: Type check (pyright — Dask writer)
+        run: uv run pyright -p pyright/daskwriter.json
+
+      - name: Type check (pyright — Spark writer)
+        run: uv run pyright -p pyright/sparkwriter.json
 
       - name: Schema drift check
         run: uv run python scripts/generate_schemas.py --check
@@ -61,9 +76,8 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v4
-
-      - name: Sync dependencies
-        run: uv sync --all-extras --dev
+        with:
+          enable-cache: true
 
       - name: Build distributions
         run: uv build
@@ -94,36 +108,46 @@ jobs:
           - name: "read unit / py3.14"
             python-version: "3.14"
             tox-env: "py314-read-unit"
-          - python-version: "3.11"
-            name: "all unit / py3.11 / spark35"
+          - name: "all unit / py3.11 / spark35"
+            python-version: "3.11"
             tox-env: "py311-all-spark35-unit"
-          - python-version: "3.11"
-            name: "all unit / py3.11 / spark4"
+            needs-java: true
+          - name: "all unit / py3.11 / spark4"
+            python-version: "3.11"
             tox-env: "py311-all-spark4-unit"
-          - python-version: "3.12"
-            name: "all unit / py3.12 / spark4"
+            needs-java: true
+          - name: "all unit / py3.12 / spark4"
+            python-version: "3.12"
             tox-env: "py312-all-spark4-unit"
-          - python-version: "3.13"
-            name: "all unit / py3.13 / spark4"
+            needs-java: true
+          - name: "all unit / py3.13 / spark4"
+            python-version: "3.13"
             tox-env: "py313-all-spark4-unit"
-          - python-version: "3.14"
-            name: "all unit / py3.14 / spark4"
+            needs-java: true
+          - name: "all unit / py3.14 / spark4"
+            python-version: "3.14"
             tox-env: "py314-all-spark4-unit"
-          - python-version: "3.11"
-            name: "sparkwriter unit / py3.11 / spark35"
+            needs-java: true
+          - name: "sparkwriter unit / py3.11 / spark35"
+            python-version: "3.11"
             tox-env: "py311-sparkwriter-spark35-unit"
-          - python-version: "3.11"
-            name: "sparkwriter unit / py3.11 / spark4"
+            needs-java: true
+          - name: "sparkwriter unit / py3.11 / spark4"
+            python-version: "3.11"
             tox-env: "py311-sparkwriter-spark4-unit"
-          - python-version: "3.12"
-            name: "sparkwriter unit / py3.12 / spark4"
+            needs-java: true
+          - name: "sparkwriter unit / py3.12 / spark4"
+            python-version: "3.12"
             tox-env: "py312-sparkwriter-spark4-unit"
-          - python-version: "3.13"
-            name: "sparkwriter unit / py3.13 / spark4"
+            needs-java: true
+          - name: "sparkwriter unit / py3.13 / spark4"
+            python-version: "3.13"
             tox-env: "py313-sparkwriter-spark4-unit"
-          - python-version: "3.14"
-            name: "sparkwriter unit / py3.14 / spark4"
+            needs-java: true
+          - name: "sparkwriter unit / py3.14 / spark4"
+            python-version: "3.14"
             tox-env: "py314-sparkwriter-spark4-unit"
+            needs-java: true
           - name: "pythonwriter unit / py3.11"
             python-version: "3.11"
             tox-env: "py311-pythonwriter-unit"
@@ -136,6 +160,15 @@ jobs:
           - name: "pythonwriter unit / py3.14"
             python-version: "3.14"
             tox-env: "py314-pythonwriter-unit"
+          - name: "daskwriter unit / py3.11"
+            python-version: "3.11"
+            tox-env: "py311-daskwriter-unit"
+          - name: "daskwriter unit / py3.12"
+            python-version: "3.12"
+            tox-env: "py312-daskwriter-unit"
+          - name: "daskwriter unit / py3.13"
+            python-version: "3.13"
+            tox-env: "py313-daskwriter-unit"
 
     steps:
       - name: Checkout
@@ -145,19 +178,21 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "${{ matrix.python-version }}"
-          cache: "pip"
 
       - name: Set up Java
+        if: ${{ matrix.needs-java }}
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Install tox
-        run: python -m pip install --upgrade pip tox
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
 
       - name: Run tests
-        run: tox -e ${{ matrix.tox-env }}
+        run: uv run tox -e ${{ matrix.tox-env }}
 
   integration:
     name: ${{ matrix.name }}
@@ -183,21 +218,44 @@ jobs:
           - name: "sparkwriter integration / py3.11 / spark35"
             python-version: "3.11"
             tox-env: "py311-sparkwriter-spark35-integration"
+            needs-java: true
           - name: "sparkwriter integration / py3.11 / spark4"
             python-version: "3.11"
             tox-env: "py311-sparkwriter-spark4-integration"
+            needs-java: true
           - name: "sparkwriter integration / py3.12 / spark4"
             python-version: "3.12"
             tox-env: "py312-sparkwriter-spark4-integration"
+            needs-java: true
           - name: "sparkwriter integration / py3.13 / spark4"
             python-version: "3.13"
             tox-env: "py313-sparkwriter-spark4-integration"
+            needs-java: true
           - name: "sparkwriter integration / py3.14 / spark4"
             python-version: "3.14"
             tox-env: "py314-sparkwriter-spark4-integration"
+            needs-java: true
           - name: "pythonwriter integration / py3.11"
             python-version: "3.11"
             tox-env: "py311-pythonwriter-integration"
+          - name: "pythonwriter integration / py3.12"
+            python-version: "3.12"
+            tox-env: "py312-pythonwriter-integration"
+          - name: "pythonwriter integration / py3.13"
+            python-version: "3.13"
+            tox-env: "py313-pythonwriter-integration"
+          - name: "pythonwriter integration / py3.14"
+            python-version: "3.14"
+            tox-env: "py314-pythonwriter-integration"
+          - name: "daskwriter integration / py3.11"
+            python-version: "3.11"
+            tox-env: "py311-daskwriter-integration"
+          - name: "daskwriter integration / py3.12"
+            python-version: "3.12"
+            tox-env: "py312-daskwriter-integration"
+          - name: "daskwriter integration / py3.13"
+            python-version: "3.13"
+            tox-env: "py313-daskwriter-integration"
 
     steps:
       - name: Checkout
@@ -207,16 +265,18 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "${{ matrix.python-version }}"
-          cache: "pip"
 
       - name: Set up Java
+        if: ${{ matrix.needs-java }}
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Install tox
-        run: python -m pip install --upgrade pip tox
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
 
       - name: Run tests
-        run: tox -e ${{ matrix.tox-env }}
+        run: uv run tox -e ${{ matrix.tox-env }}

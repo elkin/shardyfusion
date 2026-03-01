@@ -14,7 +14,7 @@ from tests.helpers.tracking import InMemoryPublisher
 
 @pytest.mark.spark
 def test_write_sharded_flow_with_in_memory_publisher(spark, tmp_path) -> None:
-    rows = [(i, f"v{i}".encode("utf-8")) for i in range(40)]
+    rows = [(i, f"v{i}".encode()) for i in range(40)]
     df = spark.createDataFrame(rows, ["id", "payload"])
 
     publisher = InMemoryPublisher()

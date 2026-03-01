@@ -2,8 +2,8 @@
 
 import os
 import time
-from collections.abc import Callable
-from typing import Any, Mapping, TypedDict
+from collections.abc import Callable, Mapping
+from typing import Any, TypedDict
 from urllib.parse import urlparse
 
 from .errors import PublishManifestError

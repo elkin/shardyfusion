@@ -13,7 +13,7 @@ from tests.helpers.tracking import InMemoryPublisher
 
 @pytest.mark.spark
 def test_sharded_writer_contract_holds_for_pyspark(spark, tmp_path) -> None:
-    rows = [(i, f"payload-{i}".encode("utf-8")) for i in range(71)]
+    rows = [(i, f"payload-{i}".encode()) for i in range(71)]
     df = spark.createDataFrame(rows, ["id", "payload"])
 
     publisher = InMemoryPublisher()

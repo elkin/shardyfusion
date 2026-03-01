@@ -1,8 +1,9 @@
 """Shared sharding types used by both writer and reader paths."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Self
+from typing import Any, Self
 
 DB_ID_COL = "_slatedb_db_id"
 

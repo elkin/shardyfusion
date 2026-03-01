@@ -3,8 +3,9 @@
 import json
 import logging
 import types
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable, Protocol, Self
+from typing import Protocol, Self
 
 from .errors import SlateDbApiError
 from .logging import FailureSeverity, get_logger, log_event, log_failure

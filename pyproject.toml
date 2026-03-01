@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "slatedb_spark_sharded"
 version = "0.1.0"
-description = "Sharded SlateDB snapshot writer for PySpark"
+description = "Sharded SlateDB snapshot writer/reader library (Spark, Dask, Python, CLI)"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{name = "slatedb_spark_sharded contributors"}]
@@ -49,6 +49,7 @@ all = [
 test = [
   "pytest>=7.4",
   "pytest-xdist>=3.6",
+  "pytest-cov>=5.0",
   "numpy>=1.24",
   "moto[server]>=5.0",
   "hypothesis>=6.0",
@@ -97,9 +98,12 @@ select = [
   "E",
   "F",
   "I",
+  "UP",
+  "B",
 ]
 ignore = [
   "E501",
+  "UP042",
 ]
 per-file-ignores = { "slatedb_spark_sharded/__init__.py" = ["F401"], "slatedb_spark_sharded/writer/spark/__init__.py" = ["F401"], "slatedb_spark_sharded/writer/python/__init__.py" = ["F401"], "slatedb_spark_sharded/writer/dask/__init__.py" = ["F401"], "slatedb_spark_sharded/reader/__init__.py" = ["F401"] }
 
