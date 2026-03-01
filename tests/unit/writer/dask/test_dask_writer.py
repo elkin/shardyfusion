@@ -20,6 +20,7 @@ from slatedb_spark_sharded.config import (  # noqa: E402
 )
 from slatedb_spark_sharded.errors import ConfigValidationError  # noqa: E402
 from slatedb_spark_sharded.manifest import BuildResult  # noqa: E402
+from slatedb_spark_sharded.metrics import MetricEvent  # noqa: E402
 from slatedb_spark_sharded.serde import ValueSpec, make_key_encoder  # noqa: E402
 from slatedb_spark_sharded.sharding_types import (  # noqa: E402
     KeyEncoding,
@@ -27,6 +28,7 @@ from slatedb_spark_sharded.sharding_types import (  # noqa: E402
     ShardingStrategy,
 )
 from slatedb_spark_sharded.testing import (  # noqa: E402
+    ListMetricsCollector,
     file_backed_adapter_factory,
     file_backed_load_db,
 )
@@ -684,3 +686,38 @@ def test_data_integrity(tmp_path: pathlib.Path) -> None:
                 key_encoding=config.key_encoding,
             )
             assert expected_db_id == winner.db_id
+
+
+# ---------------------------------------------------------------------------
+# Metrics tests
+# ---------------------------------------------------------------------------
+
+
+def test_metrics_emitted_on_write() -> None:
+    mc = ListMetricsCollector()
+    config = _make_config(num_dbs=2)
+    config.metrics_collector = mc
+
+    ddf = dd.from_pandas(
+        pd.DataFrame({"key": range(10), "val": [b"v"] * 10}),
+        npartitions=2,
+    )
+    write_sharded(ddf, config, key_col="key", value_spec=ValueSpec.binary_col("val"))
+
+    event_names = [e[0] for e in mc.events]
+    assert MetricEvent.WRITE_STARTED in event_names
+    assert MetricEvent.SHARDING_COMPLETED in event_names
+    assert MetricEvent.SHARD_WRITES_COMPLETED in event_names
+    assert MetricEvent.MANIFEST_PUBLISHED in event_names
+    assert MetricEvent.CURRENT_PUBLISHED in event_names
+    assert MetricEvent.WRITE_COMPLETED in event_names
+
+    # WRITE_STARTED should be first, WRITE_COMPLETED last
+    assert event_names[0] is MetricEvent.WRITE_STARTED
+    assert event_names[-1] is MetricEvent.WRITE_COMPLETED
+
+    # Check payload structure
+    write_completed = next(p for e, p in mc.events if e is MetricEvent.WRITE_COMPLETED)
+    assert "elapsed_ms" in write_completed
+    assert "rows_written" in write_completed
+    assert write_completed["rows_written"] == 10

@@ -14,8 +14,10 @@ from slatedb_spark_sharded.manifest import (
     RequiredBuildMeta,
     RequiredShardMeta,
 )
+from slatedb_spark_sharded.metrics import MetricEvent
 from slatedb_spark_sharded.reader import SlateDbReaderFactory, SlateShardedReader
 from slatedb_spark_sharded.sharding_types import KeyEncoding, ShardingStrategy
+from slatedb_spark_sharded.testing import ListMetricsCollector
 
 
 class _MutableManifestReader:
@@ -287,3 +289,59 @@ def test_multi_get_shard_failure_raises_slate_db_api_error(tmp_path) -> None:
         # key=1 routes to shard 0, key=6 routes to shard 1 → both shards in executor
         with pytest.raises(SlateDbApiError, match="db_id="):
             reader.multi_get([1, 6])
+
+
+# ---------------------------------------------------------------------------
+# Metrics tests
+# ---------------------------------------------------------------------------
+
+
+def test_metrics_emitted_on_reader_lifecycle(tmp_path) -> None:
+    mc = ListMetricsCollector()
+    manifests = {"mem://manifest/one": _manifest("mem://db/one")}
+    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+
+    stores: dict[str, dict[bytes, bytes]] = {
+        "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
+    }
+
+    with SlateShardedReader(
+        s3_prefix="s3://bucket/prefix",
+        local_root=str(tmp_path),
+        manifest_reader=manifest_reader,
+        reader_factory=_fake_reader_factory(stores),
+        metrics_collector=mc,
+    ) as reader:
+        result = reader.get(1)
+        assert result == b"val"
+
+    event_names = [e[0] for e in mc.events]
+    assert MetricEvent.READER_INITIALIZED in event_names
+    assert MetricEvent.READER_GET in event_names
+    assert MetricEvent.READER_CLOSED in event_names
+
+    # Check READER_GET payload
+    get_payload = next(p for e, p in mc.events if e is MetricEvent.READER_GET)
+    assert "duration_ms" in get_payload
+    assert get_payload["found"] is True
+
+
+def test_metrics_reader_get_not_found(tmp_path) -> None:
+    mc = ListMetricsCollector()
+    manifests = {"mem://manifest/one": _manifest("mem://db/one")}
+    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+
+    stores: dict[str, dict[bytes, bytes]] = {"mem://db/one": {}}
+
+    with SlateShardedReader(
+        s3_prefix="s3://bucket/prefix",
+        local_root=str(tmp_path),
+        manifest_reader=manifest_reader,
+        reader_factory=_fake_reader_factory(stores),
+        metrics_collector=mc,
+    ) as reader:
+        result = reader.get(1)
+        assert result is None
+
+    get_payload = next(p for e, p in mc.events if e is MetricEvent.READER_GET)
+    assert get_payload["found"] is False

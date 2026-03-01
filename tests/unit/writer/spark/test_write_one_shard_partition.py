@@ -7,9 +7,11 @@ import pytest
 from pyspark.sql import Row
 
 from slatedb_spark_sharded._writer_core import ShardAttemptResult
+from slatedb_spark_sharded.metrics import MetricEvent
 from slatedb_spark_sharded.serde import ValueSpec, make_key_encoder
 from slatedb_spark_sharded.sharding_types import KeyEncoding
 from slatedb_spark_sharded.slatedb_adapter import DbAdapterFactory
+from slatedb_spark_sharded.testing import ListMetricsCollector
 from slatedb_spark_sharded.writer.spark.writer import (
     PartitionWriteConfig,
     write_one_shard_partition,
@@ -356,3 +358,32 @@ def test_u32be_produces_4_byte_keys(tmp_path) -> None:
     # u32be keys should be 4 bytes
     assert written[0][0] == b"\x00\x00\x00\x01"
     assert written[1][0] == b"\x00\x00\x01\x00"
+
+
+# ---------------------------------------------------------------------------
+# Metrics tests
+# ---------------------------------------------------------------------------
+
+
+def test_metrics_emitted_on_shard_write(tmp_path) -> None:
+    mc = ListMetricsCollector()
+    runtime = _make_runtime(tmp_path, batch_size=5)
+    runtime.metrics_collector = mc
+    runtime.started = 0.0
+
+    _run(0, _rows(1, 2, 3), runtime)
+
+    event_names = [e[0] for e in mc.events]
+    assert MetricEvent.SHARD_WRITE_STARTED in event_names
+    assert MetricEvent.BATCH_WRITTEN in event_names
+    assert MetricEvent.SHARD_WRITE_COMPLETED in event_names
+
+    # SHARD_WRITE_STARTED should be first, SHARD_WRITE_COMPLETED last
+    assert event_names[0] is MetricEvent.SHARD_WRITE_STARTED
+    assert event_names[-1] is MetricEvent.SHARD_WRITE_COMPLETED
+
+    # Check payload structure
+    completed = next(p for e, p in mc.events if e is MetricEvent.SHARD_WRITE_COMPLETED)
+    assert "duration_ms" in completed
+    assert "row_count" in completed
+    assert completed["row_count"] == 3

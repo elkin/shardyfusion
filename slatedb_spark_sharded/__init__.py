@@ -28,6 +28,7 @@ from .manifest_readers import (
     ManifestReader,
     parse_json_manifest,
 )
+from .metrics import MetricEvent, MetricsCollector
 from .publish import DefaultS3Publisher, ManifestPublisher
 from .reader import SlateDbReaderFactory, SlateShardedReader
 from .routing import SnapshotRouter
@@ -43,6 +44,8 @@ from .type_defs import ShardReaderFactory
 __all__ = [
     "FailureSeverity",
     "get_logger",
+    "MetricEvent",
+    "MetricsCollector",
     "ManifestParseError",
     "ReaderStateError",
     "BuildResult",

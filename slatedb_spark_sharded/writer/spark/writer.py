@@ -28,6 +28,8 @@ from slatedb_spark_sharded.logging import (
     log_failure,
 )
 from slatedb_spark_sharded.manifest import BuildResult
+from slatedb_spark_sharded.metrics import MetricEvent, MetricsCollector
+from slatedb_spark_sharded.metrics import emit as emit_metric
 from slatedb_spark_sharded.serde import KeyEncoder, ValueSpec, make_key_encoder
 from slatedb_spark_sharded.sharding_types import DB_ID_COL, KeyEncoding
 from slatedb_spark_sharded.slatedb_adapter import (
@@ -60,6 +62,8 @@ class PartitionWriteConfig:
     batch_size: int
     adapter_factory: DbAdapterFactory | None
     max_writes_per_second: float | None
+    metrics_collector: MetricsCollector | None = None  # must be picklable
+    started: float = 0.0
 
 
 @dataclass(slots=True)
@@ -117,6 +121,8 @@ def _write_sharded_impl(
     verify_routing: bool,
 ) -> BuildResult:
     """Implementation assuming Spark conf already prepared."""
+    mc = config.metrics_collector
+
     log_event(
         "write_started",
         logger=_logger,
@@ -127,6 +133,7 @@ def _write_sharded_impl(
         key_encoding=config.key_encoding.value,
         writer_type="spark",
     )
+    emit_metric(mc, MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
 
     prepared_rows = _prepare_partitioned_rows(
         df=df,
@@ -141,6 +148,14 @@ def _write_sharded_impl(
         run_id=run_id,
         duration_ms=prepared_rows.shard_duration_ms,
     )
+    emit_metric(
+        mc,
+        MetricEvent.SHARDING_COMPLETED,
+        {
+            "elapsed_ms": int((time.perf_counter() - started) * 1000),
+            "duration_ms": prepared_rows.shard_duration_ms,
+        },
+    )
 
     runtime = _build_partition_write_runtime(
         config=config,
@@ -148,6 +163,7 @@ def _write_sharded_impl(
         key_col=key_col,
         value_spec=value_spec,
         max_writes_per_second=max_writes_per_second,
+        started=started,
     )
     write_outcome = _run_partition_writes(
         partitioned_rdd=prepared_rows.partitioned_rdd,
@@ -164,6 +180,15 @@ def _write_sharded_impl(
         rows_written=rows_written,
         duration_ms=write_outcome.write_duration_ms,
     )
+    emit_metric(
+        mc,
+        MetricEvent.SHARD_WRITES_COMPLETED,
+        {
+            "elapsed_ms": int((time.perf_counter() - started) * 1000),
+            "duration_ms": write_outcome.write_duration_ms,
+            "rows_written": rows_written,
+        },
+    )
 
     manifest_started = time.perf_counter()
     artifact = build_manifest_artifact(
@@ -177,6 +202,7 @@ def _write_sharded_impl(
         config=config,
         run_id=run_id,
         artifact=artifact,
+        started=started,
     )
     manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
 
@@ -199,6 +225,14 @@ def _write_sharded_impl(
         run_id=run_id,
         total_ms=result.stats.durations.total_ms,
         rows_written=result.stats.rows_written,
+    )
+    emit_metric(
+        mc,
+        MetricEvent.WRITE_COMPLETED,
+        {
+            "elapsed_ms": int((time.perf_counter() - started) * 1000),
+            "rows_written": result.stats.rows_written,
+        },
     )
 
     return result
@@ -301,6 +335,7 @@ def _build_partition_write_runtime(
     key_col: str,
     value_spec: ValueSpec,
     max_writes_per_second: float | None,
+    started: float = 0.0,
 ) -> PartitionWriteConfig:
     """Construct immutable worker-side runtime config for partition shard writers."""
 
@@ -317,6 +352,8 @@ def _build_partition_write_runtime(
         batch_size=config.batch_size,
         adapter_factory=config.adapter_factory,
         max_writes_per_second=max_writes_per_second,
+        metrics_collector=config.metrics_collector,
+        started=started,
     )
 
 
@@ -373,7 +410,11 @@ def write_one_shard_partition(
 
     bucket: TokenBucket | None = None
     if runtime.max_writes_per_second is not None:
-        bucket = TokenBucket(runtime.max_writes_per_second)
+        bucket = TokenBucket(
+            runtime.max_writes_per_second, metrics_collector=runtime.metrics_collector
+        )
+
+    mc = runtime.metrics_collector
 
     log_event(
         "shard_write_started",
@@ -381,6 +422,13 @@ def write_one_shard_partition(
         db_id=db_id,
         attempt=attempt,
         db_url=db_url,
+    )
+    emit_metric(
+        mc,
+        MetricEvent.SHARD_WRITE_STARTED,
+        {
+            "elapsed_ms": int((time.perf_counter() - runtime.started) * 1000),
+        },
     )
 
     partition_started = time.perf_counter()
@@ -408,12 +456,32 @@ def write_one_shard_partition(
                     if bucket is not None:
                         bucket.acquire(len(batch))
                     adapter.write_batch(batch)
+                    emit_metric(
+                        mc,
+                        MetricEvent.BATCH_WRITTEN,
+                        {
+                            "elapsed_ms": int(
+                                (time.perf_counter() - runtime.started) * 1000
+                            ),
+                            "batch_size": len(batch),
+                        },
+                    )
                     batch.clear()
 
             if batch:
                 if bucket is not None:
                     bucket.acquire(len(batch))
                 adapter.write_batch(batch)
+                emit_metric(
+                    mc,
+                    MetricEvent.BATCH_WRITTEN,
+                    {
+                        "elapsed_ms": int(
+                            (time.perf_counter() - runtime.started) * 1000
+                        ),
+                        "batch_size": len(batch),
+                    },
+                )
                 batch.clear()
 
             adapter.flush()
@@ -442,6 +510,15 @@ def write_one_shard_partition(
         attempt=attempt,
         row_count=row_count,
         duration_ms=duration_ms,
+    )
+    emit_metric(
+        mc,
+        MetricEvent.SHARD_WRITE_COMPLETED,
+        {
+            "elapsed_ms": int((time.perf_counter() - runtime.started) * 1000),
+            "duration_ms": duration_ms,
+            "row_count": row_count,
+        },
     )
 
     writer_info: JsonObject = {

@@ -28,6 +28,8 @@ from .manifest import (
     RequiredBuildMeta,
     RequiredShardMeta,
 )
+from .metrics import MetricEvent
+from .metrics import emit as emit_metric
 from .ordering import compare_ordered
 from .publish import DefaultS3Publisher
 from .routing import xxhash64_db_id  # SHARDING INVARIANT: direct import, not reimpl.
@@ -199,9 +201,11 @@ def publish_manifest_and_current(
     config: WriteConfig,
     run_id: str,
     artifact: ManifestArtifact,
+    started: float = 0.0,
 ) -> _PublishResult:
     """Publish manifest and CURRENT pointer."""
 
+    mc = config.metrics_collector
     publisher = config.manifest.publisher or DefaultS3Publisher(
         config.s3_prefix,
         manifest_name=config.manifest.manifest_name,
@@ -232,6 +236,13 @@ def publish_manifest_and_current(
         logger=_logger,
         run_id=run_id,
         manifest_ref=manifest_ref,
+    )
+    emit_metric(
+        mc,
+        MetricEvent.MANIFEST_PUBLISHED,
+        {
+            "elapsed_ms": int((time.perf_counter() - started) * 1000),
+        },
     )
 
     current_artifact = _build_current_artifact(
@@ -265,6 +276,13 @@ def publish_manifest_and_current(
         run_id=run_id,
         current_ref=current_ref,
         manifest_ref=manifest_ref,
+    )
+    emit_metric(
+        mc,
+        MetricEvent.CURRENT_PUBLISHED,
+        {
+            "elapsed_ms": int((time.perf_counter() - started) * 1000),
+        },
     )
 
     return _PublishResult(manifest_ref=manifest_ref, current_ref=current_ref)

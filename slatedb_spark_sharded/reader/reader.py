@@ -3,6 +3,7 @@
 import logging
 import os
 import threading
+import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -26,6 +27,8 @@ from slatedb_spark_sharded.manifest_readers import (
     DefaultS3ManifestReader,
     ManifestReader,
 )
+from slatedb_spark_sharded.metrics import MetricEvent, MetricsCollector
+from slatedb_spark_sharded.metrics import emit as emit_metric
 from slatedb_spark_sharded.routing import SnapshotRouter
 from slatedb_spark_sharded.sharding_types import KeyEncoding
 from slatedb_spark_sharded.type_defs import KeyInput, ShardReader, ShardReaderFactory
@@ -118,6 +121,7 @@ class SlateShardedReader:
         slate_env_file: str | None = None,
         thread_safety: str = "lock",
         max_workers: int | None = None,
+        metrics_collector: MetricsCollector | None = None,
     ) -> None:
         if thread_safety not in {"lock", "pool"}:
             raise ValueError("thread_safety must be 'lock' or 'pool'")
@@ -126,6 +130,7 @@ class SlateShardedReader:
         self.local_root = local_root
         self.thread_safety = thread_safety
         self.max_workers = max_workers
+        self._metrics = metrics_collector
 
         # Resolve reader factory: explicit > legacy env_file > default
         if reader_factory is not None:
@@ -152,6 +157,7 @@ class SlateShardedReader:
             num_shards=len(self._state.handles),
             manifest_ref=self._state.manifest_ref,
         )
+        emit_metric(self._metrics, MetricEvent.READER_INITIALIZED, {})
 
     @property
     def key_encoding(self) -> KeyEncoding:
@@ -173,14 +179,32 @@ class SlateShardedReader:
     def get(self, key: KeyInput) -> bytes | None:
         """Get one key from the currently loaded snapshot."""
 
+        mc = self._metrics
+        t0 = time.perf_counter() if mc is not None else 0.0
+
         with self._use_state() as state:
             db_id = state.router.route_one(key)
             key_bytes = state.router.encode_lookup_key(key)
             handle = state.handles[db_id]
-            return _read_one(handle, key_bytes)
+            result = _read_one(handle, key_bytes)
+
+        if mc is not None:
+            emit_metric(
+                mc,
+                MetricEvent.READER_GET,
+                {
+                    "duration_ms": int((time.perf_counter() - t0) * 1000),
+                    "found": result is not None,
+                },
+            )
+
+        return result
 
     def multi_get(self, keys: Sequence[KeyInput]) -> dict[KeyInput, bytes | None]:
         """Get multiple keys with per-shard grouping and optional shard parallelism."""
+
+        mc = self._metrics
+        t0 = time.perf_counter() if mc is not None else 0.0
 
         key_list = list(keys)
         with self._use_state() as state:
@@ -213,7 +237,19 @@ class SlateShardedReader:
                         _read_group(state.router, state.handles[db_id], shard_keys)
                     )
 
-            return {key: results.get(key) for key in key_list}
+            ordered = {key: results.get(key) for key in key_list}
+
+        if mc is not None:
+            emit_metric(
+                mc,
+                MetricEvent.READER_MULTI_GET,
+                {
+                    "duration_ms": int((time.perf_counter() - t0) * 1000),
+                    "num_keys": len(key_list),
+                },
+            )
+
+        return ordered
 
     def refresh(self) -> bool:
         """Reload CURRENT and manifest, atomically swapping readers when ref changes."""
@@ -237,6 +273,9 @@ class SlateShardedReader:
                     "reader_refresh_unchanged",
                     logger=_logger,
                     manifest_ref=current_ref,
+                )
+                emit_metric(
+                    self._metrics, MetricEvent.READER_REFRESHED, {"changed": False}
                 )
                 return False
 
@@ -266,6 +305,7 @@ class SlateShardedReader:
             old_manifest_ref=old_state.manifest_ref,
             new_manifest_ref=current_ref,
         )
+        emit_metric(self._metrics, MetricEvent.READER_REFRESHED, {"changed": True})
 
         return True
 
@@ -289,6 +329,13 @@ class SlateShardedReader:
             logger=_logger,
             s3_prefix=self.s3_prefix,
             num_handles_closed=len(self._state.handles),
+        )
+        emit_metric(
+            self._metrics,
+            MetricEvent.READER_CLOSED,
+            {
+                "num_handles": len(self._state.handles),
+            },
         )
 
     def __enter__(self) -> "SlateShardedReader":

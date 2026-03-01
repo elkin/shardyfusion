@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 from .errors import ConfigValidationError
 from .manifest import ManifestBuilder
+from .metrics import MetricsCollector
 from .publish import ManifestPublisher
 from .sharding_types import KeyEncoding, ShardingSpec
 from .slatedb_adapter import DbAdapterFactory
@@ -57,6 +58,8 @@ class WriteConfig:
     sharding: ShardingSpec = field(default_factory=ShardingSpec)
     output: OutputOptions = field(default_factory=OutputOptions)
     manifest: ManifestOptions = field(default_factory=ManifestOptions)
+
+    metrics_collector: MetricsCollector | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.sharding, ShardingSpec):

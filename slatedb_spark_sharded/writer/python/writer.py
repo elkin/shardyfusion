@@ -29,6 +29,8 @@ from slatedb_spark_sharded.logging import (
     log_failure,
 )
 from slatedb_spark_sharded.manifest import BuildResult
+from slatedb_spark_sharded.metrics import MetricEvent
+from slatedb_spark_sharded.metrics import emit as emit_metric
 from slatedb_spark_sharded.serde import make_key_encoder
 from slatedb_spark_sharded.sharding_types import ShardingStrategy
 from slatedb_spark_sharded.slatedb_adapter import DbAdapterFactory, SlateDbFactory
@@ -55,6 +57,7 @@ def write_sharded(
     _validate_sharding(config)
     run_id = config.output.run_id or uuid4().hex
     started = time.perf_counter()
+    mc = config.metrics_collector
 
     log_event(
         "write_started",
@@ -66,6 +69,7 @@ def write_sharded(
         key_encoding=config.key_encoding.value,
         writer_type="python",
     )
+    emit_metric(mc, MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
 
     factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory()
 
@@ -101,6 +105,15 @@ def write_sharded(
         rows_written=rows_written,
         duration_ms=write_duration_ms,
     )
+    emit_metric(
+        mc,
+        MetricEvent.SHARD_WRITES_COMPLETED,
+        {
+            "elapsed_ms": int((time.perf_counter() - started) * 1000),
+            "duration_ms": write_duration_ms,
+            "rows_written": rows_written,
+        },
+    )
 
     winners = select_winners(attempts, num_dbs=config.num_dbs)
 
@@ -116,6 +129,7 @@ def write_sharded(
         config=config,
         run_id=run_id,
         artifact=artifact,
+        started=started,
     )
     manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
 
@@ -138,6 +152,14 @@ def write_sharded(
         run_id=run_id,
         total_ms=result.stats.durations.total_ms,
         rows_written=result.stats.rows_written,
+    )
+    emit_metric(
+        mc,
+        MetricEvent.WRITE_COMPLETED,
+        {
+            "elapsed_ms": int((time.perf_counter() - started) * 1000),
+            "rows_written": result.stats.rows_written,
+        },
     )
 
     return result
@@ -193,7 +215,9 @@ def _write_single_process(
     num_dbs = config.num_dbs
     bucket: TokenBucket | None = None
     if max_writes_per_second is not None:
-        bucket = TokenBucket(max_writes_per_second)
+        bucket = TokenBucket(
+            max_writes_per_second, metrics_collector=config.metrics_collector
+        )
 
     # Open all shard adapters
     adapters = []
@@ -303,7 +327,9 @@ def _shard_worker(
 
     bucket: TokenBucket | None = None
     if max_writes_per_second is not None:
-        bucket = TokenBucket(max_writes_per_second)
+        bucket = TokenBucket(
+            max_writes_per_second, metrics_collector=config.metrics_collector
+        )
 
     row_count = 0
     min_key: KeyLike | None = None

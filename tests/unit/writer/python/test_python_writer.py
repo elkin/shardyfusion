@@ -12,6 +12,7 @@ from slatedb_spark_sharded._writer_core import route_key
 from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteConfig
 from slatedb_spark_sharded.errors import ConfigValidationError
 from slatedb_spark_sharded.manifest import BuildResult
+from slatedb_spark_sharded.metrics import MetricEvent
 from slatedb_spark_sharded.serde import make_key_encoder
 from slatedb_spark_sharded.sharding_types import (
     KeyEncoding,
@@ -20,6 +21,7 @@ from slatedb_spark_sharded.sharding_types import (
 )
 from slatedb_spark_sharded.slatedb_adapter import DbAdapterFactory
 from slatedb_spark_sharded.testing import (
+    ListMetricsCollector,
     fake_adapter_factory,
     file_backed_adapter_factory,
     file_backed_load_db,
@@ -641,3 +643,38 @@ def test_parallel_rate_limited_write(tmp_path: pathlib.Path) -> None:
     )
 
     assert result.stats.rows_written == 10
+
+
+# ---------------------------------------------------------------------------
+# Metrics tests
+# ---------------------------------------------------------------------------
+
+
+def test_metrics_emitted_on_write() -> None:
+    mc = ListMetricsCollector()
+    config = _make_config(num_dbs=2)
+    config.metrics_collector = mc
+
+    write_sharded(
+        list(range(10)),
+        config,
+        key_fn=lambda r: r,
+        value_fn=lambda r: b"v",
+    )
+
+    event_names = [e[0] for e in mc.events]
+    assert MetricEvent.WRITE_STARTED in event_names
+    assert MetricEvent.SHARD_WRITES_COMPLETED in event_names
+    assert MetricEvent.MANIFEST_PUBLISHED in event_names
+    assert MetricEvent.CURRENT_PUBLISHED in event_names
+    assert MetricEvent.WRITE_COMPLETED in event_names
+
+    # WRITE_STARTED should be first, WRITE_COMPLETED last
+    assert event_names[0] is MetricEvent.WRITE_STARTED
+    assert event_names[-1] is MetricEvent.WRITE_COMPLETED
+
+    # Check payload structure
+    write_completed = next(p for e, p in mc.events if e is MetricEvent.WRITE_COMPLETED)
+    assert "elapsed_ms" in write_completed
+    assert "rows_written" in write_completed
+    assert write_completed["rows_written"] == 10

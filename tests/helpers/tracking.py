@@ -69,7 +69,7 @@ class RecordingTokenBucket:
 
     instances: list[RecordingTokenBucket] = []
 
-    def __init__(self, rate: float) -> None:
+    def __init__(self, rate: float, **kwargs: object) -> None:
         self.rate = rate
         self.acquire_calls: list[int] = []
         RecordingTokenBucket.instances.append(self)

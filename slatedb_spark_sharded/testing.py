@@ -5,10 +5,11 @@ import json
 import os
 import types
 from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import Self, TypedDict
+from dataclasses import dataclass, field
+from typing import Any, Self, TypedDict
 from urllib.parse import quote
 
+from .metrics import MetricEvent
 from .storage import parse_s3_url
 
 
@@ -284,3 +285,13 @@ def real_file_adapter_factory(object_store_root: str) -> RealSlateDbFileAdapterF
     """Return a serializable real SlateDB file-backed adapter factory."""
 
     return RealSlateDbFileAdapterFactory(object_store_root=object_store_root)
+
+
+@dataclass(slots=True)
+class ListMetricsCollector:
+    """Test helper: collects all metric events for assertions."""
+
+    events: list[tuple[MetricEvent, dict[str, Any]]] = field(default_factory=list)
+
+    def emit(self, event: MetricEvent, payload: dict[str, Any]) -> None:
+        self.events.append((event, dict(payload)))
