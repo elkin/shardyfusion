@@ -36,6 +36,7 @@ uv run pyright -p pyright/read.json                       # reader-only
 uv run pyright -p pyright/pythonwriter.json               # Python writer only
 uv run pyright -p pyright/daskwriter.json                 # Dask writer only
 uv run pyright -p pyright/sparkwriter.json                # Spark writer only
+python scripts/generate_schemas.py --check                # verify JSON schemas are up-to-date
 ```
 
 ### Tests
@@ -50,7 +51,7 @@ uv run pytest -q tests/integration/read
 uv run pytest -q tests/integration/writer
 
 # Tox labels
-uv run tox -m quality       # lint, format, type-all, type-{read,pythonwriter,daskwriter,sparkwriter}, package, docs-check
+uv run tox -m quality       # lint, format, type-all, type-{read,pythonwriter,daskwriter,sparkwriter}, package, docs-check, schema-check
 uv run tox -m unit          # unit tests across py311-py314, Spark 3.5/4, and Dask
 uv run tox -m integration   # integration tests across py311-py314
 uv run tox -m e2e           # end-to-end tests against Garage S3
@@ -89,6 +90,7 @@ just d-build         # build the CI image
 just d-shell         # interactive shell inside the container
 just d-quality       # quality checks in container
 just d-unit          # unit tests in container
+just d-integration   # integration tests in container
 just d-e2e           # e2e tests against Garage (via compose)
 just d-ci            # quality → unit → integration in container
 just d <command>     # arbitrary command in container
@@ -112,8 +114,8 @@ On every push/PR, CI runs in order: **quality → package → unit → integrati
 
 - **Quality**: lint + format + pyright (Python 3.11 only)
 - **Package**: `uv build` + wheel smoke-test import
-- **Unit**: matrix of py3.11–3.14 × Spark 3.5/4 (read-unit, sparkwriter-unit, pythonwriter-unit, all-unit). **Note:** Dask writer tox envs exist locally but are not yet in CI.
-- **Integration**: matrix of py3.11–3.14 × Spark 3.5/4 (read-integration, sparkwriter-integration, pythonwriter-integration; moto-backed S3)
+- **Unit**: matrix of py3.11–3.14 × Spark 3.5/4 (read-unit, sparkwriter-unit, pythonwriter-unit, all-unit) + Dask writer on py3.11–3.13 (daskwriter-unit). **Note:** Dask does not run on py3.14.
+- **Integration**: matrix of py3.11–3.14 × Spark 3.5/4 (read-integration, sparkwriter-integration, pythonwriter-integration) + Dask writer on py3.11–3.13 (daskwriter-integration); all moto-backed S3
 - **E2E**: runs via `just d-e2e` (not in GitHub Actions — local/container only)
 
 Java 17 (temurin) is used for all Spark-requiring CI jobs. Weekly scheduled build on Mondays at 06:00 UTC.
@@ -124,9 +126,12 @@ The library is split into five independent paths that share config, manifest mod
 
 **Writer path (Spark)** (requires PySpark + Java):
 `writer/spark/writer.py` → `writer/spark/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
+`writer/spark/single_db_writer.py` (single-shard variant, distributed sorting)
+`writer/spark/util.py` (`DataFrameCacheContext`)
 
 **Writer path (Dask)** (no Spark/Java needed):
 `writer/dask/writer.py` → `writer/dask/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
+`writer/dask/single_db_writer.py` (single-shard variant, distributed sorting)
 
 **Writer path (Python)** (no Spark/Java needed):
 `writer/python/writer.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
@@ -161,8 +166,11 @@ Layer 3 — Writer core (shared by Spark, Dask, and Python writers):
 Layer 4 — Entry points:
   writer/spark/sharding.py (→ config, sharding_types)
   writer/spark/writer.py (→ _writer_core, writer/spark/sharding, config, serde, slatedb_adapter)
+  writer/spark/single_db_writer.py (→ _writer_core, _rate_limiter, config, serde, slatedb_adapter)
+  writer/spark/util.py (→ standalone; DataFrameCacheContext)
   writer/dask/sharding.py (→ _writer_core, sharding_types, errors)
   writer/dask/writer.py (→ _writer_core, _rate_limiter, config, serde, slatedb_adapter, storage, writer/dask/sharding)
+  writer/dask/single_db_writer.py (→ _writer_core, _rate_limiter, config, serde, slatedb_adapter)
   writer/python/writer.py (→ _writer_core, _rate_limiter, config, serde, slatedb_adapter)
   reader/reader.py (→ manifest_readers, routing, sharding_types)
   cli/app.py → cli/config.py, cli/output.py, cli/interactive.py, cli/batch.py
@@ -329,7 +337,7 @@ Writer functions are imported from subpackages (not re-exported at top level):
   - `tests/unit/cli/` — CLI unit tests (Click CliRunner with mocked reader)
 - **`tests/integration/`** — requires S3 emulation via `moto`; Spark writer tests additionally require Spark + Java
 - **`tests/e2e/`** — end-to-end tests against Garage S3 server via compose; run with `just d-e2e`
-- **`tests/helpers/`** — shared test scenarios (`s3_test_scenarios.py`) used by both integration (moto) and e2e (Garage) suites
+- **`tests/helpers/`** — shared test scenarios (`s3_test_scenarios.py`) used by both integration (moto) and e2e (Garage) suites; `tracking.py` provides test doubles (`TrackingAdapter`, `TrackingFactory`, `RecordingTokenBucket`, `InMemoryPublisher`) for writer unit tests
 - `@pytest.mark.spark` marks tests requiring a local PySpark session
 - `@pytest.mark.dask` marks tests requiring `writer-dask` extras
 - `@pytest.mark.e2e` marks end-to-end tests requiring a container engine
@@ -355,7 +363,7 @@ The Garage image is built from `docker/garage-e2e.Dockerfile`. The test runner c
 ## Coding Conventions
 
 - Python 3.11+ with full type hints (pyright + ruff enforced)
-- Ruff rules: `E`, `F`, `I`; line length 88; **`E501` ignored** (long lines allowed)
+- Ruff rules: `E`, `F`, `I`, `UP`, `B`; line length 88; **`E501`** and **`UP042`** ignored (long lines allowed; `UP042` permits `from __future__` elision)
 - Keep Spark logic in writer-side modules; avoid Python UDFs when Spark built-ins are available
 - Dataclasses with `slots=True` for performance-sensitive models
 - Manifest models use Pydantic (`ConfigDict(use_enum_values=False)`) — enum names serialize, not values
