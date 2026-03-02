@@ -141,10 +141,10 @@ The library is split into five independent paths that share config, manifest mod
 
 ```
 Layer 0 — Core types & errors (no internal deps):
-  errors.py, type_defs.py, sharding_types.py, ordering.py, logging.py
+  errors.py, type_defs.py, sharding_types.py, ordering.py, logging.py, metrics.py
 
 Layer 1 — Config & serialization:
-  config.py (→ sharding_types)
+  config.py (→ sharding_types, metrics)
   serde.py (→ sharding_types)
   _rate_limiter.py (standalone)
 
@@ -250,6 +250,10 @@ These are all Protocols, allowing user-provided implementations:
 
 `ValueSpec` controls how DataFrame rows are serialized to bytes: `binary_col`, `json_cols`, or a callable encoder.
 
+### Metrics & Observability
+
+`MetricsCollector` (Protocol in `metrics.py`) is an optional observer: set `WriteConfig.metrics_collector` or pass it to the reader. The `MetricEvent` enum defines events across writer lifecycle (e.g., `WRITE_STARTED`, `SHARD_WRITE_COMPLETED`), reader lifecycle (`READER_GET`, `READER_REFRESHED`), and infrastructure (`S3_RETRY`, `RATE_LIMITER_THROTTLED`). Collectors receive `(event, **kwargs)` and should silently ignore unknown events for forward compatibility.
+
 ### Key Encodings
 
 The `key_encoding` field on `WriteConfig` (default `"u64be"`) controls how keys are serialized to bytes in SlateDB:
@@ -305,7 +309,7 @@ All errors inherit from `SlatedbSparkShardedError` which carries a `retryable: b
 
 Exported from `__init__.py` (always available, no optional extras required):
 
-`WriteConfig`, `ManifestOptions`, `OutputOptions`, `ShardingSpec`, `ShardingStrategy`, `KeyEncoding`, `ValueSpec`, `ManifestArtifact`, `ManifestBuilder`, `JsonManifestBuilder`, `ManifestPublisher`, `DefaultS3Publisher`, `ManifestReader`, `DefaultS3ManifestReader`, `FunctionManifestReader`, `SnapshotRouter`, `SlateShardedReader`, `SlateDbReaderFactory`, `SlateDbFactory`, `DbAdapter`, `DbAdapterFactory`, `BuildResult`, `BuildStats`, `BuildDurations`, `CurrentPointer`, `RequiredBuildMeta`, `RequiredShardMeta`, `ManifestShardingSpec`, `ShardReaderFactory`, `parse_json_manifest`, `ManifestParseError`, `ReaderStateError`, `FailureSeverity`
+`WriteConfig`, `ManifestOptions`, `OutputOptions`, `ShardingSpec`, `ShardingStrategy`, `KeyEncoding`, `ValueSpec`, `ManifestArtifact`, `ManifestBuilder`, `JsonManifestBuilder`, `ManifestPublisher`, `DefaultS3Publisher`, `ManifestReader`, `DefaultS3ManifestReader`, `FunctionManifestReader`, `SnapshotRouter`, `SlateShardedReader`, `SlateDbReaderFactory`, `SlateDbFactory`, `DbAdapter`, `DbAdapterFactory`, `BuildResult`, `BuildStats`, `BuildDurations`, `CurrentPointer`, `RequiredBuildMeta`, `RequiredShardMeta`, `ManifestShardingSpec`, `ShardReaderFactory`, `parse_json_manifest`, `ManifestParseError`, `ReaderStateError`, `FailureSeverity`, `get_logger`, `MetricEvent`, `MetricsCollector`
 
 Writer functions are imported from subpackages (not re-exported at top level):
 
