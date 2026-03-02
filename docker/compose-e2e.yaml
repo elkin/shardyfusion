@@ -21,14 +21,14 @@ services:
         condition: service_healthy
     working_dir: /workspace
     environment:
-      UV_PROJECT_ENVIRONMENT: /opt/slatedb-venv
+      UV_PROJECT_ENVIRONMENT: /opt/shardyfusion-venv
       GARAGE_E2E_ENDPOINT: "http://garage:3900"
       GARAGE_E2E_ADMIN_URL: "http://garage:3903"
       GARAGE_E2E_ADMIN_TOKEN: "e2e-admin-token-for-testing"
     volumes:
       - ..:/workspace
       - uv-cache:/root/.cache/uv
-      - uv-venv:/opt/slatedb-venv
+      - uv-venv:/opt/shardyfusion-venv
     command: >-
       /bin/bash -lc "uv sync --all-extras --dev --quiet && uv run tox -m e2e"
 

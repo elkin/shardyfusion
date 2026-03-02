@@ -97,7 +97,7 @@ just d <command>     # arbitrary command in container
 CONTAINER_ENGINE=docker just d-build
 ```
 
-The container uses an isolated project venv at `/opt/slatedb-venv`, not the host `.venv`.
+The container uses an isolated project venv at `/opt/shardyfusion-venv`, not the host `.venv`.
 
 ### Build & Docs
 
@@ -290,7 +290,7 @@ The invariant: `pmod(xxhash64(payload, seed=42), num_dbs)` where:
 
 ### Error Hierarchy
 
-All errors inherit from `SlatedbSparkShardedError` which carries a `retryable: bool` flag:
+All errors inherit from `ShardyfusionError` which carries a `retryable: bool` flag:
 
 | Error | Retryable | Trigger |
 |---|---|---|

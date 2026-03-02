@@ -13,8 +13,8 @@ from typing import Any
 
 from shardyfusion.errors import (
     ReaderStateError,
+    ShardyfusionError,
     SlateDbApiError,
-    SlatedbSparkShardedError,
 )
 from shardyfusion.logging import (
     FailureSeverity,
@@ -225,7 +225,7 @@ class SlateShardedReader:
                     for db_id, future in futures.items():
                         try:
                             results.update(future.result())
-                        except SlatedbSparkShardedError:
+                        except ShardyfusionError:
                             raise  # domain exceptions propagate unchanged
                         except Exception as exc:
                             raise SlateDbApiError(

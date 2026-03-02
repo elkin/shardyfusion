@@ -18,7 +18,7 @@ from shardyfusion._writer_core import (
     update_min_max,
 )
 from shardyfusion.config import WriteConfig
-from shardyfusion.errors import ConfigValidationError, SlatedbSparkShardedError
+from shardyfusion.errors import ConfigValidationError, ShardyfusionError
 from shardyfusion.logging import FailureSeverity, log_failure
 from shardyfusion.manifest import BuildResult
 from shardyfusion.serde import ValueSpec, make_key_encoder
@@ -243,7 +243,7 @@ def _stream_to_single_db(
 
             adapter.flush()
             checkpoint_id = adapter.checkpoint()
-    except SlatedbSparkShardedError:
+    except ShardyfusionError:
         raise
     except Exception as exc:
         log_failure(
@@ -256,7 +256,7 @@ def _stream_to_single_db(
             rows_written=row_count,
             include_traceback=True,
         )
-        raise SlatedbSparkShardedError(
+        raise ShardyfusionError(
             f"Single-db write failed for db_id={db_id}, attempt={attempt}: {exc}"
         ) from exc
 

@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>shardyfusion — Architecture Map</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:#0f0f1a;color:#d4d4d8;height:100vh;overflow:hidden;display:flex;flex-direction:column}
+.header{padding:10px 20px;background:#13132a;border-bottom:1px solid #2a2a4a;display:flex;align-items:center;gap:16px;flex-shrink:0}
+.header h1{font-size:16px;color:#e4e4e7;font-weight:600;white-space:nowrap}
+.header .pkg{font-size:13px;color:#71717a;font-family:'SF Mono',Consolas,monospace}
+.app{display:flex;flex:1;overflow:hidden}
+.sidebar{width:270px;background:#13132a;border-right:1px solid #2a2a4a;overflow-y:auto;flex-shrink:0;padding:12px}
+.sidebar-section{margin-bottom:16px}
+.sidebar-section h3{font-size:11px;text-transform:uppercase;letter-spacing:1.2px;color:#71717a;margin-bottom:8px;font-weight:600}
+.preset-grid{display:flex;flex-wrap:wrap;gap:5px}
+.preset-btn{font-size:11px;padding:4px 10px;border:1px solid #2a2a4a;background:#1a1a2e;color:#a1a1aa;border-radius:4px;cursor:pointer;transition:all .15s}
+.preset-btn:hover{border-color:#4a4a6a;color:#d4d4d8}
+.preset-btn.active{border-color:#7c3aed;background:#1e1040;color:#c4b5fd}
+.toggle-row{display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:12px}
+.toggle-row input{accent-color:#7c3aed;cursor:pointer}
+.toggle-row .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.comment-item{padding:8px;background:#1a1a2e;border:1px solid #2a2a4a;border-radius:6px;margin-bottom:6px;font-size:11px;position:relative}
+.comment-item .cm-label{color:#a78bfa;font-weight:600;margin-bottom:2px}
+.comment-item .cm-file{color:#52525b;font-family:'SF Mono',Consolas,monospace;font-size:10px}
+.comment-item .cm-text{color:#d4d4d8;margin-top:4px;line-height:1.4}
+.comment-item .cm-del{position:absolute;top:6px;right:8px;background:none;border:none;color:#52525b;cursor:pointer;font-size:14px;line-height:1}
+.comment-item .cm-del:hover{color:#ef4444}
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.canvas-wrap{flex:1;position:relative;overflow:auto;background:#0f0f1a}
+.canvas-wrap svg{display:block}
+.zoom-controls{position:absolute;top:12px;right:12px;display:flex;gap:4px}
+.zoom-btn{width:30px;height:30px;border:1px solid #2a2a4a;background:#13132a;color:#a1a1aa;border-radius:4px;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.zoom-btn:hover{border-color:#4a4a6a;color:#d4d4d8}
+.legend{position:absolute;bottom:12px;left:12px;background:#13132ae0;border:1px solid #2a2a4a;border-radius:6px;padding:10px 14px;font-size:11px}
+.legend-title{font-weight:600;color:#a1a1aa;margin-bottom:6px}
+.legend-row{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+.prompt-panel{height:130px;border-top:1px solid #2a2a4a;background:#13132a;display:flex;flex-direction:column;flex-shrink:0}
+.prompt-header{display:flex;align-items:center;justify-content:space-between;padding:8px 16px;border-bottom:1px solid #1a1a2e}
+.prompt-header span{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#71717a;font-weight:600}
+.copy-btn{font-size:11px;padding:3px 12px;border:1px solid #2a2a4a;background:#1a1a2e;color:#a1a1aa;border-radius:4px;cursor:pointer;transition:all .15s}
+.copy-btn:hover{border-color:#4a4a6a;color:#d4d4d8}
+.copy-btn.copied{border-color:#10b981;color:#10b981}
+.prompt-text{flex:1;overflow-y:auto;padding:10px 16px;font-size:12px;line-height:1.6;color:#a1a1aa;font-family:'SF Mono',Consolas,monospace;white-space:pre-wrap}
+.modal-overlay{display:none;position:fixed;inset:0;background:#000a;z-index:100;align-items:center;justify-content:center}
+.modal-overlay.open{display:flex}
+.modal{background:#1a1a2e;border:1px solid #2a2a4a;border-radius:10px;width:440px;max-height:80vh;overflow-y:auto;padding:20px}
+.modal h2{font-size:14px;color:#e4e4e7;margin-bottom:2px}
+.modal .m-file{font-size:11px;color:#71717a;font-family:'SF Mono',Consolas,monospace;margin-bottom:10px}
+.modal .m-desc{font-size:12px;color:#a1a1aa;line-height:1.5;margin-bottom:8px;padding:8px;background:#13132a;border-radius:4px}
+.modal .m-exports{font-size:11px;color:#71717a;font-family:'SF Mono',Consolas,monospace;line-height:1.5;margin-bottom:12px;padding:8px;background:#13132a;border-radius:4px}
+.modal .m-exports-label{color:#a1a1aa;font-weight:600}
+.modal textarea{width:100%;height:70px;background:#13132a;border:1px solid #2a2a4a;border-radius:6px;color:#d4d4d8;font-size:12px;padding:8px;resize:vertical;font-family:inherit}
+.modal textarea:focus{outline:none;border-color:#7c3aed}
+.modal .m-actions{display:flex;gap:8px;margin-top:10px;justify-content:flex-end}
+.modal .m-actions button{padding:5px 16px;border-radius:5px;font-size:12px;cursor:pointer;border:1px solid #2a2a4a;transition:all .15s}
+.m-cancel{background:#1a1a2e;color:#a1a1aa}
+.m-cancel:hover{border-color:#4a4a6a}
+.m-save{background:#7c3aed;color:white;border-color:#7c3aed !important}
+.m-save:hover{background:#6d28d9}
+.empty-msg{color:#52525b;font-size:11px;font-style:italic}
+svg .node-rect{cursor:pointer;transition:filter .15s}
+svg .node-rect:hover{filter:brightness(1.3)}
+svg .node-label{pointer-events:none;fill:#e4e4e7;font-size:12px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif}
+svg .node-sub{pointer-events:none;fill:#71717a;font-size:9.5px;font-family:'SF Mono',Consolas,monospace}
+svg .conn-path{fill:none}
+svg .layer-label{fill:#27273a;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1.5px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif}
+svg .comment-badge{pointer-events:none}
+svg .invariant-box{fill:none;stroke:#f59e0b;stroke-width:1.2;stroke-dasharray:6 4;opacity:0.35;rx:10}
+svg .invariant-label{fill:#f59e0b;font-size:9px;opacity:0.45;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Architecture Map</h1>
+  <span class="pkg">shardyfusion</span>
+</div>
+
+<div class="app">
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <h3>Views</h3>
+      <div class="preset-grid" id="presets"></div>
+    </div>
+    <div class="sidebar-section">
+      <h3>Layers</h3>
+      <div id="layer-toggles"></div>
+    </div>
+    <div class="sidebar-section">
+      <h3>Connections</h3>
+      <div id="conn-toggles"></div>
+    </div>
+    <div class="sidebar-section">
+      <h3 id="comments-title">Comments (0)</h3>
+      <div id="comments-list"><span class="empty-msg">Click a component to add feedback</span></div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="canvas-wrap" id="canvas-wrap">
+      <svg id="diagram" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1350 800">
+        <defs>
+          <marker id="ah-blue" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="7" markerHeight="5.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#3b82f6"/></marker>
+          <marker id="ah-gray" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="7" markerHeight="5.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#52525b"/></marker>
+        </defs>
+        <g id="diagram-content"></g>
+      </svg>
+      <div class="zoom-controls">
+        <button class="zoom-btn" id="zoom-in" title="Zoom in">+</button>
+        <button class="zoom-btn" id="zoom-reset" title="Reset">1:1</button>
+        <button class="zoom-btn" id="zoom-out" title="Zoom out">&minus;</button>
+      </div>
+      <div class="legend">
+        <div class="legend-title">Connections</div>
+        <div class="legend-row"><svg width="28" height="10"><line x1="0" y1="5" x2="28" y2="5" stroke="#3b82f6" stroke-width="1.8"/></svg><span>Data flow</span></div>
+        <div class="legend-row"><svg width="28" height="10"><line x1="0" y1="5" x2="28" y2="5" stroke="#52525b" stroke-width="1.2" stroke-dasharray="4 3"/></svg><span>Dependency</span></div>
+        <div class="legend-row" style="margin-top:6px"><svg width="28" height="10"><rect x="0" y="1" width="28" height="8" rx="2" fill="none" stroke="#f59e0b" stroke-width="1" stroke-dasharray="4 3" opacity="0.6"/></svg><span>xxhash64 invariant</span></div>
+      </div>
+    </div>
+
+    <div class="prompt-panel">
+      <div class="prompt-header">
+        <span>Prompt Output</span>
+        <button class="copy-btn" id="copy-btn">Copy</button>
+      </div>
+      <div class="prompt-text" id="prompt-text"></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal">
+    <h2 id="m-title"></h2>
+    <div class="m-file" id="m-file"></div>
+    <div class="m-desc" id="m-desc"></div>
+    <div class="m-exports" id="m-exports"></div>
+    <label style="font-size:11px;color:#71717a;display:block;margin-bottom:4px">Add feedback:</label>
+    <textarea id="m-comment" placeholder="Your feedback on this component..."></textarea>
+    <div class="m-actions">
+      <button class="m-cancel" id="m-cancel">Cancel</button>
+      <button class="m-save" id="m-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── Data ────────────────────────────────────────────────────────────────
+var LAYERS = [
+  { id: 'entry',   label: 'Entry Points',     color: '#a78bfa' },
+  { id: 'helpers', label: 'Framework Helpers', color: '#f7b733' },
+  { id: 'core',    label: 'Shared Core',       color: '#c084fc' },
+  { id: 'infra',   label: 'Infrastructure',    color: '#7b68ee' },
+  { id: 'types',   label: 'Core Types',        color: '#52525b' },
+];
+
+var CONN_TYPES = [
+  { id: 'data-flow',  label: 'Data Flow',  color: '#3b82f6', dash: '', marker: 'ah-blue' },
+  { id: 'dependency', label: 'Dependency',  color: '#52525b', dash: '4 3', marker: 'ah-gray' },
+];
+
+var PRESETS = [
+  { id: 'full',         label: 'Full System' },
+  { id: 'spark-write',  label: 'Spark Write' },
+  { id: 'dask-write',   label: 'Dask Write' },
+  { id: 'python-write', label: 'Python Write' },
+  { id: 'read',         label: 'Read Path' },
+  { id: 'cli',          label: 'CLI' },
+];
+
+var nodes = [
+  { id:'spark-writer',    label:'Spark Writer',     sub:'writer/spark/writer.py',   w:175, h:60, layer:'entry',   bc:'#f97316',
+    desc:'Entry point for Spark-based sharded writes. Converts DataFrame to partitioned RDD, writes each shard in parallel across executors.',
+    exp:'write_sharded(), DataFrameCacheContext, SparkConfOverrideContext' },
+  { id:'dask-writer',     label:'Dask Writer',      sub:'writer/dask/writer.py',    w:175, h:60, layer:'entry',   bc:'#f97316',
+    desc:'Entry point for Dask-based sharded writes. Uses map_partitions for parallel shard writes. No Spark/Java dependency.',
+    exp:'write_sharded_dask()' },
+  { id:'python-writer',   label:'Python Writer',    sub:'writer/python/writer.py',  w:175, h:60, layer:'entry',   bc:'#f97316',
+    desc:'Pure-Python sharded writes via iterables with key_fn/value_fn. Single-process or multiprocessing.spawn parallel mode.',
+    exp:'write_sharded()' },
+  { id:'reader',          label:'Reader',           sub:'reader/reader.py',         w:175, h:60, layer:'entry',   bc:'#4ecdc4',
+    desc:'Loads CURRENT pointer, dereferences manifest, builds SnapshotRouter. get()/multi_get() with atomic refresh() and reference counting.',
+    exp:'SlateShardedReader, SlateDbReaderFactory' },
+  { id:'cli',             label:'CLI (slate-reader)',sub:'cli/app.py',              w:185, h:60, layer:'entry',   bc:'#22d3ee',
+    desc:'Click CLI: get, multiget, info, refresh, exec subcommands. Interactive REPL via cmd.Cmd. Auto-coerces keys for integer encodings.',
+    exp:'main() \u2014 submodules: config, output, interactive, batch' },
+  { id:'spark-sharding',  label:'Spark Sharding',   sub:'writer/spark/sharding.py', w:175, h:60, layer:'helpers', bc:'#f7b733',
+    desc:'Adds _slatedb_db_id column via Spark SQL expressions. HASH: xxhash64(cast(key as long)). RANGE: Bucketizer or SQL filter. CUSTOM: user expression.',
+    exp:'add_db_id_column(), prepare_partitioned_rdd()' },
+  { id:'dask-sharding',   label:'Dask Sharding',    sub:'writer/dask/sharding.py',  w:175, h:60, layer:'helpers', bc:'#f7b733',
+    desc:'Adds _slatedb_db_id column via map_partitions with Python routing function. CUSTOM_EXPR rejected. Quantile-based range boundaries.',
+    exp:'add_db_id_column(), compute_range_boundaries()' },
+  { id:'writer-core',     label:'Writer Core',      sub:'_writer_core.py',          w:175, h:60, layer:'core',   bc:'#c084fc',
+    desc:'Framework-agnostic core shared by all three writers. Routing, winner selection, manifest building, and publishing.',
+    exp:'_route_key(), _select_winners(), _build_manifest_artifact(), _publish_manifest_and_current()' },
+  { id:'db-adapter',      label:'DB Adapter',       sub:'slatedb_adapter.py',       w:175, h:60, layer:'core',   bc:'#c084fc',
+    desc:'DbAdapter and DbAdapterFactory protocols. DefaultSlateDbAdapter wraps official SlateDB binding. Import is deferred to __init__.',
+    exp:'DbAdapter (Protocol), DbAdapterFactory (Protocol), SlateDbFactory' },
+  { id:'routing',         label:'Routing',          sub:'routing.py',               w:175, h:60, layer:'core',   bc:'#c084fc',
+    desc:'SnapshotRouter mirrors write-time sharding at read time. xxhash64 with seed=42, 8-byte LE payload. CRITICAL INVARIANT module.',
+    exp:'SnapshotRouter \u2014 route_one(), group_keys(), encode_lookup_key()' },
+  { id:'manifest-readers',label:'Manifest Readers',  sub:'manifest_readers.py',     w:195, h:60, layer:'core',   bc:'#c084fc',
+    desc:'ManifestReader protocol + DefaultS3ManifestReader. Loads CURRENT pointer and dereferences manifest JSON.',
+    exp:'ManifestReader (Protocol), DefaultS3ManifestReader, parse_json_manifest()' },
+  { id:'config',          label:'Config',           sub:'config.py',                w:150, h:60, layer:'infra',  bc:'#7b68ee',
+    desc:'Configuration dataclasses with validation. WriteConfig combines output, manifest, sharding, and adapter settings.',
+    exp:'WriteConfig, OutputOptions, ManifestOptions' },
+  { id:'serde',           label:'Serde',            sub:'serde.py',                 w:135, h:60, layer:'infra',  bc:'#7b68ee',
+    desc:'Key encoding (u64be=8-byte, u32be=4-byte big-endian) and ValueSpec (binary_col, json_cols, or custom encoder callable).',
+    exp:'KeyEncoder, ValueSpec, make_key_encoder()' },
+  { id:'rate-limiter',    label:'Rate Limiter',     sub:'_rate_limiter.py',         w:155, h:60, layer:'infra',  bc:'#7b68ee',
+    desc:'Thread-safe token-bucket rate limiter. Releases lock before sleeping to prevent starvation. Used by Dask and Python writers.',
+    exp:'TokenBucket \u2014 acquire(), rate property' },
+  { id:'manifest',        label:'Manifest',         sub:'manifest.py',              w:150, h:60, layer:'infra',  bc:'#7b68ee',
+    desc:'Pydantic models for manifest data. ManifestBuilder protocol controls serialization format. Default: JSON.',
+    exp:'RequiredBuildMeta, RequiredShardMeta, BuildResult, ManifestBuilder (Protocol)' },
+  { id:'publish',         label:'Publish',          sub:'publish.py',               w:140, h:60, layer:'infra',  bc:'#7b68ee',
+    desc:'ManifestPublisher protocol + DefaultS3Publisher. Two-phase: manifest first, then CURRENT pointer. Exponential backoff retries.',
+    exp:'ManifestPublisher (Protocol), DefaultS3Publisher' },
+  { id:'storage',         label:'Storage',          sub:'storage.py',               w:150, h:60, layer:'infra',  bc:'#7b68ee',
+    desc:'S3 operations with exponential backoff retries (3 attempts: 1s, 2s, 4s). Handles transient S3 errors.',
+    exp:'create_s3_client(), get_bytes(), put_bytes(), parse_s3_url()' },
+  { id:'errors',          label:'Errors',           sub:'errors.py',                w:135, h:60, layer:'types',  bc:'#52525b',
+    desc:'Custom exception hierarchy. All errors carry retryable:bool flag. ShardyfusionError is the base class.',
+    exp:'ConfigValidationError, ShardAssignmentError, PublishManifestError, S3TransientError, ...' },
+  { id:'type-defs',       label:'Type Defs',        sub:'type_defs.py',             w:145, h:60, layer:'types',  bc:'#52525b',
+    desc:'Shared type aliases and protocols for shard readers. S3ClientConfig TypedDict for S3 client configuration.',
+    exp:'JsonValue, KeyLike, ShardReader (Protocol), ShardReaderFactory (Protocol)' },
+  { id:'sharding-types',  label:'Sharding Types',   sub:'sharding_types.py',        w:175, h:60, layer:'types',  bc:'#52525b',
+    desc:'Core enums and dataclasses for sharding configuration. DB_ID_COL constant. BoundaryValue union type.',
+    exp:'KeyEncoding, ShardingStrategy, ShardingSpec, BoundaryValue, DB_ID_COL' },
+  { id:'ordering',        label:'Ordering',         sub:'ordering.py',              w:135, h:60, layer:'types',  bc:'#52525b',
+    desc:'Deterministic comparison helper for range boundary validation. Handles int/float/string ordering.',
+    exp:'compare_ordered()' },
+  { id:'logging',         label:'Logging',          sub:'logging.py',               w:145, h:60, layer:'types',  bc:'#52525b',
+    desc:'Structured logging with severity classification. Used across writers, reader, and storage for failure reporting.',
+    exp:'FailureSeverity, log_event(), log_failure()' },
+];
+
+var connections = [
+  { from:'spark-writer',  to:'spark-sharding', type:'data-flow', label:'add_db_id' },
+  { from:'dask-writer',   to:'dask-sharding',  type:'data-flow', label:'add_db_id' },
+  { from:'spark-writer',  to:'writer-core',    type:'data-flow', label:'build & publish' },
+  { from:'dask-writer',   to:'writer-core',    type:'data-flow', label:'build & publish' },
+  { from:'python-writer', to:'writer-core',    type:'data-flow', label:'route & publish' },
+  { from:'spark-writer',  to:'db-adapter',     type:'data-flow', label:'write_batch' },
+  { from:'dask-writer',   to:'db-adapter',     type:'data-flow', label:'write_batch' },
+  { from:'python-writer', to:'db-adapter',     type:'data-flow', label:'write_batch' },
+  { from:'cli',    to:'reader',           type:'data-flow', label:'get / multi_get' },
+  { from:'reader', to:'routing',          type:'data-flow', label:'route_one' },
+  { from:'reader', to:'manifest-readers', type:'data-flow', label:'load manifest' },
+  { from:'writer-core',      to:'publish',  type:'data-flow', label:'publish' },
+  { from:'manifest-readers', to:'storage',  type:'data-flow', label:'get_bytes' },
+  { from:'publish',          to:'storage',  type:'data-flow', label:'put_bytes' },
+  { from:'writer-core', to:'routing',       type:'dependency', label:'_route_key' },
+  { from:'writer-core', to:'serde',         type:'dependency', label:'key encoder' },
+  { from:'writer-core', to:'config',        type:'dependency' },
+  { from:'writer-core', to:'manifest',      type:'dependency', label:'build artifact' },
+  { from:'routing',     to:'serde',         type:'dependency', label:'encode key' },
+  { from:'routing',     to:'manifest',      type:'dependency' },
+  { from:'routing',     to:'sharding-types',type:'dependency' },
+  { from:'dask-writer',   to:'rate-limiter',type:'dependency', label:'TokenBucket' },
+  { from:'python-writer', to:'rate-limiter',type:'dependency', label:'TokenBucket' },
+  { from:'manifest-readers', to:'manifest', type:'dependency', label:'parse' },
+  { from:'publish',     to:'manifest',      type:'dependency' },
+];
+
+var PRESET_NODES = {
+  'full': null,
+  'spark-write':  new Set(['spark-writer','spark-sharding','writer-core','db-adapter','routing','config','serde','manifest','publish','storage','sharding-types','errors','type-defs','logging']),
+  'dask-write':   new Set(['dask-writer','dask-sharding','writer-core','db-adapter','routing','config','serde','rate-limiter','manifest','publish','storage','sharding-types','errors','type-defs','logging']),
+  'python-write': new Set(['python-writer','writer-core','db-adapter','routing','config','serde','rate-limiter','manifest','publish','storage','sharding-types','errors','type-defs','logging']),
+  'read':         new Set(['reader','routing','manifest-readers','serde','manifest','storage','sharding-types','type-defs','errors','logging']),
+  'cli':          new Set(['cli','reader','routing','manifest-readers','serde','manifest','storage','type-defs']),
+};
+
+// ─── Per-preset layouts ──────────────────────────────────────────────────
+// Full system: wide spacing, writers centered over core, reader group offset right
+var BASE = {
+  'spark-writer':60,'dask-writer':280,'python-writer':500,'reader':830,'cli':1090,
+  'spark-sharding':60,'dask-sharding':280,
+  'writer-core':250,'db-adapter':500,'routing':760,'manifest-readers':1010,
+  'config':50,'serde':240,'rate-limiter':420,'manifest':620,'publish':810,'storage':1010,
+  'errors':100,'type-defs':320,'sharding-types':540,'ordering':780,'logging':1000,
+};
+var BASE_Y = { entry:30, helpers:200, core:370, infra:540, types:710 };
+
+function basePos(id) {
+  var n = nodeMap[id];
+  return { x: BASE[id], y: BASE_Y[n.layer] };
+}
+
+// Focused layouts: only active nodes get repositioned for clean vertical flow
+var FOCUSED = {
+  'spark-write': {
+    'spark-writer':    {x:390,y:30},  'spark-sharding':  {x:190,y:200},
+    'db-adapter':      {x:620,y:200}, 'writer-core':     {x:320,y:370},
+    'routing':         {x:620,y:370}, 'config':          {x:50,y:540},
+    'serde':           {x:230,y:540}, 'manifest':        {x:440,y:540},
+    'publish':         {x:650,y:540}, 'storage':         {x:870,y:540},
+    'errors':          {x:120,y:710}, 'sharding-types':  {x:350,y:710},
+    'type-defs':       {x:600,y:710}, 'logging':         {x:850,y:710},
+  },
+  'dask-write': {
+    'dask-writer':     {x:390,y:30},  'dask-sharding':   {x:190,y:200},
+    'db-adapter':      {x:620,y:200}, 'writer-core':     {x:320,y:370},
+    'routing':         {x:620,y:370}, 'config':          {x:20,y:540},
+    'serde':           {x:185,y:540}, 'rate-limiter':    {x:355,y:540},
+    'manifest':        {x:540,y:540}, 'publish':         {x:730,y:540},
+    'storage':         {x:920,y:540}, 'errors':          {x:120,y:710},
+    'sharding-types':  {x:350,y:710}, 'type-defs':       {x:600,y:710},
+    'logging':         {x:850,y:710},
+  },
+  'python-write': {
+    'python-writer':   {x:400,y:30},  'writer-core':     {x:240,y:200},
+    'db-adapter':      {x:560,y:200}, 'config':          {x:50,y:370},
+    'serde':           {x:230,y:370}, 'rate-limiter':    {x:420,y:370},
+    'routing':         {x:650,y:370}, 'manifest':        {x:260,y:540},
+    'publish':         {x:480,y:540}, 'storage':         {x:710,y:540},
+    'errors':          {x:120,y:710}, 'sharding-types':  {x:370,y:710},
+    'type-defs':       {x:620,y:710}, 'logging':         {x:870,y:710},
+  },
+  'read': {
+    'reader':          {x:380,y:30},  'routing':         {x:220,y:200},
+    'manifest-readers':{x:530,y:200}, 'serde':           {x:70,y:370},
+    'manifest':        {x:320,y:370}, 'storage':         {x:620,y:370},
+    'sharding-types':  {x:120,y:540}, 'type-defs':       {x:370,y:540},
+    'errors':          {x:620,y:540}, 'logging':         {x:860,y:540},
+  },
+  'cli': {
+    'cli':             {x:420,y:30},  'reader':          {x:320,y:200},
+    'routing':         {x:150,y:370}, 'manifest-readers':{x:480,y:370},
+    'serde':           {x:50,y:540},  'manifest':        {x:280,y:540},
+    'storage':         {x:530,y:540}, 'type-defs':       {x:780,y:540},
+  },
+};
+
+// ─── State ───────────────────────────────────────────────────────────────
+var state = {
+  preset: 'full',
+  layers: {},
+  connTypes: {},
+  comments: [],
+  zoom: 1,
+  modalNodeId: null,
+};
+LAYERS.forEach(function(l) { state.layers[l.id] = true; });
+CONN_TYPES.forEach(function(c) { state.connTypes[c.id] = true; });
+
+var nodeMap = {};
+nodes.forEach(function(n) { nodeMap[n.id] = n; });
+
+// ─── Animation ───────────────────────────────────────────────────────────
+var currentPos = {};
+var animStartPos = {};
+var animEndPos = {};
+var animFrame = null;
+var animStartTime = 0;
+var ANIM_MS = 420;
+
+// Init positions
+nodes.forEach(function(n) { currentPos[n.id] = basePos(n.id); });
+
+function getTargetPos(nodeId) {
+  var layout = FOCUSED[state.preset];
+  var activeSet = PRESET_NODES[state.preset];
+  if (layout && layout[nodeId] && (!activeSet || activeSet.has(nodeId))) {
+    return layout[nodeId];
+  }
+  return basePos(nodeId);
+}
+
+function startAnimation() {
+  nodes.forEach(function(n) {
+    animStartPos[n.id] = { x: currentPos[n.id].x, y: currentPos[n.id].y };
+    animEndPos[n.id] = getTargetPos(n.id);
+  });
+  animStartTime = performance.now();
+  if (!animFrame) animFrame = requestAnimationFrame(animLoop);
+}
+
+function animLoop(now) {
+  var rawT = Math.min(1, (now - animStartTime) / ANIM_MS);
+  var t = rawT < 0.5 ? 2 * rawT * rawT : -1 + (4 - 2 * rawT) * rawT;
+
+  nodes.forEach(function(n) {
+    var s = animStartPos[n.id], e = animEndPos[n.id];
+    currentPos[n.id] = { x: s.x + (e.x - s.x) * t, y: s.y + (e.y - s.y) * t };
+  });
+
+  render();
+
+  if (rawT < 1) {
+    animFrame = requestAnimationFrame(animLoop);
+  } else {
+    animFrame = null;
+    nodes.forEach(function(n) {
+      currentPos[n.id] = { x: animEndPos[n.id].x, y: animEndPos[n.id].y };
+    });
+    render();
+  }
+}
+
+// ─── SVG helpers ─────────────────────────────────────────────────────────
+var NS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs) {
+  var el = document.createElementNS(NS, tag);
+  if (attrs) { var ks = Object.keys(attrs); for (var i = 0; i < ks.length; i++) el.setAttribute(ks[i], attrs[ks[i]]); }
+  return el;
+}
+
+// ─── Rendering ───────────────────────────────────────────────────────────
+var svgDom = document.getElementById('diagram');
+var gContent = document.getElementById('diagram-content');
+
+function render() {
+  while (gContent.firstChild) gContent.removeChild(gContent.firstChild);
+  var activeSet = PRESET_NODES[state.preset];
+
+  // Layer labels (computed from node positions)
+  var layerYs = {};
+  nodes.forEach(function(n) {
+    if (!state.layers[n.layer]) return;
+    var p = currentPos[n.id];
+    if (!layerYs[n.layer] || p.y < layerYs[n.layer]) layerYs[n.layer] = p.y;
+  });
+  LAYERS.forEach(function(l) {
+    if (layerYs[l.id] == null) return;
+    var txt = svgEl('text', { x: '1320', y: String(layerYs[l.id] + 38), 'text-anchor': 'end' });
+    txt.classList.add('layer-label');
+    txt.textContent = l.label;
+    gContent.appendChild(txt);
+  });
+
+  // Invariant box (dynamic bounds around sharding + routing nodes)
+  var invIds = ['spark-sharding','dask-sharding','writer-core','db-adapter','routing'];
+  var invVisible = invIds.filter(function(id) { return state.layers[nodeMap[id].layer]; });
+  if (invVisible.length >= 2 && (state.preset === 'full' || state.preset === 'spark-write' || state.preset === 'dask-write' || state.preset === 'python-write')) {
+    var ix1 = Infinity, iy1 = Infinity, ix2 = -Infinity, iy2 = -Infinity;
+    invVisible.forEach(function(id) {
+      var p = currentPos[id], n = nodeMap[id];
+      ix1 = Math.min(ix1, p.x); iy1 = Math.min(iy1, p.y);
+      ix2 = Math.max(ix2, p.x + n.w); iy2 = Math.max(iy2, p.y + n.h);
+    });
+    var box = svgEl('rect', { x: String(ix1 - 18), y: String(iy1 - 22), width: String(ix2 - ix1 + 36), height: String(iy2 - iy1 + 44) });
+    box.classList.add('invariant-box');
+    gContent.appendChild(box);
+    var lbl = svgEl('text', { x: String(ix1 - 12), y: String(iy1 - 8) });
+    lbl.classList.add('invariant-label');
+    lbl.textContent = 'xxhash64 sharding invariant \u2014 all paths must produce identical shard IDs';
+    gContent.appendChild(lbl);
+  }
+
+  // Connections
+  connections.forEach(function(c) {
+    if (!state.connTypes[c.type]) return;
+    var fromN = nodeMap[c.from], toN = nodeMap[c.to];
+    if (!fromN || !toN) return;
+    if (!state.layers[fromN.layer] || !state.layers[toN.layer]) return;
+
+    var fromP = currentPos[c.from], toP = currentPos[c.to];
+    var dimmed = activeSet && (!activeSet.has(c.from) || !activeSet.has(c.to));
+    var ct = CONN_TYPES.find(function(t) { return t.id === c.type; });
+    var pathD = computePath(fromP, fromN, toP, toN);
+
+    var p = svgEl('path', { d: pathD, stroke: ct.color, 'stroke-width': c.type === 'data-flow' ? '1.8' : '1.1', 'marker-end': 'url(#' + ct.marker + ')' });
+    if (ct.dash) p.setAttribute('stroke-dasharray', ct.dash);
+    p.classList.add('conn-path');
+    p.style.opacity = dimmed ? 0.06 : (c.type === 'data-flow' ? 0.7 : 0.3);
+    gContent.appendChild(p);
+
+    if (c.label && !dimmed) {
+      var mid = bezierMid(pathD);
+      if (mid) {
+        var tEl = svgEl('text', { x: String(mid.x), y: String(mid.y - 5), 'text-anchor': 'middle', fill: ct.color, 'font-size': '9', 'font-family': "'SF Mono',Consolas,monospace" });
+        tEl.style.opacity = '0.55';
+        tEl.textContent = c.label;
+        gContent.appendChild(tEl);
+      }
+    }
+  });
+
+  // Nodes
+  nodes.forEach(function(n) {
+    if (!state.layers[n.layer]) return;
+    var pos = currentPos[n.id];
+    var dimmed = activeSet && !activeSet.has(n.id);
+    var hasComment = state.comments.some(function(c) { return c.nodeId === n.id; });
+
+    var group = svgEl('g');
+    group.style.opacity = String(dimmed ? 0.1 : 1);
+    group.style.cursor = 'pointer';
+    group.addEventListener('click', function() { openModal(n.id); });
+
+    var rect = svgEl('rect', { x: String(pos.x), y: String(pos.y), width: String(n.w), height: String(n.h), rx: '8', fill: hexToRgba(n.bc, 0.1), stroke: hasComment ? '#a78bfa' : n.bc, 'stroke-width': hasComment ? '2' : '1.2' });
+    rect.classList.add('node-rect');
+    group.appendChild(rect);
+
+    var label = svgEl('text', { x: String(pos.x + n.w / 2), y: String(pos.y + 26), 'text-anchor': 'middle' });
+    label.classList.add('node-label');
+    label.textContent = n.label;
+    group.appendChild(label);
+
+    var sub = svgEl('text', { x: String(pos.x + n.w / 2), y: String(pos.y + 42), 'text-anchor': 'middle' });
+    sub.classList.add('node-sub');
+    sub.textContent = n.sub;
+    group.appendChild(sub);
+
+    if (hasComment) {
+      var badge = svgEl('circle', { cx: String(pos.x + n.w - 6), cy: String(pos.y + 6), r: '4', fill: '#a78bfa' });
+      badge.classList.add('comment-badge');
+      group.appendChild(badge);
+    }
+    gContent.appendChild(group);
+  });
+
+  updatePrompt();
+}
+
+function computePath(fromP, fromN, toP, toN) {
+  var fcx = fromP.x + fromN.w / 2, fcy = fromP.y + fromN.h / 2;
+  var tcx = toP.x + toN.w / 2, tcy = toP.y + toN.h / 2;
+
+  if (Math.abs(fcy - tcy) < 30) {
+    var right = tcx > fcx;
+    var sx = right ? fromP.x + fromN.w : fromP.x;
+    var sy = fcy;
+    var ex = right ? toP.x : toP.x + toN.w;
+    var ey = tcy;
+    var dx = Math.abs(ex - sx);
+    var curve = Math.min(dx * 0.25, 40);
+    return right
+      ? 'M' + sx + ',' + sy + ' C' + (sx + dx * 0.35) + ',' + (sy - curve) + ' ' + (ex - dx * 0.35) + ',' + (ey - curve) + ' ' + ex + ',' + ey
+      : 'M' + sx + ',' + sy + ' C' + (sx - dx * 0.35) + ',' + (sy - curve) + ' ' + (ex + dx * 0.35) + ',' + (ey - curve) + ' ' + ex + ',' + ey;
+  }
+
+  var down = tcy > fcy;
+  var sx2 = fcx, sy2 = down ? fromP.y + fromN.h : fromP.y;
+  var ex2 = tcx, ey2 = down ? toP.y : toP.y + toN.h;
+  var dy = Math.abs(ey2 - sy2);
+  var cp = dy * 0.4;
+  return down
+    ? 'M' + sx2 + ',' + sy2 + ' C' + sx2 + ',' + (sy2 + cp) + ' ' + ex2 + ',' + (ey2 - cp) + ' ' + ex2 + ',' + ey2
+    : 'M' + sx2 + ',' + sy2 + ' C' + sx2 + ',' + (sy2 - cp) + ' ' + ex2 + ',' + (ey2 + cp) + ' ' + ex2 + ',' + ey2;
+}
+
+function bezierMid(d) {
+  var m = d.match(/M([\d.]+),([\d.]+)\s*C([\d.]+),([\d.-]+)\s+([\d.]+),([\d.-]+)\s+([\d.]+),([\d.]+)/);
+  if (!m) return null;
+  var nums = m.slice(1).map(Number);
+  var t = 0.5, mt = 0.5;
+  return {
+    x: mt*mt*mt*nums[0] + 3*mt*mt*t*nums[2] + 3*mt*t*t*nums[4] + t*t*t*nums[6],
+    y: mt*mt*mt*nums[1] + 3*mt*mt*t*nums[3] + 3*mt*t*t*nums[5] + t*t*t*nums[7],
+  };
+}
+
+function hexToRgba(hex, a) {
+  return 'rgba(' + parseInt(hex.slice(1,3),16) + ',' + parseInt(hex.slice(3,5),16) + ',' + parseInt(hex.slice(5,7),16) + ',' + a + ')';
+}
+
+// ─── Zoom ────────────────────────────────────────────────────────────────
+var zoom = 1;
+function setZoom(z) {
+  zoom = Math.max(0.4, Math.min(2.5, z));
+  svgDom.style.width = (1350 * zoom) + 'px';
+  svgDom.style.height = (800 * zoom) + 'px';
+}
+document.getElementById('zoom-in').addEventListener('click', function() { setZoom(zoom + 0.15); });
+document.getElementById('zoom-reset').addEventListener('click', function() { setZoom(1); });
+document.getElementById('zoom-out').addEventListener('click', function() { setZoom(zoom - 0.15); });
+
+// ─── Controls ────────────────────────────────────────────────────────────
+function buildControls() {
+  var presetEl = document.getElementById('presets');
+  while (presetEl.firstChild) presetEl.removeChild(presetEl.firstChild);
+  PRESETS.forEach(function(p) {
+    var btn = document.createElement('button');
+    btn.className = 'preset-btn' + (state.preset === p.id ? ' active' : '');
+    btn.textContent = p.label;
+    btn.addEventListener('click', function() {
+      state.preset = p.id;
+      buildControls();
+      startAnimation();
+    });
+    presetEl.appendChild(btn);
+  });
+
+  var layerEl = document.getElementById('layer-toggles');
+  while (layerEl.firstChild) layerEl.removeChild(layerEl.firstChild);
+  LAYERS.forEach(function(l) {
+    var row = document.createElement('label');
+    row.className = 'toggle-row';
+    var cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = state.layers[l.id];
+    cb.addEventListener('change', function() { state.layers[l.id] = cb.checked; render(); });
+    var dot = document.createElement('span');
+    dot.className = 'dot'; dot.style.background = l.color;
+    row.appendChild(cb); row.appendChild(dot);
+    row.appendChild(document.createTextNode(l.label));
+    layerEl.appendChild(row);
+  });
+
+  var connEl = document.getElementById('conn-toggles');
+  while (connEl.firstChild) connEl.removeChild(connEl.firstChild);
+  CONN_TYPES.forEach(function(c) {
+    var row = document.createElement('label');
+    row.className = 'toggle-row';
+    var cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = state.connTypes[c.id];
+    cb.addEventListener('change', function() { state.connTypes[c.id] = cb.checked; render(); });
+    var dot = document.createElement('span');
+    dot.className = 'dot'; dot.style.background = c.color;
+    row.appendChild(cb); row.appendChild(dot);
+    row.appendChild(document.createTextNode(c.label));
+    connEl.appendChild(row);
+  });
+}
+
+// ─── Modal ───────────────────────────────────────────────────────────────
+function openModal(nodeId) {
+  var n = nodeMap[nodeId];
+  if (!n) return;
+  state.modalNodeId = nodeId;
+  document.getElementById('m-title').textContent = n.label;
+  document.getElementById('m-file').textContent = n.sub;
+  document.getElementById('m-desc').textContent = n.desc;
+  var exportsEl = document.getElementById('m-exports');
+  while (exportsEl.firstChild) exportsEl.removeChild(exportsEl.firstChild);
+  var exLabel = document.createElement('span');
+  exLabel.className = 'm-exports-label';
+  exLabel.textContent = 'Exports: ';
+  exportsEl.appendChild(exLabel);
+  exportsEl.appendChild(document.createTextNode(n.exp));
+  var existing = state.comments.find(function(c) { return c.nodeId === nodeId; });
+  document.getElementById('m-comment').value = existing ? existing.text : '';
+  document.getElementById('modal-overlay').classList.add('open');
+  setTimeout(function() { document.getElementById('m-comment').focus(); }, 50);
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('open');
+  state.modalNodeId = null;
+}
+
+function saveComment() {
+  var text = document.getElementById('m-comment').value.trim();
+  var nodeId = state.modalNodeId;
+  state.comments = state.comments.filter(function(c) { return c.nodeId !== nodeId; });
+  if (text) {
+    var n = nodeMap[nodeId];
+    state.comments.push({ nodeId: nodeId, label: n.label, file: n.sub, text: text });
+  }
+  closeModal();
+  renderComments();
+  render();
+}
+
+function renderComments() {
+  var el = document.getElementById('comments-list');
+  document.getElementById('comments-title').textContent = 'Comments (' + state.comments.length + ')';
+  while (el.firstChild) el.removeChild(el.firstChild);
+  if (!state.comments.length) {
+    var empty = document.createElement('span');
+    empty.className = 'empty-msg';
+    empty.textContent = 'Click a component to add feedback';
+    el.appendChild(empty);
+    return;
+  }
+  state.comments.forEach(function(c, i) {
+    var item = document.createElement('div');
+    item.className = 'comment-item';
+    var labelDiv = document.createElement('div');
+    labelDiv.className = 'cm-label'; labelDiv.textContent = c.label; item.appendChild(labelDiv);
+    var fileDiv = document.createElement('div');
+    fileDiv.className = 'cm-file'; fileDiv.textContent = c.file; item.appendChild(fileDiv);
+    var textDiv = document.createElement('div');
+    textDiv.className = 'cm-text'; textDiv.textContent = c.text; item.appendChild(textDiv);
+    var delBtn = document.createElement('button');
+    delBtn.className = 'cm-del'; delBtn.title = 'Delete'; delBtn.textContent = '\u00d7';
+    delBtn.addEventListener('click', function() { delComment(i); });
+    item.appendChild(delBtn);
+    el.appendChild(item);
+  });
+}
+
+function delComment(i) {
+  state.comments.splice(i, 1);
+  renderComments();
+  render();
+}
+
+// ─── Prompt ──────────────────────────────────────────────────────────────
+function updatePrompt() {
+  var el = document.getElementById('prompt-text');
+  var presetObj = PRESETS.find(function(p) { return p.id === state.preset; });
+  var presetLabel = presetObj ? presetObj.label : 'Full System';
+  if (!state.comments.length) {
+    el.textContent = 'Viewing: ' + presetLabel + '\n\nClick components in the diagram to add feedback. Comments generate a copy-ready prompt here.';
+    return;
+  }
+  var prompt = 'Architecture feedback for shardyfusion';
+  if (state.preset !== 'full') prompt += ' (' + presetLabel + ' view)';
+  prompt += ':\n';
+  state.comments.forEach(function(c) {
+    prompt += '\n**' + c.label + '** (' + c.file + '):\n' + c.text + '\n';
+  });
+  el.textContent = prompt;
+}
+
+function copyPrompt() {
+  var text = document.getElementById('prompt-text').textContent;
+  navigator.clipboard.writeText(text).then(function() {
+    var btn = document.getElementById('copy-btn');
+    btn.textContent = 'Copied!'; btn.classList.add('copied');
+    setTimeout(function() { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+  });
+}
+
+document.getElementById('copy-btn').addEventListener('click', copyPrompt);
+document.getElementById('m-save').addEventListener('click', saveComment);
+document.getElementById('m-cancel').addEventListener('click', closeModal);
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeModal(); });
+document.getElementById('modal-overlay').addEventListener('click', function(e) { if (e.target === e.currentTarget) closeModal(); });
+
+// ─── Init ────────────────────────────────────────────────────────────────
+buildControls();
+render();
+setZoom(1);
+</script>
+</body>
+</html>

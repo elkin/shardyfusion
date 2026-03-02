@@ -1,7 +1,7 @@
 FROM python:3.11-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV UV_PROJECT_ENVIRONMENT=/opt/slatedb-venv
+ENV UV_PROJECT_ENVIRONMENT=/opt/shardyfusion-venv
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -22,7 +22,7 @@ RUN uv python install 3.12 3.13 3.14 \
     && ln -sf "$(uv python find 3.13)" /usr/local/bin/python3.13 \
     && ln -sf "$(uv python find 3.14)" /usr/local/bin/python3.14
 
-RUN mkdir -p /opt/slatedb-venv
+RUN mkdir -p /opt/shardyfusion-venv
 
 # Pre-install project dependencies into the container-local uv environment.
 # This ensures runtime tools (e.g. slatedb, pyspark, tox deps) are available

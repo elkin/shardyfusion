@@ -12,7 +12,7 @@ retrying the operation may help:
 """
 
 
-class SlatedbSparkShardedError(Exception):
+class ShardyfusionError(Exception):
     """Base exception for all package-specific errors."""
 
     retryable: bool = False
@@ -23,19 +23,19 @@ class SlatedbSparkShardedError(Exception):
 # ---------------------------------------------------------------------------
 
 
-class ConfigValidationError(SlatedbSparkShardedError):
+class ConfigValidationError(ShardyfusionError):
     """Configuration failed validation."""
 
     retryable = False
 
 
-class ShardAssignmentError(SlatedbSparkShardedError):
+class ShardAssignmentError(ShardyfusionError):
     """Rows could not be assigned to valid shard ids."""
 
     retryable = False
 
 
-class ShardCoverageError(SlatedbSparkShardedError):
+class ShardCoverageError(ShardyfusionError):
     """Partition results did not cover all expected shard ids."""
 
     retryable = False
@@ -46,43 +46,43 @@ class ShardCoverageError(SlatedbSparkShardedError):
 # ---------------------------------------------------------------------------
 
 
-class SlateDbApiError(SlatedbSparkShardedError):
+class SlateDbApiError(ShardyfusionError):
     """SlateDB binding was unavailable or incompatible."""
 
     retryable = False
 
 
-class ManifestBuildError(SlatedbSparkShardedError):
+class ManifestBuildError(ShardyfusionError):
     """Manifest artifact creation failed."""
 
     retryable = False
 
 
-class PublishManifestError(SlatedbSparkShardedError):
+class PublishManifestError(ShardyfusionError):
     """Manifest publish operation failed."""
 
     retryable = True
 
 
-class PublishCurrentError(SlatedbSparkShardedError):
+class PublishCurrentError(ShardyfusionError):
     """CURRENT pointer publish operation failed."""
 
     retryable = True
 
 
-class ManifestParseError(SlatedbSparkShardedError):
+class ManifestParseError(ShardyfusionError):
     """Manifest or CURRENT pointer payload could not be parsed or is structurally invalid."""
 
     retryable = False
 
 
-class ReaderStateError(SlatedbSparkShardedError):
+class ReaderStateError(ShardyfusionError):
     """Reader operation attempted in an invalid lifecycle state (closed, missing CURRENT)."""
 
     retryable = False
 
 
-class S3TransientError(SlatedbSparkShardedError):
+class S3TransientError(ShardyfusionError):
     """Transient S3 error that may succeed on retry (throttle, 500, 503, timeout)."""
 
     retryable = True

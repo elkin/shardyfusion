@@ -20,7 +20,7 @@ from shardyfusion._writer_core import (
 from shardyfusion.config import WriteConfig
 from shardyfusion.errors import (
     ConfigValidationError,
-    SlatedbSparkShardedError,
+    ShardyfusionError,
 )
 from shardyfusion.logging import (
     FailureSeverity,
@@ -368,7 +368,7 @@ def _shard_worker(
             error=exc,
             db_id=db_id,
         )
-        raise SlatedbSparkShardedError(
+        raise ShardyfusionError(
             f"Shard write failed for db_id={db_id}: {exc}"
         ) from exc
 

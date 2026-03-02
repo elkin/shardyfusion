@@ -18,7 +18,7 @@ from shardyfusion import SlateShardedReader
 
 reader = SlateShardedReader(
     s3_prefix="s3://bucket/prefix",
-    local_root="/tmp/slatedb-reader",
+    local_root="/tmp/shardyfusion-reader",
 )
 
 value = reader.get(123)

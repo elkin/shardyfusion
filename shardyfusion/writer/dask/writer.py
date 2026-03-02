@@ -23,7 +23,7 @@ from shardyfusion.config import WriteConfig
 from shardyfusion.errors import (
     ConfigValidationError,
     ShardAssignmentError,
-    SlatedbSparkShardedError,
+    ShardyfusionError,
 )
 from shardyfusion.logging import (
     FailureSeverity,
@@ -513,7 +513,7 @@ def _write_one_shard(
 
             adapter.flush()
             checkpoint_id = adapter.checkpoint()
-    except SlatedbSparkShardedError:
+    except ShardyfusionError:
         raise
     except Exception as exc:
         log_failure(
@@ -527,7 +527,7 @@ def _write_one_shard(
             rows_written=row_count,
             include_traceback=True,
         )
-        raise SlatedbSparkShardedError(
+        raise ShardyfusionError(
             f"Shard write failed for db_id={db_id}, attempt={attempt}: {exc}"
         ) from exc
 

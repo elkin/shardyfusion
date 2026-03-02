@@ -8,13 +8,13 @@
   "workspaceFolder": "/workspace",
   "containerEnv": {
     "SPARK_LOCAL_IP": "127.0.0.1",
-    "UV_PROJECT_ENVIRONMENT": "/opt/slatedb-venv"
+    "UV_PROJECT_ENVIRONMENT": "/opt/shardyfusion-venv"
   },
   "postCreateCommand": "uv sync --all-extras --dev",
   "customizations": {
     "vscode": {
       "settings": {
-        "python.defaultInterpreterPath": "/opt/slatedb-venv/bin/python",
+        "python.defaultInterpreterPath": "/opt/shardyfusion-venv/bin/python",
         "python.terminal.activateEnvironment": true
       },
       "extensions": [

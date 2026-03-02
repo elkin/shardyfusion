@@ -12,7 +12,7 @@ from shardyfusion.config import (
     OutputOptions,
     WriteConfig,
 )
-from shardyfusion.errors import ConfigValidationError, SlatedbSparkShardedError
+from shardyfusion.errors import ConfigValidationError, ShardyfusionError
 from shardyfusion.manifest import BuildResult
 from shardyfusion.serde import ValueSpec
 from shardyfusion.sharding_types import KeyEncoding
@@ -602,11 +602,11 @@ class _FailingFactory:
 
 @pytest.mark.spark
 def test_unexpected_error_wrapped_in_slatedb_error(spark: SparkSession) -> None:
-    """Generic exceptions from the adapter are wrapped in SlatedbSparkShardedError."""
+    """Generic exceptions from the adapter are wrapped in ShardyfusionError."""
     config = _make_config(factory=_FailingFactory(RuntimeError("boom")))  # type: ignore[arg-type]
     df = spark.createDataFrame([(1,)], ["key"])
 
-    with pytest.raises(SlatedbSparkShardedError, match="boom") as exc_info:
+    with pytest.raises(ShardyfusionError, match="boom") as exc_info:
         write_single_db(
             df,
             config,
@@ -619,12 +619,12 @@ def test_unexpected_error_wrapped_in_slatedb_error(spark: SparkSession) -> None:
 
 @pytest.mark.spark
 def test_slatedb_error_passes_through(spark: SparkSession) -> None:
-    """SlatedbSparkShardedError from the adapter is not double-wrapped."""
-    original = SlatedbSparkShardedError("original error")
+    """ShardyfusionError from the adapter is not double-wrapped."""
+    original = ShardyfusionError("original error")
     config = _make_config(factory=_FailingFactory(original))  # type: ignore[arg-type]
     df = spark.createDataFrame([(1,)], ["key"])
 
-    with pytest.raises(SlatedbSparkShardedError, match="original error") as exc_info:
+    with pytest.raises(ShardyfusionError, match="original error") as exc_info:
         write_single_db(
             df,
             config,

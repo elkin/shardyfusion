@@ -41,7 +41,7 @@
   - Run any local-style command in container: `just d <command>`
   - Named recipes: `just d-quality`, `just d-unit`, `just d-integration`, `just d-e2e`, `just d-ci`
   - Use Docker instead of Podman: `CONTAINER_ENGINE=docker just docker-build`
-  - Container runs use an isolated uv project env at `/opt/slatedb-venv` (not host `.venv`).
+  - Container runs use an isolated uv project env at `/opt/shardyfusion-venv` (not host `.venv`).
 
 ## Coding Style & Naming Conventions
 - Python 3.11+ with full type hints.

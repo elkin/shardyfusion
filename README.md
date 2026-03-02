@@ -78,7 +78,7 @@ from shardyfusion import SlateShardedReader
 
 reader = SlateShardedReader(
     s3_prefix="s3://bucket/prefix",
-    local_root="/tmp/slatedb-reader",
+    local_root="/tmp/shardyfusion-reader",
 )
 
 value = reader.get(123)
@@ -142,7 +142,7 @@ just d uv run tox -m integration
 
 `just d ...` runs the same command shape as local usage, but inside the container.
 It uses container-only uv state and a container-only project venv path
-(`UV_PROJECT_ENVIRONMENT=/opt/slatedb-venv`), so it does not reuse host `.venv`.
+(`UV_PROJECT_ENVIRONMENT=/opt/shardyfusion-venv`), so it does not reuse host `.venv`.
 
 Container runtime defaults to `podman`; switch to Docker with:
 

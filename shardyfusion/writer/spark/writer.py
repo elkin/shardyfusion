@@ -20,7 +20,7 @@ from shardyfusion._writer_core import (
     update_min_max,
 )
 from shardyfusion.config import WriteConfig
-from shardyfusion.errors import ShardAssignmentError, SlatedbSparkShardedError
+from shardyfusion.errors import ShardAssignmentError, ShardyfusionError
 from shardyfusion.logging import (
     FailureSeverity,
     get_logger,
@@ -498,7 +498,7 @@ def write_one_shard_partition(
             rows_written=row_count,
             include_traceback=True,
         )
-        raise SlatedbSparkShardedError(
+        raise ShardyfusionError(
             f"Shard write failed for db_id={db_id}, attempt={attempt}: {exc}"
         ) from exc
 

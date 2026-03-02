@@ -5,7 +5,7 @@ image := env_var_or_default("CONTAINER_IMAGE", "shardyfusion-ci")
 workspace := "/workspace"
 uv_cache_volume := "shardyfusion-uv-cache"
 uv_venv_volume := "shardyfusion-uv-venv"
-uv_project_env := "/opt/slatedb-venv"
+uv_project_env := "/opt/shardyfusion-venv"
 
 _default:
     @just --list
