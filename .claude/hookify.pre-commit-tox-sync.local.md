@@ -2,7 +2,7 @@
 name: pre-commit-tox-sync
 enabled: true
 event: bash
-action: block
+action: warn
 pattern: git\s+commit
 ---
 

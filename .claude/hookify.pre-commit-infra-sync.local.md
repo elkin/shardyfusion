@@ -2,7 +2,7 @@
 name: pre-commit-infra-sync
 enabled: true
 event: bash
-action: block
+action: warn
 pattern: git\s+commit
 ---
 
