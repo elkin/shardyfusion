@@ -146,7 +146,7 @@ The library is split into five independent paths that share config, manifest mod
 
 ```
 Layer 0 — Core types & errors (no internal deps):
-  errors.py, type_defs.py, sharding_types.py, ordering.py, logging.py, metrics.py
+  errors.py, type_defs.py, sharding_types.py, ordering.py, logging.py, metrics.py, schemas/
 
 Layer 1 — Config & serialization:
   config.py (→ sharding_types, metrics)

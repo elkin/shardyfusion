@@ -1,8 +1,8 @@
 """Generate JSON Schema files from Pydantic models.
 
 Usage:
-    python scripts/generate_schemas.py          # write to schemas/
-    python scripts/generate_schemas.py --check  # verify schemas/ is up-to-date
+    python scripts/generate_schemas.py          # write to shardyfusion/schemas/
+    python scripts/generate_schemas.py --check  # verify shardyfusion/schemas/ is up-to-date
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from pathlib import Path
 from shardyfusion.manifest import CurrentPointer, ParsedManifest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCHEMAS_DIR = REPO_ROOT / "schemas"
+SCHEMAS_DIR = REPO_ROOT / "shardyfusion" / "schemas"
 
 SCHEMAS: dict[str, dict] = {
     "manifest.schema.json": {
