@@ -209,7 +209,6 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **Session-scoped test fixtures**: PySpark and S3 (moto/Garage) fixtures are session-scoped for performance. Tests share the same Spark session and S3 service.
 - **Writer scenario imports are deferred**: `tests/helpers/s3_test_scenarios.py` imports writer modules inside function bodies so reader-only test collection doesn't fail.
 - **Dask writer rejects `CUSTOM_EXPR` sharding**: Unlike the Spark writer, the Dask writer raises `ConfigValidationError` for custom expression sharding. Only `HASH` and `RANGE` are supported.
-- **`OutputOptions.local_root` defaults to `/tmp/shardyfusion`**: Not per-user; may cause permission issues in shared environments.
 
 ## Environment Notes
 

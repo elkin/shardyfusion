@@ -1,5 +1,7 @@
 """Configuration models for sharded SlateDB writes."""
 
+import os
+import tempfile
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
@@ -23,7 +25,9 @@ class OutputOptions:
     run_id: str | None = None
     db_path_template: str = "db={db_id:05d}"
     tmp_prefix: str = "_tmp"
-    local_root: str = "/tmp/shardyfusion"
+    local_root: str = field(
+        default_factory=lambda: os.path.join(tempfile.gettempdir(), "shardyfusion")
+    )
 
 
 @dataclass(slots=True)

@@ -3,6 +3,7 @@
 import os
 import stat
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -19,7 +20,9 @@ class ReaderConfig(BaseModel):
     """Non-sensitive reader settings from [reader] in reader.toml."""
 
     current_url: str | None = None
-    local_root: str = "/tmp/slatefusion"
+    local_root: str = Field(
+        default_factory=lambda: os.path.join(tempfile.gettempdir(), "shardyfusion")
+    )
     thread_safety: str = "lock"
     max_workers: int = Field(default=4, ge=1)
     slate_env_file: str | None = None
