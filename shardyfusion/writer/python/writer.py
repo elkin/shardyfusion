@@ -368,9 +368,7 @@ def _shard_worker(
             error=exc,
             db_id=db_id,
         )
-        raise ShardyfusionError(
-            f"Shard write failed for db_id={db_id}: {exc}"
-        ) from exc
+        raise ShardyfusionError(f"Shard write failed for db_id={db_id}: {exc}") from exc
 
     writer_info: JsonObject = {
         "stage_id": None,
