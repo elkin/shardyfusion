@@ -86,8 +86,8 @@ jobs:
 
       - name: Wheel install smoke test
         run: |
-          uv pip install --force-reinstall dist/*.whl
-          uv run python -c "import shardyfusion; print('import ok')"
+          uv pip install --system --force-reinstall dist/*.whl
+          python -c "import shardyfusion; print('import ok')"
 
   unit:
     name: ${{ matrix.name }}
