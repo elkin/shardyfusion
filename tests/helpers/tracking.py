@@ -12,8 +12,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Self
 
-from slatedb_spark_sharded.manifest import ManifestArtifact
-from slatedb_spark_sharded.publish import ManifestPublisher
+from shardyfusion.manifest import ManifestArtifact
+from shardyfusion.publish import ManifestPublisher
 
 
 class TrackingAdapter:

@@ -1,5 +1,5 @@
 {
-  "name": "slatedb_spark_sharded",
+  "name": "shardyfusion",
   "build": {
     "dockerfile": "../docker/ci.Dockerfile",
     "context": ".."

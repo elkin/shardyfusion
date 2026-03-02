@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 from pyspark.sql import functions as F
 
-from slatedb_spark_sharded.errors import ShardAssignmentError
-from slatedb_spark_sharded.sharding_types import KeyEncoding
-from slatedb_spark_sharded.writer.spark.sharding import (
+from shardyfusion.errors import ShardAssignmentError
+from shardyfusion.sharding_types import KeyEncoding
+from shardyfusion.writer.spark.sharding import (
     DB_ID_COL,
     ShardingSpec,
     ShardingStrategy,
@@ -14,7 +14,7 @@ from slatedb_spark_sharded.writer.spark.sharding import (
     _resolve_boundaries,
     add_db_id_column,
 )
-from slatedb_spark_sharded.writer.spark.writer import verify_routing_agreement
+from shardyfusion.writer.spark.writer import verify_routing_agreement
 
 
 class _FakeApproxQuantileDf:

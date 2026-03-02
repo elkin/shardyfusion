@@ -27,7 +27,7 @@ def spark() -> Generator[SparkSession, None, None]:
 
     session = (
         SparkSession.builder.master("local[2]")
-        .appName("slatedb_spark_sharded_tests")
+        .appName("shardyfusion_tests")
         .config("spark.ui.enabled", "false")
         .getOrCreate()
     )

@@ -10,9 +10,9 @@ from pyspark.sql import Column, DataFrame, Row
 from pyspark.sql import functions as F
 from pyspark.sql.types import IntegerType, LongType, StringType
 
-from slatedb_spark_sharded.errors import ShardAssignmentError
-from slatedb_spark_sharded.ordering import compare_ordered
-from slatedb_spark_sharded.sharding_types import (
+from shardyfusion.errors import ShardAssignmentError
+from shardyfusion.ordering import compare_ordered
+from shardyfusion.sharding_types import (
     DB_ID_COL,
     BoundaryValue,
     ShardingSpec,

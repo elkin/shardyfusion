@@ -13,8 +13,8 @@ Key guarantees:
 Typical usage:
 
 ```python
-from slatedb_spark_sharded import WriteConfig, ValueSpec
-from slatedb_spark_sharded.writer.spark import write_sharded
+from shardyfusion import WriteConfig, ValueSpec
+from shardyfusion.writer.spark import write_sharded
 
 config = WriteConfig(
     num_dbs=8,
@@ -88,21 +88,21 @@ Key differences:
 ### Usage examples
 
 ```python
-# Spark: from slatedb_spark_sharded.writer.spark import write_sharded
+# Spark: from shardyfusion.writer.spark import write_sharded
 result = write_sharded(
     df, config, key_col="id",
     value_spec=ValueSpec.binary_col("payload"),
     max_writes_per_second=10_000.0,
 )
 
-# Dask: from slatedb_spark_sharded.writer.dask import write_sharded
+# Dask: from shardyfusion.writer.dask import write_sharded
 result = write_sharded(
     ddf, config, key_col="id",
     value_spec=ValueSpec.binary_col("payload"),
     max_writes_per_second=10_000.0,
 )
 
-# Python: from slatedb_spark_sharded.writer.python import write_sharded
+# Python: from shardyfusion.writer.python import write_sharded
 result = write_sharded(
     records, config, key_fn=lambda r: r["id"],
     value_fn=lambda r: r["payload"],

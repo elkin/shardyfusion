@@ -1,7 +1,7 @@
-"""Tests for slatedb_spark_sharded.metrics module."""
+"""Tests for shardyfusion.metrics module."""
 
-from slatedb_spark_sharded.metrics import MetricEvent
-from slatedb_spark_sharded.testing import ListMetricsCollector
+from shardyfusion.metrics import MetricEvent
+from shardyfusion.testing import ListMetricsCollector
 
 
 class TestMetricEvent:

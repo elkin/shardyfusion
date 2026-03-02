@@ -10,14 +10,14 @@ import pytest
 dd = pytest.importorskip("dask.dataframe")
 import dask  # noqa: E402
 
-from slatedb_spark_sharded.config import (  # noqa: E402
+from shardyfusion.config import (  # noqa: E402
     ManifestOptions,
     OutputOptions,
     WriteConfig,
 )
-from slatedb_spark_sharded.serde import ValueSpec  # noqa: E402
-from slatedb_spark_sharded.testing import file_backed_adapter_factory  # noqa: E402
-from slatedb_spark_sharded.writer.dask.single_db_writer import (  # noqa: E402
+from shardyfusion.serde import ValueSpec  # noqa: E402
+from shardyfusion.testing import file_backed_adapter_factory  # noqa: E402
+from shardyfusion.writer.dask.single_db_writer import (  # noqa: E402
     write_single_db,
 )
 

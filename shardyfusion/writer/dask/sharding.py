@@ -3,9 +3,9 @@
 import dask.dataframe as dd
 import pandas as pd
 
-from slatedb_spark_sharded._writer_core import route_key
-from slatedb_spark_sharded.errors import ShardAssignmentError
-from slatedb_spark_sharded.sharding_types import (
+from shardyfusion._writer_core import route_key
+from shardyfusion.errors import ShardAssignmentError
+from shardyfusion.sharding_types import (
     DB_ID_COL,
     BoundaryValue,
     KeyEncoding,

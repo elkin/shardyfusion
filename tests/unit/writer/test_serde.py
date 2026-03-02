@@ -2,9 +2,9 @@
 
 import pytest
 
-from slatedb_spark_sharded.errors import ConfigValidationError
-from slatedb_spark_sharded.serde import make_key_encoder
-from slatedb_spark_sharded.sharding_types import KeyEncoding
+from shardyfusion.errors import ConfigValidationError
+from shardyfusion.serde import make_key_encoder
+from shardyfusion.sharding_types import KeyEncoding
 
 
 class TestMakeKeyEncoderU64be:

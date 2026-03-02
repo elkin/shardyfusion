@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from slatedb_spark_sharded.errors import SlateDbApiError
-from slatedb_spark_sharded.slatedb_adapter import DefaultSlateDbAdapter
+from shardyfusion.errors import SlateDbApiError
+from shardyfusion.slatedb_adapter import DefaultSlateDbAdapter
 
 
 def test_open_uses_official_constructor_signature(monkeypatch) -> None:

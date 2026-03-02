@@ -1,11 +1,11 @@
-"""Unit tests for slatedb_spark_sharded.cli.output formatters."""
+"""Unit tests for shardyfusion.cli.output formatters."""
 
 from __future__ import annotations
 
 import json
 
-from slatedb_spark_sharded.cli.config import OutputConfig
-from slatedb_spark_sharded.cli.output import (
+from shardyfusion.cli.config import OutputConfig
+from shardyfusion.cli.output import (
     build_error_result,
     build_get_result,
     build_multiget_result,

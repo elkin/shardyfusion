@@ -13,7 +13,7 @@ Run `git diff --name-only HEAD` and `git status --porcelain` to identify modifie
 
 | Changed files match | Checks to run |
 |---|---|
-| `README.md`, `CLAUDE.md`, `AGENTS.md`, `docs/`, or any source in `slatedb_spark_sharded/` | 1. Documentation sync |
+| `README.md`, `CLAUDE.md`, `AGENTS.md`, `docs/`, or any source in `shardyfusion/` | 1. Documentation sync |
 | Any source or test file | 2. CI & E2E tests |
 | `tests/`, `tox.ini` | 3. Tox sync |
 | `docker/`, `.github/`, `tox.ini`, `pyproject.toml` | 4. Infrastructure sync |

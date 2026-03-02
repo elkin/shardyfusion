@@ -1,10 +1,10 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
 engine := env_var_or_default("CONTAINER_ENGINE", "podman")
-image := env_var_or_default("CONTAINER_IMAGE", "slatedb-spark-sharded-ci")
+image := env_var_or_default("CONTAINER_IMAGE", "shardyfusion-ci")
 workspace := "/workspace"
-uv_cache_volume := "slatedb-spark-sharded-uv-cache"
-uv_venv_volume := "slatedb-spark-sharded-uv-venv"
+uv_cache_volume := "shardyfusion-uv-cache"
+uv_venv_volume := "shardyfusion-uv-venv"
 uv_project_env := "/opt/slatedb-venv"
 
 _default:

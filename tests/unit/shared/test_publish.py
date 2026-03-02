@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from slatedb_spark_sharded.manifest import ManifestArtifact
-from slatedb_spark_sharded.publish import DefaultS3Publisher
+from shardyfusion.manifest import ManifestArtifact
+from shardyfusion.publish import DefaultS3Publisher
 
 
 def test_default_s3_publisher_builds_expected_urls(monkeypatch) -> None:
@@ -29,10 +29,8 @@ def test_default_s3_publisher_builds_expected_urls(monkeypatch) -> None:
             }
         )
 
-    monkeypatch.setattr(
-        "slatedb_spark_sharded.publish.create_s3_client", fake_create_s3_client
-    )
-    monkeypatch.setattr("slatedb_spark_sharded.publish.put_bytes", fake_put_bytes)
+    monkeypatch.setattr("shardyfusion.publish.create_s3_client", fake_create_s3_client)
+    monkeypatch.setattr("shardyfusion.publish.put_bytes", fake_put_bytes)
 
     publisher = DefaultS3Publisher("s3://bucket/prefix")
     artifact = ManifestArtifact(payload=b"{}", content_type="application/json")

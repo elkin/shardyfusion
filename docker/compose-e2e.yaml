@@ -15,7 +15,7 @@ services:
       start_period: 5s
 
   tests:
-    image: ${CONTAINER_IMAGE:-slatedb-spark-sharded-ci}
+    image: ${CONTAINER_IMAGE:-shardyfusion-ci}
     depends_on:
       garage:
         condition: service_healthy
@@ -34,6 +34,6 @@ services:
 
 volumes:
   uv-cache:
-    name: slatedb-spark-sharded-uv-cache
+    name: shardyfusion-uv-cache
   uv-venv:
-    name: slatedb-spark-sharded-uv-venv
+    name: shardyfusion-uv-venv

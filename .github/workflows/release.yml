@@ -49,7 +49,7 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Type check (pyright)
-        run: uv run pyright slatedb_spark_sharded
+        run: uv run pyright shardyfusion
 
       - name: Unit and integration tests
         run: uv run tox -e py311-all-spark4-unit,py311-read-integration,py311-sparkwriter-spark4-integration

@@ -300,7 +300,7 @@ flag per invocation.
 ## Module Layout
 
 ```
-slatedb_spark_sharded/
+shardyfusion/
 └── cli/
     ├── __init__.py          # exports main()
     ├── app.py               # click top-level group + subcommands (get, multiget,
@@ -328,7 +328,7 @@ cli = [
 ]
 
 [project.scripts]
-slate-reader = "slatedb_spark_sharded.cli.app:main"
+slate-reader = "shardyfusion.cli.app:main"
 ```
 
 All new dependencies go under the `cli` extra so the core library and existing

@@ -1,8 +1,8 @@
-# slatedb_spark_sharded: How It Works
+# shardyfusion: How It Works
 
 ## Overview
 
-`slatedb_spark_sharded` builds a sharded snapshot from a Spark `DataFrame` into multiple independent SlateDB databases, writes metadata (manifest + CURRENT pointer), and provides service-side readers that route keys to the correct shard.
+`shardyfusion` builds a sharded snapshot from a Spark `DataFrame` into multiple independent SlateDB databases, writes metadata (manifest + CURRENT pointer), and provides service-side readers that route keys to the correct shard.
 
 Core behavior:
 

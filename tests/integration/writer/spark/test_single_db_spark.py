@@ -6,14 +6,14 @@ import json
 
 import pytest
 
-from slatedb_spark_sharded.config import (
+from shardyfusion.config import (
     ManifestOptions,
     OutputOptions,
     WriteConfig,
 )
-from slatedb_spark_sharded.serde import ValueSpec
-from slatedb_spark_sharded.testing import file_backed_adapter_factory
-from slatedb_spark_sharded.writer.spark.single_db_writer import write_single_db
+from shardyfusion.serde import ValueSpec
+from shardyfusion.testing import file_backed_adapter_factory
+from shardyfusion.writer.spark.single_db_writer import write_single_db
 
 
 @pytest.mark.spark

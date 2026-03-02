@@ -11,26 +11,26 @@ from dataclasses import dataclass
 from queue import Queue
 from typing import Any
 
-from slatedb_spark_sharded.errors import (
+from shardyfusion.errors import (
     ReaderStateError,
     SlateDbApiError,
     SlatedbSparkShardedError,
 )
-from slatedb_spark_sharded.logging import (
+from shardyfusion.logging import (
     FailureSeverity,
     get_logger,
     log_event,
     log_failure,
 )
-from slatedb_spark_sharded.manifest import ParsedManifest
-from slatedb_spark_sharded.manifest_readers import (
+from shardyfusion.manifest import ParsedManifest
+from shardyfusion.manifest_readers import (
     DefaultS3ManifestReader,
     ManifestReader,
 )
-from slatedb_spark_sharded.metrics import MetricEvent, MetricsCollector
-from slatedb_spark_sharded.routing import SnapshotRouter
-from slatedb_spark_sharded.sharding_types import KeyEncoding
-from slatedb_spark_sharded.type_defs import KeyInput, ShardReader, ShardReaderFactory
+from shardyfusion.metrics import MetricEvent, MetricsCollector
+from shardyfusion.routing import SnapshotRouter
+from shardyfusion.sharding_types import KeyEncoding
+from shardyfusion.type_defs import KeyInput, ShardReader, ShardReaderFactory
 
 _logger = get_logger(__name__)
 

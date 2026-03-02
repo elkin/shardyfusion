@@ -3,13 +3,13 @@ from __future__ import annotations
 import pytest
 from pyspark.sql import functions as F
 
-from slatedb_spark_sharded.manifest import (
+from shardyfusion.manifest import (
     ManifestShardingSpec,
     RequiredBuildMeta,
     RequiredShardMeta,
 )
-from slatedb_spark_sharded.routing import SnapshotRouter
-from slatedb_spark_sharded.sharding_types import KeyEncoding, ShardingStrategy
+from shardyfusion.routing import SnapshotRouter
+from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 
 
 def _build_required(

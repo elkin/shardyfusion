@@ -5,7 +5,7 @@ import traceback
 from enum import Enum
 from typing import Any
 
-LOGGER = logging.getLogger("slatedb_spark_sharded")
+LOGGER = logging.getLogger("shardyfusion")
 
 _SEVERITY_TO_LOG_LEVEL: dict[str, int] = {
     "WARNING": logging.WARNING,
@@ -36,16 +36,16 @@ _SEVERITY_TO_LEVEL = {
 
 
 def get_logger(name: str) -> logging.Logger:
-    """Return a logger in the ``slatedb_spark_sharded`` hierarchy.
+    """Return a logger in the ``shardyfusion`` hierarchy.
 
     Strips the package prefix when *name* already starts with it so that
     callers can pass ``__name__`` directly::
 
         _logger = get_logger(__name__)
     """
-    prefix = "slatedb_spark_sharded."
+    prefix = "shardyfusion."
     suffix = name[len(prefix) :] if name.startswith(prefix) else name
-    return logging.getLogger(f"slatedb_spark_sharded.{suffix}")
+    return logging.getLogger(f"shardyfusion.{suffix}")
 
 
 def log_event(

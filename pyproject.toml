@@ -3,12 +3,12 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "slatedb_spark_sharded"
+name = "shardyfusion"
 version = "0.1.0"
 description = "Sharded SlateDB snapshot writer/reader library (Spark, Dask, Python, CLI)"
 readme = "README.md"
 requires-python = ">=3.11"
-authors = [{name = "slatedb_spark_sharded contributors"}]
+authors = [{name = "shardyfusion contributors"}]
 license = "Apache-2.0"
 dependencies = [
   "xxhash>=3.4",
@@ -68,7 +68,7 @@ docs = [
 ]
 
 [project.scripts]
-slate-reader = "slatedb_spark_sharded.cli.app:main"
+slate-reader = "shardyfusion.cli.app:main"
 
 [dependency-groups]
 dev = [
@@ -77,7 +77,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["slatedb_spark_sharded*"]
+include = ["shardyfusion*"]
 
 [tool.ruff]
 target-version = "py311"
@@ -105,7 +105,7 @@ ignore = [
   "E501",
   "UP042",
 ]
-per-file-ignores = { "slatedb_spark_sharded/__init__.py" = ["F401"], "slatedb_spark_sharded/writer/spark/__init__.py" = ["F401"], "slatedb_spark_sharded/writer/python/__init__.py" = ["F401"], "slatedb_spark_sharded/writer/dask/__init__.py" = ["F401"], "slatedb_spark_sharded/reader/__init__.py" = ["F401"] }
+per-file-ignores = { "shardyfusion/__init__.py" = ["F401"], "shardyfusion/writer/spark/__init__.py" = ["F401"], "shardyfusion/writer/python/__init__.py" = ["F401"], "shardyfusion/writer/dask/__init__.py" = ["F401"], "shardyfusion/reader/__init__.py" = ["F401"] }
 
 [tool.ruff.format]
 quote-style = "double"
@@ -116,7 +116,7 @@ line-ending = "lf"
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
 include = [
-  "slatedb_spark_sharded",
+  "shardyfusion",
 ]
 exclude = [
   ".git",

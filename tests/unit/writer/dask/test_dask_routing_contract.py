@@ -13,14 +13,14 @@ import pytest
 dd = pytest.importorskip("dask.dataframe")
 import dask  # noqa: E402
 
-from slatedb_spark_sharded._writer_core import route_key  # noqa: E402
-from slatedb_spark_sharded.sharding_types import (  # noqa: E402
+from shardyfusion._writer_core import route_key  # noqa: E402
+from shardyfusion.sharding_types import (  # noqa: E402
     DB_ID_COL,
     KeyEncoding,
     ShardingSpec,
     ShardingStrategy,
 )
-from slatedb_spark_sharded.writer.dask.sharding import add_db_id_column  # noqa: E402
+from shardyfusion.writer.dask.sharding import add_db_id_column  # noqa: E402
 
 # Reuse edge-case keys from the main routing contract test suite.
 from tests.unit.writer.test_routing_contract import (  # noqa: E402

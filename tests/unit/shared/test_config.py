@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from slatedb_spark_sharded.config import WriteConfig
-from slatedb_spark_sharded.errors import ConfigValidationError
-from slatedb_spark_sharded.sharding_types import KeyEncoding
+from shardyfusion.config import WriteConfig
+from shardyfusion.errors import ConfigValidationError
+from shardyfusion.sharding_types import KeyEncoding
 
 # ---------------------------------------------------------------------------
 # WriteConfig tests

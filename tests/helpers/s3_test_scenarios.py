@@ -17,16 +17,16 @@ from typing import TYPE_CHECKING, Any
 
 import slatedb
 
-from slatedb_spark_sharded.manifest import (
+from shardyfusion.manifest import (
     CurrentPointer,
     ManifestShardingSpec,
     RequiredBuildMeta,
     RequiredShardMeta,
 )
-from slatedb_spark_sharded.manifest_readers import DefaultS3ManifestReader
-from slatedb_spark_sharded.reader import SlateShardedReader
-from slatedb_spark_sharded.sharding_types import KeyEncoding, ShardingStrategy
-from slatedb_spark_sharded.type_defs import S3ClientConfig
+from shardyfusion.manifest_readers import DefaultS3ManifestReader
+from shardyfusion.reader import SlateShardedReader
+from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
+from shardyfusion.type_defs import S3ClientConfig
 
 if TYPE_CHECKING:
     from ..conftest import LocalS3Service
@@ -179,15 +179,15 @@ def run_writer_publishes_manifest_scenario(
 ) -> None:
     """Writer publishes manifest + CURRENT to S3, then reads shards back."""
 
-    from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteConfig
-    from slatedb_spark_sharded.serde import ValueSpec
-    from slatedb_spark_sharded.sharding_types import ShardingSpec
-    from slatedb_spark_sharded.testing import (
+    from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+    from shardyfusion.serde import ValueSpec
+    from shardyfusion.sharding_types import ShardingSpec
+    from shardyfusion.testing import (
         map_s3_db_url_to_file_url,
         real_file_adapter_factory,
         writer_local_dir_for_db_url,
     )
-    from slatedb_spark_sharded.writer.spark import write_sharded
+    from shardyfusion.writer.spark import write_sharded
 
     rows = [(i, f"v{i}".encode()) for i in range(24)]
     df = spark.createDataFrame(rows, ["id", "payload"])
@@ -279,15 +279,15 @@ def run_writer_reader_refresh_scenario(
 ) -> None:
     """Writer publishes v1, reader opens, writer publishes v2, reader refreshes."""
 
-    from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteConfig
-    from slatedb_spark_sharded.serde import ValueSpec
-    from slatedb_spark_sharded.sharding_types import ShardingSpec
-    from slatedb_spark_sharded.testing import (
+    from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+    from shardyfusion.serde import ValueSpec
+    from shardyfusion.sharding_types import ShardingSpec
+    from shardyfusion.testing import (
         map_s3_db_url_to_file_url,
         real_file_adapter_factory,
         writer_local_dir_for_db_url,
     )
-    from slatedb_spark_sharded.writer.spark import write_sharded
+    from shardyfusion.writer.spark import write_sharded
 
     bucket = s3_service["bucket"]
     endpoint_url = s3_service["endpoint_url"]
@@ -388,14 +388,14 @@ def run_python_writer_publishes_manifest_scenario(
 ) -> None:
     """Python writer publishes manifest + CURRENT to S3, then reads shards back."""
 
-    from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteConfig
-    from slatedb_spark_sharded.sharding_types import ShardingSpec
-    from slatedb_spark_sharded.testing import (
+    from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+    from shardyfusion.sharding_types import ShardingSpec
+    from shardyfusion.testing import (
         map_s3_db_url_to_file_url,
         real_file_adapter_factory,
         writer_local_dir_for_db_url,
     )
-    from slatedb_spark_sharded.writer.python import write_sharded
+    from shardyfusion.writer.python import write_sharded
 
     mode_label = "parallel" if parallel else "sequential"
     records = list(range(24))
@@ -494,15 +494,15 @@ def run_dask_writer_publishes_manifest_scenario(
     import dask.dataframe as dd
     import pandas as pd
 
-    from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteConfig
-    from slatedb_spark_sharded.serde import ValueSpec
-    from slatedb_spark_sharded.sharding_types import ShardingSpec
-    from slatedb_spark_sharded.testing import (
+    from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+    from shardyfusion.serde import ValueSpec
+    from shardyfusion.sharding_types import ShardingSpec
+    from shardyfusion.testing import (
         map_s3_db_url_to_file_url,
         real_file_adapter_factory,
         writer_local_dir_for_db_url,
     )
-    from slatedb_spark_sharded.writer.dask import write_sharded
+    from shardyfusion.writer.dask import write_sharded
 
     bucket = s3_service["bucket"]
     endpoint_url = s3_service["endpoint_url"]
@@ -596,14 +596,14 @@ def run_python_writer_reader_refresh_scenario(
 ) -> None:
     """Python writer publishes v1, reader opens, Python writer publishes v2, reader refreshes."""
 
-    from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteConfig
-    from slatedb_spark_sharded.sharding_types import ShardingSpec
-    from slatedb_spark_sharded.testing import (
+    from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+    from shardyfusion.sharding_types import ShardingSpec
+    from shardyfusion.testing import (
         map_s3_db_url_to_file_url,
         real_file_adapter_factory,
         writer_local_dir_for_db_url,
     )
-    from slatedb_spark_sharded.writer.python import write_sharded
+    from shardyfusion.writer.python import write_sharded
 
     bucket = s3_service["bucket"]
     endpoint_url = s3_service["endpoint_url"]
@@ -696,15 +696,15 @@ def run_dask_writer_reader_refresh_scenario(
     import dask.dataframe as dd
     import pandas as pd
 
-    from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteConfig
-    from slatedb_spark_sharded.serde import ValueSpec
-    from slatedb_spark_sharded.sharding_types import ShardingSpec
-    from slatedb_spark_sharded.testing import (
+    from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+    from shardyfusion.serde import ValueSpec
+    from shardyfusion.sharding_types import ShardingSpec
+    from shardyfusion.testing import (
         map_s3_db_url_to_file_url,
         real_file_adapter_factory,
         writer_local_dir_for_db_url,
     )
-    from slatedb_spark_sharded.writer.dask import write_sharded
+    from shardyfusion.writer.dask import write_sharded
 
     bucket = s3_service["bucket"]
     endpoint_url = s3_service["endpoint_url"]

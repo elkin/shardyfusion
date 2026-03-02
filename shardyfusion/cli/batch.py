@@ -21,7 +21,7 @@ def load_script(script_path: str) -> dict[str, Any]:
     except ImportError as exc:
         raise SystemExit(
             "pyyaml is required for batch script execution. "
-            "Install it with: pip install 'slatedb_spark_sharded[cli]'"
+            "Install it with: pip install 'shardyfusion[cli]'"
         ) from exc
 
     with open(script_path, encoding="utf-8") as fh:

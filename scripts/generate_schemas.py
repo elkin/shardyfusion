@@ -12,7 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from slatedb_spark_sharded.manifest import CurrentPointer, ParsedManifest
+from shardyfusion.manifest import CurrentPointer, ParsedManifest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMAS_DIR = REPO_ROOT / "schemas"
@@ -21,14 +21,14 @@ SCHEMAS: dict[str, dict] = {
     "manifest.schema.json": {
         **ParsedManifest.model_json_schema(mode="serialization"),
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://github.com/slatedb/slatedb-spark-sharded/schemas/manifest.schema.json",
+        "$id": "https://github.com/slatedb/shardyfusion/schemas/manifest.schema.json",
         "title": "SlateDB Sharded Manifest",
         "description": "JSON manifest published to S3 by the sharded writer.",
     },
     "current-pointer.schema.json": {
         **CurrentPointer.model_json_schema(),
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://github.com/slatedb/slatedb-spark-sharded/schemas/current-pointer.schema.json",
+        "$id": "https://github.com/slatedb/shardyfusion/schemas/current-pointer.schema.json",
         "title": "SlateDB Sharded CURRENT Pointer",
         "description": "JSON pointer published to S3 at _CURRENT.",
     },

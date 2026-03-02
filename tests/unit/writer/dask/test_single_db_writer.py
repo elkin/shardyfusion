@@ -11,23 +11,23 @@ import pytest
 dd = pytest.importorskip("dask.dataframe")
 import dask  # noqa: E402
 
-from slatedb_spark_sharded.config import (  # noqa: E402
+from shardyfusion.config import (  # noqa: E402
     ManifestOptions,
     OutputOptions,
     WriteConfig,
 )
-from slatedb_spark_sharded.errors import (  # noqa: E402
+from shardyfusion.errors import (  # noqa: E402
     ConfigValidationError,
     SlatedbSparkShardedError,
 )
-from slatedb_spark_sharded.manifest import BuildResult  # noqa: E402
-from slatedb_spark_sharded.serde import ValueSpec, make_key_encoder  # noqa: E402
-from slatedb_spark_sharded.sharding_types import KeyEncoding  # noqa: E402
-from slatedb_spark_sharded.testing import (  # noqa: E402
+from shardyfusion.manifest import BuildResult  # noqa: E402
+from shardyfusion.serde import ValueSpec, make_key_encoder  # noqa: E402
+from shardyfusion.sharding_types import KeyEncoding  # noqa: E402
+from shardyfusion.testing import (  # noqa: E402
     file_backed_adapter_factory,
     file_backed_load_db,
 )
-from slatedb_spark_sharded.writer.dask.single_db_writer import (  # noqa: E402
+from shardyfusion.writer.dask.single_db_writer import (  # noqa: E402
     DaskCacheContext,
     write_single_db,
 )
@@ -193,7 +193,7 @@ def test_rate_limiting() -> None:
 def _patch_token_bucket(monkeypatch: pytest.MonkeyPatch) -> list[RecordingTokenBucket]:
     RecordingTokenBucket.instances = []
     monkeypatch.setattr(
-        "slatedb_spark_sharded.writer.dask.single_db_writer.TokenBucket",
+        "shardyfusion.writer.dask.single_db_writer.TokenBucket",
         RecordingTokenBucket,
     )
     return RecordingTokenBucket.instances

@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import json
 
-from slatedb_spark_sharded.manifest import (
+from shardyfusion.manifest import (
     JsonManifestBuilder,
     ManifestShardingSpec,
     ParsedManifest,
     RequiredBuildMeta,
     RequiredShardMeta,
 )
-from slatedb_spark_sharded.sharding_types import ShardingStrategy
+from shardyfusion.sharding_types import ShardingStrategy
 
 
 def test_json_manifest_builder_includes_required_shards_and_custom() -> None:

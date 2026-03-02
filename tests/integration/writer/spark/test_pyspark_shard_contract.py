@@ -4,10 +4,10 @@ import json
 
 import pytest
 
-from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteConfig
-from slatedb_spark_sharded.serde import ValueSpec
-from slatedb_spark_sharded.testing import real_file_adapter_factory
-from slatedb_spark_sharded.writer.spark import write_sharded
+from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+from shardyfusion.serde import ValueSpec
+from shardyfusion.testing import real_file_adapter_factory
+from shardyfusion.writer.spark import write_sharded
 from tests.helpers.tracking import InMemoryPublisher
 
 

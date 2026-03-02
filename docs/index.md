@@ -1,6 +1,6 @@
-# slatedb_spark_sharded
+# shardyfusion
 
-`slatedb_spark_sharded` builds and reads sharded SlateDB snapshots.
+`shardyfusion` builds and reads sharded SlateDB snapshots.
 
 The package provides:
 

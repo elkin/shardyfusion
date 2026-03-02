@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import click.testing
 
-from slatedb_spark_sharded.cli.app import cli
+from shardyfusion.cli.app import cli
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -74,7 +74,7 @@ def _invoke(
     if env:
         effective_env.update(env)
 
-    with patch("slatedb_spark_sharded.cli.app._build_reader", return_value=reader):
+    with patch("shardyfusion.cli.app._build_reader", return_value=reader):
         runner = click.testing.CliRunner()
         return runner.invoke(cli, args, env=effective_env)
 

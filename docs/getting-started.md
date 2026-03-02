@@ -42,7 +42,7 @@ uv run ruff check .
 uv run ruff format --check .
 
 # Type check
-uv run pyright slatedb_spark_sharded
+uv run pyright shardyfusion
 
 # Run tests directly
 uv run pytest -q

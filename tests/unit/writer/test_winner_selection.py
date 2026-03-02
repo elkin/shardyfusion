@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from slatedb_spark_sharded._writer_core import ShardAttemptResult, select_winners
+from shardyfusion._writer_core import ShardAttemptResult, select_winners
 
 
 def test_winner_selection_is_deterministic() -> None:

@@ -1,8 +1,8 @@
-site_name: slatedb_spark_sharded
+site_name: shardyfusion
 site_description: Sharded SlateDB snapshot writer and reader helpers for PySpark
-site_url: https://slatedb.github.io/slatedb_spark_sharded/
-repo_url: https://github.com/slatedb/slatedb_spark_sharded
-repo_name: slatedb/slatedb_spark_sharded
+site_url: https://slatedb.github.io/shardyfusion/
+repo_url: https://github.com/slatedb/shardyfusion
+repo_name: slatedb/shardyfusion
 
 theme:
   name: material

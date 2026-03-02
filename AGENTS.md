@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Source package: `slatedb_spark_sharded/` (31 modules)
+- Source package: `shardyfusion/` (31 modules)
   - Writer path (Spark): `writer/spark/writer.py`, `writer/spark/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
   - Writer path (Python): `writer/python/writer.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
   - Reader path: `reader/reader.py`, `routing.py`, `manifest_readers.py`
@@ -27,7 +27,7 @@
 - Lint: `uv run ruff check .`
 - Format check: `uv run ruff format --check .`
 - Auto-fix: `just fix` (ruff check --fix + ruff format)
-- Type check: `uv run pyright slatedb_spark_sharded`
+- Type check: `uv run pyright shardyfusion`
 - Package build: `uv build`
 - Tox labels:
   - `uv run tox -m quality` — lint, format, type, package, docs-check

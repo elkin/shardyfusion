@@ -14,7 +14,7 @@ The reader loads:
 Example:
 
 ```python
-from slatedb_spark_sharded import SlateShardedReader
+from shardyfusion import SlateShardedReader
 
 reader = SlateShardedReader(
     s3_prefix="s3://bucket/prefix",

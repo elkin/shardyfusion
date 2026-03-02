@@ -8,25 +8,25 @@ from typing import Self
 
 import pytest
 
-from slatedb_spark_sharded._writer_core import route_key
-from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteConfig
-from slatedb_spark_sharded.errors import ConfigValidationError
-from slatedb_spark_sharded.manifest import BuildResult
-from slatedb_spark_sharded.metrics import MetricEvent
-from slatedb_spark_sharded.serde import make_key_encoder
-from slatedb_spark_sharded.sharding_types import (
+from shardyfusion._writer_core import route_key
+from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+from shardyfusion.errors import ConfigValidationError
+from shardyfusion.manifest import BuildResult
+from shardyfusion.metrics import MetricEvent
+from shardyfusion.serde import make_key_encoder
+from shardyfusion.sharding_types import (
     KeyEncoding,
     ShardingSpec,
     ShardingStrategy,
 )
-from slatedb_spark_sharded.slatedb_adapter import DbAdapterFactory
-from slatedb_spark_sharded.testing import (
+from shardyfusion.slatedb_adapter import DbAdapterFactory
+from shardyfusion.testing import (
     ListMetricsCollector,
     fake_adapter_factory,
     file_backed_adapter_factory,
     file_backed_load_db,
 )
-from slatedb_spark_sharded.writer.python import write_sharded
+from shardyfusion.writer.python import write_sharded
 from tests.helpers.tracking import InMemoryPublisher, RecordingTokenBucket
 
 # ---------------------------------------------------------------------------
@@ -254,7 +254,7 @@ def test_rate_limited_write() -> None:
 def _patch_token_bucket(monkeypatch: pytest.MonkeyPatch) -> list[RecordingTokenBucket]:
     RecordingTokenBucket.instances = []
     monkeypatch.setattr(
-        "slatedb_spark_sharded.writer.python.writer.TokenBucket",
+        "shardyfusion.writer.python.writer.TokenBucket",
         RecordingTokenBucket,
     )
     return RecordingTokenBucket.instances

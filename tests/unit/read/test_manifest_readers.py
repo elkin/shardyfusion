@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from slatedb_spark_sharded.errors import ManifestParseError
-from slatedb_spark_sharded.manifest_readers import (
+from shardyfusion.errors import ManifestParseError
+from shardyfusion.manifest_readers import (
     DefaultS3ManifestReader,
     parse_json_manifest,
 )
@@ -112,7 +112,7 @@ def test_load_current_rejects_corrupt_json(monkeypatch) -> None:
         return b"not-json{{{"
 
     monkeypatch.setattr(
-        "slatedb_spark_sharded.manifest_readers.try_get_bytes", fake_try_get_bytes
+        "shardyfusion.manifest_readers.try_get_bytes", fake_try_get_bytes
     )
     reader = DefaultS3ManifestReader("s3://bucket/prefix")
     with pytest.raises(ManifestParseError, match="not valid JSON"):
@@ -130,7 +130,7 @@ def test_load_current_rejects_missing_manifest_ref(monkeypatch) -> None:
         ).encode("utf-8")
 
     monkeypatch.setattr(
-        "slatedb_spark_sharded.manifest_readers.try_get_bytes", fake_try_get_bytes
+        "shardyfusion.manifest_readers.try_get_bytes", fake_try_get_bytes
     )
     reader = DefaultS3ManifestReader("s3://bucket/prefix")
     with pytest.raises(ManifestParseError, match="manifest_ref"):

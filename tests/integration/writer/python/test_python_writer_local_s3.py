@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 
-from slatedb_spark_sharded.config import ManifestOptions, OutputOptions, WriteConfig
-from slatedb_spark_sharded.sharding_types import ShardingSpec, ShardingStrategy
-from slatedb_spark_sharded.testing import file_backed_adapter_factory
-from slatedb_spark_sharded.writer.python import write_sharded
+from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
+from shardyfusion.testing import file_backed_adapter_factory
+from shardyfusion.writer.python import write_sharded
 
 
 def test_python_writer_publishes_manifest_and_current_to_local_s3(

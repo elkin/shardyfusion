@@ -1,4 +1,4 @@
-"""Custom exception hierarchy for slatedb_spark_sharded.
+"""Custom exception hierarchy for shardyfusion.
 
 Failure classification
 ----------------------

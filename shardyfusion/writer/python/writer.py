@@ -7,8 +7,8 @@ from collections.abc import Callable, Iterable
 from typing import TypeVar
 from uuid import uuid4
 
-from slatedb_spark_sharded._rate_limiter import TokenBucket
-from slatedb_spark_sharded._writer_core import (
+from shardyfusion._rate_limiter import TokenBucket
+from shardyfusion._writer_core import (
     ShardAttemptResult,
     assemble_build_result,
     build_manifest_artifact,
@@ -17,24 +17,24 @@ from slatedb_spark_sharded._writer_core import (
     select_winners,
     update_min_max,
 )
-from slatedb_spark_sharded.config import WriteConfig
-from slatedb_spark_sharded.errors import (
+from shardyfusion.config import WriteConfig
+from shardyfusion.errors import (
     ConfigValidationError,
     SlatedbSparkShardedError,
 )
-from slatedb_spark_sharded.logging import (
+from shardyfusion.logging import (
     FailureSeverity,
     get_logger,
     log_event,
     log_failure,
 )
-from slatedb_spark_sharded.manifest import BuildResult
-from slatedb_spark_sharded.metrics import MetricEvent
-from slatedb_spark_sharded.serde import make_key_encoder
-from slatedb_spark_sharded.sharding_types import ShardingStrategy
-from slatedb_spark_sharded.slatedb_adapter import DbAdapterFactory, SlateDbFactory
-from slatedb_spark_sharded.storage import join_s3
-from slatedb_spark_sharded.type_defs import JsonObject, KeyLike
+from shardyfusion.manifest import BuildResult
+from shardyfusion.metrics import MetricEvent
+from shardyfusion.serde import make_key_encoder
+from shardyfusion.sharding_types import ShardingStrategy
+from shardyfusion.slatedb_adapter import DbAdapterFactory, SlateDbFactory
+from shardyfusion.storage import join_s3
+from shardyfusion.type_defs import JsonObject, KeyLike
 
 _logger = get_logger(__name__)
 

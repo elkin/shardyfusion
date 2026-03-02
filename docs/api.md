@@ -2,40 +2,40 @@
 
 ## Config
 
-::: slatedb_spark_sharded.config
+::: shardyfusion.config
 
 ## Sharding
 
-::: slatedb_spark_sharded.writer.spark.sharding
+::: shardyfusion.writer.spark.sharding
 
 ## Writer (Spark)
 
-::: slatedb_spark_sharded.writer.spark.writer
+::: shardyfusion.writer.spark.writer
 
 ## Writer (Python)
 
-::: slatedb_spark_sharded.writer.python.writer
+::: shardyfusion.writer.python.writer
 
 ## Manifest Models and Builders
 
-::: slatedb_spark_sharded.manifest
+::: shardyfusion.manifest
 
 ## Publisher and Storage
 
-::: slatedb_spark_sharded.publish
+::: shardyfusion.publish
 
-::: slatedb_spark_sharded.storage
+::: shardyfusion.storage
 
 ## Manifest Readers
 
-::: slatedb_spark_sharded.manifest_readers
+::: shardyfusion.manifest_readers
 
 ## Routing and Reader
 
-::: slatedb_spark_sharded.routing
+::: shardyfusion.routing
 
-::: slatedb_spark_sharded.reader.reader
+::: shardyfusion.reader.reader
 
 ## Serde
 
-::: slatedb_spark_sharded.serde
+::: shardyfusion.serde

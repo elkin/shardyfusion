@@ -1,12 +1,12 @@
-"""Tests for S3 retry metrics in slatedb_spark_sharded.storage."""
+"""Tests for S3 retry metrics in shardyfusion.storage."""
 
 from __future__ import annotations
 
 import pytest
 
-from slatedb_spark_sharded.metrics import MetricEvent
-from slatedb_spark_sharded.storage import _retry_s3_operation
-from slatedb_spark_sharded.testing import ListMetricsCollector
+from shardyfusion.metrics import MetricEvent
+from shardyfusion.storage import _retry_s3_operation
+from shardyfusion.testing import ListMetricsCollector
 
 
 class _FakeTransientS3Error(Exception):
@@ -20,7 +20,7 @@ class _FakeTransientS3Error(Exception):
 class TestRetryS3OperationMetrics:
     def test_s3_retry_emits_metric_on_transient_failure(self, monkeypatch):
         """Transient failure then success → one S3_RETRY event."""
-        monkeypatch.setattr("slatedb_spark_sharded.storage.time.sleep", lambda _: None)
+        monkeypatch.setattr("shardyfusion.storage.time.sleep", lambda _: None)
         mc = ListMetricsCollector()
         calls = 0
 
@@ -47,7 +47,7 @@ class TestRetryS3OperationMetrics:
 
     def test_s3_retry_exhausted_emits_metric(self, monkeypatch):
         """All retries exhausted → S3_RETRY per attempt + one S3_RETRY_EXHAUSTED."""
-        monkeypatch.setattr("slatedb_spark_sharded.storage.time.sleep", lambda _: None)
+        monkeypatch.setattr("shardyfusion.storage.time.sleep", lambda _: None)
         mc = ListMetricsCollector()
 
         def operation():
@@ -72,7 +72,7 @@ class TestRetryS3OperationMetrics:
 
     def test_s3_retry_no_metrics_when_collector_is_none(self, monkeypatch):
         """No crash when metrics_collector is None."""
-        monkeypatch.setattr("slatedb_spark_sharded.storage.time.sleep", lambda _: None)
+        monkeypatch.setattr("shardyfusion.storage.time.sleep", lambda _: None)
         calls = 0
 
         def operation():

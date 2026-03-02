@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`slatedb_spark_sharded` is a sharded snapshot writer/reader library for SlateDB. It provides:
+`shardyfusion` is a sharded snapshot writer/reader library for SlateDB. It provides:
 - Writer-side Spark APIs to build `num_dbs` independent SlateDB shard databases
 - Dask DataFrame-based writer (no Spark/Java needed)
 - Pure-Python iterator-based writer (no Spark/Java needed)
@@ -31,7 +31,7 @@ uv sync --all-extras --dev     # Full dev environment
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run pyright slatedb_spark_sharded                      # all code (type-all)
+uv run pyright shardyfusion                      # all code (type-all)
 uv run pyright -p pyright/read.json                       # reader-only
 uv run pyright -p pyright/pythonwriter.json               # Python writer only
 uv run pyright -p pyright/daskwriter.json                 # Dask writer only
@@ -313,9 +313,9 @@ Exported from `__init__.py` (always available, no optional extras required):
 
 Writer functions are imported from subpackages (not re-exported at top level):
 
-- **Spark:** `from slatedb_spark_sharded.writer.spark import write_sharded, write_single_db, DataFrameCacheContext, SparkConfOverrideContext`
-- **Dask:** `from slatedb_spark_sharded.writer.dask import write_sharded, write_single_db, DaskCacheContext`
-- **Python:** `from slatedb_spark_sharded.writer.python import write_sharded`
+- **Spark:** `from shardyfusion.writer.spark import write_sharded, write_single_db, DataFrameCacheContext, SparkConfOverrideContext`
+- **Dask:** `from shardyfusion.writer.dask import write_sharded, write_single_db, DaskCacheContext`
+- **Python:** `from shardyfusion.writer.python import write_sharded`
 
 ## Testing Notes
 
@@ -371,7 +371,7 @@ The Garage image is built from `docker/garage-e2e.Dockerfile`. The test runner c
 - **Session-scoped test fixtures**: PySpark and S3 (moto/Garage) fixtures are session-scoped for performance. Tests share the same Spark session and S3 service.
 - **Writer scenario imports are deferred**: `tests/helpers/s3_test_scenarios.py` imports writer modules inside function bodies so reader-only test collection doesn't fail.
 - **Dask writer rejects `CUSTOM_EXPR` sharding**: Unlike the Spark writer, the Dask writer raises `ConfigValidationError` for custom expression sharding. Only `HASH` and `RANGE` are supported.
-- **`OutputOptions.local_root` defaults to `/tmp/slatedb-spark`**: Not per-user; may cause permission issues in shared environments.
+- **`OutputOptions.local_root` defaults to `/tmp/shardyfusion`**: Not per-user; may cause permission issues in shared environments.
 
 ## Environment Notes
 

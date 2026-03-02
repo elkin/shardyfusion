@@ -1,6 +1,6 @@
-# slatedb_spark_sharded
+# shardyfusion
 
-`slatedb_spark_sharded` is a sharded snapshot writer/reader library for SlateDB.
+`shardyfusion` is a sharded snapshot writer/reader library for SlateDB.
 
 It provides:
 
@@ -43,8 +43,8 @@ uv sync --all-extras --dev
 ## Minimal Writer Usage
 
 ```python
-from slatedb_spark_sharded import WriteConfig, ValueSpec
-from slatedb_spark_sharded.writer.spark import write_sharded
+from shardyfusion import WriteConfig, ValueSpec
+from shardyfusion.writer.spark import write_sharded
 
 config = WriteConfig(
     num_dbs=8,
@@ -74,7 +74,7 @@ result = write_sharded(
 ## Minimal Reader Usage
 
 ```python
-from slatedb_spark_sharded import SlateShardedReader
+from shardyfusion import SlateShardedReader
 
 reader = SlateShardedReader(
     s3_prefix="s3://bucket/prefix",
@@ -99,7 +99,7 @@ uv run ruff format --check .
 ### Type checking
 
 ```bash
-uv run pyright slatedb_spark_sharded
+uv run pyright shardyfusion
 ```
 
 ### Tests
@@ -123,8 +123,8 @@ uv run tox p -p 2
 Containerized local development run (Podman):
 
 ```bash
-podman build -f docker/ci.Dockerfile -t slatedb-spark-sharded-ci .
-podman run --rm -v "$PWD:/workspace" -w /workspace slatedb-spark-sharded-ci \
+podman build -f docker/ci.Dockerfile -t shardyfusion-ci .
+podman run --rm -v "$PWD:/workspace" -w /workspace shardyfusion-ci \
   /bin/bash -lc "uv sync --all-extras --dev && uv run tox -m quality && uv run tox -m unit && uv run tox -m integration"
 ```
 

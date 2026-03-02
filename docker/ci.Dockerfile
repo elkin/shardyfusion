@@ -27,12 +27,12 @@ RUN mkdir -p /opt/slatedb-venv
 # Pre-install project dependencies into the container-local uv environment.
 # This ensures runtime tools (e.g. slatedb, pyspark, tox deps) are available
 # even before mounting the local workspace.
-WORKDIR /tmp/slatedb-spark-sharded-deps
+WORKDIR /tmp/shardyfusion-deps
 COPY pyproject.toml uv.lock ./
 RUN uv sync --all-extras --dev --no-install-project --quiet
 
 WORKDIR /workspace
 
 # Example usage:
-#   podman build -f docker/ci.Dockerfile -t slatedb-spark-sharded-ci .
-#   podman run --rm -it -v "$PWD:/workspace" -w /workspace slatedb-spark-sharded-ci uv sync --all-extras --dev
+#   podman build -f docker/ci.Dockerfile -t shardyfusion-ci .
+#   podman run --rm -it -v "$PWD:/workspace" -w /workspace shardyfusion-ci uv sync --all-extras --dev

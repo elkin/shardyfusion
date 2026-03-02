@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
     from tests.conftest import LocalS3Service
 
-from slatedb_spark_sharded.type_defs import S3ClientConfig
+from shardyfusion.type_defs import S3ClientConfig
 
 
 def _admin_request(
@@ -150,7 +150,7 @@ def spark() -> Generator[SparkSession, None, None]:
 
     session = (
         SparkSession.builder.master("local[2]")
-        .appName("slatedb_spark_sharded_e2e")
+        .appName("shardyfusion_e2e")
         .config("spark.ui.enabled", "false")
         .getOrCreate()
     )

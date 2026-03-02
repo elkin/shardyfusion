@@ -6,13 +6,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pyspark.sql import Row
 
-from slatedb_spark_sharded._writer_core import ShardAttemptResult
-from slatedb_spark_sharded.metrics import MetricEvent
-from slatedb_spark_sharded.serde import ValueSpec, make_key_encoder
-from slatedb_spark_sharded.sharding_types import KeyEncoding
-from slatedb_spark_sharded.slatedb_adapter import DbAdapterFactory
-from slatedb_spark_sharded.testing import ListMetricsCollector
-from slatedb_spark_sharded.writer.spark.writer import (
+from shardyfusion._writer_core import ShardAttemptResult
+from shardyfusion.metrics import MetricEvent
+from shardyfusion.serde import ValueSpec, make_key_encoder
+from shardyfusion.sharding_types import KeyEncoding
+from shardyfusion.slatedb_adapter import DbAdapterFactory
+from shardyfusion.testing import ListMetricsCollector
+from shardyfusion.writer.spark.writer import (
     PartitionWriteConfig,
     write_one_shard_partition,
 )
@@ -104,7 +104,7 @@ def _run(
     db_id: int, rows: list[tuple[int, Row]], runtime: PartitionWriteConfig
 ) -> ShardAttemptResult:
     """Consume the generator and return the single yielded result."""
-    with patch("slatedb_spark_sharded.writer.spark.writer.TaskContext") as mock_tc:
+    with patch("shardyfusion.writer.spark.writer.TaskContext") as mock_tc:
         mock_tc.get.return_value = None
         results = list(write_one_shard_partition(db_id, rows, runtime))
     assert len(results) == 1
@@ -118,7 +118,7 @@ def _run(
 
 def test_result_is_dataclass_not_string(tmp_path) -> None:
     runtime = _make_runtime(tmp_path)
-    with patch("slatedb_spark_sharded.writer.spark.writer.TaskContext") as mock_tc:
+    with patch("shardyfusion.writer.spark.writer.TaskContext") as mock_tc:
         mock_tc.get.return_value = None
         results = list(write_one_shard_partition(0, _rows(1), runtime))
     assert len(results) == 1
@@ -181,7 +181,7 @@ def test_writer_info_contains_attempt(tmp_path) -> None:
 
 def test_no_task_context_uses_attempt_zero(tmp_path) -> None:
     runtime = _make_runtime(tmp_path)
-    with patch("slatedb_spark_sharded.writer.spark.writer.TaskContext") as mock_tc:
+    with patch("shardyfusion.writer.spark.writer.TaskContext") as mock_tc:
         mock_tc.get.return_value = None
         (result,) = write_one_shard_partition(0, _rows(1), runtime)
     assert result.attempt == 0
@@ -196,7 +196,7 @@ def test_task_context_fields_propagated(tmp_path) -> None:
     mock_ctx.stageId.return_value = 5
     mock_ctx.taskAttemptId.return_value = 99
 
-    with patch("slatedb_spark_sharded.writer.spark.writer.TaskContext") as mock_tc:
+    with patch("shardyfusion.writer.spark.writer.TaskContext") as mock_tc:
         mock_tc.get.return_value = mock_ctx
         (result,) = write_one_shard_partition(0, _rows(1), runtime)
 
@@ -255,7 +255,7 @@ def test_rate_limited_partition_write(tmp_path) -> None:
 def _patch_token_bucket(monkeypatch: pytest.MonkeyPatch) -> list[RecordingTokenBucket]:
     RecordingTokenBucket.instances = []
     monkeypatch.setattr(
-        "slatedb_spark_sharded.writer.spark.writer.TokenBucket",
+        "shardyfusion.writer.spark.writer.TokenBucket",
         RecordingTokenBucket,
     )
     return RecordingTokenBucket.instances

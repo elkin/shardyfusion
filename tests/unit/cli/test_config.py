@@ -1,10 +1,10 @@
-"""Unit tests for slatedb_spark_sharded.cli.config helpers."""
+"""Unit tests for shardyfusion.cli.config helpers."""
 
 from __future__ import annotations
 
 import pytest
 
-from slatedb_spark_sharded.cli.config import (
+from shardyfusion.cli.config import (
     ReaderConfig,
     build_s3_client_config,
     coerce_cli_key,

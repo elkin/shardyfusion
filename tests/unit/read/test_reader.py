@@ -6,18 +6,18 @@ from dataclasses import dataclass
 
 import pytest
 
-from slatedb_spark_sharded.errors import ReaderStateError, SlateDbApiError
-from slatedb_spark_sharded.manifest import (
+from shardyfusion.errors import ReaderStateError, SlateDbApiError
+from shardyfusion.manifest import (
     CurrentPointer,
     ManifestShardingSpec,
     ParsedManifest,
     RequiredBuildMeta,
     RequiredShardMeta,
 )
-from slatedb_spark_sharded.metrics import MetricEvent
-from slatedb_spark_sharded.reader import SlateDbReaderFactory, SlateShardedReader
-from slatedb_spark_sharded.sharding_types import KeyEncoding, ShardingStrategy
-from slatedb_spark_sharded.testing import ListMetricsCollector
+from shardyfusion.metrics import MetricEvent
+from shardyfusion.reader import SlateDbReaderFactory, SlateShardedReader
+from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
+from shardyfusion.testing import ListMetricsCollector
 
 
 class _MutableManifestReader:

@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from slatedb_spark_sharded._writer_core import manifest_safe_sharding
-from slatedb_spark_sharded.sharding_types import ShardingSpec, ShardingStrategy
-from slatedb_spark_sharded.writer.spark.util import (
+from shardyfusion._writer_core import manifest_safe_sharding
+from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
+from shardyfusion.writer.spark.util import (
     DataFrameCacheContext,
     SparkConfOverrideContext,
 )
-from slatedb_spark_sharded.writer.spark.writer import (
+from shardyfusion.writer.spark.writer import (
     write_sharded,
 )
 
@@ -127,15 +127,15 @@ def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> 
         return "result-sentinel"
 
     monkeypatch.setattr(
-        "slatedb_spark_sharded.writer.spark.writer.SparkConfOverrideContext",
+        "shardyfusion.writer.spark.writer.SparkConfOverrideContext",
         _RecordingCtx,
     )
     monkeypatch.setattr(
-        "slatedb_spark_sharded.writer.spark.writer._write_sharded_impl",
+        "shardyfusion.writer.spark.writer._write_sharded_impl",
         _fake_impl,
     )
 
-    from slatedb_spark_sharded.serde import ValueSpec
+    from shardyfusion.serde import ValueSpec
 
     result = write_sharded(
         fake_df,  # type: ignore[arg-type]
@@ -193,15 +193,15 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
         return "result-sentinel"
 
     monkeypatch.setattr(
-        "slatedb_spark_sharded.writer.spark.writer.SparkConfOverrideContext",
+        "shardyfusion.writer.spark.writer.SparkConfOverrideContext",
         _RecordingCtx,
     )
     monkeypatch.setattr(
-        "slatedb_spark_sharded.writer.spark.writer._write_sharded_impl",
+        "shardyfusion.writer.spark.writer._write_sharded_impl",
         _fake_impl,
     )
 
-    from slatedb_spark_sharded.serde import ValueSpec
+    from shardyfusion.serde import ValueSpec
 
     result1 = write_sharded(
         fake_df,  # type: ignore[arg-type]
@@ -227,7 +227,7 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
 
 
 def testmanifest_safe_sharding_preserves_boundaries_for_custom_expr() -> None:
-    from slatedb_spark_sharded.manifest import ManifestShardingSpec
+    from shardyfusion.manifest import ManifestShardingSpec
 
     spec = ShardingSpec(
         strategy=ShardingStrategy.CUSTOM_EXPR,

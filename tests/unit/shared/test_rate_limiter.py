@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import time
 
-from slatedb_spark_sharded._rate_limiter import TokenBucket
+from shardyfusion._rate_limiter import TokenBucket
 
 
 def test_acquire_immediate_when_full() -> None:

@@ -14,8 +14,8 @@ from bisect import bisect_right
 
 import pytest
 
-from slatedb_spark_sharded.routing import xxhash64_db_id
-from slatedb_spark_sharded.sharding_types import KeyEncoding
+from shardyfusion.routing import xxhash64_db_id
+from shardyfusion.sharding_types import KeyEncoding
 from tests.unit.writer.test_routing_contract import EDGE_CASE_KEYS, U32_EDGE_CASE_KEYS
 
 
@@ -79,7 +79,7 @@ def test_spark_python_hash_agreement_u32be(spark, num_dbs: int) -> None:
 )
 def test_spark_range_expr_matches_python_bisect(spark, boundaries: list[int]) -> None:
     """Spark _range_bucket_expr output == bisect_right for integer keys."""
-    from slatedb_spark_sharded.writer.spark.sharding import (
+    from shardyfusion.writer.spark.sharding import (
         DB_ID_COL,
         _range_bucket_expr,
     )
@@ -120,7 +120,7 @@ def test_spark_bucketizer_matches_python_bisect(
     spark, boundaries: list[int | float]
 ) -> None:
     """Spark Bucketizer output == bisect_right for numeric boundaries."""
-    from slatedb_spark_sharded.writer.spark.sharding import (
+    from shardyfusion.writer.spark.sharding import (
         DB_ID_COL,
         _range_bucketize_df,
     )
@@ -148,7 +148,7 @@ def test_spark_bucketizer_matches_python_bisect(
 @pytest.mark.spark
 def test_spark_string_range_expr_matches_python_bisect(spark) -> None:
     """String boundaries: Spark SQL range expression vs Python bisect_right."""
-    from slatedb_spark_sharded.writer.spark.sharding import (
+    from shardyfusion.writer.spark.sharding import (
         DB_ID_COL,
         _range_bucket_expr,
     )

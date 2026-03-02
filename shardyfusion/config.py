@@ -23,7 +23,7 @@ class OutputOptions:
     run_id: str | None = None
     db_path_template: str = "db={db_id:05d}"
     tmp_prefix: str = "_tmp"
-    local_root: str = "/tmp/slatedb-spark"
+    local_root: str = "/tmp/shardyfusion"
 
 
 @dataclass(slots=True)

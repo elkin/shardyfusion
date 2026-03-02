@@ -1,4 +1,4 @@
-"""Public API for slatedb_spark_sharded."""
+"""Public API for shardyfusion."""
 
 from .config import (
     ManifestOptions,

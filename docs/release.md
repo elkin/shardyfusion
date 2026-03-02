@@ -31,8 +31,8 @@ git push origin v0.1.1
 ## Verify
 
 ```bash
-uv pip install slatedb_spark_sharded==0.1.1
-uv run python -c "import slatedb_spark_sharded; print('ok')"
+uv pip install shardyfusion==0.1.1
+uv run python -c "import shardyfusion; print('ok')"
 ```
 
 ## If release fails

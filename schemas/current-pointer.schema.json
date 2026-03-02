@@ -32,5 +32,5 @@
   "title": "SlateDB Sharded CURRENT Pointer",
   "type": "object",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/slatedb/slatedb-spark-sharded/schemas/current-pointer.schema.json"
+  "$id": "https://github.com/slatedb/shardyfusion/schemas/current-pointer.schema.json"
 }

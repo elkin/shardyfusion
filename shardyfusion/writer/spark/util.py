@@ -5,7 +5,7 @@ from typing import Self
 from pyspark import StorageLevel
 from pyspark.sql import DataFrame, SparkSession
 
-from slatedb_spark_sharded.logging import log_event
+from shardyfusion.logging import log_event
 
 
 class DataFrameCacheContext:

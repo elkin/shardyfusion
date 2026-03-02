@@ -18,19 +18,19 @@ import random
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from slatedb_spark_sharded._writer_core import route_key
-from slatedb_spark_sharded.manifest import (
+from shardyfusion._writer_core import route_key
+from shardyfusion.manifest import (
     ManifestShardingSpec,
     RequiredBuildMeta,
     RequiredShardMeta,
 )
-from slatedb_spark_sharded.routing import (
+from shardyfusion.routing import (
     SnapshotRouter,
     xxhash64_db_id,
     xxhash64_payload,
     xxhash64_signed,
 )
-from slatedb_spark_sharded.sharding_types import (
+from shardyfusion.sharding_types import (
     KeyEncoding,
     ShardingSpec,
     ShardingStrategy,

@@ -42,7 +42,7 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Type check (pyright — all code)
-        run: uv run pyright slatedb_spark_sharded
+        run: uv run pyright shardyfusion
 
       - name: Type check (pyright — reader)
         run: uv run pyright -p pyright/read.json
@@ -85,7 +85,7 @@ jobs:
       - name: Wheel install smoke test
         run: |
           uv pip install --force-reinstall dist/*.whl
-          uv run python -c "import slatedb_spark_sharded; print('import ok')"
+          uv run python -c "import shardyfusion; print('import ok')"
 
   unit:
     name: ${{ matrix.name }}

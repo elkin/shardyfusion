@@ -7,17 +7,17 @@ import json
 import pytest
 from pyspark.sql import SparkSession
 
-from slatedb_spark_sharded.config import (
+from shardyfusion.config import (
     ManifestOptions,
     OutputOptions,
     WriteConfig,
 )
-from slatedb_spark_sharded.errors import ConfigValidationError, SlatedbSparkShardedError
-from slatedb_spark_sharded.manifest import BuildResult
-from slatedb_spark_sharded.serde import ValueSpec
-from slatedb_spark_sharded.sharding_types import KeyEncoding
-from slatedb_spark_sharded.writer.spark.single_db_writer import write_single_db
-from slatedb_spark_sharded.writer.spark.writer import DataFrameCacheContext
+from shardyfusion.errors import ConfigValidationError, SlatedbSparkShardedError
+from shardyfusion.manifest import BuildResult
+from shardyfusion.serde import ValueSpec
+from shardyfusion.sharding_types import KeyEncoding
+from shardyfusion.writer.spark.single_db_writer import write_single_db
+from shardyfusion.writer.spark.writer import DataFrameCacheContext
 from tests.helpers.tracking import (
     InMemoryPublisher,
     RecordingTokenBucket,
@@ -250,7 +250,7 @@ def test_rate_limiting(spark: SparkSession) -> None:
 def _patch_token_bucket(monkeypatch: pytest.MonkeyPatch) -> list[RecordingTokenBucket]:
     RecordingTokenBucket.instances = []
     monkeypatch.setattr(
-        "slatedb_spark_sharded.writer.spark.single_db_writer.TokenBucket",
+        "shardyfusion.writer.spark.single_db_writer.TokenBucket",
         RecordingTokenBucket,
     )
     return RecordingTokenBucket.instances

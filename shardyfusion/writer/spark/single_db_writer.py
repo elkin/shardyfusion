@@ -8,8 +8,8 @@ from uuid import uuid4
 from pyspark import StorageLevel
 from pyspark.sql import DataFrame
 
-from slatedb_spark_sharded._rate_limiter import TokenBucket
-from slatedb_spark_sharded._writer_core import (
+from shardyfusion._rate_limiter import TokenBucket
+from shardyfusion._writer_core import (
     ShardAttemptResult,
     assemble_build_result,
     build_manifest_artifact,
@@ -17,18 +17,18 @@ from slatedb_spark_sharded._writer_core import (
     select_winners,
     update_min_max,
 )
-from slatedb_spark_sharded.config import WriteConfig
-from slatedb_spark_sharded.errors import ConfigValidationError, SlatedbSparkShardedError
-from slatedb_spark_sharded.logging import FailureSeverity, log_failure
-from slatedb_spark_sharded.manifest import BuildResult
-from slatedb_spark_sharded.serde import ValueSpec, make_key_encoder
-from slatedb_spark_sharded.sharding_types import ShardingSpec, ShardingStrategy
-from slatedb_spark_sharded.slatedb_adapter import (
+from shardyfusion.config import WriteConfig
+from shardyfusion.errors import ConfigValidationError, SlatedbSparkShardedError
+from shardyfusion.logging import FailureSeverity, log_failure
+from shardyfusion.manifest import BuildResult
+from shardyfusion.serde import ValueSpec, make_key_encoder
+from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
+from shardyfusion.slatedb_adapter import (
     DbAdapterFactory,
     SlateDbFactory,
 )
-from slatedb_spark_sharded.storage import join_s3
-from slatedb_spark_sharded.type_defs import JsonObject, KeyLike
+from shardyfusion.storage import join_s3
+from shardyfusion.type_defs import JsonObject, KeyLike
 
 from .sharding import validate_key_col_type
 from .util import DataFrameCacheContext, SparkConfOverrideContext
