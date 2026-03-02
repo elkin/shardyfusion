@@ -28,8 +28,8 @@ RUN mkdir -p /opt/shardyfusion-venv
 # This ensures runtime tools (e.g. slatedb, pyspark, tox deps) are available
 # even before mounting the local workspace.
 WORKDIR /tmp/shardyfusion-deps
-COPY pyproject.toml uv.lock ./
-RUN uv sync --all-extras --dev --no-install-project --quiet
+COPY pyproject.toml ./
+RUN uv lock --quiet && uv sync --all-extras --dev --no-install-project --quiet
 
 WORKDIR /workspace
 
