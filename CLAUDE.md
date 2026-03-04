@@ -159,7 +159,7 @@ Both encodings produce identical hash routing results for keys in `[0, 2^32-1]` 
 
 - **Hash** (default): `pmod(xxhash64(cast(key as long)), num_dbs)` — requires integer key column
 - **Range**: Explicit boundaries or computed via `approxQuantile` — supports int/float/string keys
-- **Custom**: User-provided Spark SQL expression or column builder callable (Spark writer only; not supported in Dask or Python writers)
+- **Custom**: User-provided Spark SQL expression or column builder callable (Spark writer only; not supported in Dask, Ray, or Python writers)
 
 The `SnapshotRouter` in `routing.py` mirrors the writer's sharding logic exactly for consistent key routing at read time.
 
@@ -196,7 +196,7 @@ Writer functions are imported from subpackages (not re-exported at top level):
 
 ## Testing Notes
 
-- **`tests/unit/`** — fast, no Spark; use pytest-xdist (`-n 2`). Areas: `shared/`, `read/`, `writer/` (+ `writer/spark/`, `writer/python/`, `writer/dask/`), `cli/`
+- **`tests/unit/`** — fast, no Spark; use pytest-xdist (`-n 2`). Areas: `shared/`, `read/`, `writer/` (+ `writer/spark/`, `writer/python/`, `writer/dask/`, `writer/ray/`), `cli/`
 - **`tests/integration/`** — S3 via `moto`; Spark writer tests require Spark + Java
 - **`tests/e2e/`** — Garage S3 via compose; `just d-e2e`
 - **`tests/helpers/`** — `s3_test_scenarios.py` (shared scenarios for moto/Garage), `tracking.py` (test doubles: `TrackingAdapter`, `TrackingFactory`, `RecordingTokenBucket`, `InMemoryPublisher`)
