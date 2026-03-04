@@ -30,7 +30,7 @@ writer-python = [
   "boto3>=1.28",
 ]
 writer-dask = [
-  "dask[dataframe]>=2024.1",
+  "dask[dataframe]>=2024.1; python_version<'3.14'",
   "slatedb",
   "boto3>=1.28",
 ]
