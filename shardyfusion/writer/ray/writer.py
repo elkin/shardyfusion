@@ -3,6 +3,7 @@
 import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -477,7 +478,7 @@ def _write_one_shard(
     batch: list[tuple[bytes, bytes]] = []
 
     try:
-        with factory(db_url=db_url, local_dir=local_dir) as adapter:
+        with factory(db_url=db_url, local_dir=Path(local_dir)) as adapter:
             for _, row in pdf.iterrows():
                 key_value: Any = row[runtime.key_col]
                 # Convert numpy scalars to Python types for downstream compatibility

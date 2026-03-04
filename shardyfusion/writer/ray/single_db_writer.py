@@ -3,6 +3,7 @@
 import os
 import time
 import types
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -209,7 +210,7 @@ def _stream_to_single_db(
     write_started = time.perf_counter()
 
     try:
-        with factory(db_url=db_url, local_dir=local_dir) as adapter:
+        with factory(db_url=db_url, local_dir=Path(local_dir)) as adapter:
             batch: list[tuple[bytes, bytes]] = []
 
             # Stream batches using iter_batches — Ray handles prefetching internally.

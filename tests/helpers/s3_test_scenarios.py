@@ -980,7 +980,7 @@ def run_ray_writer_reader_refresh_scenario(
             s3_client_config=s3_client_config,
         )
 
-    with SlateShardedReader(**reader_kwargs) as reader:
+    with ConcurrentShardedReader(**reader_kwargs) as reader:
         assert reader.get(7) == b"old-7"
 
         result_v2 = write_sharded(
