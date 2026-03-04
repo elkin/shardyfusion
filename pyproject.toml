@@ -35,7 +35,7 @@ writer-dask = [
   "boto3>=1.28",
 ]
 writer-ray = [
-  "ray[data]>=2.20",
+  "ray[data]>=2.20; python_version<'3.14'",
   "slatedb",
   "boto3>=1.28",
 ]
