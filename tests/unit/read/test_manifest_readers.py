@@ -97,13 +97,13 @@ def test_default_reader_rejects_non_json_manifest_content_type() -> None:
 
 
 def test_parse_json_manifest_rejects_corrupt_json() -> None:
-    with pytest.raises(ManifestParseError, match="not valid JSON"):
+    with pytest.raises(ManifestParseError, match="Manifest validation failed"):
         parse_json_manifest(b"not-json{{{")
 
 
 def test_parse_json_manifest_rejects_missing_required_field() -> None:
     payload = json.dumps({"shards": [], "custom": {}}).encode("utf-8")
-    with pytest.raises(ManifestParseError, match="missing required object"):
+    with pytest.raises(ManifestParseError, match="Manifest validation failed"):
         parse_json_manifest(payload)
 
 
@@ -115,7 +115,7 @@ def test_load_current_rejects_corrupt_json(monkeypatch) -> None:
         "shardyfusion.manifest_readers.try_get_bytes", fake_try_get_bytes
     )
     reader = DefaultS3ManifestReader("s3://bucket/prefix")
-    with pytest.raises(ManifestParseError, match="not valid JSON"):
+    with pytest.raises(ManifestParseError, match="validation failed"):
         reader.load_current()
 
 

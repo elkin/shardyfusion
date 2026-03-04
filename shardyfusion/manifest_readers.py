@@ -1,6 +1,5 @@
 """Manifest loading interfaces and default S3-backed implementation."""
 
-import json
 from collections.abc import Callable
 from typing import Protocol
 
@@ -82,14 +81,7 @@ class DefaultS3ManifestReader:
             return None
 
         try:
-            obj = json.loads(payload.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise ManifestParseError(
-                "CURRENT pointer payload is not valid JSON or not valid UTF-8"
-            ) from exc
-
-        try:
-            return CurrentPointer.model_validate(obj)
+            return CurrentPointer.model_validate_json(payload)
         except ValidationError as exc:
             raise ManifestParseError(
                 f"CURRENT pointer validation failed: {exc}"
@@ -127,37 +119,7 @@ def parse_json_manifest(payload: bytes) -> ParsedManifest:
     """Parse default JSON manifest payload into typed ParsedManifest."""
 
     try:
-        obj = json.loads(payload.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        log_failure(
-            "manifest_payload_decode_failed",
-            severity=FailureSeverity.ERROR,
-            logger=_logger,
-            error=exc,
-            payload_size=len(payload),
-        )
-        raise ManifestParseError(
-            "Manifest payload is not valid JSON or not valid UTF-8"
-        ) from exc
-
-    if not isinstance(obj, dict):
-        raise ManifestParseError("Manifest payload must be a JSON object")
-
-    required_raw = obj.get("required")
-    shards_raw = obj.get("shards")
-    custom_raw = obj.get("custom", {})
-
-    if not isinstance(required_raw, dict):
-        raise ManifestParseError("Manifest missing required object `required`")
-    if not isinstance(shards_raw, list):
-        raise ManifestParseError("Manifest missing required array `shards`")
-    if not isinstance(custom_raw, dict):
-        raise ManifestParseError("Manifest field `custom` must be an object")
-
-    try:
-        parsed = ParsedManifest.model_validate(
-            {"required_build": required_raw, "shards": shards_raw, "custom": custom_raw}
-        )
+        parsed = ParsedManifest.model_validate_json(payload)
     except ValidationError as exc:
         raise ManifestParseError(f"Manifest validation failed: {exc}") from exc
 
