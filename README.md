@@ -4,14 +4,18 @@
 
 It provides:
 
-- writer-side Spark APIs to build `num_dbs` independent SlateDB shard databases
+- writer-side APIs to build `num_dbs` independent SlateDB shard databases
+  - **Spark** (`writer-spark`) — PySpark DataFrame-based, requires Java
+  - **Dask** (`writer-dask`) — Dask DataFrame-based, no Java required
+  - **Ray** (`writer-ray`) — Ray Data Dataset-based, no Java required
+  - **Python** (`writer-python`) — pure-Python iterator-based, no Java required
 - manifest + `_CURRENT` publishing protocol (default S3, pluggable interfaces)
 - reader-side routing helpers for service-side `get` and `multi_get`
 
 ## Runtime Prerequisites
 
-- Reader-only usage does not require Java.
-- Writer usage (PySpark) requires a local Java runtime (JRE/JDK) available on `PATH`
+- Reader-only, Python writer, Dask writer, and Ray writer usage do not require Java.
+- Spark writer requires a local Java runtime (JRE/JDK) available on `PATH`
   or via `JAVA_HOME`.
 - Running Spark-based tests also requires Java.
 
@@ -30,6 +34,9 @@ uv sync --extra writer-python
 # Dask writer (no Spark/Java required)
 uv sync --extra writer-dask
 
+# Ray writer (no Spark/Java required)
+uv sync --extra writer-ray
+
 # Full install
 uv sync --all-extras
 ```
@@ -42,32 +49,65 @@ uv sync --all-extras --dev
 
 ## Minimal Writer Usage
 
+### Spark
+
 ```python
 from shardyfusion import WriteConfig, ValueSpec
 from shardyfusion.writer.spark import write_sharded
 
-config = WriteConfig(
-    num_dbs=8,
-    s3_prefix="s3://bucket/prefix",
-)
+config = WriteConfig(num_dbs=8, s3_prefix="s3://bucket/prefix")
 
 result = write_sharded(
-    df,
-    config,
+    df, config,
     key_col="id",
     value_spec=ValueSpec.binary_col("payload"),
 )
 ```
 
-To apply temporary Spark config for the write call:
+### Dask
 
 ```python
+from shardyfusion import WriteConfig, ValueSpec
+from shardyfusion.writer.dask import write_sharded
+
+config = WriteConfig(num_dbs=8, s3_prefix="s3://bucket/prefix")
+
 result = write_sharded(
-    df,
-    config,
+    ddf, config,
     key_col="id",
     value_spec=ValueSpec.binary_col("payload"),
-    spark_conf_overrides={"spark.speculation": "false"},
+)
+```
+
+### Ray
+
+```python
+import ray
+from shardyfusion import WriteConfig, ValueSpec
+from shardyfusion.writer.ray import write_sharded
+
+config = WriteConfig(num_dbs=8, s3_prefix="s3://bucket/prefix")
+ds = ray.data.from_items([{"id": i, "payload": b"..."} for i in range(1000)])
+
+result = write_sharded(
+    ds, config,
+    key_col="id",
+    value_spec=ValueSpec.binary_col("payload"),
+)
+```
+
+### Python
+
+```python
+from shardyfusion import WriteConfig
+from shardyfusion.writer.python import write_sharded
+
+config = WriteConfig(num_dbs=8, s3_prefix="s3://bucket/prefix")
+
+result = write_sharded(
+    records, config,
+    key_fn=lambda r: r["id"],
+    value_fn=lambda r: r["payload"],
 )
 ```
 

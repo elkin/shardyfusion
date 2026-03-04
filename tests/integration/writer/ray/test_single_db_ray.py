@@ -1,13 +1,11 @@
-"""Integration test: Dask single-db writer → moto S3 → verify manifest and CURRENT."""
+"""Integration test: Ray single-db writer → moto S3 → verify manifest and CURRENT."""
 
 from __future__ import annotations
 
 import json
 
-import dask
-import dask.dataframe as dd
-import pandas as pd
-import pytest
+import ray
+import ray.data
 
 from shardyfusion.config import (
     ManifestOptions,
@@ -16,23 +14,17 @@ from shardyfusion.config import (
 )
 from shardyfusion.serde import ValueSpec
 from shardyfusion.testing import file_backed_adapter_factory
-from shardyfusion.writer.dask.single_db_writer import (
+from shardyfusion.writer.ray.single_db_writer import (
     write_single_db,
 )
 
 
-@pytest.fixture(autouse=True)
-def _synchronous_scheduler():
-    with dask.config.set(scheduler="synchronous"):
-        yield
-
-
-def test_single_db_dask_publishes_manifest_and_current(
+def test_single_db_ray_publishes_manifest_and_current(
     local_s3_service, tmp_path
 ) -> None:
     bucket = local_s3_service["bucket"]
     endpoint_url = local_s3_service["endpoint_url"]
-    s3_prefix = f"s3://{bucket}/single-db-dask"
+    s3_prefix = f"s3://{bucket}/single-db-ray"
     file_backed_root = str(tmp_path / "file-backed")
 
     config = WriteConfig(
@@ -40,7 +32,7 @@ def test_single_db_dask_publishes_manifest_and_current(
         s3_prefix=s3_prefix,
         adapter_factory=file_backed_adapter_factory(file_backed_root),
         output=OutputOptions(
-            run_id="single-db-dask-test",
+            run_id="single-db-ray-test",
             local_root=str(tmp_path / "local"),
         ),
         manifest=ManifestOptions(
@@ -53,11 +45,13 @@ def test_single_db_dask_publishes_manifest_and_current(
         ),
     )
 
-    pdf = pd.DataFrame({"id": list(range(20)), "val": [f"val-{i}" for i in range(20)]})
-    ddf = dd.from_pandas(pdf, npartitions=2)
+    ds = ray.data.from_items(
+        [{"id": i, "val": f"val-{i}"} for i in range(20)],
+        override_num_blocks=2,
+    )
 
     result = write_single_db(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: str(row["val"]).encode()),
@@ -65,8 +59,8 @@ def test_single_db_dask_publishes_manifest_and_current(
 
     assert len(result.winners) == 1
     assert result.winners[0].row_count == 20
-    assert result.manifest_ref.startswith(f"s3://{bucket}/single-db-dask/manifests/")
-    assert result.current_ref == f"s3://{bucket}/single-db-dask/_CURRENT"
+    assert result.manifest_ref.startswith(f"s3://{bucket}/single-db-ray/manifests/")
+    assert result.current_ref == f"s3://{bucket}/single-db-ray/_CURRENT"
 
     client = local_s3_service["client"]
     manifest_key = result.manifest_ref.split(f"s3://{bucket}/", 1)[1]
@@ -78,7 +72,7 @@ def test_single_db_dask_publishes_manifest_and_current(
     manifest_payload = json.loads(manifest_obj["Body"].read().decode("utf-8"))
     current_payload = json.loads(current_obj["Body"].read().decode("utf-8"))
 
-    assert manifest_payload["required"]["run_id"] == "single-db-dask-test"
+    assert manifest_payload["required"]["run_id"] == "single-db-ray-test"
     assert manifest_payload["required"]["num_dbs"] == 1
     assert len(manifest_payload["shards"]) == 1
     assert current_payload["manifest_ref"] == result.manifest_ref

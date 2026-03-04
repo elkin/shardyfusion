@@ -1,15 +1,14 @@
-"""Tests for the Dask writer."""
+"""Tests for the Ray writer."""
 
 from __future__ import annotations
 
+import pathlib
 from collections.abc import Iterable
-from pathlib import Path
 from typing import Self
 
-import dask
-import dask.dataframe as dd
-import pandas as pd
 import pytest
+import ray
+import ray.data
 
 from shardyfusion._writer_core import route_key
 from shardyfusion.config import (
@@ -31,20 +30,8 @@ from shardyfusion.testing import (
     file_backed_adapter_factory,
     file_backed_load_db,
 )
-from shardyfusion.writer.dask import write_sharded
-from tests.helpers.tracking import InMemoryPublisher, RecordingTokenBucket
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _synchronous_scheduler():
-    """Force synchronous Dask scheduler for deterministic test behavior."""
-    with dask.config.set(scheduler="synchronous"):
-        yield
-
+from shardyfusion.writer.ray import write_sharded
+from tests.helpers.tracking import InMemoryPublisher
 
 # ---------------------------------------------------------------------------
 # Test infrastructure
@@ -85,7 +72,7 @@ class _TrackingFactory:
         self.adapters: dict[int, _TrackingAdapter] = {}
         self._call_count = 0
 
-    def __call__(self, *, db_url: str, local_dir: Path) -> _TrackingAdapter:
+    def __call__(self, *, db_url: str, local_dir: str) -> _TrackingAdapter:
         adapter = _TrackingAdapter()
         self.adapters[self._call_count] = adapter
         self._call_count += 1
@@ -113,7 +100,7 @@ def _make_config(
 
 
 def _make_file_backed_config(
-    tmp_path: Path,
+    tmp_path: pathlib.Path,
     *,
     num_dbs: int = 4,
     batch_size: int = 50_000,
@@ -137,11 +124,12 @@ def _make_file_backed_config(
     return config, root_dir
 
 
-def _make_dask_df(
-    records: list[dict[str, object]], npartitions: int = 2
-) -> dd.DataFrame:
-    pdf = pd.DataFrame(records)
-    return dd.from_pandas(pdf, npartitions=npartitions)
+def _make_ray_ds(
+    records: list[dict[str, object]], parallelism: int = 2
+) -> ray.data.Dataset:
+    if not records:
+        return ray.data.from_items([{"id": 0}]).filter(lambda r: False)
+    return ray.data.from_items(records, override_num_blocks=parallelism)
 
 
 # ---------------------------------------------------------------------------
@@ -154,10 +142,10 @@ def test_hash_routing_round_trip() -> None:
     config = _make_config(num_dbs=4, factory=factory)
 
     records = [{"id": i} for i in range(40)]
-    ddf = _make_dask_df(records, npartitions=2)
+    ds = _make_ray_ds(records, parallelism=2)
 
     result = write_sharded(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: f"v{row['id']}".encode()),
@@ -183,10 +171,10 @@ def test_range_explicit_boundaries() -> None:
     )
 
     records = [{"id": i} for i in range(30)]
-    ddf = _make_dask_df(records, npartitions=2)
+    ds = _make_ray_ds(records, parallelism=2)
 
     result = write_sharded(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -199,37 +187,6 @@ def test_range_explicit_boundaries() -> None:
     assert result.winners[2].row_count == 10
 
 
-def test_range_auto_computed_boundaries() -> None:
-    factory = _TrackingFactory()
-    config = WriteConfig(
-        num_dbs=3,
-        s3_prefix="s3://bucket/prefix",
-        adapter_factory=factory,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=None,
-        ),
-        output=OutputOptions(run_id="test-run"),
-        manifest=ManifestOptions(publisher=InMemoryPublisher()),
-    )
-
-    # 90 evenly distributed records — quantiles should produce reasonable boundaries
-    records = [{"id": i} for i in range(90)]
-    ddf = _make_dask_df(records, npartitions=3)
-
-    result = write_sharded(
-        ddf,
-        config,
-        key_col="id",
-        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-    )
-
-    assert len(result.winners) == 3
-    assert sum(w.row_count for w in result.winners) == 90
-    # All three shards should have some records (boundaries computed from quantiles)
-    assert all(w.row_count > 0 for w in result.winners)
-
-
 def test_custom_expr_raises() -> None:
     config = _make_config(
         num_dbs=2,
@@ -237,11 +194,11 @@ def test_custom_expr_raises() -> None:
     )
 
     records = [{"id": i} for i in range(10)]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     with pytest.raises(ConfigValidationError, match="Custom expression"):
         write_sharded(
-            ddf,
+            ds,
             config,
             key_col="id",
             value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -252,14 +209,10 @@ def test_empty_input() -> None:
     factory = _TrackingFactory()
     config = _make_config(num_dbs=4, factory=factory)
 
-    ddf = _make_dask_df([], npartitions=1)
-
-    # Empty DataFrames need a schema for Dask
-    pdf = pd.DataFrame({"id": pd.Series(dtype="int64")})
-    ddf = dd.from_pandas(pdf, npartitions=1)
+    ds = _make_ray_ds([], parallelism=1)
 
     result = write_sharded(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -269,26 +222,27 @@ def test_empty_input() -> None:
     assert all(w.row_count == 0 for w in result.winners)
 
 
-def test_batch_flushing() -> None:
-    factory = _TrackingFactory()
-    config = _make_config(num_dbs=1, factory=factory, batch_size=3)
+def test_batch_flushing(tmp_path: pathlib.Path) -> None:
+    # NOTE: Ray runs _write_partition in worker processes, so in-memory
+    # tracking factories cannot observe adapter calls across the process
+    # boundary.  Use file-backed adapters and verify through BuildResult.
+    config, root_dir = _make_file_backed_config(tmp_path, num_dbs=1, batch_size=3)
 
     # 7 records all go to shard 0 (only 1 shard)
     records = [{"id": i} for i in range(7)]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
-    write_sharded(
-        ddf,
+    result = write_sharded(
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
     )
 
-    # Find the adapter that got records
-    adapter = factory.adapters[0]
-    total_pairs = sum(len(call) for call in adapter.write_calls)
-    assert total_pairs == 7
-    assert len(adapter.write_calls) >= 3  # at least 2 full + 1 final
+    assert result.stats.rows_written == 7
+    # Verify all records actually landed in the shard
+    shard_data = file_backed_load_db(root_dir, result.winners[0].db_url)
+    assert len(shard_data) == 7
 
 
 def test_min_max_key_tracking() -> None:
@@ -303,10 +257,10 @@ def test_min_max_key_tracking() -> None:
     )
 
     records = [{"id": k} for k in [10, 20, 30, 60, 70, 80]]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     result = write_sharded(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -326,10 +280,10 @@ def test_rate_limited_write() -> None:
     config = _make_config(num_dbs=1, factory=factory, batch_size=1)
 
     records = [{"id": i} for i in range(5)]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     result = write_sharded(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -344,185 +298,52 @@ def test_rate_limited_write() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
-def _patch_token_bucket(monkeypatch: pytest.MonkeyPatch) -> list[RecordingTokenBucket]:
-    RecordingTokenBucket.instances = []
-    monkeypatch.setattr(
-        "shardyfusion.writer.dask.writer.TokenBucket",
-        RecordingTokenBucket,
-    )
-    return RecordingTokenBucket.instances
+def test_rate_limited_write_succeeds(tmp_path: pathlib.Path) -> None:
+    # NOTE: Ray runs _write_partition in worker processes, so monkeypatching
+    # TokenBucket in the driver process has no effect on workers.  Verify that
+    # rate-limited writes succeed and produce correct results instead.
+    config, root_dir = _make_file_backed_config(tmp_path, num_dbs=1, batch_size=50_000)
 
-
-def test_rate_limiter_bucket_created_with_correct_rate(
-    _patch_token_bucket: list[RecordingTokenBucket],
-) -> None:
-    config = _make_config(num_dbs=1, batch_size=50_000)
     records = [{"id": i} for i in range(5)]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
-    write_sharded(
-        ddf,
+    result = write_sharded(
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
         max_writes_per_second=42.5,
     )
 
-    assert len(_patch_token_bucket) == 1
-    assert _patch_token_bucket[0].rate == 42.5
+    assert result.stats.rows_written == 5
+    shard_data = file_backed_load_db(root_dir, result.winners[0].db_url)
+    assert len(shard_data) == 5
 
 
-def test_rate_limiter_no_bucket_when_rate_is_none(
-    _patch_token_bucket: list[RecordingTokenBucket],
-) -> None:
-    config = _make_config(num_dbs=1, batch_size=50_000)
+def test_write_without_rate_limiter(tmp_path: pathlib.Path) -> None:
+    config, root_dir = _make_file_backed_config(tmp_path, num_dbs=1, batch_size=50_000)
+
     records = [{"id": i} for i in range(5)]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
-    write_sharded(
-        ddf,
+    result = write_sharded(
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
     )
 
-    assert len(_patch_token_bucket) == 0
+    assert result.stats.rows_written == 5
 
 
-def test_rate_limiter_acquire_count_matches_batch_writes(
-    _patch_token_bucket: list[RecordingTokenBucket],
-) -> None:
-    config = _make_config(num_dbs=1, batch_size=3)
-    records = [{"id": i} for i in range(7)]
-    ddf = _make_dask_df(records, npartitions=1)
-
-    write_sharded(
-        ddf,
-        config,
-        key_col="id",
-        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-        max_writes_per_second=100.0,
-    )
-
-    assert len(_patch_token_bucket) == 1
-    bucket = _patch_token_bucket[0]
-    # 7 rows / batch_size 3 → batches of [3, 3, 1] → 3 acquire calls
-    assert len(bucket.acquire_calls) == 3
-    assert bucket.acquire_calls == [3, 3, 1]
-    assert sum(bucket.acquire_calls) == 7
-
-
-def test_rate_limiter_single_batch_single_acquire(
-    _patch_token_bucket: list[RecordingTokenBucket],
-) -> None:
-    config = _make_config(num_dbs=1, batch_size=50_000)
-    records = [{"id": i} for i in range(5)]
-    ddf = _make_dask_df(records, npartitions=1)
-
-    write_sharded(
-        ddf,
-        config,
-        key_col="id",
-        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-        max_writes_per_second=100.0,
-    )
-
-    assert len(_patch_token_bucket) == 1
-    bucket = _patch_token_bucket[0]
-    # All 5 rows fit in one batch → single acquire for all 5
-    assert bucket.acquire_calls == [5]
-
-
-def test_rate_limiter_exact_batch_boundary(
-    _patch_token_bucket: list[RecordingTokenBucket],
-) -> None:
-    config = _make_config(num_dbs=1, batch_size=3)
-    records = [{"id": i} for i in range(6)]
-    ddf = _make_dask_df(records, npartitions=1)
-
-    write_sharded(
-        ddf,
-        config,
-        key_col="id",
-        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-        max_writes_per_second=100.0,
-    )
-
-    assert len(_patch_token_bucket) == 1
-    bucket = _patch_token_bucket[0]
-    # 6 rows / batch_size 3 → exactly 2 full batches, no trailing partial
-    assert bucket.acquire_calls == [3, 3]
-
-
-def test_rate_limiter_multiple_shards_independent_buckets(
-    _patch_token_bucket: list[RecordingTokenBucket],
-) -> None:
-    config = _make_config(
-        num_dbs=2,
-        batch_size=1,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=[50],
-        ),
-    )
-    records = [{"id": k} for k in [10, 20, 30, 60, 70, 80]]
-    ddf = _make_dask_df(records, npartitions=1)
-
-    write_sharded(
-        ddf,
-        config,
-        key_col="id",
-        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-        max_writes_per_second=100.0,
-    )
-
-    # Each shard gets its own bucket
-    assert len(_patch_token_bucket) == 2
-    # batch_size=1 → each row is its own batch → acquire(1) per row
-    total_acquires = sum(len(b.acquire_calls) for b in _patch_token_bucket)
-    assert total_acquires == 6
-    # Each shard has 3 rows
-    acquire_counts = sorted(len(b.acquire_calls) for b in _patch_token_bucket)
-    assert acquire_counts == [3, 3]
-
-
-def test_rate_limiter_empty_shard_no_bucket(
-    _patch_token_bucket: list[RecordingTokenBucket],
-) -> None:
-    config = _make_config(
-        num_dbs=4,
-        batch_size=50_000,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=[100, 200, 300],
-        ),
-    )
-    # Both keys < 100, so all go to shard 0
-    records = [{"id": 0}, {"id": 1}]
-    ddf = _make_dask_df(records, npartitions=1)
-
-    write_sharded(
-        ddf,
-        config,
-        key_col="id",
-        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-        max_writes_per_second=100.0,
-    )
-
-    # Only 1 bucket created (only shard 0 has rows)
-    assert len(_patch_token_bucket) == 1
-    assert _patch_token_bucket[0].acquire_calls == [2]
-
-
-def test_value_spec_binary_col(tmp_path: Path) -> None:
+def test_value_spec_binary_col(tmp_path: pathlib.Path) -> None:
     config, root_dir = _make_file_backed_config(tmp_path, num_dbs=2)
 
     records = [{"id": i, "payload": f"data-{i}".encode()} for i in range(10)]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     result = write_sharded(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.binary_col("payload"),
@@ -540,14 +361,14 @@ def test_value_spec_binary_col(tmp_path: Path) -> None:
         assert all_kv[key_bytes] == f"data-{i}".encode()
 
 
-def test_value_spec_json_cols(tmp_path: Path) -> None:
+def test_value_spec_json_cols(tmp_path: pathlib.Path) -> None:
     config, root_dir = _make_file_backed_config(tmp_path, num_dbs=2)
 
     records = [{"id": i, "name": f"user{i}"} for i in range(10)]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     result = write_sharded(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.json_cols(["id", "name"]),
@@ -569,7 +390,7 @@ def test_value_spec_json_cols(tmp_path: Path) -> None:
     assert parsed["name"] == "user0"
 
 
-def test_sort_within_partitions(tmp_path: Path) -> None:
+def test_sort_within_partitions(tmp_path: pathlib.Path) -> None:
     config, root_dir = _make_file_backed_config(
         tmp_path,
         num_dbs=2,
@@ -581,10 +402,10 @@ def test_sort_within_partitions(tmp_path: Path) -> None:
 
     # Deliberately unsorted records
     records = [{"id": k} for k in [30, 10, 20, 80, 60, 70]]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     result = write_sharded(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -598,7 +419,7 @@ def test_sort_within_partitions(tmp_path: Path) -> None:
         assert keys == sorted(keys), f"Shard {winner.db_id} keys not sorted"
 
 
-def test_u32be_key_encoding(tmp_path: Path) -> None:
+def test_u32be_key_encoding(tmp_path: pathlib.Path) -> None:
     config, root_dir = _make_file_backed_config(
         tmp_path,
         num_dbs=2,
@@ -606,10 +427,10 @@ def test_u32be_key_encoding(tmp_path: Path) -> None:
     )
 
     records = [{"id": i} for i in range(20)]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     result = write_sharded(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: f"v{row['id']}".encode()),
@@ -630,11 +451,11 @@ def test_verify_routing_enabled() -> None:
     config = _make_config(num_dbs=4)
 
     records = [{"id": i} for i in range(20)]
-    ddf = _make_dask_df(records, npartitions=2)
+    ds = _make_ray_ds(records, parallelism=2)
 
     # Should not raise — verification passes when routing is correct
     result = write_sharded(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -644,14 +465,14 @@ def test_verify_routing_enabled() -> None:
     assert result.stats.rows_written == 20
 
 
-def test_data_integrity(tmp_path: Path) -> None:
+def test_data_integrity(tmp_path: pathlib.Path) -> None:
     config, root_dir = _make_file_backed_config(tmp_path, num_dbs=4)
 
     records = [{"id": i} for i in range(100)]
-    ddf = _make_dask_df(records, npartitions=4)
+    ds = _make_ray_ds(records, parallelism=4)
 
     result = write_sharded(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(
@@ -697,11 +518,11 @@ def test_metrics_emitted_on_write() -> None:
     config = _make_config(num_dbs=2)
     config.metrics_collector = mc
 
-    ddf = dd.from_pandas(
-        pd.DataFrame({"key": range(10), "val": [b"v"] * 10}),
-        npartitions=2,
+    ds = ray.data.from_items(
+        [{"key": i, "val": b"v"} for i in range(10)], override_num_blocks=2
     )
-    write_sharded(ddf, config, key_col="key", value_spec=ValueSpec.binary_col("val"))
+
+    write_sharded(ds, config, key_col="key", value_spec=ValueSpec.binary_col("val"))
 
     event_names = [e[0] for e in mc.events]
     assert MetricEvent.WRITE_STARTED in event_names

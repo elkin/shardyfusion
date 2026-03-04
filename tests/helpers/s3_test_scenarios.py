@@ -787,3 +787,214 @@ def run_dask_writer_reader_refresh_scenario(
 
         unchanged = reader.refresh()
         assert unchanged is False
+
+
+# ---------------------------------------------------------------------------
+# Scenario 8: Ray writer publishes manifest to S3
+# ---------------------------------------------------------------------------
+
+
+def run_ray_writer_publishes_manifest_scenario(
+    s3_service: LocalS3Service,
+    tmp_path: Path,
+    *,
+    s3_client_config: S3ClientConfig | None = None,
+) -> None:
+    """Ray writer publishes manifest + CURRENT to S3, then reads shards back."""
+
+    import ray.data
+
+    from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+    from shardyfusion.serde import ValueSpec
+    from shardyfusion.sharding_types import ShardingSpec
+    from shardyfusion.testing import (
+        map_s3_db_url_to_file_url,
+        real_file_adapter_factory,
+        writer_local_dir_for_db_url,
+    )
+    from shardyfusion.writer.ray import write_sharded
+
+    bucket = s3_service["bucket"]
+    endpoint_url = s3_service["endpoint_url"]
+    s3_prefix = f"s3://{bucket}/ray-writer"
+    local_root = str(tmp_path / "ray-writer-local")
+    object_store_root = str(tmp_path / "ray-object-store")
+
+    manifest_s3_config: S3ClientConfig = s3_client_config or {
+        "endpoint_url": endpoint_url,
+        "region_name": s3_service["region_name"],
+        "access_key_id": s3_service["access_key_id"],
+        "secret_access_key": s3_service["secret_access_key"],
+    }
+
+    config = WriteConfig(
+        num_dbs=4,
+        s3_prefix=s3_prefix,
+        sharding=ShardingSpec(
+            strategy=ShardingStrategy.RANGE,
+            boundaries=[6, 12, 18],
+        ),
+        adapter_factory=real_file_adapter_factory(object_store_root),
+        manifest=ManifestOptions(s3_client_config=manifest_s3_config),
+        output=OutputOptions(
+            run_id="ray-writer-e2e",
+            local_root=local_root,
+        ),
+    )
+
+    ds = ray.data.from_items(
+        [{"id": i, "val": f"v{i}"} for i in range(24)],
+        override_num_blocks=4,
+    )
+
+    result = write_sharded(
+        ds,
+        config,
+        key_col="id",
+        value_spec=ValueSpec.callable_encoder(lambda row: str(row["val"]).encode()),
+    )
+
+    assert len(result.winners) == 4
+    assert result.manifest_ref.startswith(f"s3://{bucket}/ray-writer/manifests/")
+    assert result.current_ref == f"s3://{bucket}/ray-writer/_CURRENT"
+
+    manifest_key = result.manifest_ref.split(f"s3://{bucket}/", 1)[1]
+    current_key = result.current_ref.split(f"s3://{bucket}/", 1)[1]
+
+    client = s3_service["client"]
+    manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
+    current_obj = client.get_object(Bucket=bucket, Key=current_key)
+
+    manifest_payload = json.loads(manifest_obj["Body"].read().decode("utf-8"))
+    current_payload = json.loads(current_obj["Body"].read().decode("utf-8"))
+
+    assert manifest_payload["required"]["run_id"] == "ray-writer-e2e"
+    assert manifest_payload["required"]["num_dbs"] == 4
+    assert len(manifest_payload["shards"]) == 4
+    assert current_payload["manifest_ref"] == result.manifest_ref
+    assert current_payload["manifest_content_type"] == "application/json"
+
+    # Verify each shard was physically written and can be read via real SlateDB.
+    total_rows = 0
+    for winner in result.winners:
+        reader = slatedb.SlateDBReader(
+            writer_local_dir_for_db_url(winner.db_url, local_root),
+            url=map_s3_db_url_to_file_url(winner.db_url, object_store_root),
+            checkpoint_id=winner.checkpoint_id,
+        )
+        try:
+            probe_key = winner.db_id * 6
+            got = reader.get(probe_key.to_bytes(8, "big", signed=False))
+            assert got == f"v{probe_key}".encode()
+            total_rows += winner.row_count
+        finally:
+            reader.close()
+
+    assert total_rows == 24
+
+
+# ---------------------------------------------------------------------------
+# Scenario 9: Ray writer publishes v1, reader opens, Ray writer publishes
+# v2, reader refreshes
+# ---------------------------------------------------------------------------
+
+
+def run_ray_writer_reader_refresh_scenario(
+    s3_service: LocalS3Service,
+    tmp_path: Path,
+    *,
+    s3_client_config: S3ClientConfig | None = None,
+) -> None:
+    """Ray writer publishes v1, reader opens, Ray writer publishes v2, reader refreshes."""
+
+    import ray.data
+
+    from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+    from shardyfusion.serde import ValueSpec
+    from shardyfusion.sharding_types import ShardingSpec
+    from shardyfusion.testing import (
+        map_s3_db_url_to_file_url,
+        real_file_adapter_factory,
+        writer_local_dir_for_db_url,
+    )
+    from shardyfusion.writer.ray import write_sharded
+
+    bucket = s3_service["bucket"]
+    endpoint_url = s3_service["endpoint_url"]
+    s3_prefix = f"s3://{bucket}/ray-writer-reader-refresh"
+    local_root = str(tmp_path / "ray-writer-local")
+    object_store_root = str(tmp_path / "ray-object-store")
+
+    manifest_s3_config: S3ClientConfig = s3_client_config or {
+        "endpoint_url": endpoint_url,
+        "region_name": s3_service["region_name"],
+        "access_key_id": s3_service["access_key_id"],
+        "secret_access_key": s3_service["secret_access_key"],
+    }
+
+    def build_config(run_id: str) -> WriteConfig:
+        return WriteConfig(
+            num_dbs=4,
+            s3_prefix=s3_prefix,
+            output=OutputOptions(run_id=run_id, local_root=local_root),
+            sharding=ShardingSpec(
+                strategy=ShardingStrategy.RANGE,
+                boundaries=[8, 16, 24],
+            ),
+            adapter_factory=real_file_adapter_factory(object_store_root),
+            manifest=ManifestOptions(s3_client_config=manifest_s3_config),
+        )
+
+    value_spec = ValueSpec.callable_encoder(lambda row: str(row["val"]).encode())
+
+    def make_ds(prefix: str) -> ray.data.Dataset:
+        return ray.data.from_items(
+            [{"id": i, "val": f"{prefix}-{i}"} for i in range(32)],
+            override_num_blocks=4,
+        )
+
+    result_v1 = write_sharded(
+        make_ds("old"),
+        build_config("ray-refresh-run-1"),
+        key_col="id",
+        value_spec=value_spec,
+    )
+
+    def open_real_reader(
+        *, db_url: str, local_dir: str, checkpoint_id: str | None
+    ) -> slatedb.SlateDBReader:
+        return slatedb.SlateDBReader(
+            writer_local_dir_for_db_url(db_url, local_root),
+            url=map_s3_db_url_to_file_url(db_url, object_store_root),
+            checkpoint_id=checkpoint_id,
+        )
+
+    reader_kwargs: dict[str, Any] = {
+        "s3_prefix": s3_prefix,
+        "local_root": str(tmp_path / "reader-cache"),
+        "reader_factory": open_real_reader,
+    }
+    if s3_client_config is not None:
+        reader_kwargs["manifest_reader"] = DefaultS3ManifestReader(
+            s3_prefix,
+            s3_client_config=s3_client_config,
+        )
+
+    with SlateShardedReader(**reader_kwargs) as reader:
+        assert reader.get(7) == b"old-7"
+
+        result_v2 = write_sharded(
+            make_ds("new"),
+            build_config("ray-refresh-run-2"),
+            key_col="id",
+            value_spec=value_spec,
+        )
+
+        assert result_v1.manifest_ref != result_v2.manifest_ref
+
+        changed = reader.refresh()
+        assert changed is True
+        assert reader.get(7) == b"new-7"
+
+        unchanged = reader.refresh()
+        assert unchanged is False

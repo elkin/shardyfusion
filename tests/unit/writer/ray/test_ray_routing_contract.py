@@ -1,16 +1,15 @@
-"""Contract tests verifying Dask-computed db_id matches Python routing.
+"""Contract tests verifying Ray-computed db_id matches Python routing.
 
-Since the Dask writer uses ``route_key()`` directly (not Spark SQL),
+Since the Ray writer uses ``route_key()`` directly (not Spark SQL),
 this verifies end-to-end correctness of the ``add_db_id_column()``
 function against the canonical routing function.
 """
 
 from __future__ import annotations
 
-import dask
-import dask.dataframe as dd
-import pandas as pd
 import pytest
+import ray
+import ray.data
 
 from shardyfusion._writer_core import route_key
 from shardyfusion.sharding_types import (
@@ -19,7 +18,7 @@ from shardyfusion.sharding_types import (
     ShardingSpec,
     ShardingStrategy,
 )
-from shardyfusion.writer.dask.sharding import add_db_id_column
+from shardyfusion.writer.ray.sharding import add_db_id_column
 
 # Reuse edge-case keys from the main routing contract test suite.
 from tests.unit.writer.test_routing_contract import (
@@ -28,69 +27,63 @@ from tests.unit.writer.test_routing_contract import (
 )
 
 
-@pytest.fixture(autouse=True)
-def _synchronous_scheduler():
-    with dask.config.set(scheduler="synchronous"):
-        yield
-
-
 @pytest.mark.parametrize("num_dbs", [1, 2, 3, 5, 7, 8, 16, 64, 128])
-def test_dask_python_hash_agreement_u64be(num_dbs: int) -> None:
-    """Dask add_db_id_column matches route_key for u64be hash sharding."""
+def test_ray_python_hash_agreement_u64be(num_dbs: int) -> None:
+    """Ray add_db_id_column matches route_key for u64be hash sharding."""
 
-    pdf = pd.DataFrame({"id": EDGE_CASE_KEYS})
-    ddf = dd.from_pandas(pdf, npartitions=4)
+    ds = ray.data.from_items([{"id": k} for k in EDGE_CASE_KEYS], override_num_blocks=4)
     sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
 
-    result = add_db_id_column(
-        ddf,
+    result_ds = add_db_id_column(
+        ds,
         key_col="id",
         num_dbs=num_dbs,
         sharding=sharding,
         key_encoding=KeyEncoding.U64BE,
-    ).compute()
+    )
 
-    for _, row in result.iterrows():
-        key = int(row["id"])  # convert numpy scalar to Python int
-        dask_db_id = int(row[DB_ID_COL])
+    for row in result_ds.take_all():
+        key = int(row["id"])
+        ray_db_id = int(row[DB_ID_COL])
         python_db_id = route_key(
             key,
             num_dbs=num_dbs,
             sharding=sharding,
             key_encoding=KeyEncoding.U64BE,
         )
-        assert dask_db_id == python_db_id, (
-            f"key={key}, num_dbs={num_dbs}: Dask={dask_db_id}, Python={python_db_id}"
+        assert ray_db_id == python_db_id, (
+            f"key={key}, num_dbs={num_dbs}: Ray={ray_db_id}, Python={python_db_id}"
         )
 
 
 @pytest.mark.parametrize("num_dbs", [1, 2, 3, 5, 8, 16, 64])
-def test_dask_python_hash_agreement_u32be(num_dbs: int) -> None:
-    """Dask add_db_id_column matches route_key for u32be hash sharding."""
+def test_ray_python_hash_agreement_u32be(num_dbs: int) -> None:
+    """Ray add_db_id_column matches route_key for u32be hash sharding."""
 
-    pdf = pd.DataFrame({"id": U32_EDGE_CASE_KEYS})
-    ddf = dd.from_pandas(pdf, npartitions=4)
+    ds = ray.data.from_items(
+        [{"id": k} for k in U32_EDGE_CASE_KEYS], override_num_blocks=4
+    )
     sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
 
-    result = add_db_id_column(
-        ddf,
+    result_ds = add_db_id_column(
+        ds,
         key_col="id",
         num_dbs=num_dbs,
         sharding=sharding,
         key_encoding=KeyEncoding.U32BE,
-    ).compute()
+    )
 
-    for _, row in result.iterrows():
-        key = int(row["id"])  # convert numpy scalar to Python int
-        dask_db_id = int(row[DB_ID_COL])
+    for row in result_ds.take_all():
+        key = int(row["id"])
+        ray_db_id = int(row[DB_ID_COL])
         python_db_id = route_key(
             key,
             num_dbs=num_dbs,
             sharding=sharding,
             key_encoding=KeyEncoding.U32BE,
         )
-        assert dask_db_id == python_db_id, (
-            f"key={key}, num_dbs={num_dbs}: Dask(u32be)={dask_db_id}, Python={python_db_id}"
+        assert ray_db_id == python_db_id, (
+            f"key={key}, num_dbs={num_dbs}: Ray(u32be)={ray_db_id}, Python={python_db_id}"
         )
 
 
@@ -103,8 +96,8 @@ def test_dask_python_hash_agreement_u32be(num_dbs: int) -> None:
         [0, 100, 200, 300, 400, 500, 600, 700, 800, 900],
     ],
 )
-def test_dask_range_sharding_matchesroute_key(boundaries: list[int]) -> None:
-    """Dask add_db_id_column matches route_key for range sharding."""
+def test_ray_range_sharding_matches_route_key(boundaries: list[int]) -> None:
+    """Ray add_db_id_column matches route_key for range sharding."""
 
     num_dbs = len(boundaries) + 1
     sharding = ShardingSpec(
@@ -122,27 +115,26 @@ def test_dask_range_sharding_matchesroute_key(boundaries: list[int]) -> None:
         )
     )
 
-    pdf = pd.DataFrame({"id": keys})
-    ddf = dd.from_pandas(pdf, npartitions=2)
+    ds = ray.data.from_items([{"id": k} for k in keys], override_num_blocks=2)
 
-    result = add_db_id_column(
-        ddf,
+    result_ds = add_db_id_column(
+        ds,
         key_col="id",
         num_dbs=num_dbs,
         sharding=sharding,
         key_encoding=KeyEncoding.U64BE,
-    ).compute()
+    )
 
-    for _, row in result.iterrows():
-        key = int(row["id"])  # convert numpy scalar to Python int
-        dask_db_id = int(row[DB_ID_COL])
+    for row in result_ds.take_all():
+        key = int(row["id"])
+        ray_db_id = int(row[DB_ID_COL])
         python_db_id = route_key(
             key,
             num_dbs=num_dbs,
             sharding=sharding,
             key_encoding=KeyEncoding.U64BE,
         )
-        assert dask_db_id == python_db_id, (
+        assert ray_db_id == python_db_id, (
             f"key={key}, boundaries={boundaries}: "
-            f"Dask={dask_db_id}, Python={python_db_id}"
+            f"Ray={ray_db_id}, Python={python_db_id}"
         )

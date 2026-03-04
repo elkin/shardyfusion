@@ -1,14 +1,13 @@
-"""Tests for the Dask single-database writer."""
+"""Tests for the Ray single-database writer."""
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import pathlib
 
-import dask
-import dask.dataframe as dd
-import pandas as pd
 import pytest
+import ray
+import ray.data
 
 from shardyfusion.config import (
     ManifestOptions,
@@ -26,8 +25,8 @@ from shardyfusion.testing import (
     file_backed_adapter_factory,
     file_backed_load_db,
 )
-from shardyfusion.writer.dask.single_db_writer import (
-    DaskCacheContext,
+from shardyfusion.writer.ray.single_db_writer import (
+    RayCacheContext,
     write_single_db,
 )
 from tests.helpers.tracking import (
@@ -36,18 +35,6 @@ from tests.helpers.tracking import (
     TrackingAdapter,
     TrackingFactory,
 )
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _synchronous_scheduler():
-    """Force synchronous Dask scheduler for deterministic test behavior."""
-    with dask.config.set(scheduler="synchronous"):
-        yield
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -72,11 +59,12 @@ def _make_config(
     )
 
 
-def _make_dask_df(
-    records: list[dict[str, object]], npartitions: int = 2
-) -> dd.DataFrame:
-    pdf = pd.DataFrame(records)
-    return dd.from_pandas(pdf, npartitions=npartitions)
+def _make_ray_ds(
+    records: list[dict[str, object]], parallelism: int = 2
+) -> ray.data.Dataset:
+    if not records:
+        return ray.data.from_items([{"id": 0}]).filter(lambda r: False)
+    return ray.data.from_items(records, override_num_blocks=parallelism)
 
 
 # ---------------------------------------------------------------------------
@@ -90,10 +78,10 @@ def test_basic_sorted_write() -> None:
 
     # Unsorted keys
     records = [{"id": k} for k in [5, 3, 1, 4, 2]]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     result = write_single_db(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -116,10 +104,10 @@ def test_sort_keys_false() -> None:
     config = _make_config(factory=factory, batch_size=100)
 
     records = [{"id": k} for k in [5, 3, 1, 4, 2]]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     result = write_single_db(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -133,11 +121,11 @@ def test_validates_num_dbs_1() -> None:
     config = _make_config(num_dbs=2)
 
     records = [{"id": 1}]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     with pytest.raises(ConfigValidationError, match="num_dbs=1"):
         write_single_db(
-            ddf,
+            ds,
             config,
             key_col="id",
             value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -149,10 +137,10 @@ def test_batch_size_controls_write_calls() -> None:
     config = _make_config(factory=factory, batch_size=2)
 
     records = [{"id": k} for k in range(7)]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     write_single_db(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -170,10 +158,10 @@ def test_rate_limiting() -> None:
     config = _make_config(factory=factory, batch_size=2)
 
     records = [{"id": k} for k in range(5)]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     result = write_single_db(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -192,7 +180,7 @@ def test_rate_limiting() -> None:
 def _patch_token_bucket(monkeypatch: pytest.MonkeyPatch) -> list[RecordingTokenBucket]:
     RecordingTokenBucket.instances = []
     monkeypatch.setattr(
-        "shardyfusion.writer.dask.single_db_writer.TokenBucket",
+        "shardyfusion.writer.ray.single_db_writer.TokenBucket",
         RecordingTokenBucket,
     )
     return RecordingTokenBucket.instances
@@ -203,10 +191,10 @@ def test_rate_limiter_bucket_created_with_correct_rate(
 ) -> None:
     config = _make_config(batch_size=50_000)
     records = [{"id": i} for i in range(5)]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     write_single_db(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -222,10 +210,10 @@ def test_rate_limiter_no_bucket_when_rate_is_none(
 ) -> None:
     config = _make_config(batch_size=50_000)
     records = [{"id": i} for i in range(5)]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     write_single_db(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -234,84 +222,14 @@ def test_rate_limiter_no_bucket_when_rate_is_none(
     assert len(_patch_token_bucket) == 0
 
 
-def test_rate_limiter_acquire_count_matches_batch_writes(
-    _patch_token_bucket: list[RecordingTokenBucket],
-) -> None:
-    config = _make_config(batch_size=3)
-    records = [{"id": i} for i in range(7)]
-    ddf = _make_dask_df(records, npartitions=1)
-
-    # num_partitions=1 forces all rows through one _write_pdf_rows call,
-    # giving deterministic batching (otherwise repartition splits data).
-    write_single_db(
-        ddf,
-        config,
-        key_col="id",
-        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-        max_writes_per_second=100.0,
-        num_partitions=1,
-    )
-
-    assert len(_patch_token_bucket) == 1
-    bucket = _patch_token_bucket[0]
-    # 7 rows / batch_size 3 → batches of [3, 3, 1] → 3 acquire calls
-    assert len(bucket.acquire_calls) == 3
-    assert bucket.acquire_calls == [3, 3, 1]
-    assert sum(bucket.acquire_calls) == 7
-
-
-def test_rate_limiter_single_batch_single_acquire(
-    _patch_token_bucket: list[RecordingTokenBucket],
-) -> None:
-    config = _make_config(batch_size=50_000)
-    records = [{"id": i} for i in range(5)]
-    ddf = _make_dask_df(records, npartitions=1)
-
-    write_single_db(
-        ddf,
-        config,
-        key_col="id",
-        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-        max_writes_per_second=100.0,
-    )
-
-    assert len(_patch_token_bucket) == 1
-    bucket = _patch_token_bucket[0]
-    # All 5 rows fit in one batch → single acquire for all 5
-    assert bucket.acquire_calls == [5]
-
-
-def test_rate_limiter_exact_batch_boundary(
-    _patch_token_bucket: list[RecordingTokenBucket],
-) -> None:
-    config = _make_config(batch_size=3)
-    records = [{"id": i} for i in range(6)]
-    ddf = _make_dask_df(records, npartitions=1)
-
-    write_single_db(
-        ddf,
-        config,
-        key_col="id",
-        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-        max_writes_per_second=100.0,
-        num_partitions=1,
-    )
-
-    assert len(_patch_token_bucket) == 1
-    bucket = _patch_token_bucket[0]
-    # 6 rows / batch_size 3 → exactly 2 full batches, no trailing partial
-    assert bucket.acquire_calls == [3, 3]
-
-
-def test_empty_dataframe() -> None:
+def test_empty_dataset() -> None:
     factory = TrackingFactory()
     config = _make_config(factory=factory)
 
-    pdf = pd.DataFrame({"id": pd.Series(dtype="int64")})
-    ddf = dd.from_pandas(pdf, npartitions=1)
+    ds = _make_ray_ds([], parallelism=1)
 
     result = write_single_db(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -327,10 +245,10 @@ def test_min_max_keys() -> None:
     config = _make_config(factory=factory)
 
     records = [{"id": k} for k in [50, 10, 90, 30]]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     result = write_single_db(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -351,10 +269,10 @@ def test_manifest_structure() -> None:
     )
 
     records = [{"id": k} for k in range(5)]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     result = write_single_db(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -375,10 +293,10 @@ def test_key_encoding_u32be() -> None:
     config = _make_config(factory=factory, key_encoding=KeyEncoding.U32BE)
 
     records = [{"id": 1}, {"id": 256}]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     write_single_db(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -391,67 +309,21 @@ def test_key_encoding_u32be() -> None:
     assert all_keys[1] == b"\x00\x00\x01\x00"
 
 
-def test_cache_input_false() -> None:
-    factory = TrackingFactory()
-    config = _make_config(factory=factory)
+def test_ray_cache_context_enabled_false() -> None:
+    records = [{"id": i} for i in range(3)]
+    ds = ray.data.from_items(records)
 
-    records = [{"id": k} for k in range(5)]
-    ddf = _make_dask_df(records, npartitions=1)
-
-    result = write_single_db(
-        ddf,
-        config,
-        key_col="id",
-        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-        cache_input=False,
-    )
-
-    assert result.stats.rows_written == 5
+    with RayCacheContext(ds, enabled=False) as result_ds:
+        assert result_ds is ds
 
 
-def test_prefetch_and_no_prefetch_same_result() -> None:
-    records = [{"id": k} for k in range(20)]
-    ddf = _make_dask_df(records, npartitions=4)
+def test_ray_cache_context_enabled_true() -> None:
+    records = [{"id": i} for i in range(3)]
+    ds = ray.data.from_items(records)
 
-    factory1 = TrackingFactory()
-    config1 = _make_config(factory=factory1)
-    result1 = write_single_db(
-        ddf,
-        config1,
-        key_col="id",
-        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-        prefetch_partitions=True,
-    )
-
-    factory2 = TrackingFactory()
-    config2 = _make_config(factory=factory2)
-    result2 = write_single_db(
-        ddf,
-        config2,
-        key_col="id",
-        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-        prefetch_partitions=False,
-    )
-
-    assert result1.stats.rows_written == result2.stats.rows_written
-    assert result1.winners[0].row_count == result2.winners[0].row_count
-
-
-def test_dask_cache_context_enabled_false() -> None:
-    pdf = pd.DataFrame({"id": [1, 2, 3]})
-    ddf = dd.from_pandas(pdf, npartitions=1)
-
-    with DaskCacheContext(ddf, enabled=False) as result_ddf:
-        assert result_ddf is ddf
-
-
-def test_dask_cache_context_enabled_true() -> None:
-    pdf = pd.DataFrame({"id": [1, 2, 3]})
-    ddf = dd.from_pandas(pdf, npartitions=1)
-
-    with DaskCacheContext(ddf, enabled=True) as result_ddf:
-        # Persisted Dask DataFrames are a different object
-        assert result_ddf is not ddf
+    with RayCacheContext(ds, enabled=True) as result_ds:
+        # Materialized datasets are a different object
+        assert result_ds is not ds
 
 
 def test_checkpoint_id_in_result() -> None:
@@ -459,10 +331,10 @@ def test_checkpoint_id_in_result() -> None:
     config = _make_config(factory=factory)
 
     records = [{"id": 1}]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     result = write_single_db(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -471,35 +343,16 @@ def test_checkpoint_id_in_result() -> None:
     assert result.winners[0].checkpoint_id == "fake-checkpoint"
 
 
-def test_explicit_num_partitions_skips_count() -> None:
-    """When num_partitions is provided, len(ddf) is not called."""
-    factory = TrackingFactory()
-    config = _make_config(factory=factory, batch_size=2)
-
-    records = [{"id": k} for k in range(10)]
-    ddf = _make_dask_df(records, npartitions=2)
-
-    result = write_single_db(
-        ddf,
-        config,
-        key_col="id",
-        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-        num_partitions=3,
-    )
-
-    assert result.winners[0].row_count == 10
-
-
 def test_shard_duration_is_zero() -> None:
     """Single-db mode has no sharding phase; shard_duration_ms must be 0."""
     factory = TrackingFactory()
     config = _make_config(factory=factory)
 
     records = [{"id": k} for k in range(5)]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     result = write_single_db(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -508,7 +361,7 @@ def test_shard_duration_is_zero() -> None:
     assert result.stats.durations.sharding_ms == 0
 
 
-def test_data_integrity_file_backed(tmp_path: Path) -> None:
+def test_data_integrity_file_backed(tmp_path: pathlib.Path) -> None:
     root_dir = str(tmp_path / "file_backed")
     config = WriteConfig(
         num_dbs=1,
@@ -522,10 +375,10 @@ def test_data_integrity_file_backed(tmp_path: Path) -> None:
     )
 
     records = [{"id": i} for i in range(50)]
-    ddf = _make_dask_df(records, npartitions=3)
+    ds = _make_ray_ds(records, parallelism=3)
 
     result = write_single_db(
-        ddf,
+        ds,
         config,
         key_col="id",
         value_spec=ValueSpec.callable_encoder(
@@ -544,51 +397,6 @@ def test_data_integrity_file_backed(tmp_path: Path) -> None:
     for i in range(50):
         key_bytes = make_key_encoder(config.key_encoding)(i)
         assert all_kv[key_bytes] == f"value-{i}".encode()
-
-
-def test_sorted_write_multiple_partitions() -> None:
-    """Verify global sort order is preserved across multiple partitions."""
-    factory = TrackingFactory()
-    # batch_size=2 with 20 rows → ceil(20/2)=10 partitions
-    config = _make_config(factory=factory, batch_size=2)
-
-    records = [
-        {"id": k}
-        for k in [19, 7, 13, 2, 18, 5, 11, 1, 15, 9, 17, 3, 14, 6, 12, 0, 16, 8, 10, 4]
-    ]
-    ddf = _make_dask_df(records, npartitions=4)
-
-    result = write_single_db(
-        ddf,
-        config,
-        key_col="id",
-        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-    )
-
-    assert result.winners[0].row_count == 20
-
-    # Verify ALL keys arrive in globally sorted order across all batches
-    adapter = factory.adapters[0]
-    all_keys = [pair[0] for call in adapter.write_calls for pair in call]
-    assert all_keys == sorted(all_keys), (
-        f"Keys not globally sorted across {len(adapter.write_calls)} batches"
-    )
-
-
-def test_validates_missing_key_col() -> None:
-    """Passing a non-existent key column raises ConfigValidationError early."""
-    config = _make_config()
-
-    records = [{"id": 1}]
-    ddf = _make_dask_df(records, npartitions=1)
-
-    with pytest.raises(ConfigValidationError, match="nonexistent"):
-        write_single_db(
-            ddf,
-            config,
-            key_col="nonexistent",
-            value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -611,7 +419,7 @@ class _FailingFactory:
     def __init__(self, error: Exception) -> None:
         self._error = error
 
-    def __call__(self, *, db_url: str, local_dir: Path) -> _FailingAdapter:
+    def __call__(self, *, db_url: str, local_dir: str) -> _FailingAdapter:
         return _FailingAdapter(self._error)
 
 
@@ -620,11 +428,11 @@ def test_unexpected_error_wrapped_in_slatedb_error() -> None:
     config = _make_config(factory=_FailingFactory(RuntimeError("boom")))  # type: ignore[arg-type]
 
     records = [{"id": 1}]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     with pytest.raises(ShardyfusionError, match="boom") as exc_info:
         write_single_db(
-            ddf,
+            ds,
             config,
             key_col="id",
             value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
@@ -639,11 +447,11 @@ def test_slatedb_error_passes_through() -> None:
     config = _make_config(factory=_FailingFactory(original))  # type: ignore[arg-type]
 
     records = [{"id": 1}]
-    ddf = _make_dask_df(records, npartitions=1)
+    ds = _make_ray_ds(records, parallelism=1)
 
     with pytest.raises(ShardyfusionError, match="original error") as exc_info:
         write_single_db(
-            ddf,
+            ds,
             config,
             key_col="id",
             value_spec=ValueSpec.callable_encoder(lambda row: b"v"),

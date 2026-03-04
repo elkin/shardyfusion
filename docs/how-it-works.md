@@ -2,7 +2,7 @@
 
 ## Overview
 
-`shardyfusion` builds a sharded snapshot from a Spark `DataFrame` into multiple independent SlateDB databases, writes metadata (manifest + CURRENT pointer), and provides service-side readers that route keys to the correct shard.
+`shardyfusion` builds a sharded snapshot into multiple independent SlateDB databases, writes metadata (manifest + CURRENT pointer), and provides service-side readers that route keys to the correct shard. Four writer backends are supported: Spark, Dask, Ray, and pure Python.
 
 Core behavior:
 
@@ -13,11 +13,18 @@ Core behavior:
 
 ## Write Side (Snapshot Build)
 
-Public entrypoint:
+All four backends follow the same three-phase pipeline:
 
-- `write_sharded(df, config, *, key_col, value_spec, sort_within_partitions=False, spark_conf_overrides=None, cache_input=False, storage_level=None, max_writes_per_second=None)`
+1. **Sharding** — assign each row a `_slatedb_db_id` column
+2. **Write** — partition data by `db_id`, write each shard to S3
+3. **Publish** — build manifest, publish manifest, publish `_CURRENT` pointer
 
-### Write-side pipeline
+The backends differ in how they distribute work, but share all core logic from
+`_writer_core.py` (routing, winner selection, manifest building, publishing).
+
+### Spark write pipeline
+
+Entrypoint: `shardyfusion.writer.spark.write_sharded`
 
 1. Optional Spark conf overrides are applied during the call.
 2. Optional input persistence (`persist`) is applied if `cache_input=True`.
@@ -31,9 +38,44 @@ Public entrypoint:
    - then `mapPartitionsWithIndex` where partition index is shard `db_id`
 5. Each partition writes one attempt-isolated shard location on S3-compatible storage.
 6. Driver collects partition results (attempt metadata), picks deterministic winners per `db_id`.
-7. Manifest artifact is built (default JSON builder unless custom builder is supplied).
-8. Manifest is published, then CURRENT pointer is published.
-9. `BuildResult` is returned with winners, artifact, refs, and typed stats.
+7. Manifest artifact is built, published, then CURRENT pointer is published.
+8. `BuildResult` is returned with winners, artifact, refs, and typed stats.
+
+### Dask write pipeline
+
+Entrypoint: `shardyfusion.writer.dask.write_sharded`
+
+1. `add_db_id_column` computes shard assignment via Python `route_key()` per partition.
+   Range boundaries are computed via Dask quantiles. `CUSTOM_EXPR` is rejected.
+2. Dask DataFrame is shuffled by `_slatedb_db_id`, then `map_partitions` writes each shard.
+3. Empty shards get zero-row placeholder results.
+4. Optional rate limiting and routing verification.
+5. Same `_writer_core.py` functions for winner selection, manifest building, and publishing.
+
+### Ray write pipeline
+
+Entrypoint: `shardyfusion.writer.ray.write_sharded`
+
+1. `add_db_id_column` computes shard assignment via `map_batches` with Arrow batch format
+   (`batch_format="pyarrow"`, `zero_copy_batch=True`) to avoid Arrow→pandas→Arrow overhead.
+   Range boundaries are computed via sampling. `CUSTOM_EXPR` is rejected.
+2. Dataset is repartitioned by `_slatedb_db_id` using hash shuffle
+   (`repartition(num_dbs, shuffle=True, keys=[DB_ID_COL])`).
+   `DataContext.shuffle_strategy` is saved/restored in a `try/finally` block.
+3. `map_batches` with `batch_format="pandas"` writes each shard.
+   Empty shards get zero-row placeholder results.
+4. Optional rate limiting and routing verification.
+5. Same `_writer_core.py` functions for winner selection, manifest building, and publishing.
+
+### Python write pipeline
+
+Entrypoint: `shardyfusion.writer.python.write_sharded`
+
+1. Accepts `Iterable[T]` with `key_fn`/`value_fn` callables.
+2. Routes each item via `route_key()`, writes to the appropriate shard adapter.
+3. Supports single-process (all adapters open simultaneously) or multi-process
+   (`parallel=True`, one worker per shard via `multiprocessing.spawn`).
+4. Same `_writer_core.py` functions for winner selection, manifest building, and publishing.
 
 ### Retry/speculation safety
 
@@ -106,23 +148,25 @@ Grouped options:
     - `secret_access_key`
     - `session_token`
 
-Extra runtime controls on `write_sharded`:
+Extra runtime controls on `write_sharded` (vary by backend):
 
-- `key_col`: name of the key column
-- `value_spec`: how to serialize row values
-- `sort_within_partitions`: sort rows within each partition before writing
-- `spark_conf_overrides`: temporary Spark settings for one call
-- `cache_input`: persist input DataFrame for the call
-- `storage_level`: Spark `StorageLevel` passed to `persist(...)`
-- `max_writes_per_second`: rate-limit writes (see [Rate Limiting](writer.md#rate-limiting))
+- `key_col`: name of the key column (Spark, Dask, Ray)
+- `value_spec`: how to serialize row values (Spark, Dask, Ray)
+- `sort_within_partitions`: sort rows within each partition before writing (Spark, Dask, Ray)
+- `max_writes_per_second`: rate-limit writes (all backends; see [Rate Limiting](writer.md#rate-limiting))
+- `verify_routing`: runtime routing spot-check (Spark, Dask, Ray; default `True`)
+- `spark_conf_overrides`: temporary Spark settings (Spark only)
+- `cache_input` / `storage_level`: persist input DataFrame (Spark only)
+- `key_fn` / `value_fn`: key/value extraction callables (Python only)
+- `parallel`: multi-process mode (Python only)
 
-### Key type contracts
+### Sharding strategy support
 
-Enforced in `add_db_id_column`:
-
-- `hash` strategy: `key_col` must be Spark `IntegerType` or `LongType`
-- `range` strategy: `key_col` must be one of:
-  - `IntegerType`, `LongType`, `FloatType`, `DoubleType`, `StringType`
+| Strategy | Spark | Dask | Ray | Python |
+|----------|-------|------|-----|--------|
+| `HASH` | Yes | Yes | Yes | Yes |
+| `RANGE` | Yes | Yes | Yes | Yes |
+| `CUSTOM_EXPR` | Yes | No | No | No |
 
 ## Reader Side
 
@@ -154,7 +198,8 @@ Primary class:
 ### Routing semantics
 
 - `hash`:
-  - writer: Spark `xxhash64(cast(key_col as long))`
+  - Spark writer: `xxhash64(cast(key_col as long))` (Spark SQL)
+  - Dask/Ray/Python writers: `route_key()` from `_writer_core.py` (same xxhash64 algorithm)
   - reader: Python `xxhash` implementation aligned with Spark semantics for this contract
 - `range`:
   - route by shard min/max intervals when present
@@ -162,6 +207,7 @@ Primary class:
 - `custom_expr`:
   - Spark expression is not evaluated at read time
   - requires manifest routing hints (boundaries or shard ranges)
+  - only supported by Spark writer
 
 ### Refresh and concurrency model
 
@@ -172,7 +218,23 @@ Primary class:
   - atomically swap active state
   - close retired readers when no in-flight operations are using them
 
-## Mermaid Diagram: Write Side
+## Mermaid Diagram: Write Side (Generic)
+
+```mermaid
+flowchart TD
+    A["Input data<br/>(DataFrame / Dataset / Iterable)"] --> B[add_db_id_column<br/>route_key per row]
+    B --> C["Partition by db_id<br/>(RDD / shuffle / repartition)"]
+    C --> D["Write each shard<br/>_tmp/run_id/db/attempt"]
+    D --> E[Collect attempt results]
+    E --> F[Deterministic winner per db_id]
+    F --> G[Build manifest artifact]
+    G --> H[publish_manifest]
+    H --> I[Build CURRENT JSON]
+    I --> J[publish_current]
+    J --> K[Return BuildResult]
+```
+
+## Mermaid Diagram: Write Side (Spark Detail)
 
 ```mermaid
 flowchart TD
