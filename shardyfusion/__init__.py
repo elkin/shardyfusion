@@ -30,7 +30,12 @@ from .manifest_readers import (
 )
 from .metrics import MetricEvent, MetricsCollector
 from .publish import DefaultS3Publisher, ManifestPublisher
-from .reader import ConcurrentShardedReader, ShardedReader, SlateDbReaderFactory
+from .reader import (
+    ConcurrentShardedReader,
+    ShardedReader,
+    SlateDbReaderFactory,
+    SnapshotInfo,
+)
 from .routing import SnapshotRouter
 from .serde import ValueSpec
 from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
@@ -73,6 +78,7 @@ __all__ = [
     "ShardedReader",
     "SlateDbReaderFactory",
     "SlateDbFactory",
+    "SnapshotInfo",
     "SnapshotRouter",
     "ShardingSpec",
     "ShardingStrategy",

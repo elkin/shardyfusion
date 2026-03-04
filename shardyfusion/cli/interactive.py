@@ -113,8 +113,8 @@ class SlateReaderRepl(cmd.Cmd):
         try:
             info = self._reader.snapshot_info()
             print(
-                f"Loaded manifest run_id={info['run_id']}  "
-                f"({info['num_dbs']} shards, {info['sharding']} sharding)"
+                f"Loaded manifest run_id={info.run_id}  "
+                f"({info.num_dbs} shards, {info.sharding} sharding)"
             )
         except Exception:
             pass

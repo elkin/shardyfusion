@@ -1,6 +1,7 @@
 """Output formatters for the reader CLI."""
 
 import base64
+import dataclasses
 import json
 from typing import Any
 
@@ -72,7 +73,7 @@ def build_refresh_result(changed: bool) -> dict[str, Any]:
 def build_info_result(reader: Any) -> dict[str, Any]:
     """Extract manifest metadata from a reader instance."""
     info = reader.snapshot_info()
-    return {"op": "info", **info}
+    return {"op": "info", **dataclasses.asdict(info)}
 
 
 def build_error_result(op: str, key_hint: str | None, error: str) -> dict[str, Any]:

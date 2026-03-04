@@ -35,6 +35,17 @@ from shardyfusion.type_defs import KeyInput, ShardReader, ShardReaderFactory
 _logger = get_logger(__name__)
 
 
+@dataclass(slots=True, frozen=True)
+class SnapshotInfo:
+    """Read-only snapshot of manifest metadata."""
+
+    run_id: str
+    num_dbs: int
+    sharding: str
+    created_at: str
+    manifest_ref: str
+
+
 @dataclass(slots=True)
 class SlateDbReaderFactory:
     """Picklable reader factory that captures SlateDB-specific config."""
@@ -259,16 +270,16 @@ class ShardedReader(_BaseShardedReader):
     def key_encoding(self) -> KeyEncoding:
         return KeyEncoding.from_value(self._state.router.key_encoding)
 
-    def snapshot_info(self) -> dict[str, Any]:
+    def snapshot_info(self) -> SnapshotInfo:
         state = self._state
         rb = state.router.required_build
-        return {
-            "run_id": rb.run_id,
-            "num_dbs": rb.num_dbs,
-            "sharding": rb.sharding.strategy.value,
-            "created_at": rb.created_at,
-            "manifest_ref": state.manifest_ref,
-        }
+        return SnapshotInfo(
+            run_id=rb.run_id,
+            num_dbs=rb.num_dbs,
+            sharding=rb.sharding.strategy.value,
+            created_at=rb.created_at,
+            manifest_ref=state.manifest_ref,
+        )
 
     def get(self, key: KeyInput) -> bytes | None:
         if self._closed:
@@ -471,16 +482,16 @@ class ConcurrentShardedReader(_BaseShardedReader):
     def key_encoding(self) -> KeyEncoding:
         return KeyEncoding.from_value(self._state.router.key_encoding)
 
-    def snapshot_info(self) -> dict[str, Any]:
+    def snapshot_info(self) -> SnapshotInfo:
         state = self._state
         rb = state.router.required_build
-        return {
-            "run_id": rb.run_id,
-            "num_dbs": rb.num_dbs,
-            "sharding": rb.sharding.strategy.value,
-            "created_at": rb.created_at,
-            "manifest_ref": state.manifest_ref,
-        }
+        return SnapshotInfo(
+            run_id=rb.run_id,
+            num_dbs=rb.num_dbs,
+            sharding=rb.sharding.strategy.value,
+            created_at=rb.created_at,
+            manifest_ref=state.manifest_ref,
+        )
 
     def get(self, key: KeyInput) -> bytes | None:
         mc = self._metrics
