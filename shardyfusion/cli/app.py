@@ -35,7 +35,7 @@ _CTX_INIT_PARAMS = "slate_init_params"
 
 
 def _build_reader(ctx: click.Context) -> Any:
-    """Construct a SlateShardedReader from the parameters stored in ctx.obj."""
+    """Construct a ConcurrentShardedReader from the parameters stored in ctx.obj."""
     params = ctx.obj[_CTX_INIT_PARAMS]
     s3_prefix: str = params["s3_prefix"]
     current_name: str = params["current_name"]
@@ -43,7 +43,7 @@ def _build_reader(ctx: click.Context) -> Any:
     s3_client_config = params["s3_client_config"]
 
     from ..manifest_readers import DefaultS3ManifestReader
-    from ..reader import SlateShardedReader
+    from ..reader import ConcurrentShardedReader
 
     manifest_reader = DefaultS3ManifestReader(
         s3_prefix,
@@ -52,7 +52,7 @@ def _build_reader(ctx: click.Context) -> Any:
     )
 
     try:
-        return SlateShardedReader(
+        return ConcurrentShardedReader(
             s3_prefix=s3_prefix,
             local_root=reader_cfg.local_root,
             manifest_reader=manifest_reader,

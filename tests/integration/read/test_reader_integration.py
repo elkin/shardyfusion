@@ -12,7 +12,7 @@ from shardyfusion.manifest import (
     RequiredShardMeta,
 )
 from shardyfusion.manifest_readers import ManifestReader, parse_json_manifest
-from shardyfusion.reader import SlateShardedReader
+from shardyfusion.reader import ConcurrentShardedReader
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 
 
@@ -150,7 +150,7 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
     }
     manifests = {"mem://manifest/1": manifest_payload}
 
-    with SlateShardedReader(
+    with ConcurrentShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(local_root),
         manifest_reader=InMemoryManifestReader(

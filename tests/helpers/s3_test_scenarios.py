@@ -24,7 +24,7 @@ from shardyfusion.manifest import (
     RequiredShardMeta,
 )
 from shardyfusion.manifest_readers import DefaultS3ManifestReader
-from shardyfusion.reader import SlateShardedReader
+from shardyfusion.reader import ConcurrentShardedReader
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 from shardyfusion.type_defs import S3ClientConfig
 
@@ -155,7 +155,7 @@ def run_reader_loads_manifest_scenario(
             s3_client_config=s3_client_config,
         )
 
-    with SlateShardedReader(**reader_kwargs) as reader:
+    with ConcurrentShardedReader(**reader_kwargs) as reader:
         assert reader.get(1) == b"v1"
         assert reader.get(10) == b"v10"
         got = reader.multi_get([8, 15, 1, 10])
@@ -350,7 +350,7 @@ def run_writer_reader_refresh_scenario(
             s3_client_config=s3_client_config,
         )
 
-    with SlateShardedReader(**reader_kwargs) as reader:
+    with ConcurrentShardedReader(**reader_kwargs) as reader:
         assert reader.get(7) == b"old-7"
 
         df_v2 = spark.createDataFrame(
@@ -658,7 +658,7 @@ def run_python_writer_reader_refresh_scenario(
             s3_client_config=s3_client_config,
         )
 
-    with SlateShardedReader(**reader_kwargs) as reader:
+    with ConcurrentShardedReader(**reader_kwargs) as reader:
         assert reader.get(7) == b"old-7"
 
         result_v2 = write_sharded(
@@ -768,7 +768,7 @@ def run_dask_writer_reader_refresh_scenario(
             s3_client_config=s3_client_config,
         )
 
-    with SlateShardedReader(**reader_kwargs) as reader:
+    with ConcurrentShardedReader(**reader_kwargs) as reader:
         assert reader.get(7) == b"old-7"
 
         with dask.config.set(scheduler="synchronous"):

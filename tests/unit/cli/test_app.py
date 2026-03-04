@@ -12,6 +12,7 @@ from unittest.mock import patch
 import click.testing
 
 from shardyfusion.cli.app import cli
+from shardyfusion.reader.reader import SnapshotInfo
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -19,7 +20,7 @@ from shardyfusion.cli.app import cli
 
 
 class _FakeReader:
-    """Minimal mock of SlateShardedReader for CLI testing."""
+    """Minimal mock of ConcurrentShardedReader for CLI testing."""
 
     def __init__(
         self,
@@ -42,14 +43,14 @@ class _FakeReader:
     def refresh(self) -> bool:
         return False
 
-    def snapshot_info(self) -> dict[str, Any]:
-        return {
-            "run_id": "test-run",
-            "num_dbs": 2,
-            "sharding": "hash",
-            "created_at": "2026-01-01T00:00:00+00:00",
-            "manifest_ref": "manifest-001.json",
-        }
+    def snapshot_info(self) -> SnapshotInfo:
+        return SnapshotInfo(
+            run_id="test-run",
+            num_dbs=2,
+            sharding="hash",
+            created_at="2026-01-01T00:00:00+00:00",
+            manifest_ref="manifest-001.json",
+        )
 
     def close(self) -> None:
         pass

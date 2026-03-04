@@ -1,4 +1,4 @@
-"""Interactive REPL for the slate-reader CLI, backed by SlateShardedReader."""
+"""Interactive REPL for the slate-reader CLI, backed by ConcurrentShardedReader."""
 
 import cmd
 import shlex
@@ -17,7 +17,7 @@ from .output import (
 
 
 class SlateReaderRepl(cmd.Cmd):
-    """cmd.Cmd REPL that wraps a single SlateShardedReader instance."""
+    """cmd.Cmd REPL that wraps a single reader instance."""
 
     intro = ""
     prompt = "slate> "
@@ -113,8 +113,8 @@ class SlateReaderRepl(cmd.Cmd):
         try:
             info = self._reader.snapshot_info()
             print(
-                f"Loaded manifest run_id={info['run_id']}  "
-                f"({info['num_dbs']} shards, {info['sharding']} sharding)"
+                f"Loaded manifest run_id={info.run_id}  "
+                f"({info.num_dbs} shards, {info.sharding} sharding)"
             )
         except Exception:
             pass
