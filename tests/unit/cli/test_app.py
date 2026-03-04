@@ -19,7 +19,7 @@ from shardyfusion.cli.app import cli
 
 
 class _FakeReader:
-    """Minimal mock of SlateShardedReader for CLI testing."""
+    """Minimal mock of ConcurrentShardedReader for CLI testing."""
 
     def __init__(
         self,

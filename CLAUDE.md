@@ -88,11 +88,11 @@ Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
 
 ### Read Pipeline
 
-1. `SlateShardedReader` in `reader/reader.py` loads the `_CURRENT` pointer from S3 and dereferences the manifest.
+1. `ShardedReader` / `ConcurrentShardedReader` in `reader/reader.py` loads the `_CURRENT` pointer from S3 and dereferences the manifest.
 2. Builds a `SnapshotRouter` from the manifest sharding metadata (mirrors write-time sharding logic).
 3. `get(key)` / `multi_get(keys)` routes keys to shard IDs, then reads from the appropriate shard.
-4. `refresh()` atomically swaps readers using reference counting for safe cleanup of in-flight operations.
-5. Thread safety via `threading.Lock` (default) or `ThreadPoolExecutor` pool mode (`thread_safety` config).
+4. `ShardedReader` swaps state directly on refresh. `ConcurrentShardedReader` atomically swaps readers using reference counting for safe cleanup of in-flight operations.
+5. `ConcurrentShardedReader` provides thread safety via `threading.Lock` (default) or `ThreadPoolExecutor` pool mode (`thread_safety` config).
 
 ### CLI (`slate-reader`)
 

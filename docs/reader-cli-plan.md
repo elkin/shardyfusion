@@ -2,7 +2,7 @@
 
 ## Overview
 
-A standalone CLI tool (`slate-reader`) that wraps `SlateShardedReader` for
+A standalone CLI tool (`slate-reader`) that wraps `ConcurrentShardedReader` for
 interactive ad-hoc lookups, batch script execution, and manifest inspection.
 All operations reuse a single in-memory manifest load; credentials are kept in
 a dedicated file separate from the operational config.
@@ -11,7 +11,7 @@ a dedicated file separate from the operational config.
 
 ## Commands
 
-The CLI maps directly to `SlateShardedReader` methods:
+The CLI maps directly to `ConcurrentShardedReader` methods:
 
 | CLI command | Library method |
 |---|---|
@@ -308,7 +308,7 @@ shardyfusion/
     ├── config.py            # ReaderConfig, CredentialsProfile + S3Options dataclasses,
     │                        #   TOML loaders, search-order resolution,
     │                        #   botocore.config.Config assembly
-    ├── interactive.py       # cmd.Cmd REPL backed by SlateShardedReader
+    ├── interactive.py       # cmd.Cmd REPL backed by ConcurrentShardedReader
     ├── batch.py             # YAML script loader + sequential executor
     ├── output.py            # formatters: json, jsonl, table, text
     └── example_config/

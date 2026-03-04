@@ -1,3 +1,3 @@
-from .reader import SlateDbReaderFactory, SlateShardedReader
+from .reader import ConcurrentShardedReader, ShardedReader, SlateDbReaderFactory
 
-__all__ = ["SlateDbReaderFactory", "SlateShardedReader"]
+__all__ = ["ConcurrentShardedReader", "ShardedReader", "SlateDbReaderFactory"]

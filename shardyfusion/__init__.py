@@ -30,7 +30,7 @@ from .manifest_readers import (
 )
 from .metrics import MetricEvent, MetricsCollector
 from .publish import DefaultS3Publisher, ManifestPublisher
-from .reader import SlateDbReaderFactory, SlateShardedReader
+from .reader import ConcurrentShardedReader, ShardedReader, SlateDbReaderFactory
 from .routing import SnapshotRouter
 from .serde import ValueSpec
 from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
@@ -69,7 +69,8 @@ __all__ = [
     "RequiredBuildMeta",
     "RequiredShardMeta",
     "ShardReaderFactory",
-    "SlateShardedReader",
+    "ConcurrentShardedReader",
+    "ShardedReader",
     "SlateDbReaderFactory",
     "SlateDbFactory",
     "SnapshotRouter",

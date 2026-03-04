@@ -128,7 +128,7 @@ Enforced in `add_db_id_column`:
 
 Primary class:
 
-- `SlateShardedReader(...)`
+- `ConcurrentShardedReader(...)`
 
 ### Reader initialization flow
 
@@ -198,7 +198,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[SlateShardedReader init] --> B{custom publisher?}
+    A[ConcurrentShardedReader init] --> B{custom publisher?}
     B -->|no / default| C[DefaultS3ManifestReader]
     B -->|yes| D{manifest_reader provided?}
     D -->|no| E[Raise ValueError]

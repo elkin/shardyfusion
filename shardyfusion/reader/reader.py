@@ -48,7 +48,7 @@ class SlateDbReaderFactory:
             from slatedb import SlateDBReader
         except ImportError as exc:  # pragma: no cover - runtime dependent
             raise SlateDbApiError(
-                "slatedb package is required for SlateShardedReader"
+                "slatedb package is required for reading shards"
             ) from exc
 
         return SlateDBReader(
@@ -59,8 +59,24 @@ class SlateDbReaderFactory:
         )
 
 
+# ---------------------------------------------------------------------------
+# Shared reader state types
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class _SimpleReaderState:
+    """Lightweight reader state without refcounting — used by ShardedReader."""
+
+    manifest_ref: str
+    router: SnapshotRouter
+    readers: dict[int, ShardReader]
+
+
 @dataclass(slots=True)
 class _ReaderState:
+    """Thread-safe reader state with refcounting — used by ConcurrentShardedReader."""
+
     manifest_ref: str
     router: SnapshotRouter
     handles: dict[int, "_ShardHandle"]
@@ -106,8 +122,310 @@ class _ReaderPool:
                 )
 
 
-class SlateShardedReader:
-    """Load latest snapshot manifest and perform routed key lookups."""
+# ---------------------------------------------------------------------------
+# Base reader class
+# ---------------------------------------------------------------------------
+
+
+class _BaseShardedReader:
+    """Shared constructor and utilities for ShardedReader and ConcurrentShardedReader."""
+
+    def __init__(
+        self,
+        *,
+        s3_prefix: str,
+        local_root: str,
+        manifest_reader: ManifestReader | None = None,
+        current_name: str = "_CURRENT",
+        reader_factory: ShardReaderFactory | None = None,
+        slate_env_file: str | None = None,
+        max_workers: int | None = None,
+        metrics_collector: MetricsCollector | None = None,
+    ) -> None:
+        self.s3_prefix = s3_prefix
+        self.local_root = local_root
+        self.max_workers = max_workers
+        self._metrics = metrics_collector
+
+        if reader_factory is not None:
+            self._reader_factory: ShardReaderFactory = reader_factory
+        else:
+            self._reader_factory = SlateDbReaderFactory(env_file=slate_env_file)
+
+        if manifest_reader is not None:
+            self._manifest_reader = manifest_reader
+        else:
+            self._manifest_reader = DefaultS3ManifestReader(
+                s3_prefix,
+                current_name=current_name,
+                metrics_collector=metrics_collector,
+            )
+
+        self._closed = False
+
+        # Shared executor for multi_get parallelism (created once, reused)
+        if max_workers is not None and max_workers > 1:
+            self._executor: ThreadPoolExecutor | None = ThreadPoolExecutor(
+                max_workers=max_workers
+            )
+        else:
+            self._executor = None
+
+    def _load_current(self) -> Any:
+        """Load CURRENT pointer, raising ReaderStateError if missing."""
+        current = self._manifest_reader.load_current()
+        if current is None:
+            log_failure(
+                "reader_current_not_found",
+                severity=FailureSeverity.ERROR,
+                logger=_logger,
+                s3_prefix=self.s3_prefix,
+            )
+            raise ReaderStateError("CURRENT pointer not found")
+        return current
+
+    def _open_one_reader(self, shard: Any) -> ShardReader:
+        """Create local dir and open a single shard reader."""
+        local_path = os.path.join(self.local_root, f"shard={shard.db_id:05d}")
+        os.makedirs(local_path, exist_ok=True)
+        return self._reader_factory(
+            db_url=shard.db_url,
+            local_dir=local_path,
+            checkpoint_id=shard.checkpoint_id,
+        )
+
+    def _emit(self, event: MetricEvent, payload: dict[str, Any]) -> None:
+        if self._metrics is not None:
+            self._metrics.emit(event, payload)
+
+    def _shutdown_executor(self) -> None:
+        if self._executor is not None:
+            self._executor.shutdown(wait=False)
+            self._executor = None
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        raise NotImplementedError
+
+
+# ---------------------------------------------------------------------------
+# ShardedReader — non-thread-safe, no locks, no refcounting
+# ---------------------------------------------------------------------------
+
+
+class ShardedReader(_BaseShardedReader):
+    """Non-thread-safe sharded reader for single-threaded services.
+
+    Provides the same ``get`` / ``multi_get`` / ``refresh`` API as
+    ``ConcurrentShardedReader`` but without locks or reference counting.
+    """
+
+    def __init__(
+        self,
+        *,
+        s3_prefix: str,
+        local_root: str,
+        manifest_reader: ManifestReader | None = None,
+        current_name: str = "_CURRENT",
+        reader_factory: ShardReaderFactory | None = None,
+        slate_env_file: str | None = None,
+        max_workers: int | None = None,
+        metrics_collector: MetricsCollector | None = None,
+    ) -> None:
+        super().__init__(
+            s3_prefix=s3_prefix,
+            local_root=local_root,
+            manifest_reader=manifest_reader,
+            current_name=current_name,
+            reader_factory=reader_factory,
+            slate_env_file=slate_env_file,
+            max_workers=max_workers,
+            metrics_collector=metrics_collector,
+        )
+        self._state = self._load_initial_state()
+
+        log_event(
+            "reader_initialized",
+            logger=_logger,
+            s3_prefix=self.s3_prefix,
+            num_shards=len(self._state.readers),
+            manifest_ref=self._state.manifest_ref,
+        )
+        self._emit(MetricEvent.READER_INITIALIZED, {})
+
+    @property
+    def key_encoding(self) -> KeyEncoding:
+        return KeyEncoding.from_value(self._state.router.key_encoding)
+
+    def snapshot_info(self) -> dict[str, Any]:
+        state = self._state
+        rb = state.router.required_build
+        return {
+            "run_id": rb.run_id,
+            "num_dbs": rb.num_dbs,
+            "sharding": rb.sharding.strategy.value,
+            "created_at": rb.created_at,
+            "manifest_ref": state.manifest_ref,
+        }
+
+    def get(self, key: KeyInput) -> bytes | None:
+        if self._closed:
+            raise ReaderStateError("Reader is closed")
+
+        mc = self._metrics
+        t0 = time.perf_counter() if mc is not None else 0.0
+
+        state = self._state
+        db_id = state.router.route_one(key)
+        key_bytes = state.router.encode_lookup_key(key)
+        result = state.readers[db_id].get(key_bytes)
+
+        if mc is not None:
+            mc.emit(
+                MetricEvent.READER_GET,
+                {
+                    "duration_ms": int((time.perf_counter() - t0) * 1000),
+                    "found": result is not None,
+                },
+            )
+
+        return result
+
+    def multi_get(self, keys: Sequence[KeyInput]) -> dict[KeyInput, bytes | None]:
+        if self._closed:
+            raise ReaderStateError("Reader is closed")
+
+        mc = self._metrics
+        t0 = time.perf_counter() if mc is not None else 0.0
+
+        key_list = list(keys)
+        state = self._state
+        grouped = state.router.group_keys(key_list)
+        results: dict[KeyInput, bytes | None] = {}
+
+        if self._executor is not None and len(grouped) > 1:
+            futures = {
+                db_id: self._executor.submit(
+                    _read_group_simple, state.router, state.readers[db_id], shard_keys
+                )
+                for db_id, shard_keys in grouped.items()
+            }
+            for db_id, future in futures.items():
+                try:
+                    results.update(future.result())
+                except ShardyfusionError:
+                    raise
+                except Exception as exc:
+                    raise SlateDbApiError(
+                        f"Read failed for shard db_id={db_id}"
+                    ) from exc
+        else:
+            for db_id, shard_keys in grouped.items():
+                results.update(
+                    _read_group_simple(state.router, state.readers[db_id], shard_keys)
+                )
+
+        ordered = {key: results.get(key) for key in key_list}
+
+        if mc is not None:
+            mc.emit(
+                MetricEvent.READER_MULTI_GET,
+                {
+                    "duration_ms": int((time.perf_counter() - t0) * 1000),
+                    "num_keys": len(key_list),
+                },
+            )
+
+        return ordered
+
+    def refresh(self) -> bool:
+        if self._closed:
+            raise ReaderStateError("Reader is closed")
+
+        current = self._load_current()
+        current_ref = current.manifest_ref
+
+        if current_ref == self._state.manifest_ref:
+            log_event(
+                "reader_refresh_unchanged",
+                logger=_logger,
+                manifest_ref=current_ref,
+            )
+            self._emit(MetricEvent.READER_REFRESHED, {"changed": False})
+            return False
+
+        manifest = self._manifest_reader.load_manifest(
+            current_ref, current.manifest_content_type
+        )
+        new_state = self._build_simple_state(current_ref, manifest)
+        old_state = self._state
+        self._state = new_state
+        _close_simple_state(old_state)
+
+        log_event(
+            "reader_refreshed",
+            logger=_logger,
+            old_manifest_ref=old_state.manifest_ref,
+            new_manifest_ref=current_ref,
+        )
+        self._emit(MetricEvent.READER_REFRESHED, {"changed": True})
+        return True
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        num_readers = len(self._state.readers)
+        _close_simple_state(self._state)
+        self._shutdown_executor()
+
+        log_event(
+            "reader_closed",
+            logger=_logger,
+            s3_prefix=self.s3_prefix,
+            num_handles_closed=num_readers,
+        )
+        self._emit(MetricEvent.READER_CLOSED, {"num_handles": num_readers})
+
+    def __enter__(self) -> "ShardedReader":
+        return self
+
+    def _load_initial_state(self) -> _SimpleReaderState:
+        current = self._load_current()
+        manifest = self._manifest_reader.load_manifest(
+            current.manifest_ref, current.manifest_content_type
+        )
+        return self._build_simple_state(current.manifest_ref, manifest)
+
+    def _build_simple_state(
+        self, manifest_ref: str, manifest: ParsedManifest
+    ) -> _SimpleReaderState:
+        router = SnapshotRouter(manifest.required_build, manifest.shards)
+        readers: dict[int, ShardReader] = {}
+        try:
+            for shard in manifest.shards:
+                readers[shard.db_id] = self._open_one_reader(shard)
+        except Exception:
+            for reader in readers.values():
+                try:
+                    reader.close()
+                except Exception:
+                    pass
+            raise
+        return _SimpleReaderState(
+            manifest_ref=manifest_ref, router=router, readers=readers
+        )
+
+
+# ---------------------------------------------------------------------------
+# ConcurrentShardedReader — thread-safe with lock/pool modes
+# ---------------------------------------------------------------------------
+
+
+class ConcurrentShardedReader(_BaseShardedReader):
+    """Thread-safe sharded reader with lock or pool concurrency modes."""
 
     def __init__(
         self,
@@ -125,29 +443,19 @@ class SlateShardedReader:
         if thread_safety not in {"lock", "pool"}:
             raise ValueError("thread_safety must be 'lock' or 'pool'")
 
-        self.s3_prefix = s3_prefix
-        self.local_root = local_root
+        super().__init__(
+            s3_prefix=s3_prefix,
+            local_root=local_root,
+            manifest_reader=manifest_reader,
+            current_name=current_name,
+            reader_factory=reader_factory,
+            slate_env_file=slate_env_file,
+            max_workers=max_workers,
+            metrics_collector=metrics_collector,
+        )
+
         self.thread_safety = thread_safety
-        self.max_workers = max_workers
-        self._metrics = metrics_collector
-
-        # Resolve reader factory: explicit > legacy env_file > default
-        if reader_factory is not None:
-            self._reader_factory: ShardReaderFactory = reader_factory
-        else:
-            self._reader_factory = SlateDbReaderFactory(env_file=slate_env_file)
-
-        if manifest_reader is not None:
-            self._manifest_reader = manifest_reader
-        else:
-            self._manifest_reader = DefaultS3ManifestReader(
-                s3_prefix,
-                current_name=current_name,
-                metrics_collector=metrics_collector,
-            )
-
         self._state_lock = threading.Lock()
-        self._closed = False
         self._state = self._load_initial_state()
 
         log_event(
@@ -157,16 +465,13 @@ class SlateShardedReader:
             num_shards=len(self._state.handles),
             manifest_ref=self._state.manifest_ref,
         )
-        if self._metrics is not None:
-            self._metrics.emit(MetricEvent.READER_INITIALIZED, {})
+        self._emit(MetricEvent.READER_INITIALIZED, {})
 
     @property
     def key_encoding(self) -> KeyEncoding:
-        """The key encoding used by the loaded manifest."""
         return KeyEncoding.from_value(self._state.router.key_encoding)
 
     def snapshot_info(self) -> dict[str, Any]:
-        """Return a dict of manifest metadata for the current snapshot."""
         state = self._state
         rb = state.router.required_build
         return {
@@ -178,8 +483,6 @@ class SlateShardedReader:
         }
 
     def get(self, key: KeyInput) -> bytes | None:
-        """Get one key from the currently loaded snapshot."""
-
         mc = self._metrics
         t0 = time.perf_counter() if mc is not None else 0.0
 
@@ -201,8 +504,6 @@ class SlateShardedReader:
         return result
 
     def multi_get(self, keys: Sequence[KeyInput]) -> dict[KeyInput, bytes | None]:
-        """Get multiple keys with per-shard grouping and optional shard parallelism."""
-
         mc = self._metrics
         t0 = time.perf_counter() if mc is not None else 0.0
 
@@ -211,26 +512,25 @@ class SlateShardedReader:
             grouped = state.router.group_keys(key_list)
             results: dict[KeyInput, bytes | None] = {}
 
-            if self.max_workers and self.max_workers > 1 and len(grouped) > 1:
-                with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                    futures = {
-                        db_id: executor.submit(
-                            _read_group,
-                            state.router,
-                            state.handles[db_id],
-                            shard_keys,
-                        )
-                        for db_id, shard_keys in grouped.items()
-                    }
-                    for db_id, future in futures.items():
-                        try:
-                            results.update(future.result())
-                        except ShardyfusionError:
-                            raise  # domain exceptions propagate unchanged
-                        except Exception as exc:
-                            raise SlateDbApiError(
-                                f"Read failed for shard db_id={db_id}"
-                            ) from exc
+            if self._executor is not None and len(grouped) > 1:
+                futures = {
+                    db_id: self._executor.submit(
+                        _read_group,
+                        state.router,
+                        state.handles[db_id],
+                        shard_keys,
+                    )
+                    for db_id, shard_keys in grouped.items()
+                }
+                for db_id, future in futures.items():
+                    try:
+                        results.update(future.result())
+                    except ShardyfusionError:
+                        raise
+                    except Exception as exc:
+                        raise SlateDbApiError(
+                            f"Read failed for shard db_id={db_id}"
+                        ) from exc
             else:
                 for db_id, shard_keys in grouped.items():
                     results.update(
@@ -251,8 +551,6 @@ class SlateShardedReader:
         return ordered
 
     def refresh(self) -> bool:
-        """Reload CURRENT and manifest, atomically swapping readers when ref changes."""
-
         current = self._manifest_reader.load_current()
         if current is None:
             log_failure(
@@ -273,8 +571,7 @@ class SlateShardedReader:
                     logger=_logger,
                     manifest_ref=current_ref,
                 )
-                if self._metrics is not None:
-                    self._metrics.emit(MetricEvent.READER_REFRESHED, {"changed": False})
+                self._emit(MetricEvent.READER_REFRESHED, {"changed": False})
                 return False
 
         manifest = self._manifest_reader.load_manifest(
@@ -303,14 +600,10 @@ class SlateShardedReader:
             old_manifest_ref=old_state.manifest_ref,
             new_manifest_ref=current_ref,
         )
-        if self._metrics is not None:
-            self._metrics.emit(MetricEvent.READER_REFRESHED, {"changed": True})
-
+        self._emit(MetricEvent.READER_REFRESHED, {"changed": True})
         return True
 
     def close(self) -> None:
-        """Close all active readers and prevent further operations."""
-
         state_to_close: _ReaderState | None = None
         with self._state_lock:
             if self._closed:
@@ -323,40 +616,23 @@ class SlateShardedReader:
         if state_to_close is not None:
             _close_state(state_to_close)
 
+        self._shutdown_executor()
+
         log_event(
             "reader_closed",
             logger=_logger,
             s3_prefix=self.s3_prefix,
             num_handles_closed=len(self._state.handles),
         )
-        if self._metrics is not None:
-            self._metrics.emit(
-                MetricEvent.READER_CLOSED,
-                {
-                    "num_handles": len(self._state.handles),
-                },
-            )
+        self._emit(MetricEvent.READER_CLOSED, {"num_handles": len(self._state.handles)})
 
-    def __enter__(self) -> "SlateShardedReader":
+    def __enter__(self) -> "ConcurrentShardedReader":
         return self
 
-    def __exit__(self, *args: object) -> None:
-        self.close()
-
     def _load_initial_state(self) -> _ReaderState:
-        current = self._manifest_reader.load_current()
-        if current is None:
-            log_failure(
-                "reader_current_not_found",
-                severity=FailureSeverity.ERROR,
-                logger=_logger,
-                s3_prefix=self.s3_prefix,
-            )
-            raise ReaderStateError("CURRENT pointer not found")
-
+        current = self._load_current()
         manifest = self._manifest_reader.load_manifest(
-            current.manifest_ref,
-            current.manifest_content_type,
+            current.manifest_ref, current.manifest_content_type
         )
         return self._build_state(current.manifest_ref, manifest)
 
@@ -366,15 +642,8 @@ class SlateShardedReader:
 
         try:
             for shard in manifest.shards:
-                local_path = os.path.join(self.local_root, f"shard={shard.db_id:05d}")
-                os.makedirs(local_path, exist_ok=True)
-
                 if self.thread_safety == "lock":
-                    reader = self._reader_factory(
-                        db_url=shard.db_url,
-                        local_dir=local_path,
-                        checkpoint_id=shard.checkpoint_id,
-                    )
+                    reader = self._open_one_reader(shard)
                     handles[shard.db_id] = _ShardHandle(
                         mode="lock",
                         reader=reader,
@@ -382,14 +651,7 @@ class SlateShardedReader:
                     )
                 else:
                     pool_size = self.max_workers or 4
-                    readers = [
-                        self._reader_factory(
-                            db_url=shard.db_url,
-                            local_dir=local_path,
-                            checkpoint_id=shard.checkpoint_id,
-                        )
-                        for _ in range(pool_size)
-                    ]
+                    readers = [self._open_one_reader(shard) for _ in range(pool_size)]
                     handles[shard.db_id] = _ShardHandle(
                         mode="pool",
                         pool=_ReaderPool(readers),
@@ -403,7 +665,6 @@ class SlateShardedReader:
 
     @contextmanager
     def _use_state(self) -> Iterator[_ReaderState]:
-        """Acquire and release a refcounted snapshot of the current state."""
         state = self._acquire_state()
         try:
             yield state
@@ -440,6 +701,20 @@ class SlateShardedReader:
             _close_state(state)
 
 
+# ---------------------------------------------------------------------------
+# Free functions
+# ---------------------------------------------------------------------------
+
+
+def _read_group_simple(
+    router: SnapshotRouter,
+    reader: ShardReader,
+    keys: list[KeyInput],
+) -> dict[KeyInput, bytes | None]:
+    """Read a group of keys from a single shard reader (no locking)."""
+    return {key: reader.get(router.encode_lookup_key(key)) for key in keys}
+
+
 def _read_group(
     router: SnapshotRouter,
     handle: _ShardHandle,
@@ -464,19 +739,19 @@ def _read_one(handle: _ShardHandle, key: bytes) -> bytes | None:
         return reader.get(key)
 
 
-def _open_slatedb_reader(
-    *,
-    local_path: str,
-    db_url: str,
-    checkpoint_id: str | None,
-    env_file: str | None,
-) -> ShardReader:
-    """Legacy helper kept for backward-compatible monkeypatching in tests."""
-    return SlateDbReaderFactory(env_file=env_file)(
-        db_url=db_url,
-        local_dir=local_path,
-        checkpoint_id=checkpoint_id,
-    )
+def _close_simple_state(state: _SimpleReaderState) -> None:
+    for db_id, reader in state.readers.items():
+        try:
+            reader.close()
+        except Exception as exc:
+            log_failure(
+                "reader_handle_close_failed",
+                severity=FailureSeverity.ERROR,
+                logger=_logger,
+                error=exc,
+                db_id=db_id,
+                manifest_ref=state.manifest_ref,
+            )
 
 
 def _close_state(state: _ReaderState) -> None:

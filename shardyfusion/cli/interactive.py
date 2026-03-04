@@ -1,4 +1,4 @@
-"""Interactive REPL for the slate-reader CLI, backed by SlateShardedReader."""
+"""Interactive REPL for the slate-reader CLI, backed by ConcurrentShardedReader."""
 
 import cmd
 import shlex
@@ -17,7 +17,7 @@ from .output import (
 
 
 class SlateReaderRepl(cmd.Cmd):
-    """cmd.Cmd REPL that wraps a single SlateShardedReader instance."""
+    """cmd.Cmd REPL that wraps a single reader instance."""
 
     intro = ""
     prompt = "slate> "

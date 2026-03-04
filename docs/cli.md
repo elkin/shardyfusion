@@ -1,6 +1,6 @@
 # CLI (`slate-reader`)
 
-The `slate-reader` command-line tool wraps `SlateShardedReader` for interactive
+The `slate-reader` command-line tool wraps `ConcurrentShardedReader` for interactive
 lookups, batch script execution, and manifest inspection — no Python code needed.
 
 ## Installation

@@ -74,9 +74,9 @@ result = write_sharded(
 ## Minimal Reader Usage
 
 ```python
-from shardyfusion import SlateShardedReader
+from shardyfusion import ShardedReader
 
-reader = SlateShardedReader(
+reader = ShardedReader(
     s3_prefix="s3://bucket/prefix",
     local_root="/tmp/shardyfusion-reader",
 )

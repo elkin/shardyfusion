@@ -70,7 +70,7 @@ def build_refresh_result(changed: bool) -> dict[str, Any]:
 
 
 def build_info_result(reader: Any) -> dict[str, Any]:
-    """Extract manifest metadata from a SlateShardedReader."""
+    """Extract manifest metadata from a reader instance."""
     info = reader.snapshot_info()
     return {"op": "info", **info}
 
