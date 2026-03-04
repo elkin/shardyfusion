@@ -3,6 +3,8 @@
 ## Project Structure & Module Organization
 - Source package: `shardyfusion/` (31 modules)
   - Writer path (Spark): `writer/spark/writer.py`, `writer/spark/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
+  - Writer path (Dask): `writer/dask/writer.py`, `writer/dask/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
+  - Writer path (Ray): `writer/ray/writer.py`, `writer/ray/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
   - Writer path (Python): `writer/python/writer.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
   - Reader path: `reader/reader.py`, `routing.py`, `manifest_readers.py`
   - CLI path: `cli/app.py`, `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
@@ -22,6 +24,7 @@
   - Spark writer: `uv sync --extra writer-spark`
   - Python writer: `uv sync --extra writer-python`
   - Dask writer: `uv sync --extra writer-dask`
+  - Ray writer: `uv sync --extra writer-ray`
   - CLI-only: `uv sync --extra cli`
   - Full dev: `uv sync --all-extras --dev`
 - Lint: `uv run ruff check .`
@@ -74,5 +77,5 @@
 
 ## Environment & Configuration Notes
 - Spark-based writer flows require Java (`JAVA_HOME` or `PATH`).
-- Reader-only and Python writer usage do not require Spark/Java.
+- Reader-only, Python writer, Dask writer, and Ray writer usage do not require Spark/Java.
 - CLI requires `click>=8.0` and `pyyaml>=6.0` (`uv sync --extra cli`).
