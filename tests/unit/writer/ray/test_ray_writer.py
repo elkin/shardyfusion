@@ -7,32 +7,31 @@ from collections.abc import Iterable
 from typing import Self
 
 import pytest
+import ray
+import ray.data
 
-ray_data = pytest.importorskip("ray.data")
-import ray  # noqa: E402
-
-from shardyfusion._writer_core import route_key  # noqa: E402
-from shardyfusion.config import (  # noqa: E402
+from shardyfusion._writer_core import route_key
+from shardyfusion.config import (
     ManifestOptions,
     OutputOptions,
     WriteConfig,
 )
-from shardyfusion.errors import ConfigValidationError  # noqa: E402
-from shardyfusion.manifest import BuildResult  # noqa: E402
-from shardyfusion.metrics import MetricEvent  # noqa: E402
-from shardyfusion.serde import ValueSpec, make_key_encoder  # noqa: E402
-from shardyfusion.sharding_types import (  # noqa: E402
+from shardyfusion.errors import ConfigValidationError
+from shardyfusion.manifest import BuildResult
+from shardyfusion.metrics import MetricEvent
+from shardyfusion.serde import ValueSpec, make_key_encoder
+from shardyfusion.sharding_types import (
     KeyEncoding,
     ShardingSpec,
     ShardingStrategy,
 )
-from shardyfusion.testing import (  # noqa: E402
+from shardyfusion.testing import (
     ListMetricsCollector,
     file_backed_adapter_factory,
     file_backed_load_db,
 )
-from shardyfusion.writer.ray import write_sharded  # noqa: E402
-from tests.helpers.tracking import InMemoryPublisher  # noqa: E402
+from shardyfusion.writer.ray import write_sharded
+from tests.helpers.tracking import InMemoryPublisher
 
 # ---------------------------------------------------------------------------
 # Test infrastructure

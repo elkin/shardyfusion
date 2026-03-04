@@ -4,23 +4,21 @@ from __future__ import annotations
 
 import json
 
-import pytest
+import ray
+import ray.data
 
-ray_data = pytest.importorskip("ray.data")
-import ray  # noqa: E402
-
-from shardyfusion.config import (  # noqa: E402
+from shardyfusion.config import (
     ManifestOptions,
     OutputOptions,
     WriteConfig,
 )
-from shardyfusion.serde import ValueSpec  # noqa: E402
-from shardyfusion.sharding_types import (  # noqa: E402
+from shardyfusion.serde import ValueSpec
+from shardyfusion.sharding_types import (
     ShardingSpec,
     ShardingStrategy,
 )
-from shardyfusion.testing import file_backed_adapter_factory  # noqa: E402
-from shardyfusion.writer.ray import write_sharded  # noqa: E402
+from shardyfusion.testing import file_backed_adapter_factory
+from shardyfusion.writer.ray import write_sharded
 
 
 def test_ray_writer_publishes_manifest_and_current_to_local_s3(

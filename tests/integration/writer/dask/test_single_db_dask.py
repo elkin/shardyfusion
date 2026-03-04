@@ -4,20 +4,19 @@ from __future__ import annotations
 
 import json
 
+import dask
+import dask.dataframe as dd
 import pandas as pd
 import pytest
 
-dd = pytest.importorskip("dask.dataframe")
-import dask  # noqa: E402
-
-from shardyfusion.config import (  # noqa: E402
+from shardyfusion.config import (
     ManifestOptions,
     OutputOptions,
     WriteConfig,
 )
-from shardyfusion.serde import ValueSpec  # noqa: E402
-from shardyfusion.testing import file_backed_adapter_factory  # noqa: E402
-from shardyfusion.writer.dask.single_db_writer import (  # noqa: E402
+from shardyfusion.serde import ValueSpec
+from shardyfusion.testing import file_backed_adapter_factory
+from shardyfusion.writer.dask.single_db_writer import (
     write_single_db,
 )
 

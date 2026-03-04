@@ -6,31 +6,30 @@ import json
 import pathlib
 
 import pytest
+import ray
+import ray.data
 
-ray_data = pytest.importorskip("ray.data")
-import ray  # noqa: E402
-
-from shardyfusion.config import (  # noqa: E402
+from shardyfusion.config import (
     ManifestOptions,
     OutputOptions,
     WriteConfig,
 )
-from shardyfusion.errors import (  # noqa: E402
+from shardyfusion.errors import (
     ConfigValidationError,
     ShardyfusionError,
 )
-from shardyfusion.manifest import BuildResult  # noqa: E402
-from shardyfusion.serde import ValueSpec, make_key_encoder  # noqa: E402
-from shardyfusion.sharding_types import KeyEncoding  # noqa: E402
-from shardyfusion.testing import (  # noqa: E402
+from shardyfusion.manifest import BuildResult
+from shardyfusion.serde import ValueSpec, make_key_encoder
+from shardyfusion.sharding_types import KeyEncoding
+from shardyfusion.testing import (
     file_backed_adapter_factory,
     file_backed_load_db,
 )
-from shardyfusion.writer.ray.single_db_writer import (  # noqa: E402
+from shardyfusion.writer.ray.single_db_writer import (
     RayCacheContext,
     write_single_db,
 )
-from tests.helpers.tracking import (  # noqa: E402
+from tests.helpers.tracking import (
     InMemoryPublisher,
     RecordingTokenBucket,
     TrackingAdapter,

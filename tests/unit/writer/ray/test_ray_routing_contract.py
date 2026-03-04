@@ -8,21 +8,20 @@ function against the canonical routing function.
 from __future__ import annotations
 
 import pytest
+import ray
+import ray.data
 
-ray_data = pytest.importorskip("ray.data")
-import ray  # noqa: E402
-
-from shardyfusion._writer_core import route_key  # noqa: E402
-from shardyfusion.sharding_types import (  # noqa: E402
+from shardyfusion._writer_core import route_key
+from shardyfusion.sharding_types import (
     DB_ID_COL,
     KeyEncoding,
     ShardingSpec,
     ShardingStrategy,
 )
-from shardyfusion.writer.ray.sharding import add_db_id_column  # noqa: E402
+from shardyfusion.writer.ray.sharding import add_db_id_column
 
 # Reuse edge-case keys from the main routing contract test suite.
-from tests.unit.writer.test_routing_contract import (  # noqa: E402
+from tests.unit.writer.test_routing_contract import (
     EDGE_CASE_KEYS,
     U32_EDGE_CASE_KEYS,
 )
