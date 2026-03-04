@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `shardyfusion` is a sharded snapshot writer/reader library for SlateDB. It provides:
 - Writer-side Spark APIs to build `num_dbs` independent SlateDB shard databases
 - Dask DataFrame-based writer (no Spark/Java needed)
+- Ray Data-based writer (no Spark/Java needed)
 - Pure-Python iterator-based writer (no Spark/Java needed)
 - Manifest + `_CURRENT` publishing protocol (default S3, pluggable interfaces)
 - Reader-side routing helpers for service-side `get` and `multi_get`
@@ -15,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Tooling
 
-**Package manager**: uv. Extras: `read`, `writer-spark` (requires Java), `writer-python`, `writer-dask`, `cli`. Full dev: `uv sync --all-extras --dev`.
+**Package manager**: uv. Extras: `read`, `writer-spark` (requires Java), `writer-python`, `writer-dask`, `writer-ray`, `cli`. Full dev: `uv sync --all-extras --dev`.
 
 **Workflows**: Run `just --list` for all local and container (`d-*`) targets. Key entry points: `just fix` (auto-format), `just ci` (quality + unit + integration). Container default engine is Podman; override with `CONTAINER_ENGINE=docker`.
 
@@ -29,11 +30,11 @@ Container venv is at `/opt/shardyfusion-venv`, not the host `.venv`.
 
 ## CI Pipeline (GitHub Actions)
 
-On every push/PR: **quality → package → unit → integration** (parallel within each stage). E2E is local/container only (`just d-e2e`). Java 17 (temurin) for Spark jobs. **Dask does not run on py3.14.** Weekly scheduled build on Mondays at 06:00 UTC.
+On every push/PR: **quality → package → unit → integration** (parallel within each stage). E2E is local/container only (`just d-e2e`). Java 17 (temurin) for Spark jobs. **Dask and Ray do not run on py3.14.** Weekly scheduled build on Mondays at 06:00 UTC.
 
 ## Architecture
 
-The library is split into five independent paths that share config, manifest models, and core logic:
+The library is split into six independent paths that share config, manifest models, and core logic:
 
 **Writer path (Spark)** (requires PySpark + Java):
 `writer/spark/writer.py` → `writer/spark/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
@@ -43,6 +44,10 @@ The library is split into five independent paths that share config, manifest mod
 **Writer path (Dask)** (no Spark/Java needed):
 `writer/dask/writer.py` → `writer/dask/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
 `writer/dask/single_db_writer.py` (single-shard variant, distributed sorting)
+
+**Writer path (Ray)** (no Spark/Java needed):
+`writer/ray/writer.py` → `writer/ray/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
+`writer/ray/single_db_writer.py` (single-shard variant, distributed sorting)
 
 **Writer path (Python)** (no Spark/Java needed):
 `writer/python/writer.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
@@ -60,7 +65,7 @@ Layer 0 — Core types & errors: errors.py, type_defs.py, sharding_types.py, ord
 Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py
 Layer 2 — Storage, publish, routing, manifest: storage.py, manifest.py, publish.py, routing.py, manifest_readers.py
 Layer 3 — Writer core: _writer_core.py (shared by all writers)
-Layer 4 — Entry points: writer/{spark,dask,python}/*.py, reader/reader.py, cli/app.py
+Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/reader.py, cli/app.py
 Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
 ```
 
@@ -78,6 +83,13 @@ Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
 2. `writer/dask/sharding.py` adds `_slatedb_db_id` column via Python routing function applied per partition (not Spark SQL). Range boundaries computed via Dask quantiles. `CUSTOM_EXPR` strategy is explicitly rejected.
 3. Shuffles by `_slatedb_db_id`, then `map_partitions` writes each shard. Empty shards get zero-row placeholder results.
 4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `verify_routing_agreement()`.
+5. Uses the same `_writer_core.py` functions for winner selection, manifest building, and publishing.
+
+**Ray writer** (`write_sharded`):
+1. Entry point in `writer/ray/writer.py`. Accepts `ray.data.Dataset` with `key_col`/`value_spec`.
+2. `writer/ray/sharding.py` adds `_slatedb_db_id` column via Arrow batch format (`map_batches` with `batch_format="pyarrow"`, `zero_copy_batch=True`). Range boundaries computed via sampling. `CUSTOM_EXPR` strategy is explicitly rejected.
+3. Repartitions by `_slatedb_db_id` using hash shuffle (`DataContext.shuffle_strategy = "HASH_SHUFFLE"`; saved/restored). Then `map_batches` writes each shard with `batch_format="pandas"`.
+4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `_verify_routing_agreement()`.
 5. Uses the same `_writer_core.py` functions for winner selection, manifest building, and publishing.
 
 **Python writer** (`write_sharded`):
@@ -164,8 +176,8 @@ The invariant: `pmod(xxhash64(payload, seed=42), num_dbs)` where:
 - **Modulo**: Python `%` with positive `num_dbs` equals Spark `pmod`
 
 **Safety mechanisms:**
-1. `verify_routing_agreement()` in `writer/spark/writer.py` and `writer/dask/writer.py` — runtime spot-check comparing framework-assigned shard IDs vs Python routing on a sample of written rows. Controlled by `verify_routing=True` (default).
-2. `tests/unit/writer/test_routing_contract.py` — hypothesis property tests (Python-only). `tests/unit/writer/spark/test_routing_contract.py` — Spark-vs-Python cross-checks with ~200 edge-case keys. `tests/unit/writer/dask/test_dask_routing_contract.py` — Dask-vs-Python cross-checks.
+1. `verify_routing_agreement()` in `writer/spark/writer.py`, `writer/dask/writer.py`, and `writer/ray/writer.py` — runtime spot-check comparing framework-assigned shard IDs vs Python routing on a sample of written rows. Controlled by `verify_routing=True` (default).
+2. `tests/unit/writer/test_routing_contract.py` — hypothesis property tests (Python-only). `tests/unit/writer/spark/test_routing_contract.py` — Spark-vs-Python cross-checks with ~200 edge-case keys. `tests/unit/writer/dask/test_dask_routing_contract.py` — Dask-vs-Python cross-checks. `tests/unit/writer/ray/test_ray_routing_contract.py` — Ray-vs-Python cross-checks.
 3. Single implementation in `routing.py:xxhash64_db_id()` imported by all writer paths (never reimplemented).
 
 ### Error Hierarchy
@@ -179,6 +191,7 @@ Core types exported from `shardyfusion.__init__` (always available, no optional 
 Writer functions are imported from subpackages (not re-exported at top level):
 - **Spark:** `from shardyfusion.writer.spark import write_sharded, write_single_db, DataFrameCacheContext, SparkConfOverrideContext`
 - **Dask:** `from shardyfusion.writer.dask import write_sharded, write_single_db, DaskCacheContext`
+- **Ray:** `from shardyfusion.writer.ray import write_sharded, write_single_db, RayCacheContext`
 - **Python:** `from shardyfusion.writer.python import write_sharded`
 
 ## Testing Notes
@@ -187,8 +200,8 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **`tests/integration/`** — S3 via `moto`; Spark writer tests require Spark + Java
 - **`tests/e2e/`** — Garage S3 via compose; `just d-e2e`
 - **`tests/helpers/`** — `s3_test_scenarios.py` (shared scenarios for moto/Garage), `tracking.py` (test doubles: `TrackingAdapter`, `TrackingFactory`, `RecordingTokenBucket`, `InMemoryPublisher`)
-- Markers: `@pytest.mark.spark`, `@pytest.mark.dask`, `@pytest.mark.e2e`
-- **Contract tests**: hypothesis property tests in `test_routing_contract.py`, framework cross-checks in `writer/spark/` and `writer/dask/`
+- Markers: `@pytest.mark.spark`, `@pytest.mark.dask`, `@pytest.mark.ray`, `@pytest.mark.e2e`
+- **Contract tests**: hypothesis property tests in `test_routing_contract.py`, framework cross-checks in `writer/spark/`, `writer/dask/`, and `writer/ray/`
 - For behavior changes: add/adjust unit tests first, then integration tests where routing/publishing or framework behavior is affected
 
 ## Coding Conventions
@@ -209,9 +222,12 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **Session-scoped test fixtures**: PySpark and S3 (moto/Garage) fixtures are session-scoped for performance. Tests share the same Spark session and S3 service.
 - **Writer scenario imports are deferred**: `tests/helpers/s3_test_scenarios.py` imports writer modules inside function bodies so reader-only test collection doesn't fail.
 - **Dask writer rejects `CUSTOM_EXPR` sharding**: Unlike the Spark writer, the Dask writer raises `ConfigValidationError` for custom expression sharding. Only `HASH` and `RANGE` are supported.
+- **Ray writer rejects `CUSTOM_EXPR` sharding**: Same as Dask — only `HASH` and `RANGE` are supported.
+- **Ray writer temporarily sets `DataContext.shuffle_strategy`**: During repartition, the Ray writer sets `DataContext.shuffle_strategy = "HASH_SHUFFLE"` and restores the previous value in a `try/finally` block.
 
 ## Environment Notes
 
 - Spark-based writer flows require **Java 17** (`JAVA_HOME` or `PATH`). CI uses temurin distribution.
 - `SPARK_LOCAL_IP=127.0.0.1` is set in tox and devcontainer to avoid hostname resolution issues.
-- Reader-only, Python writer, and Dask writer usage do not require Spark/Java.
+- Reader-only, Python writer, Dask writer, and Ray writer usage do not require Spark/Java.
+- **Ray does not run on py3.14** (same as Dask).

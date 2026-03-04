@@ -4,13 +4,29 @@
 
 ::: shardyfusion.config
 
-## Sharding
+## Sharding (Spark)
 
 ::: shardyfusion.writer.spark.sharding
+
+## Sharding (Dask)
+
+::: shardyfusion.writer.dask.sharding
+
+## Sharding (Ray)
+
+::: shardyfusion.writer.ray.sharding
 
 ## Writer (Spark)
 
 ::: shardyfusion.writer.spark.writer
+
+## Writer (Dask)
+
+::: shardyfusion.writer.dask.writer
+
+## Writer (Ray)
+
+::: shardyfusion.writer.ray.writer
 
 ## Writer (Python)
 

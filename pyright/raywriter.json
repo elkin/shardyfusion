@@ -5,7 +5,7 @@
   "exclude": [
     "../shardyfusion/writer/python",
     "../shardyfusion/writer/spark",
-    "../shardyfusion/writer/ray",
+    "../shardyfusion/writer/dask",
     "../shardyfusion/cli"
   ],
   "extraPaths": [".."],

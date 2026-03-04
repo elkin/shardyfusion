@@ -1,25 +1,31 @@
 # Writer Side
 
-Primary entrypoint:
+Four writer backends are available, all producing the same manifest format:
 
-- `write_sharded(df, config, *, key_col, value_spec, sort_within_partitions=False, spark_conf_overrides=None, cache_input=False, storage_level=None, max_writes_per_second=None)`
+| Backend | Entrypoint | Input Type | Requires Java |
+|---------|-----------|------------|---------------|
+| Spark | `shardyfusion.writer.spark.write_sharded` | PySpark `DataFrame` | Yes |
+| Dask | `shardyfusion.writer.dask.write_sharded` | Dask `DataFrame` | No |
+| Ray | `shardyfusion.writer.ray.write_sharded` | Ray `Dataset` | No |
+| Python | `shardyfusion.writer.python.write_sharded` | `Iterable[T]` | No |
 
-Key guarantees:
+Each backend also has a `write_single_db` variant for single-shard writes (Spark, Dask, Ray).
+
+Key guarantees (all backends):
 
 - one-writer-per-db partitioning contract (`num_dbs` partitions)
 - retry/speculation safety via attempt-isolated shard output URLs
 - deterministic winner selection per `db_id`
 
-Typical usage:
+## Typical Usage
+
+### Spark
 
 ```python
 from shardyfusion import WriteConfig, ValueSpec
 from shardyfusion.writer.spark import write_sharded
 
-config = WriteConfig(
-    num_dbs=8,
-    s3_prefix="s3://bucket/prefix",
-)
+config = WriteConfig(num_dbs=8, s3_prefix="s3://bucket/prefix")
 
 result = write_sharded(
     df,
@@ -27,6 +33,56 @@ result = write_sharded(
     key_col="id",
     value_spec=ValueSpec.binary_col("payload"),
     spark_conf_overrides={"spark.speculation": "false"},
+)
+```
+
+### Dask
+
+```python
+from shardyfusion import WriteConfig, ValueSpec
+from shardyfusion.writer.dask import write_sharded
+
+config = WriteConfig(num_dbs=8, s3_prefix="s3://bucket/prefix")
+
+result = write_sharded(
+    ddf,
+    config,
+    key_col="id",
+    value_spec=ValueSpec.binary_col("payload"),
+)
+```
+
+### Ray
+
+```python
+import ray
+from shardyfusion import WriteConfig, ValueSpec
+from shardyfusion.writer.ray import write_sharded
+
+config = WriteConfig(num_dbs=8, s3_prefix="s3://bucket/prefix")
+ds = ray.data.from_items([{"id": i, "payload": b"..."} for i in range(1000)])
+
+result = write_sharded(
+    ds,
+    config,
+    key_col="id",
+    value_spec=ValueSpec.binary_col("payload"),
+)
+```
+
+### Python
+
+```python
+from shardyfusion import WriteConfig
+from shardyfusion.writer.python import write_sharded
+
+config = WriteConfig(num_dbs=8, s3_prefix="s3://bucket/prefix")
+
+result = write_sharded(
+    records,
+    config,
+    key_fn=lambda r: r["id"],
+    value_fn=lambda r: r["payload"],
 )
 ```
 
@@ -72,17 +128,19 @@ the aggregate write rate:
 | Spark single-db | `write_single_db` (spark) | 1 shared bucket | All writes limited to `rate` rows/sec total |
 | Dask sharded | `write_sharded` (dask) | 1 bucket per shard | Each shard independently limited to `rate` rows/sec |
 | Dask single-db | `write_single_db` (dask) | 1 shared bucket | All writes limited to `rate` rows/sec total |
+| Ray sharded | `write_sharded` (ray) | 1 bucket per shard | Each shard independently limited to `rate` rows/sec |
+| Ray single-db | `write_single_db` (ray) | 1 shared bucket | All writes limited to `rate` rows/sec total |
 | Python sequential | `write_sharded` | 1 shared bucket for all shards | All shards collectively limited to `rate` rows/sec |
 | Python parallel | `write_sharded(parallel=True)` | 1 bucket per worker process | Each shard independently limited to `rate` rows/sec |
 
 Key differences:
 
-- **Sharded Spark/Dask**: independent per-shard buckets — aggregate write rate
+- **Sharded Spark/Dask/Ray**: independent per-shard buckets — aggregate write rate
   across all shards = `rate × num_dbs`.
 - **Python sequential**: single shared bucket — aggregate write rate = `rate`
   (all shards compete for the same tokens).
 - **Python parallel**: `multiprocessing.spawn` gives each worker its own
-  bucket, so aggregate behavior matches Spark/Dask sharded.
+  bucket, so aggregate behavior matches Spark/Dask/Ray sharded.
 - **Single-db writers**: always one bucket — straightforward `rate` rows/sec.
 
 ### Usage examples
@@ -98,6 +156,13 @@ result = write_sharded(
 # Dask: from shardyfusion.writer.dask import write_sharded
 result = write_sharded(
     ddf, config, key_col="id",
+    value_spec=ValueSpec.binary_col("payload"),
+    max_writes_per_second=10_000.0,
+)
+
+# Ray: from shardyfusion.writer.ray import write_sharded
+result = write_sharded(
+    ds, config, key_col="id",
     value_spec=ValueSpec.binary_col("payload"),
     max_writes_per_second=10_000.0,
 )

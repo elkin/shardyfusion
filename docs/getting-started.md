@@ -21,6 +21,9 @@ uv sync --extra writer-python
 # Dask writer (no Spark/Java required)
 uv sync --extra writer-dask
 
+# Ray writer (no Spark/Java required)
+uv sync --extra writer-ray
+
 # CLI only (no Spark/Java required)
 uv sync --extra cli
 

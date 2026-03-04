@@ -54,6 +54,9 @@ jobs:
       - name: Type check (pyright — Dask writer)
         run: uv run pyright -p pyright/daskwriter.json
 
+      - name: Type check (pyright — Ray writer)
+        run: uv run pyright -p pyright/raywriter.json
+
       - name: Type check (pyright — Spark writer)
         run: uv run pyright -p pyright/sparkwriter.json
 
@@ -171,6 +174,15 @@ jobs:
           - name: "daskwriter unit / py3.13"
             python-version: "3.13"
             tox-env: "py313-daskwriter-unit"
+          - name: "raywriter unit / py3.11"
+            python-version: "3.11"
+            tox-env: "py311-raywriter-unit"
+          - name: "raywriter unit / py3.12"
+            python-version: "3.12"
+            tox-env: "py312-raywriter-unit"
+          - name: "raywriter unit / py3.13"
+            python-version: "3.13"
+            tox-env: "py313-raywriter-unit"
 
     steps:
       - name: Checkout
@@ -259,6 +271,15 @@ jobs:
           - name: "daskwriter integration / py3.13"
             python-version: "3.13"
             tox-env: "py313-daskwriter-integration"
+          - name: "raywriter integration / py3.11"
+            python-version: "3.11"
+            tox-env: "py311-raywriter-integration"
+          - name: "raywriter integration / py3.12"
+            python-version: "3.12"
+            tox-env: "py312-raywriter-integration"
+          - name: "raywriter integration / py3.13"
+            python-version: "3.13"
+            tox-env: "py313-raywriter-integration"
 
     steps:
       - name: Checkout
