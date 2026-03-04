@@ -1,8 +1,8 @@
 """Configuration models for sharded SlateDB writes."""
 
-import os
 import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from urllib.parse import urlparse
 
 from .errors import ConfigValidationError
@@ -26,7 +26,7 @@ class OutputOptions:
     db_path_template: str = "db={db_id:05d}"
     tmp_prefix: str = "_tmp"
     local_root: str = field(
-        default_factory=lambda: os.path.join(tempfile.gettempdir(), "shardyfusion")
+        default_factory=lambda: str(Path(tempfile.gettempdir()) / "shardyfusion")
     )
 
 

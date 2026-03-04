@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from pyspark.sql import SparkSession
@@ -596,7 +597,7 @@ class _FailingFactory:
     def __init__(self, error: Exception) -> None:
         self._error = error
 
-    def __call__(self, *, db_url: str, local_dir: str) -> _FailingAdapter:
+    def __call__(self, *, db_url: str, local_dir: Path) -> _FailingAdapter:
         return _FailingAdapter(self._error)
 
 

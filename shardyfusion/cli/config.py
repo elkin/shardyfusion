@@ -21,7 +21,7 @@ class ReaderConfig(BaseModel):
 
     current_url: str | None = None
     local_root: str = Field(
-        default_factory=lambda: os.path.join(tempfile.gettempdir(), "shardyfusion")
+        default_factory=lambda: str(Path(tempfile.gettempdir()) / "shardyfusion")
     )
     thread_safety: str = "lock"
     max_workers: int = Field(default=4, ge=1)

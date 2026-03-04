@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import pathlib
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Self
 
 import pandas as pd
@@ -86,7 +86,7 @@ class _TrackingFactory:
         self.adapters: dict[int, _TrackingAdapter] = {}
         self._call_count = 0
 
-    def __call__(self, *, db_url: str, local_dir: str) -> _TrackingAdapter:
+    def __call__(self, *, db_url: str, local_dir: Path) -> _TrackingAdapter:
         adapter = _TrackingAdapter()
         self.adapters[self._call_count] = adapter
         self._call_count += 1
@@ -114,7 +114,7 @@ def _make_config(
 
 
 def _make_file_backed_config(
-    tmp_path: pathlib.Path,
+    tmp_path: Path,
     *,
     num_dbs: int = 4,
     batch_size: int = 50_000,
@@ -516,7 +516,7 @@ def test_rate_limiter_empty_shard_no_bucket(
     assert _patch_token_bucket[0].acquire_calls == [2]
 
 
-def test_value_spec_binary_col(tmp_path: pathlib.Path) -> None:
+def test_value_spec_binary_col(tmp_path: Path) -> None:
     config, root_dir = _make_file_backed_config(tmp_path, num_dbs=2)
 
     records = [{"id": i, "payload": f"data-{i}".encode()} for i in range(10)]
@@ -541,7 +541,7 @@ def test_value_spec_binary_col(tmp_path: pathlib.Path) -> None:
         assert all_kv[key_bytes] == f"data-{i}".encode()
 
 
-def test_value_spec_json_cols(tmp_path: pathlib.Path) -> None:
+def test_value_spec_json_cols(tmp_path: Path) -> None:
     config, root_dir = _make_file_backed_config(tmp_path, num_dbs=2)
 
     records = [{"id": i, "name": f"user{i}"} for i in range(10)]
@@ -570,7 +570,7 @@ def test_value_spec_json_cols(tmp_path: pathlib.Path) -> None:
     assert parsed["name"] == "user0"
 
 
-def test_sort_within_partitions(tmp_path: pathlib.Path) -> None:
+def test_sort_within_partitions(tmp_path: Path) -> None:
     config, root_dir = _make_file_backed_config(
         tmp_path,
         num_dbs=2,
@@ -599,7 +599,7 @@ def test_sort_within_partitions(tmp_path: pathlib.Path) -> None:
         assert keys == sorted(keys), f"Shard {winner.db_id} keys not sorted"
 
 
-def test_u32be_key_encoding(tmp_path: pathlib.Path) -> None:
+def test_u32be_key_encoding(tmp_path: Path) -> None:
     config, root_dir = _make_file_backed_config(
         tmp_path,
         num_dbs=2,
@@ -645,7 +645,7 @@ def test_verify_routing_enabled() -> None:
     assert result.stats.rows_written == 20
 
 
-def test_data_integrity(tmp_path: pathlib.Path) -> None:
+def test_data_integrity(tmp_path: Path) -> None:
     config, root_dir = _make_file_backed_config(tmp_path, num_dbs=4)
 
     records = [{"id": i} for i in range(100)]

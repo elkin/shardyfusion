@@ -2,10 +2,10 @@
 
 import base64
 import json
-import os
 import types
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Self, TypedDict
 from urllib.parse import quote
 
@@ -25,7 +25,7 @@ class FakeSlateDbAdapter:
         self,
         *,
         db_url: str,
-        local_dir: str,
+        local_dir: Path,
     ) -> None:
         _ = (local_dir, db_url)
         self._db = FakeDb()
@@ -61,7 +61,7 @@ class FakeSlateDbAdapter:
 def fake_adapter_factory(
     *,
     db_url: str,
-    local_dir: str,
+    local_dir: Path,
 ) -> FakeSlateDbAdapter:
     """Return a worker-serializable fake adapter instance."""
 
@@ -86,11 +86,11 @@ class FileBackedSlateDbAdapter:
         root_dir: str,
         *,
         db_url: str,
-        local_dir: str,
+        local_dir: Path,
     ) -> None:
         _ = local_dir
         self._root_dir = root_dir
-        os.makedirs(self._root_dir, exist_ok=True)
+        Path(self._root_dir).mkdir(parents=True, exist_ok=True)
         self._db = FileBackedDb(file_path=_file_path_for_db_url(self._root_dir, db_url))
 
     @property
@@ -109,7 +109,7 @@ class FileBackedSlateDbAdapter:
         self.close()
 
     def write_batch(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
-        os.makedirs(os.path.dirname(self._db.file_path), exist_ok=True)
+        Path(self._db.file_path).parent.mkdir(parents=True, exist_ok=True)
         with open(self._db.file_path, "ab") as handle:
             for key, value in pairs:
                 payload = {
@@ -139,7 +139,7 @@ class FileBackedSlateDbAdapterFactory:
         self,
         *,
         db_url: str,
-        local_dir: str,
+        local_dir: Path,
     ) -> FileBackedSlateDbAdapter:
         return FileBackedSlateDbAdapter(
             self.root_dir,
@@ -158,7 +158,7 @@ def file_backed_load_db(root_dir: str, db_url: str) -> dict[bytes, bytes]:
     """Load latest key/value view for one db_url from file-backed fake adapter output."""
 
     file_path = _file_path_for_db_url(root_dir, db_url)
-    if not os.path.exists(file_path):
+    if not Path(file_path).exists():
         return {}
 
     result: dict[bytes, bytes] = {}
@@ -176,15 +176,15 @@ def file_backed_load_db(root_dir: str, db_url: str) -> dict[bytes, bytes]:
 
 def _file_path_for_db_url(root_dir: str, db_url: str) -> str:
     safe_name = quote(db_url, safe="")
-    return os.path.join(root_dir, f"{safe_name}.jsonl")
+    return str(Path(root_dir) / f"{safe_name}.jsonl")
 
 
 def map_s3_db_url_to_file_url(db_url: str, object_store_root: str) -> str:
     """Map a shard db_url like s3://bucket/key to file://... for local tests."""
 
     bucket, key = parse_s3_url(db_url)
-    object_path = os.path.join(object_store_root, bucket, key)
-    os.makedirs(object_path, exist_ok=True)
+    object_path = Path(object_store_root) / bucket / key
+    object_path.mkdir(parents=True, exist_ok=True)
     return f"file://{object_path}"
 
 
@@ -201,7 +201,7 @@ def writer_local_dir_for_db_url(db_url: str, local_root: str) -> str:
     run_segment = segments[-3]
     db_segment = segments[-2]
     attempt_segment = segments[-1]
-    return os.path.join(local_root, run_segment, db_segment, attempt_segment)
+    return str(Path(local_root) / run_segment / db_segment / attempt_segment)
 
 
 class _SlateDbOpenKwargs(TypedDict, total=False):
@@ -218,7 +218,7 @@ class RealSlateDbFileAdapter:
         object_store_root: str,
         *,
         db_url: str,
-        local_dir: str,
+        local_dir: Path,
     ) -> None:
         self._object_store_root = object_store_root
 
@@ -226,7 +226,7 @@ class RealSlateDbFileAdapter:
 
         mapped_url = map_s3_db_url_to_file_url(db_url, self._object_store_root)
         kwargs: _SlateDbOpenKwargs = {"url": mapped_url}
-        self._db = SlateDB(local_dir, **kwargs)
+        self._db = SlateDB(str(local_dir), **kwargs)
 
     @property
     def db(self) -> object:
@@ -272,7 +272,7 @@ class RealSlateDbFileAdapterFactory:
         self,
         *,
         db_url: str,
-        local_dir: str,
+        local_dir: Path,
     ) -> RealSlateDbFileAdapter:
         return RealSlateDbFileAdapter(
             self.object_store_root,

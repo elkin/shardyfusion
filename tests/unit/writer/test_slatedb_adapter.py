@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import types
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 
@@ -23,7 +24,7 @@ def test_open_uses_official_constructor_signature(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "slatedb", fake_module)
 
     adapter = DefaultSlateDbAdapter(
-        local_dir="/tmp/local",
+        local_dir=Path("/tmp/local"),
         db_url="s3://bucket/path",
         env_file="slatedb.env",
         settings={"durability": "strict"},
@@ -52,7 +53,7 @@ def test_open_raises_when_binding_signature_is_not_official(monkeypatch) -> None
         match="official Python binding signature",
     ):
         DefaultSlateDbAdapter(
-            local_dir="/tmp/local",
+            local_dir=Path("/tmp/local"),
             db_url="s3://bucket/path",
             env_file=None,
             settings={"durability": "strict"},

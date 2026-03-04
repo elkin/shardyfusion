@@ -330,7 +330,7 @@ def run_writer_reader_refresh_scenario(
     )
 
     def open_real_reader(
-        *, db_url: str, local_dir: str, checkpoint_id: str | None
+        *, db_url: str, local_dir: Path, checkpoint_id: str | None
     ) -> slatedb.SlateDBReader:
         return slatedb.SlateDBReader(
             writer_local_dir_for_db_url(db_url, local_root),
@@ -639,7 +639,7 @@ def run_python_writer_reader_refresh_scenario(
     )
 
     def open_real_reader(
-        *, db_url: str, local_dir: str, checkpoint_id: str | None
+        *, db_url: str, local_dir: Path, checkpoint_id: str | None
     ) -> slatedb.SlateDBReader:
         return slatedb.SlateDBReader(
             writer_local_dir_for_db_url(db_url, local_root),
@@ -749,7 +749,7 @@ def run_dask_writer_reader_refresh_scenario(
         )
 
     def open_real_reader(
-        *, db_url: str, local_dir: str, checkpoint_id: str | None
+        *, db_url: str, local_dir: Path, checkpoint_id: str | None
     ) -> slatedb.SlateDBReader:
         return slatedb.SlateDBReader(
             writer_local_dir_for_db_url(db_url, local_root),

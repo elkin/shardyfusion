@@ -1,9 +1,9 @@
 """Pure-Python iterator-based sharded writer (no Spark dependency)."""
 
 import multiprocessing
-import os
 import time
 from collections.abc import Callable, Iterable
+from pathlib import Path
 from typing import TypeVar
 from uuid import uuid4
 
@@ -190,12 +190,12 @@ def _make_db_url(config: WriteConfig, run_id: str, db_id: int, attempt: int) -> 
     )
 
 
-def _make_local_dir(config: WriteConfig, run_id: str, db_id: int, attempt: int) -> str:
-    return os.path.join(
-        config.output.local_root,
-        f"run_id={run_id}",
-        f"db={db_id:05d}",
-        f"attempt={attempt:02d}",
+def _make_local_dir(config: WriteConfig, run_id: str, db_id: int, attempt: int) -> Path:
+    return (
+        Path(config.output.local_root)
+        / f"run_id={run_id}"
+        / f"db={db_id:05d}"
+        / f"attempt={attempt:02d}"
     )
 
 
@@ -226,7 +226,7 @@ def _write_single_process(
         for db_id in range(num_dbs):
             db_url = _make_db_url(config, run_id, db_id, attempt)
             local_dir = _make_local_dir(config, run_id, db_id, attempt)
-            os.makedirs(local_dir, exist_ok=True)
+            local_dir.mkdir(parents=True, exist_ok=True)
             adapter = factory(db_url=db_url, local_dir=local_dir)
             adapter.__enter__()
             adapters.append(adapter)
@@ -323,7 +323,7 @@ def _shard_worker(
     attempt = 0
     db_url = _make_db_url(config, run_id, db_id, attempt)
     local_dir = _make_local_dir(config, run_id, db_id, attempt)
-    os.makedirs(local_dir, exist_ok=True)
+    local_dir.mkdir(parents=True, exist_ok=True)
 
     bucket: TokenBucket | None = None
     if max_writes_per_second is not None:

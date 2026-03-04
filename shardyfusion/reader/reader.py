@@ -1,13 +1,13 @@
 """Service-side sharded SlateDB reader helpers."""
 
 import logging
-import os
 import threading
 import time
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from queue import Queue
 from typing import Any
 
@@ -42,7 +42,7 @@ class SlateDbReaderFactory:
     env_file: str | None = None
 
     def __call__(
-        self, *, db_url: str, local_dir: str, checkpoint_id: str | None
+        self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
     ) -> ShardReader:
         try:
             from slatedb import SlateDBReader
@@ -52,7 +52,7 @@ class SlateDbReaderFactory:
             ) from exc
 
         return SlateDBReader(
-            local_dir,
+            str(local_dir),
             url=db_url,
             env_file=self.env_file,
             checkpoint_id=checkpoint_id,
@@ -366,8 +366,8 @@ class SlateShardedReader:
 
         try:
             for shard in manifest.shards:
-                local_path = os.path.join(self.local_root, f"shard={shard.db_id:05d}")
-                os.makedirs(local_path, exist_ok=True)
+                local_path = Path(self.local_root) / f"shard={shard.db_id:05d}"
+                local_path.mkdir(parents=True, exist_ok=True)
 
                 if self.thread_safety == "lock":
                     reader = self._reader_factory(
@@ -474,7 +474,7 @@ def _open_slatedb_reader(
     """Legacy helper kept for backward-compatible monkeypatching in tests."""
     return SlateDbReaderFactory(env_file=env_file)(
         db_url=db_url,
-        local_dir=local_path,
+        local_dir=Path(local_path),
         checkpoint_id=checkpoint_id,
     )
 

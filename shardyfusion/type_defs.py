@@ -1,5 +1,6 @@
 """Shared type aliases and protocols used across the package."""
 
+from pathlib import Path
 from typing import Protocol, TypeAlias, TypedDict
 
 JsonScalar: TypeAlias = None | bool | int | float | str
@@ -26,7 +27,7 @@ class ShardReaderFactory(Protocol):
     """Factory for opening one shard reader."""
 
     def __call__(
-        self, *, db_url: str, local_dir: str, checkpoint_id: str | None
+        self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
     ) -> ShardReader:
         """Construct an opened reader instance."""
         ...

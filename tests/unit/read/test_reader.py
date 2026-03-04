@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import types
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -54,7 +55,7 @@ class _FakeReader:
 def _fake_reader_factory(stores: dict[str, dict[bytes, bytes]]):
     """Return a ShardReaderFactory that routes db_url → in-memory store."""
 
-    def factory(*, db_url: str, local_dir: str, checkpoint_id: str | None):
+    def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
         _ = (local_dir, checkpoint_id)
         return _FakeReader(stores[db_url])
 
@@ -140,7 +141,7 @@ def test_slate_db_reader_factory_uses_official_slatedbreader_signature(
     factory = SlateDbReaderFactory(env_file="slatedb.env")
     reader = factory(
         db_url="s3://bucket/db",
-        local_dir="/tmp/local",
+        local_dir=Path("/tmp/local"),
         checkpoint_id="ckpt-1",
     )
 

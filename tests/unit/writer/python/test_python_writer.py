@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import pathlib
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Self
 
 import pytest
@@ -68,7 +68,7 @@ class _TrackingFactory:
         self.adapters: dict[int, _TrackingAdapter] = {}
         self._call_count = 0
 
-    def __call__(self, *, db_url: str, local_dir: str) -> _TrackingAdapter:
+    def __call__(self, *, db_url: str, local_dir: Path) -> _TrackingAdapter:
         adapter = _TrackingAdapter()
         self.adapters[self._call_count] = adapter
         self._call_count += 1
@@ -387,7 +387,7 @@ def test_rate_limiter_shared_bucket_across_shards(
 
 
 def _make_parallel_config(
-    tmp_path: pathlib.Path,
+    tmp_path: Path,
     adapter_factory: DbAdapterFactory,
     *,
     num_dbs: int = 4,
@@ -410,7 +410,7 @@ def _make_parallel_config(
     )
 
 
-def test_parallel_hash_routing_round_trip(tmp_path: pathlib.Path) -> None:
+def test_parallel_hash_routing_round_trip(tmp_path: Path) -> None:
     root_dir = str(tmp_path / "file_backed")
     factory = file_backed_adapter_factory(root_dir)
     config = _make_parallel_config(tmp_path, factory, num_dbs=4)
@@ -442,7 +442,7 @@ def test_parallel_hash_routing_round_trip(tmp_path: pathlib.Path) -> None:
         assert all_kv[key_bytes] == f"v{r}".encode()
 
 
-def test_parallel_range_explicit_boundaries(tmp_path: pathlib.Path) -> None:
+def test_parallel_range_explicit_boundaries(tmp_path: Path) -> None:
     root_dir = str(tmp_path / "file_backed")
     factory = file_backed_adapter_factory(root_dir)
     config = _make_parallel_config(
@@ -470,7 +470,7 @@ def test_parallel_range_explicit_boundaries(tmp_path: pathlib.Path) -> None:
     assert result.winners[2].row_count == 10
 
 
-def test_parallel_empty_input(tmp_path: pathlib.Path) -> None:
+def test_parallel_empty_input(tmp_path: Path) -> None:
     config = _make_parallel_config(tmp_path, fake_adapter_factory, num_dbs=4)
 
     result = write_sharded(
@@ -485,7 +485,7 @@ def test_parallel_empty_input(tmp_path: pathlib.Path) -> None:
     assert all(w.row_count == 0 for w in result.winners)
 
 
-def test_parallel_min_max_key_tracking(tmp_path: pathlib.Path) -> None:
+def test_parallel_min_max_key_tracking(tmp_path: Path) -> None:
     config = _make_parallel_config(
         tmp_path,
         fake_adapter_factory,
@@ -513,7 +513,7 @@ def test_parallel_min_max_key_tracking(tmp_path: pathlib.Path) -> None:
     assert shard1.max_key == 80
 
 
-def test_parallel_batch_flushing(tmp_path: pathlib.Path) -> None:
+def test_parallel_batch_flushing(tmp_path: Path) -> None:
     root_dir = str(tmp_path / "file_backed")
     factory = file_backed_adapter_factory(root_dir)
     config = _make_parallel_config(tmp_path, factory, num_dbs=1, batch_size=3)
@@ -536,7 +536,7 @@ def test_parallel_batch_flushing(tmp_path: pathlib.Path) -> None:
     assert len(all_kv) == 7
 
 
-def test_parallel_data_integrity(tmp_path: pathlib.Path) -> None:
+def test_parallel_data_integrity(tmp_path: Path) -> None:
     root_dir = str(tmp_path / "file_backed")
     factory = file_backed_adapter_factory(root_dir)
     config = _make_parallel_config(tmp_path, factory, num_dbs=4)
@@ -578,7 +578,7 @@ def test_parallel_data_integrity(tmp_path: pathlib.Path) -> None:
             assert expected_db_id == winner.db_id
 
 
-def test_parallel_single_shard(tmp_path: pathlib.Path) -> None:
+def test_parallel_single_shard(tmp_path: Path) -> None:
     root_dir = str(tmp_path / "file_backed")
     factory = file_backed_adapter_factory(root_dir)
     config = _make_parallel_config(tmp_path, factory, num_dbs=1)
@@ -600,7 +600,7 @@ def test_parallel_single_shard(tmp_path: pathlib.Path) -> None:
     assert len(shard_data) == 20
 
 
-def test_parallel_uneven_distribution(tmp_path: pathlib.Path) -> None:
+def test_parallel_uneven_distribution(tmp_path: Path) -> None:
     root_dir = str(tmp_path / "file_backed")
     factory = file_backed_adapter_factory(root_dir)
     config = _make_parallel_config(tmp_path, factory, num_dbs=8)
@@ -629,7 +629,7 @@ def test_parallel_uneven_distribution(tmp_path: pathlib.Path) -> None:
     assert len(all_kv) == 5
 
 
-def test_parallel_rate_limited_write(tmp_path: pathlib.Path) -> None:
+def test_parallel_rate_limited_write(tmp_path: Path) -> None:
     config = _make_parallel_config(tmp_path, fake_adapter_factory, num_dbs=2)
 
     records = list(range(10))

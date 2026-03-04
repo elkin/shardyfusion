@@ -1,8 +1,8 @@
 """Dask-based sharded writer (no Spark/Java dependency)."""
 
-import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -426,13 +426,13 @@ def _write_one_shard(
         db_rel_path,
         f"attempt={attempt:02d}",
     )
-    local_dir = os.path.join(
-        runtime.local_root,
-        f"run_id={runtime.run_id}",
-        f"db={db_id:05d}",
-        f"attempt={attempt:02d}",
+    local_dir = (
+        Path(runtime.local_root)
+        / f"run_id={runtime.run_id}"
+        / f"db={db_id:05d}"
+        / f"attempt={attempt:02d}"
     )
-    os.makedirs(local_dir, exist_ok=True)
+    local_dir.mkdir(parents=True, exist_ok=True)
 
     mc = runtime.metrics_collector
 

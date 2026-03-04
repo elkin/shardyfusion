@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-import pathlib
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -509,7 +509,7 @@ def test_shard_duration_is_zero() -> None:
     assert result.stats.durations.sharding_ms == 0
 
 
-def test_data_integrity_file_backed(tmp_path: pathlib.Path) -> None:
+def test_data_integrity_file_backed(tmp_path: Path) -> None:
     root_dir = str(tmp_path / "file_backed")
     config = WriteConfig(
         num_dbs=1,
@@ -612,7 +612,7 @@ class _FailingFactory:
     def __init__(self, error: Exception) -> None:
         self._error = error
 
-    def __call__(self, *, db_url: str, local_dir: str) -> _FailingAdapter:
+    def __call__(self, *, db_url: str, local_dir: Path) -> _FailingAdapter:
         return _FailingAdapter(self._error)
 
 

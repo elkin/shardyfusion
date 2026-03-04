@@ -1,10 +1,10 @@
 """Single-database writer using Dask for distributed sorting."""
 
 import math
-import os
 import time
 import types
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -214,13 +214,13 @@ def _stream_to_single_db(
         db_rel_path,
         f"attempt={attempt:02d}",
     )
-    local_dir = os.path.join(
-        config.output.local_root,
-        f"run_id={run_id}",
-        f"db={db_id:05d}",
-        f"attempt={attempt:02d}",
+    local_dir = (
+        Path(config.output.local_root)
+        / f"run_id={run_id}"
+        / f"db={db_id:05d}"
+        / f"attempt={attempt:02d}"
     )
-    os.makedirs(local_dir, exist_ok=True)
+    local_dir.mkdir(parents=True, exist_ok=True)
 
     factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory()
 

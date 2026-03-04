@@ -10,6 +10,7 @@ verify manifest content without S3.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Self
 
 from shardyfusion.manifest import ManifestArtifact
@@ -53,7 +54,7 @@ class TrackingFactory:
     def __init__(self) -> None:
         self.adapters: list[TrackingAdapter] = []
 
-    def __call__(self, *, db_url: str, local_dir: str) -> TrackingAdapter:
+    def __call__(self, *, db_url: str, local_dir: Path) -> TrackingAdapter:
         adapter = TrackingAdapter()
         self.adapters.append(adapter)
         return adapter

@@ -5,6 +5,7 @@ import logging
 import types
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol, Self
 
 from .errors import SlateDbApiError
@@ -54,7 +55,7 @@ class DbAdapterFactory(Protocol):
         self,
         *,
         db_url: str,
-        local_dir: str,
+        local_dir: Path,
     ) -> DbAdapter:
         """Construct an opened adapter instance."""
         ...
@@ -67,7 +68,7 @@ class SlateDbFactory:
     env_file: str | None = None
     settings: JsonObject | None = None
 
-    def __call__(self, *, db_url: str, local_dir: str) -> "DefaultSlateDbAdapter":
+    def __call__(self, *, db_url: str, local_dir: Path) -> "DefaultSlateDbAdapter":
         return DefaultSlateDbAdapter(
             local_dir=local_dir,
             db_url=db_url,
@@ -82,7 +83,7 @@ class DefaultSlateDbAdapter:
     def __init__(
         self,
         *,
-        local_dir: str,
+        local_dir: Path,
         db_url: str,
         env_file: str | None,
         settings: JsonObject | None,
@@ -102,7 +103,7 @@ class DefaultSlateDbAdapter:
 
         try:
             self._db = SlateDB(
-                local_dir,
+                str(local_dir),
                 url=db_url,
                 env_file=env_file,
                 settings=settings_payload,
@@ -193,7 +194,7 @@ class DefaultSlateDbAdapter:
 def default_adapter_factory(
     *,
     db_url: str,
-    local_dir: str,
+    local_dir: Path,
 ) -> DbAdapter:
     """Factory for default adapter instances (uses SlateDbFactory with no config)."""
 

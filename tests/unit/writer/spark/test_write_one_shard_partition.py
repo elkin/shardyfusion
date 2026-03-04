@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -58,7 +59,7 @@ def _make_factory(adapter: _FakeAdapter) -> DbAdapterFactory:
     def factory(
         *,
         db_url: str,
-        local_dir: str,
+        local_dir: Path,
     ) -> _FakeAdapter:
         return adapter
 
