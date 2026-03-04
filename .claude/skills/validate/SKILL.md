@@ -74,7 +74,15 @@ Verify that Docker, GitHub Actions, and tox all use consistent Python and Java v
    - `.github/workflows/ci.yml` (setup-java steps)
    - `docker/ci.Dockerfile` (Java installation)
    - `tox.ini` (any Java-related settings)
-4. **Version drift** — Flag and fix any interpreter or runtime version drift between these files.
+4. **Component Python version constraints** — Some components do not support all Python versions. Verify that:
+   - `tox.ini` `env_list` and labels only include supported Python versions per component
+   - `.github/workflows/ci.yml` matrix entries only include supported Python versions per component
+   - Current constraints (update this list as constraints change):
+     - **Dask writer** (`daskwriter`): Python 3.11–3.13 only (no 3.14)
+     - **Ray writer** (`raywriter`): Python 3.11–3.13 only (no 3.14)
+     - **`all` composite env**: must not include py314 if it installs Dask or Ray extras
+   - Flag any environment or CI job that pairs a constrained component with an unsupported Python version
+5. **Version drift** — Flag and fix any interpreter or runtime version drift between these files.
 
 If any inconsistencies are found, **fix them** before continuing.
 
