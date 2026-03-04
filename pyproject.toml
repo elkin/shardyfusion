@@ -45,8 +45,8 @@ cli = [
 ]
 all = [
   "pyspark>=3.3",
-  "dask[dataframe]>=2024.1",
-  "ray[data]>=2.20",
+  "dask[dataframe]>=2024.1; python_version<'3.14'",
+  "ray[data]>=2.20; python_version<'3.14'",
   "slatedb",
   "boto3>=1.28",
   "click>=8.0",

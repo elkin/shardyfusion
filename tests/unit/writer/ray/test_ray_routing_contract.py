@@ -7,11 +7,8 @@ function against the canonical routing function.
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
-os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
 ray_data = pytest.importorskip("ray.data")
 import ray  # noqa: E402
 
@@ -29,13 +26,6 @@ from tests.unit.writer.test_routing_contract import (  # noqa: E402
     EDGE_CASE_KEYS,
     U32_EDGE_CASE_KEYS,
 )
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _ray_init():
-    ray.init(num_cpus=2, ignore_reinit_error=True)
-    yield
-    ray.shutdown()
 
 
 @pytest.mark.parametrize("num_dbs", [1, 2, 3, 5, 7, 8, 16, 64, 128])

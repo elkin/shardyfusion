@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import json
-import os
 
 import pytest
 
-os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
 ray_data = pytest.importorskip("ray.data")
 import ray  # noqa: E402
 
@@ -23,13 +21,6 @@ from shardyfusion.sharding_types import (  # noqa: E402
 )
 from shardyfusion.testing import file_backed_adapter_factory  # noqa: E402
 from shardyfusion.writer.ray import write_sharded  # noqa: E402
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _ray_init():
-    ray.init(num_cpus=2, ignore_reinit_error=True)
-    yield
-    ray.shutdown()
 
 
 def test_ray_writer_publishes_manifest_and_current_to_local_s3(

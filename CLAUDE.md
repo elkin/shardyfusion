@@ -224,6 +224,7 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **Dask writer rejects `CUSTOM_EXPR` sharding**: Unlike the Spark writer, the Dask writer raises `ConfigValidationError` for custom expression sharding. Only `HASH` and `RANGE` are supported.
 - **Ray writer rejects `CUSTOM_EXPR` sharding**: Same as Dask — only `HASH` and `RANGE` are supported.
 - **Ray writer temporarily sets `DataContext.shuffle_strategy`**: During repartition, the Ray writer sets `DataContext.shuffle_strategy = "HASH_SHUFFLE"` and restores the previous value in a `try/finally` block.
+- **Ray tests need `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0`**: Ray ≥ 2.47 auto-detects `uv run` in the process tree and overrides worker Python to create fresh venvs. The env var is set in `tox.ini` for raywriter envs. For direct pytest, either set the var or use `uv run --extra writer-ray pytest ...`.
 
 ## Environment Notes
 

@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import json
-import os
 import pathlib
 
 import pytest
 
-os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
 ray_data = pytest.importorskip("ray.data")
 import ray  # noqa: E402
 
@@ -38,19 +36,6 @@ from tests.helpers.tracking import (  # noqa: E402
     TrackingAdapter,
     TrackingFactory,
 )
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _ray_init():
-    """Initialize Ray once per test session."""
-    ray.init(num_cpus=2, ignore_reinit_error=True)
-    yield
-    ray.shutdown()
-
 
 # ---------------------------------------------------------------------------
 # Helpers
