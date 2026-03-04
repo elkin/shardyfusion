@@ -29,6 +29,8 @@ class _RangeInterval:
 class SnapshotRouter:
     """Route point lookups to a shard database id using manifest sharding metadata."""
 
+    encode_lookup_key: Callable[[KeyInput], bytes]
+
     def __init__(
         self, required_build: RequiredBuildMeta, shards: list[RequiredShardMeta]
     ) -> None:
@@ -41,7 +43,7 @@ class SnapshotRouter:
         self._boundaries = list(required_build.sharding.boundaries or [])
         self._range_intervals = self._build_range_intervals(self.shards)
         self._route_one_impl = self._build_route_one_impl()
-        self._lookup_key_encoder = self._build_lookup_key_encoder()
+        self.encode_lookup_key = self._build_lookup_key_encoder()
 
     def route_one(self, key: KeyInput) -> int:
         """Route one key to db_id."""
@@ -56,11 +58,6 @@ class SnapshotRouter:
             db_id = self.route_one(key)
             grouped.setdefault(db_id, []).append(key)
         return grouped
-
-    def encode_lookup_key(self, key: KeyInput) -> bytes:
-        """Encode lookup key for SlateDB read calls."""
-
-        return self._lookup_key_encoder(key)
 
     def _build_lookup_key_encoder(self) -> Callable[[KeyInput], bytes]:
         if self.key_encoding == KeyEncoding.U64BE:
