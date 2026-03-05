@@ -29,6 +29,7 @@ class _RangeInterval:
 class SnapshotRouter:
     """Route point lookups to a shard database id using manifest sharding metadata."""
 
+    route_one: Callable[[KeyInput], int]
     encode_lookup_key: Callable[[KeyInput], bytes]
 
     def __init__(
@@ -42,13 +43,8 @@ class SnapshotRouter:
 
         self._boundaries = list(required_build.sharding.boundaries or [])
         self._range_intervals = self._build_range_intervals(self.shards)
-        self._route_one_impl = self._build_route_one_impl()
+        self.route_one = self._build_route_one()
         self.encode_lookup_key = self._build_lookup_key_encoder()
-
-    def route_one(self, key: KeyInput) -> int:
-        """Route one key to db_id."""
-
-        return self._route_one_impl(key)
 
     def group_keys(self, keys: list[KeyInput]) -> dict[int, list[KeyInput]]:
         """Group keys by routed db id while preserving order within each shard bucket."""
@@ -114,7 +110,7 @@ class SnapshotRouter:
             "Range routing requires shard min/max ranges or sharding boundaries in manifest."
         )
 
-    def _build_route_one_impl(self) -> Callable[[KeyInput], int]:
+    def _build_route_one(self) -> Callable[[KeyInput], int]:
         if self.strategy == ShardingStrategy.HASH:
             payload_fn = _makexxhash64_payload(self.key_encoding)
             num_dbs = self.num_dbs
