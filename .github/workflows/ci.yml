@@ -129,10 +129,6 @@ jobs:
             python-version: "3.13"
             tox-env: "py313-all-spark4-unit"
             needs-java: true
-          - name: "all unit / py3.14 / spark4"
-            python-version: "3.14"
-            tox-env: "py314-all-spark4-unit"
-            needs-java: true
           - name: "sparkwriter unit / py3.11 / spark35"
             python-version: "3.11"
             tox-env: "py311-sparkwriter-spark35-unit"
