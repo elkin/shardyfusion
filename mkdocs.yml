@@ -32,6 +32,7 @@ nav:
   - Observability: observability.md
   - Architecture: how-it-works.md
   - Operations: operations.md
+  - Cloud Testing: cloud-testing.md
   - Release Process: release.md
   - Glossary: glossary.md
   - API Reference: api.md
