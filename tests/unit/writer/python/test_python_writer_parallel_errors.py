@@ -94,7 +94,7 @@ def test_worker_crash_raises_error() -> None:
 
     records = [{"id": i, "val": b"x"} for i in range(100)]
 
-    with pytest.raises((ShardyfusionError, Exception)):
+    with pytest.raises(ShardyfusionError):
         _write_parallel(
             records=records,
             config=config,

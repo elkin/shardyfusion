@@ -73,9 +73,9 @@ reader = ShardedReader(
 
 | Event | Payload | Description |
 |---|---|---|
-| `S3_RETRY` | `attempt`, `delay_s`, `error` | S3 operation being retried |
-| `S3_RETRY_EXHAUSTED` | `attempts`, `error` | All S3 retry attempts failed |
-| `RATE_LIMITER_THROTTLED` | `delay_s`, `tokens` | Rate limiter imposed a wait |
+| `S3_RETRY` | `attempt`, `max_retries`, `delay_s` | S3 operation being retried |
+| `S3_RETRY_EXHAUSTED` | `attempts` | All S3 retry attempts failed |
+| `RATE_LIMITER_THROTTLED` | `wait_seconds` | Rate limiter imposed a wait |
 
 ## Logging
 
@@ -112,7 +112,7 @@ class PrometheusCollector:
             case MetricEvent.S3_RETRY:
                 counter_inc("s3_retries_total")
             case MetricEvent.RATE_LIMITER_THROTTLED:
-                histogram_observe("rate_limiter_delay_s", payload["delay_s"])
+                histogram_observe("rate_limiter_delay_s", payload["wait_seconds"])
             case _:
                 pass  # Ignore unknown events
 ```

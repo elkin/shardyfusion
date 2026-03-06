@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import tempfile
 from io import StringIO
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -42,9 +41,10 @@ class _FakeReader:
 
 
 def _write_script(content: str) -> str:
-    path = Path(tempfile.mktemp(suffix=".yaml"))
-    path.write_text(content, encoding="utf-8")
-    return str(path)
+    f = tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", delete=False)
+    f.write(content)
+    f.close()
+    return f.name
 
 
 def test_load_script_valid() -> None:

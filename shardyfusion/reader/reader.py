@@ -707,7 +707,13 @@ class ConcurrentShardedReader(_BaseShardedReader):
             should_close = state.retired and state.refcount == 0
 
         if should_close:
-            _close_state(state)
+            try:
+                _close_state(state)
+            except Exception:
+                # Deferred cleanup of retired state — per-handle failures are
+                # already logged inside _close_state.  Do not propagate to the
+                # caller (who is finishing an unrelated read operation).
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -787,6 +793,14 @@ def _close_state(state: _ReaderState) -> None:
                 manifest_ref=state.manifest_ref,
             )
     if errors:
+        log_failure(
+            "reader_state_close_partial_failure",
+            severity=FailureSeverity.ERROR,
+            logger=_logger,
+            error=errors[0][1],
+            failed_db_ids=[db_id for db_id, _ in errors],
+            total_handles=len(state.handles),
+        )
         raise SlateDbApiError(
             f"Failed to close {len(errors)} shard handle(s): "
             f"db_ids={[db_id for db_id, _ in errors]}"
