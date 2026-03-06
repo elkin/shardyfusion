@@ -1,16 +1,56 @@
 # shardyfusion
 
-`shardyfusion` is a sharded snapshot writer/reader library for SlateDB.
+[![CI](https://github.com/slatedb/shardyfusion/actions/workflows/ci.yml/badge.svg)](https://github.com/slatedb/shardyfusion/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/shardyfusion)](https://pypi.org/project/shardyfusion/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-It provides:
+## What is shardyfusion?
 
-- writer-side APIs to build `num_dbs` independent SlateDB shard databases
+shardyfusion solves the problem of building and reading sharded key-value snapshots on S3-compatible storage. It lets you write millions of key-value pairs across N independent [SlateDB](https://slatedb.io) shard databases using your preferred compute framework, then read them back with consistent routing from any Python service.
+
+**When to use it:** You have a batch pipeline that produces key-value data (features, embeddings, precomputed results) and a serving layer that needs fast key lookups. shardyfusion handles the sharding, publishing, and routing so your serving code just calls `reader.get(key)`.
+
+## Features
+
+- Writer-side APIs to build `num_dbs` independent SlateDB shard databases
   - **Spark** (`writer-spark`) — PySpark DataFrame-based, requires Java
   - **Dask** (`writer-dask`) — Dask DataFrame-based, no Java required
   - **Ray** (`writer-ray`) — Ray Data Dataset-based, no Java required
   - **Python** (`writer-python`) — pure-Python iterator-based, no Java required
-- manifest + `_CURRENT` publishing protocol (default S3, pluggable interfaces)
-- reader-side routing helpers for service-side `get` and `multi_get`
+- Manifest + `_CURRENT` publishing protocol (default S3, pluggable interfaces)
+- Reader-side routing helpers for service-side `get` and `multi_get`
+- `slate-reader` CLI for interactive and batch lookups
+- Token-bucket rate limiting for all writer paths
+- Pluggable interfaces for manifest building, publishing, and reading
+
+### When to use each writer backend
+
+| Backend | Best for | Requires |
+|---|---|---|
+| **Spark** | Large-scale batch ETL, existing Spark pipelines | Java 17+ |
+| **Dask** | Medium-scale batch, Python-native distributed computing | — |
+| **Ray** | ML pipelines, Ray ecosystem integration | — |
+| **Python** | Small datasets, scripts, testing, custom pipelines | — |
+
+## Architecture
+
+```mermaid
+graph LR
+    subgraph Write
+        A[DataFrame / Iterable] --> B[Sharding]
+        B --> C[Shard Writers]
+        C --> D[S3: shard DBs]
+        C --> E[S3: manifest]
+        E --> F[S3: _CURRENT]
+    end
+    subgraph Read
+        F --> G[SnapshotRouter]
+        G --> H[get / multi_get]
+        H --> D
+    end
+```
+
+[Full documentation](https://slatedb.github.io/shardyfusion/) | [Architecture details](docs/how-it-works.md)
 
 ## Runtime Prerequisites
 
@@ -168,8 +208,8 @@ podman run --rm -v "$PWD:/workspace" -w /workspace shardyfusion-ci \
   /bin/bash -lc "uv sync --all-extras --dev && uv run tox -m quality && uv run tox -m unit && uv run tox -m integration"
 ```
 
-The image includes both Python 3.11 and Python 3.10 so tox `py311-*` and
-`py310-*` environments execute instead of being skipped.
+The image includes Python 3.11 and later so tox `py311-*` and above
+environments execute instead of being skipped.
 
 Short container prefix via `just`:
 

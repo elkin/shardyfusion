@@ -109,7 +109,30 @@ def write_sharded(
     max_writes_per_second: float | None = None,
     verify_routing: bool = True,
 ) -> BuildResult:
-    """Write a Dask DataFrame into N independent sharded databases and publish manifest."""
+    """Write a Dask DataFrame into N independent sharded databases and publish manifest.
+
+    Args:
+        ddf: Dask DataFrame containing at least the key column and value column(s).
+        config: Write configuration (num_dbs, s3_prefix, sharding strategy, etc.).
+            CUSTOM_EXPR sharding is not supported — only HASH and RANGE.
+        key_col: Name of the key column used for shard routing.
+        value_spec: Specifies how DataFrame rows are serialized to bytes
+            (binary_col, json_cols, or a callable encoder).
+        sort_within_partitions: If True, sort rows by key within each partition.
+        max_writes_per_second: Optional rate limit (token-bucket) for write throughput.
+        verify_routing: If True (default), spot-check that Dask-assigned shard IDs
+            match Python routing on a sample of written rows.
+
+    Returns:
+        BuildResult with manifest reference, shard metadata, and build statistics.
+
+    Raises:
+        ConfigValidationError: If configuration is invalid or CUSTOM_EXPR is used.
+        ShardAssignmentError: If rows cannot be assigned to valid shard IDs.
+        ShardCoverageError: If partition results don't cover all expected shards.
+        PublishManifestError: If manifest upload to S3 fails.
+        PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
+    """
 
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex

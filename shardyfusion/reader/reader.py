@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from queue import Queue
-from typing import Any
+from typing import Any, Literal, Self
 
 from shardyfusion.errors import (
     ReaderStateError,
@@ -215,6 +215,9 @@ class _BaseShardedReader:
             self._executor.shutdown(wait=False)
             self._executor = None
 
+    def __enter__(self) -> Self:
+        return self
+
     def __exit__(self, *args: object) -> None:
         self.close()
 
@@ -401,9 +404,6 @@ class ShardedReader(_BaseShardedReader):
         )
         self._emit(MetricEvent.READER_CLOSED, {"num_handles": num_readers})
 
-    def __enter__(self) -> "ShardedReader":
-        return self
-
     def _load_initial_state(self) -> _SimpleReaderState:
         current = self._load_current()
         manifest = self._manifest_reader.load_manifest(
@@ -448,7 +448,7 @@ class ConcurrentShardedReader(_BaseShardedReader):
         current_name: str = "_CURRENT",
         reader_factory: ShardReaderFactory | None = None,
         slate_env_file: str | None = None,
-        thread_safety: str = "lock",
+        thread_safety: Literal["lock", "pool"] = "lock",
         max_workers: int | None = None,
         metrics_collector: MetricsCollector | None = None,
     ) -> None:
@@ -638,9 +638,6 @@ class ConcurrentShardedReader(_BaseShardedReader):
         )
         self._emit(MetricEvent.READER_CLOSED, {"num_handles": len(self._state.handles)})
 
-    def __enter__(self) -> "ConcurrentShardedReader":
-        return self
-
     def _load_initial_state(self) -> _ReaderState:
         current = self._load_current()
         manifest = self._manifest_reader.load_manifest(
@@ -741,21 +738,24 @@ def _read_group(
 
 def _read_one(handle: _ShardHandle, key: bytes) -> bytes | None:
     if handle.mode == "lock":
-        assert handle.lock is not None
-        assert handle.reader is not None
+        if handle.lock is None or handle.reader is None:
+            raise RuntimeError("lock-mode handle missing lock or reader")
         with handle.lock:
             return handle.reader.get(key)
 
-    assert handle.pool is not None
+    if handle.pool is None:
+        raise RuntimeError("pool-mode handle missing reader pool")
     with handle.pool.checkout() as reader:
         return reader.get(key)
 
 
 def _close_simple_state(state: _SimpleReaderState) -> None:
+    errors: list[tuple[int, BaseException]] = []
     for db_id, reader in state.readers.items():
         try:
             reader.close()
         except Exception as exc:
+            errors.append((db_id, exc))
             log_failure(
                 "reader_handle_close_failed",
                 severity=FailureSeverity.ERROR,
@@ -764,6 +764,11 @@ def _close_simple_state(state: _SimpleReaderState) -> None:
                 db_id=db_id,
                 manifest_ref=state.manifest_ref,
             )
+    if errors:
+        raise SlateDbApiError(
+            f"Failed to close {len(errors)} shard reader(s): "
+            f"db_ids={[db_id for db_id, _ in errors]}"
+        ) from errors[0][1]
 
 
 def _close_state(state: _ReaderState) -> None:
@@ -782,14 +787,10 @@ def _close_state(state: _ReaderState) -> None:
                 manifest_ref=state.manifest_ref,
             )
     if errors:
-        log_failure(
-            "reader_state_close_partial_failure",
-            severity=FailureSeverity.ERROR,
-            logger=_logger,
-            error=errors[0][1],
-            failed_db_ids=[db_id for db_id, _ in errors],
-            total_handles=len(state.handles),
-        )
+        raise SlateDbApiError(
+            f"Failed to close {len(errors)} shard handle(s): "
+            f"db_ids={[db_id for db_id, _ in errors]}"
+        ) from errors[0][1]
 
 
 def _close_handle(handle: _ShardHandle) -> None:

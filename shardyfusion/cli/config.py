@@ -6,6 +6,7 @@ import sys
 import tempfile
 import tomllib
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -23,7 +24,7 @@ class ReaderConfig(BaseModel):
     local_root: str = Field(
         default_factory=lambda: str(Path(tempfile.gettempdir()) / "shardyfusion")
     )
-    thread_safety: str = "lock"
+    thread_safety: Literal["lock", "pool"] = "lock"
     max_workers: int = Field(default=4, ge=1)
     slate_env_file: str | None = None
     credentials_profile: str = "default"

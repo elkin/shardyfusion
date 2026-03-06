@@ -267,7 +267,8 @@ def publish_manifest_and_current(
             include_traceback=True,
         )
         raise PublishCurrentError(
-            f"Manifest already published at {manifest_ref}; failed publishing CURRENT"
+            f"Manifest already published at {manifest_ref}; failed publishing CURRENT",
+            manifest_ref=manifest_ref,
         ) from exc
 
     log_event(

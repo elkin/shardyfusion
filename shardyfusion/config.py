@@ -50,6 +50,23 @@ class WriteConfig:
     Framework-specific parameters (``key_col``, ``value_spec``,
     ``sort_within_partitions``) live on the writer function signature,
     not here.
+
+    Args:
+        num_dbs: Number of shard databases to create. Must be > 0.
+        s3_prefix: S3 location for shard databases and manifests
+            (e.g. ``s3://bucket/prefix``).
+        key_encoding: How keys are serialized to bytes. Default ``u64be``
+            (8-byte big-endian). Use ``u32be`` for 4-byte keys.
+        batch_size: Number of key-value pairs per write batch. Default 50,000.
+        adapter_factory: Factory for creating shard database adapters.
+            Default: ``SlateDbFactory()``.
+        sharding: Sharding strategy configuration (hash, range, or custom).
+        output: Output path/layout settings.
+        manifest: Manifest/CURRENT build and publish settings.
+        metrics_collector: Optional observer for write lifecycle events.
+
+    Raises:
+        ConfigValidationError: If any parameter fails validation.
     """
 
     num_dbs: int

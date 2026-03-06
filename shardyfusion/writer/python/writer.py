@@ -40,6 +40,11 @@ _logger = get_logger(__name__)
 
 T = TypeVar("T")
 
+_CHUNK_DIVISOR = 10
+_WORKER_JOIN_TIMEOUT_S = 60
+_WORKER_TERMINATE_TIMEOUT_S = 5
+_RESULT_COLLECT_TIMEOUT_S = 10
+
 
 def write_sharded(
     records: Iterable[T],
@@ -51,7 +56,31 @@ def write_sharded(
     max_queue_size: int = 100,
     max_writes_per_second: float | None = None,
 ) -> BuildResult:
-    """Write an iterable of records into N sharded databases."""
+    """Write an iterable of records into N sharded databases.
+
+    Args:
+        records: Iterable of records to write. Each record is passed to
+            ``key_fn`` and ``value_fn`` to extract the key and value bytes.
+        config: Write configuration (num_dbs, s3_prefix, sharding strategy, etc.).
+            CUSTOM_EXPR and boundary-less RANGE sharding are not supported.
+        key_fn: Callable that extracts the routing key from each record.
+        value_fn: Callable that serializes each record to value bytes.
+        parallel: If True, use one subprocess per shard (``multiprocessing.spawn``).
+            If False (default), all shard adapters are open simultaneously in
+            a single process.
+        max_queue_size: Maximum per-shard queue depth in parallel mode.
+        max_writes_per_second: Optional rate limit (token-bucket) for write throughput.
+
+    Returns:
+        BuildResult with manifest reference, shard metadata, and build statistics.
+
+    Raises:
+        ConfigValidationError: If configuration is invalid.
+        ShardCoverageError: If partition results don't cover all expected shards.
+        PublishManifestError: If manifest upload to S3 fails.
+        PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
+        ShardyfusionError: If a worker process fails in parallel mode.
+    """
 
     _validate_sharding(config)
     run_id = config.output.run_id or uuid4().hex
@@ -405,7 +434,7 @@ def _write_parallel(
     """Multi-process mode: one worker per shard, main routes to queues."""
 
     num_dbs = config.num_dbs
-    chunk_size = max(1, config.batch_size // 10)
+    chunk_size = max(1, config.batch_size // _CHUNK_DIVISOR)
     ctx = multiprocessing.get_context("spawn")
 
     queues: list[multiprocessing.Queue[list[tuple[bytes, bytes]] | None]] = [
@@ -472,16 +501,37 @@ def _write_parallel(
                 pass
         raise
     finally:
-        for p in workers:
-            p.join(timeout=60)
+        _join_and_terminate_workers(workers)
+
+    # Check for worker failures before collecting results
+    failed = [(i, p.exitcode) for i, p in enumerate(workers) if p.exitcode]
+    if failed:
+        raise ShardyfusionError(
+            f"Worker process(es) exited with errors: {[(db_id, code) for db_id, code in failed]}"
+        )
 
     # Collect results
-    results: list[ShardAttemptResult] = []
-    for _ in range(num_dbs):
-        result = result_queue.get(timeout=10)
-        # Patch in min/max from main process tracking
-        result.min_key = min_keys[result.db_id]
-        result.max_key = max_keys[result.db_id]
-        results.append(result)
+    try:
+        results: list[ShardAttemptResult] = []
+        for _ in range(num_dbs):
+            result = result_queue.get(timeout=_RESULT_COLLECT_TIMEOUT_S)
+            # Patch in min/max from main process tracking
+            result.min_key = min_keys[result.db_id]
+            result.max_key = max_keys[result.db_id]
+            results.append(result)
+    except Exception:
+        _join_and_terminate_workers(workers)
+        raise
 
     return results
+
+
+def _join_and_terminate_workers(workers: list[multiprocessing.Process]) -> None:
+    """Join workers with timeout, escalating to terminate/kill if needed."""
+    for p in workers:
+        p.join(timeout=_WORKER_JOIN_TIMEOUT_S)
+        if p.is_alive():
+            p.terminate()
+            p.join(timeout=_WORKER_TERMINATE_TIMEOUT_S)
+            if p.is_alive():
+                p.kill()

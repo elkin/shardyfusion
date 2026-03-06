@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.11+
 - Java 17+ (for Spark integration tests)
 - `uv` installed
 

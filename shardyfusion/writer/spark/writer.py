@@ -85,7 +85,34 @@ def write_sharded(
     max_writes_per_second: float | None = None,
     verify_routing: bool = True,
 ) -> BuildResult:
-    """Write a DataFrame into N independent sharded databases and publish manifest metadata."""
+    """Write a DataFrame into N independent sharded databases and publish manifest metadata.
+
+    Args:
+        df: PySpark DataFrame containing at least the key column and value column(s).
+        config: Write configuration (num_dbs, s3_prefix, sharding strategy, etc.).
+        key_col: Name of the integer key column used for shard routing.
+        value_spec: Specifies how DataFrame rows are serialized to bytes
+            (binary_col, json_cols, or a callable encoder).
+        sort_within_partitions: If True, sort rows by key within each partition
+            before writing. Useful for range-scan workloads.
+        spark_conf_overrides: Optional Spark config overrides applied for the
+            duration of the write (restored after completion).
+        cache_input: If True, cache the input DataFrame before processing.
+        storage_level: Spark storage level for caching (default: MEMORY_AND_DISK).
+        max_writes_per_second: Optional rate limit (token-bucket) for write throughput.
+        verify_routing: If True (default), spot-check that Spark-assigned shard IDs
+            match Python routing on a sample of written rows.
+
+    Returns:
+        BuildResult with manifest reference, shard metadata, and build statistics.
+
+    Raises:
+        ConfigValidationError: If configuration is invalid.
+        ShardAssignmentError: If rows cannot be assigned to valid shard IDs.
+        ShardCoverageError: If partition results don't cover all expected shards.
+        PublishManifestError: If manifest upload to S3 fails.
+        PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
+    """
 
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex

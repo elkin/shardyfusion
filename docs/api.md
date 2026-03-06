@@ -4,6 +4,22 @@
 
 ::: shardyfusion.config
 
+## Errors
+
+::: shardyfusion.errors
+
+## Metrics
+
+::: shardyfusion.metrics
+
+## Type Definitions
+
+::: shardyfusion.type_defs
+
+## Sharding Types
+
+::: shardyfusion.sharding_types
+
 ## Sharding (Spark)
 
 ::: shardyfusion.writer.spark.sharding
