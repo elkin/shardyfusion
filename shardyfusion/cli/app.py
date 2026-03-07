@@ -24,6 +24,8 @@ from .output import (
     build_info_result,
     build_multiget_result,
     build_refresh_result,
+    build_route_result,
+    build_shards_result,
     emit,
 )
 
@@ -263,6 +265,40 @@ def info_cmd(ctx: click.Context) -> None:
             emit(result, output_cfg)
         except Exception as exc:
             result = build_error_result("info", None, str(exc))
+            emit(result, output_cfg, file=sys.stderr)
+            sys.exit(1)
+
+
+@cli.command("shards")
+@click.pass_context
+def shards_cmd(ctx: click.Context) -> None:
+    """Show per-shard details from the manifest."""
+    output_cfg = _get_output_cfg(ctx)
+    with _build_reader(ctx) as reader:
+        try:
+            shards = reader.shard_details()
+            result = build_shards_result(shards)
+            emit(result, output_cfg)
+        except Exception as exc:
+            result = build_error_result("shards", None, str(exc))
+            emit(result, output_cfg, file=sys.stderr)
+            sys.exit(1)
+
+
+@cli.command("route")
+@click.argument("key")
+@click.pass_context
+def route_cmd(ctx: click.Context, key: str) -> None:
+    """Show which shard a KEY routes to (without performing a lookup)."""
+    output_cfg = _get_output_cfg(ctx)
+    with _build_reader(ctx) as reader:
+        try:
+            coerced = coerce_cli_key(key, reader.key_encoding)
+            db_id = reader.route_key(coerced)
+            result = build_route_result(key, db_id)
+            emit(result, output_cfg)
+        except Exception as exc:
+            result = build_error_result("route", key, str(exc))
             emit(result, output_cfg, file=sys.stderr)
             sys.exit(1)
 

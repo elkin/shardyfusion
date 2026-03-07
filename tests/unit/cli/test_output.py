@@ -168,3 +168,80 @@ class TestFormatResult:
         result = {"op": "get", "key": "k"}
         out = format_result(result, "xml")
         assert json.loads(out)["key"] == "k"
+
+    def test_text_shards(self) -> None:
+        result = {
+            "op": "shards",
+            "shards": [
+                {
+                    "db_id": 0,
+                    "row_count": 10,
+                    "min_key": 0,
+                    "max_key": 49,
+                    "db_url": "s3://b/s0",
+                },
+                {
+                    "db_id": 1,
+                    "row_count": 20,
+                    "min_key": None,
+                    "max_key": None,
+                    "db_url": "s3://b/s1",
+                },
+            ],
+        }
+        out = format_result(result, "text")
+        assert "db_id=0" in out
+        assert "rows=10" in out
+
+    def test_text_route(self) -> None:
+        result = {"op": "route", "key": "42", "db_id": 3}
+        out = format_result(result, "text")
+        assert "42 -> shard 3" in out
+
+    def test_table_shards(self) -> None:
+        result = {
+            "op": "shards",
+            "shards": [
+                {
+                    "db_id": 0,
+                    "row_count": 10,
+                    "min_key": 0,
+                    "max_key": 49,
+                    "db_url": "s3://b/s0",
+                },
+            ],
+        }
+        out = format_result(result, "table")
+        assert "DB_ID" in out
+        assert "ROWS" in out
+
+
+# ---------------------------------------------------------------------------
+# build_shards_result / build_route_result
+# ---------------------------------------------------------------------------
+
+
+class TestBuildShardsResult:
+    def test_structure(self) -> None:
+        from shardyfusion.cli.output import build_shards_result
+
+        shards = [
+            {
+                "db_id": 0,
+                "row_count": 5,
+                "min_key": None,
+                "max_key": None,
+                "db_url": "s3://x",
+            }
+        ]
+        result = build_shards_result(shards)
+        assert result["op"] == "shards"
+        assert result["shards"] == shards
+
+
+class TestBuildRouteResult:
+    def test_structure(self) -> None:
+        from shardyfusion.cli.output import build_route_result
+
+        result = build_route_result("42", 3)
+        assert result == {"op": "route", "key": "42", "db_id": 3}

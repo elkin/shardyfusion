@@ -289,6 +289,14 @@ class ShardedReader(_BaseShardedReader):
             row_count=sum(s.row_count for s in state.router.shards),
         )
 
+    def shard_details(self) -> list[dict[str, Any]]:
+        """Return per-shard metadata from the current manifest."""
+        return _shard_details_from_router(self._state.router)
+
+    def route_key(self, key: KeyInput) -> int:
+        """Return the shard db_id a key would route to."""
+        return self._state.router.route_one(key)
+
     def get(self, key: KeyInput) -> bytes | None:
         if self._closed:
             raise ReaderStateError("Reader is closed")
@@ -499,6 +507,14 @@ class ConcurrentShardedReader(_BaseShardedReader):
             key_encoding=rb.key_encoding.value,
             row_count=sum(s.row_count for s in state.router.shards),
         )
+
+    def shard_details(self) -> list[dict[str, Any]]:
+        """Return per-shard metadata from the current manifest."""
+        return _shard_details_from_router(self._state.router)
+
+    def route_key(self, key: KeyInput) -> int:
+        """Return the shard db_id a key would route to."""
+        return self._state.router.route_one(key)
 
     def get(self, key: KeyInput) -> bytes | None:
         mc = self._metrics
@@ -725,6 +741,20 @@ class ConcurrentShardedReader(_BaseShardedReader):
 # ---------------------------------------------------------------------------
 # Free functions
 # ---------------------------------------------------------------------------
+
+
+def _shard_details_from_router(router: SnapshotRouter) -> list[dict[str, Any]]:
+    """Extract per-shard metadata from a router's shard list."""
+    return [
+        {
+            "db_id": s.db_id,
+            "row_count": s.row_count,
+            "min_key": s.min_key,
+            "max_key": s.max_key,
+            "db_url": s.db_url,
+        }
+        for s in router.shards
+    ]
 
 
 def _read_group_simple(

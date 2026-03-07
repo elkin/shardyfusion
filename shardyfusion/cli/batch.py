@@ -10,6 +10,8 @@ from .output import (
     build_info_result,
     build_multiget_result,
     build_refresh_result,
+    build_route_result,
+    build_shards_result,
     emit,
 )
 
@@ -127,4 +129,18 @@ def _execute_command(
     if op == "info":
         return build_info_result(reader)
 
-    raise ValueError(f"Unknown op: {op!r}. Supported: get, multiget, refresh, info")
+    if op == "shards":
+        return build_shards_result(reader.shard_details())
+
+    if op == "route":
+        key = cmd.get("key")
+        if key is None:
+            raise ValueError("'route' command requires a 'key' field")
+        key = str(key)
+        coerced = coerce_cli_key(key, reader.key_encoding)
+        db_id = reader.route_key(coerced)
+        return build_route_result(key, db_id)
+
+    raise ValueError(
+        f"Unknown op: {op!r}. Supported: get, multiget, refresh, info, shards, route"
+    )

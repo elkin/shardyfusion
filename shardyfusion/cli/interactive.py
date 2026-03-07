@@ -12,6 +12,8 @@ from .output import (
     build_info_result,
     build_multiget_result,
     build_refresh_result,
+    build_route_result,
+    build_shards_result,
     emit,
 )
 
@@ -85,6 +87,30 @@ class SlateReaderRepl(cmd.Cmd):
             emit(result, self._interactive_cfg)
         except Exception as exc:
             self._error("info", None, str(exc))
+
+    def do_shards(self, line: str) -> None:
+        """shards — Show per-shard details."""
+        try:
+            shards = self._reader.shard_details()
+            result = build_shards_result(shards)
+            emit(result, self._interactive_cfg)
+        except Exception as exc:
+            self._error("shards", None, str(exc))
+
+    def do_route(self, line: str) -> None:
+        """route KEY — Show which shard a key routes to."""
+        parts = shlex.split(line)
+        if len(parts) != 1:
+            self._error("route", None, "Usage: route KEY")
+            return
+        raw_key = parts[0]
+        try:
+            coerced = coerce_cli_key(raw_key, self._reader.key_encoding)
+            db_id = self._reader.route_key(coerced)
+            result = build_route_result(raw_key, db_id)
+            emit(result, self._interactive_cfg)
+        except Exception as exc:
+            self._error("route", raw_key, str(exc))
 
     def do_quit(self, line: str) -> bool:
         """quit — Exit the REPL."""

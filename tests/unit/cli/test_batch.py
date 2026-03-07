@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 from io import StringIO
 from typing import Any
@@ -40,6 +41,27 @@ class _FakeReader:
             key_encoding="u64be",
             row_count=len(self._store),
         )
+
+    def shard_details(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "db_id": 0,
+                "row_count": 10,
+                "min_key": 0,
+                "max_key": 49,
+                "db_url": "s3://b/shard=00000",
+            },
+            {
+                "db_id": 1,
+                "row_count": 20,
+                "min_key": 50,
+                "max_key": 99,
+                "db_url": "s3://b/shard=00001",
+            },
+        ]
+
+    def route_key(self, key: Any) -> int:
+        return 0 if (isinstance(key, int) and key < 50) else 1
 
 
 def _write_script(content: str) -> str:
@@ -83,8 +105,6 @@ def test_run_script_multiget() -> None:
     out = StringIO()
     errors = run_script(reader, path, OutputConfig(), output_file=out)
     assert errors == 0
-    import json
-
     parsed = json.loads(out.getvalue().strip())
     assert all(r["found"] is True for r in parsed["results"])
 
@@ -143,3 +163,25 @@ def test_run_script_missing_key_in_get() -> None:
     out = StringIO()
     errors = run_script(reader, path, OutputConfig(), output_file=out)
     assert errors == 1
+
+
+def test_run_script_shards() -> None:
+    path = _write_script("commands:\n  - op: shards\n")
+    reader = _FakeReader()
+    out = StringIO()
+    errors = run_script(reader, path, OutputConfig(), output_file=out)
+    assert errors == 0
+    parsed = json.loads(out.getvalue().strip())
+    assert parsed["op"] == "shards"
+    assert len(parsed["shards"]) == 2
+
+
+def test_run_script_route() -> None:
+    path = _write_script("commands:\n  - op: route\n    key: 10\n")
+    reader = _FakeReader()
+    out = StringIO()
+    errors = run_script(reader, path, OutputConfig(), output_file=out)
+    assert errors == 0
+    parsed = json.loads(out.getvalue().strip())
+    assert parsed["op"] == "route"
+    assert parsed["db_id"] == 0

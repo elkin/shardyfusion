@@ -54,6 +54,27 @@ class _FakeReader:
             row_count=len(self._store),
         )
 
+    def shard_details(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "db_id": 0,
+                "row_count": 10,
+                "min_key": 0,
+                "max_key": 49,
+                "db_url": "s3://b/shard=00000",
+            },
+            {
+                "db_id": 1,
+                "row_count": 20,
+                "min_key": 50,
+                "max_key": 99,
+                "db_url": "s3://b/shard=00001",
+            },
+        ]
+
+    def route_key(self, key: Any) -> int:
+        return 0 if (isinstance(key, int) and key < 50) else 1
+
     def close(self) -> None:
         pass
 
@@ -177,3 +198,26 @@ class TestSubcommands:
         result = _invoke(["--output-format", "text", "get", "42"], reader=reader)
         assert result.exit_code == 0
         assert "42=" in result.output
+
+    def test_shards(self) -> None:
+        result = _invoke(["shards"])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["op"] == "shards"
+        assert len(parsed["shards"]) == 2
+        assert parsed["shards"][0]["db_id"] == 0
+        assert parsed["shards"][1]["row_count"] == 20
+
+    def test_route(self) -> None:
+        result = _invoke(["route", "10"])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["op"] == "route"
+        assert parsed["key"] == "10"
+        assert parsed["db_id"] == 0
+
+    def test_route_high_key(self) -> None:
+        result = _invoke(["route", "80"])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["db_id"] == 1

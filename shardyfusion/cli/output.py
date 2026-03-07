@@ -83,6 +83,16 @@ def build_info_result(reader: Any) -> dict[str, Any]:
     return {"op": "info", **dataclasses.asdict(info)}
 
 
+def build_shards_result(shards: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build a dict representing per-shard details."""
+    return {"op": "shards", "shards": shards}
+
+
+def build_route_result(key: str, db_id: int) -> dict[str, Any]:
+    """Build a dict representing a route lookup result."""
+    return {"op": "route", "key": key, "db_id": db_id}
+
+
 def build_error_result(op: str, key_hint: str | None, error: str) -> dict[str, Any]:
     result: dict[str, Any] = {"op": op, "error": error}
     if key_hint is not None:
@@ -121,6 +131,18 @@ def format_result(result: dict[str, Any], fmt: str) -> str:
             return f"changed={result.get('changed', False)}"
         if op == "info":
             return "\n".join(f"{k}={v}" for k, v in result.items() if k != "op")
+        if op == "shards":
+            lines = []
+            for s in result.get("shards", []):
+                parts = [f"db_id={s['db_id']}", f"rows={s['row_count']}"]
+                if s.get("min_key") is not None:
+                    parts.append(f"min={s['min_key']}")
+                if s.get("max_key") is not None:
+                    parts.append(f"max={s['max_key']}")
+                lines.append("  ".join(parts))
+            return "\n".join(lines)
+        if op == "route":
+            return f"{result.get('key', '')} -> shard {result.get('db_id', '?')}"
         if "error" in result:
             return f"error: {result['error']}"
         return json.dumps(result, ensure_ascii=False)
@@ -144,7 +166,19 @@ def format_result(result: dict[str, Any], fmt: str) -> str:
                 v = row.get("value", "null") if row.get("found") else "null"
                 lines.append(f"{k:<{col_key}}  {v:<{col_val}}")
             return "\n".join(lines)
-        # Fall back to JSON for non-multiget ops in table mode
+        if op == "shards":
+            shards = result.get("shards", [])
+            header = f"{'DB_ID':>5}  {'ROWS':>8}  {'MIN_KEY':>10}  {'MAX_KEY':>10}  URL"
+            sep = "-" * len(header)
+            lines = [header, sep]
+            for s in shards:
+                min_k = str(s.get("min_key") or "")
+                max_k = str(s.get("max_key") or "")
+                lines.append(
+                    f"{s['db_id']:>5}  {s['row_count']:>8}  {min_k:>10}  {max_k:>10}  {s['db_url']}"
+                )
+            return "\n".join(lines)
+        # Fall back to JSON for other ops in table mode
         return json.dumps(result, ensure_ascii=False, indent=2)
 
     # Unknown format: fall back to jsonl

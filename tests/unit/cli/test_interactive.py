@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from contextlib import redirect_stdout
 from io import StringIO
 from typing import Any
@@ -46,6 +47,27 @@ class _FakeReader:
             row_count=len(self._store),
         )
 
+    def shard_details(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "db_id": 0,
+                "row_count": 10,
+                "min_key": 0,
+                "max_key": 49,
+                "db_url": "s3://b/shard=00000",
+            },
+            {
+                "db_id": 1,
+                "row_count": 20,
+                "min_key": 50,
+                "max_key": 99,
+                "db_url": "s3://b/shard=00001",
+            },
+        ]
+
+    def route_key(self, key: Any) -> int:
+        return 0 if (isinstance(key, int) and key < 50) else 1
+
     def close(self) -> None:
         pass
 
@@ -89,8 +111,6 @@ def test_do_multiget() -> None:
     with redirect_stdout(buf):
         repl.onecmd("multiget 1 2 3")
     output = buf.getvalue()
-    import json
-
     parsed = json.loads(output)
     results = parsed["results"]
     assert results[0]["found"] is True
@@ -139,6 +159,34 @@ def test_do_eof_returns_true() -> None:
     buf = StringIO()
     with redirect_stdout(buf):
         assert repl.onecmd("EOF") is True
+
+
+def test_do_shards() -> None:
+    repl = _make_repl()
+    buf = StringIO()
+    with redirect_stdout(buf):
+        repl.onecmd("shards")
+    parsed = json.loads(buf.getvalue())
+    assert parsed["op"] == "shards"
+    assert len(parsed["shards"]) == 2
+
+
+def test_do_route() -> None:
+    repl = _make_repl()
+    buf = StringIO()
+    with redirect_stdout(buf):
+        repl.onecmd("route 10")
+    parsed = json.loads(buf.getvalue())
+    assert parsed["op"] == "route"
+    assert parsed["db_id"] == 0
+
+
+def test_do_route_no_args() -> None:
+    repl = _make_repl()
+    buf = StringIO()
+    with redirect_stdout(buf):
+        repl.onecmd("route")
+    # Should print error but not crash
 
 
 def test_print_banner() -> None:
