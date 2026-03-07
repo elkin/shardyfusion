@@ -44,6 +44,8 @@ class SnapshotInfo:
     sharding: str
     created_at: str
     manifest_ref: str
+    key_encoding: str = "u64be"
+    row_count: int = 0
 
 
 @dataclass(slots=True)
@@ -283,6 +285,8 @@ class ShardedReader(_BaseShardedReader):
             sharding=rb.sharding.strategy.value,
             created_at=rb.created_at,
             manifest_ref=state.manifest_ref,
+            key_encoding=rb.key_encoding.value,
+            row_count=sum(s.row_count for s in state.router.shards),
         )
 
     def get(self, key: KeyInput) -> bytes | None:
@@ -492,6 +496,8 @@ class ConcurrentShardedReader(_BaseShardedReader):
             sharding=rb.sharding.strategy.value,
             created_at=rb.created_at,
             manifest_ref=state.manifest_ref,
+            key_encoding=rb.key_encoding.value,
+            row_count=sum(s.row_count for s in state.router.shards),
         )
 
     def get(self, key: KeyInput) -> bytes | None:

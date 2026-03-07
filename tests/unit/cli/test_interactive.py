@@ -42,6 +42,8 @@ class _FakeReader:
             sharding="hash",
             created_at="2026-01-01T00:00:00+00:00",
             manifest_ref="s3://bucket/manifests/test",
+            key_encoding=self._key_encoding,
+            row_count=len(self._store),
         )
 
     def close(self) -> None:

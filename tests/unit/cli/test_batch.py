@@ -37,6 +37,8 @@ class _FakeReader:
             sharding="hash",
             created_at="2026-01-01T00:00:00+00:00",
             manifest_ref="s3://bucket/manifests/test",
+            key_encoding="u64be",
+            row_count=len(self._store),
         )
 
 

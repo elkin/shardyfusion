@@ -50,6 +50,8 @@ class _FakeReader:
             sharding="hash",
             created_at="2026-01-01T00:00:00+00:00",
             manifest_ref="manifest-001.json",
+            key_encoding=self._key_encoding,
+            row_count=len(self._store),
         )
 
     def close(self) -> None:
@@ -153,6 +155,8 @@ class TestSubcommands:
         parsed = json.loads(result.output)
         assert parsed["op"] == "info"
         assert parsed["run_id"] == "test-run"
+        assert parsed["key_encoding"] == "u64be"
+        assert parsed["row_count"] == 0
 
     def test_refresh(self) -> None:
         result = _invoke(["refresh"])
