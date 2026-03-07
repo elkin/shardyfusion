@@ -68,6 +68,16 @@ class TestBuildMultigetResult:
         assert result["results"][0]["found"] is True
         assert result["results"][1]["found"] is False
 
+    def test_coerced_keys_int_lookup(self) -> None:
+        """When values dict is keyed by int, coerced_keys enables correct lookup."""
+        cfg = OutputConfig(value_encoding="utf8")
+        values: dict[int, bytes | None] = {1: b"val_1", 2: b"val_2"}
+        result = build_multiget_result(["1", "2"], values, cfg, coerced_keys=[1, 2])
+        assert result["results"][0]["found"] is True
+        assert result["results"][0]["key"] == "1"
+        assert result["results"][1]["found"] is True
+        assert result["results"][1]["key"] == "2"
+
 
 # ---------------------------------------------------------------------------
 # build_error_result

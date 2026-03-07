@@ -48,17 +48,24 @@ def build_multiget_result(
     keys: list[str],
     values: dict[Any, bytes | None],
     cfg: OutputConfig,
+    *,
+    coerced_keys: list[Any] | None = None,
 ) -> dict[str, Any]:
-    """Build a dict representing a `multiget` result."""
+    """Build a dict representing a `multiget` result.
+
+    When *coerced_keys* is provided, values are looked up by coerced key
+    (e.g. ``int``) while the original string key is used for display.
+    """
+    lookup_keys = coerced_keys if coerced_keys is not None else keys
     results_list = []
-    for key in keys:
-        raw = values.get(key)
+    for display_key, lookup_key in zip(keys, lookup_keys):
+        raw = values.get(lookup_key)
         if raw is None:
-            results_list.append({"key": key, "found": False})
+            results_list.append({"key": display_key, "found": False})
         else:
             results_list.append(
                 {
-                    "key": key,
+                    "key": display_key,
                     "found": True,
                     "value": encode_value(raw, cfg.value_encoding),
                 }

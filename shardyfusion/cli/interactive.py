@@ -62,7 +62,9 @@ class SlateReaderRepl(cmd.Cmd):
         try:
             coerced = [coerce_cli_key(k, self._reader.key_encoding) for k in parts]
             values = self._reader.multi_get(coerced)
-            result = build_multiget_result(parts, values, self._interactive_cfg)
+            result = build_multiget_result(
+                parts, values, self._interactive_cfg, coerced_keys=coerced
+            )
             emit(result, self._interactive_cfg)
         except Exception as exc:
             self._error("multiget", None, str(exc))

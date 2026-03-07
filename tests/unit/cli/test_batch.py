@@ -81,6 +81,10 @@ def test_run_script_multiget() -> None:
     out = StringIO()
     errors = run_script(reader, path, OutputConfig(), output_file=out)
     assert errors == 0
+    import json
+
+    parsed = json.loads(out.getvalue().strip())
+    assert all(r["found"] is True for r in parsed["results"])
 
 
 def test_run_script_info() -> None:

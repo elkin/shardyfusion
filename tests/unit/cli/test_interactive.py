@@ -87,7 +87,13 @@ def test_do_multiget() -> None:
     with redirect_stdout(buf):
         repl.onecmd("multiget 1 2 3")
     output = buf.getvalue()
-    assert output.strip() != ""
+    import json
+
+    parsed = json.loads(output)
+    results = parsed["results"]
+    assert results[0]["found"] is True
+    assert results[1]["found"] is True
+    assert results[2]["found"] is False
 
 
 def test_do_multiget_no_args() -> None:

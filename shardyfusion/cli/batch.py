@@ -118,7 +118,7 @@ def _execute_command(
         keys = [str(k) for k in keys_raw]
         coerced = [coerce_cli_key(k, reader.key_encoding) for k in keys]
         values = reader.multi_get(coerced)
-        return build_multiget_result(keys, values, cfg)
+        return build_multiget_result(keys, values, cfg, coerced_keys=coerced)
 
     if op == "refresh":
         changed = reader.refresh()

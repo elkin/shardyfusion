@@ -138,6 +138,7 @@ class TestKeyCoercion:
         parsed = json.loads(result.output)
         assert parsed["op"] == "multiget"
         assert len(parsed["results"]) == 2
+        assert all(r["found"] is True for r in parsed["results"])
 
 
 # ---------------------------------------------------------------------------

@@ -226,7 +226,9 @@ def multiget_cmd(ctx: click.Context, keys: tuple[str, ...]) -> None:
             coerced = [coerce_cli_key(k, reader.key_encoding) for k in keys]
             values = reader.multi_get(coerced)
             display_keys = list(keys)
-            result = build_multiget_result(display_keys, values, output_cfg)
+            result = build_multiget_result(
+                display_keys, values, output_cfg, coerced_keys=coerced
+            )
             emit(result, output_cfg)
         except Exception as exc:
             result = build_error_result("multiget", None, str(exc))
