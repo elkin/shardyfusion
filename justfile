@@ -21,6 +21,14 @@ fix:
     uv run ruff check --fix .
     uv run ruff format .
 
+# Build documentation
+docs:
+    uv run mkdocs build --strict
+
+# Serve documentation locally with live reload
+docs-serve:
+    uv run mkdocs serve
+
 # Lint, format, type checks, package build, docs check
 [arg('p', short='p', help='tox parallel envs')]
 quality p="2":
