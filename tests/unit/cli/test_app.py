@@ -108,6 +108,14 @@ def _invoke(
 # ---------------------------------------------------------------------------
 
 
+class TestVersionFlag:
+    def test_version_output(self) -> None:
+        runner = click.testing.CliRunner()
+        result = runner.invoke(cli, ["--version"])
+        assert result.exit_code == 0
+        assert "slate-reader" in result.output
+
+
 class TestCurrentUrlOption:
     def test_get_subcommand_not_consumed_as_url(self) -> None:
         """Regression: 'get' should be parsed as a subcommand, not as CURRENT_URL."""
