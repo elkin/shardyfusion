@@ -109,6 +109,8 @@ class TestFormatResult:
         result = {"op": "get", "key": "k", "found": True, "value": "v"}
         out = format_result(result, "json")
         assert json.loads(out) == result
+        assert "\n" in out, "json format should be pretty-printed (multi-line)"
+        assert "  " in out, "json format should use 2-space indentation"
 
     def test_text_get(self) -> None:
         result = {"op": "get", "key": "k", "found": True, "value": "v"}

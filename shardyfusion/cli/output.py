@@ -97,7 +97,10 @@ def build_error_result(op: str, key_hint: str | None, error: str) -> dict[str, A
 
 def format_result(result: dict[str, Any], fmt: str) -> str:
     """Render a result dict to a string in the requested format."""
-    if fmt in ("jsonl", "json"):
+    if fmt == "json":
+        return json.dumps(result, ensure_ascii=False, indent=2)
+
+    if fmt == "jsonl":
         return json.dumps(result, ensure_ascii=False)
 
     if fmt == "text":
