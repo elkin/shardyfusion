@@ -21,7 +21,7 @@ Both readers follow the same lifecycle:
 | Thread-safe | No | Yes |
 | Locking overhead | None | Per-shard lock or pool checkout |
 | Reference counting | No | Yes (safe refresh under load) |
-| Best for | Single-threaded services, scripts, CLI | Multi-threaded web servers, gRPC services |
+| Best for | Single-threaded services, scripts | Multi-threaded web servers, gRPC services, CLI |
 
 Use `ShardedReader` when your application is single-threaded or you manage concurrency externally. Use `ConcurrentShardedReader` when multiple threads may call `get()` / `multi_get()` concurrently.
 

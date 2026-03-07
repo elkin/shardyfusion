@@ -42,8 +42,17 @@ uv run slate-reader --current-url s3://bucket/prefix/_CURRENT get 42
 # Multiple keys
 uv run slate-reader --current-url s3://bucket/prefix/_CURRENT multiget 1 2 3
 
+# Multiple keys from stdin
+echo -e "1\n2\n3" | uv run slate-reader --current-url s3://bucket/prefix/_CURRENT multiget -
+
 # Manifest info
 uv run slate-reader --current-url s3://bucket/prefix/_CURRENT info
+
+# Per-shard details
+uv run slate-reader --current-url s3://bucket/prefix/_CURRENT shards
+
+# Check which shard a key routes to
+uv run slate-reader --current-url s3://bucket/prefix/_CURRENT route 42
 
 # Reload manifest
 uv run slate-reader --current-url s3://bucket/prefix/_CURRENT refresh
@@ -62,6 +71,8 @@ export SLATE_READER_CURRENT=s3://bucket/prefix/_CURRENT
 uv run slate-reader get 42
 uv run slate-reader multiget 1 2 3
 uv run slate-reader info
+uv run slate-reader shards
+uv run slate-reader route 42
 ```
 
 ## Global Options
@@ -73,14 +84,17 @@ uv run slate-reader info
 | `--credentials PATH` | Path to `credentials.toml` (overrides `SLATE_READER_CREDENTIALS` env) |
 | `--s3-option KEY=VALUE` | Override S3 connection option (repeatable) |
 | `--output-format FORMAT` | Output format: `json`, `jsonl` (default), `table`, `text` |
+| `--version` | Show version and exit |
 
 ## Subcommands
 
 | Subcommand | Arguments | Description |
 |---|---|---|
 | `get` | `KEY` | Look up a single key |
-| `multiget` | `KEY [KEY ...]` | Look up multiple keys (space-separated) |
-| `info` | — | Show manifest metadata (run_id, num_dbs, sharding strategy) |
+| `multiget` | `KEY [KEY ...]` or `-` | Look up multiple keys; pass `-` to read from stdin |
+| `info` | — | Show manifest metadata (run_id, num_dbs, sharding, key_encoding, row_count) |
+| `shards` | — | Show per-shard details (db_id, row_count, min/max key, URL) |
+| `route` | `KEY` | Show which shard a key routes to (without performing a lookup) |
 | `refresh` | — | Reload `_CURRENT` and manifest |
 | `exec` | `--script FILE [--output FILE]` | Execute a YAML batch script |
 
@@ -89,6 +103,9 @@ uv run slate-reader info
 CLI keys are always strings. When the manifest uses an integer key encoding
 (`u64be` or `u32be`), keys are automatically coerced to `int` before lookup.
 For other encodings (e.g. `utf8`), keys are passed as-is.
+
+The active key encoding is visible via `info` (the `key_encoding` field) and
+affects `get`, `multiget`, and `route` commands.
 
 ## Configuration
 
@@ -159,19 +176,44 @@ $ uv run slate-reader --current-url s3://bucket/prefix/_CURRENT
 
 Loaded manifest run_id=2024-01-15T12:00:00Z  (4 shards, hash sharding)
 slate> get 42
-{"op":"get","key":"42","found":true,"value":"aGVsbG8="}
-slate> multiget 1 2 3
-{"op":"multiget","results":[{"key":"1","found":false},{"key":"2","found":true,"value":"d29ybGQ="}]}
+{
+  "op": "get",
+  "key": "42",
+  "found": true,
+  "value": "aGVsbG8="
+}
 slate> info
-{"op":"info","run_id":"2024-01-15T12:00:00Z","num_dbs":4,"sharding":"hash"}
+{
+  "op": "info",
+  "run_id": "2024-01-15T12:00:00Z",
+  "num_dbs": 4,
+  "sharding": "hash",
+  "key_encoding": "u64be",
+  "row_count": 1000000,
+  ...
+}
+slate> route 42
+{
+  "op": "route",
+  "key": "42",
+  "db_id": 2
+}
+slate> shards
+{
+  "op": "shards",
+  "shards": [...]
+}
 slate> refresh
-{"op":"refresh","changed":false}
+{
+  "op": "refresh",
+  "changed": false
+}
 slate> quit
 ```
 
-Interactive mode defaults to `json` (pretty-printed) output instead of `jsonl`.
-REPL commands: `get KEY`, `multiget KEY [KEY ...]`, `info`, `refresh`,
-`quit`/`exit`/`Ctrl-D`.
+Interactive mode defaults to `json` (pretty-printed with indentation) output instead of `jsonl`.
+REPL commands: `get KEY`, `multiget KEY [KEY ...]`, `info`, `shards`, `route KEY`,
+`refresh`, `quit`/`exit`/`Ctrl-D`.
 
 ## Batch Scripts
 
@@ -192,6 +234,9 @@ commands:
   - op: multiget
     keys: [1, 2, 3]
   - op: info
+  - op: shards
+  - op: route
+    key: 42
   - op: refresh
 ```
 
