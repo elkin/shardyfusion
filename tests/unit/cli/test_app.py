@@ -173,6 +173,35 @@ class TestKeyCoercion:
 
 
 # ---------------------------------------------------------------------------
+# Stdin multiget
+# ---------------------------------------------------------------------------
+
+
+class TestMultigetStdin:
+    def test_reads_keys_from_stdin(self) -> None:
+        reader = _FakeReader(store={1: b"a", 2: b"b"}, key_encoding="u64be")
+        effective_env = {"SLATE_READER_CURRENT": "s3://bucket/prefix/_CURRENT"}
+        with patch("shardyfusion.cli.app._build_reader", return_value=reader):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(
+                cli, ["multiget", "-"], input="1\n2\n", env=effective_env
+            )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["op"] == "multiget"
+        assert len(parsed["results"]) == 2
+        assert all(r["found"] is True for r in parsed["results"])
+
+    def test_empty_stdin_errors(self) -> None:
+        reader = _FakeReader()
+        effective_env = {"SLATE_READER_CURRENT": "s3://bucket/prefix/_CURRENT"}
+        with patch("shardyfusion.cli.app._build_reader", return_value=reader):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(cli, ["multiget", "-"], input="", env=effective_env)
+        assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
 # Subcommands
 # ---------------------------------------------------------------------------
 

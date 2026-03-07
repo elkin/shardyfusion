@@ -222,7 +222,17 @@ def get_cmd(ctx: click.Context, key: str) -> None:
 @click.argument("keys", nargs=-1, required=True)
 @click.pass_context
 def multiget_cmd(ctx: click.Context, keys: tuple[str, ...]) -> None:
-    """Look up multiple KEYS (space-separated)."""
+    """Look up multiple KEYS (space-separated).
+
+    Pass a single '-' to read keys from stdin, one per line.
+    """
+    # Support reading keys from stdin when '-' is the sole argument
+    if keys == ("-",):
+        stdin_keys = [line.strip() for line in sys.stdin if line.strip()]
+        if not stdin_keys:
+            raise click.UsageError("No keys provided on stdin")
+        keys = tuple(stdin_keys)
+
     output_cfg = _get_output_cfg(ctx)
     with _build_reader(ctx) as reader:
         try:
