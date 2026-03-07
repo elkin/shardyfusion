@@ -6,8 +6,17 @@ from .config import (
     WriteConfig,
 )
 from .errors import (
+    ConfigValidationError,
+    ManifestBuildError,
     ManifestParseError,
+    PublishCurrentError,
+    PublishManifestError,
     ReaderStateError,
+    S3TransientError,
+    ShardAssignmentError,
+    ShardCoverageError,
+    ShardyfusionError,
+    SlateDbApiError,
 )
 from .logging import FailureSeverity, get_logger
 from .manifest import (
@@ -44,15 +53,26 @@ from .slatedb_adapter import (
     DbAdapterFactory,
     SlateDbFactory,
 )
-from .type_defs import ShardReaderFactory
+from .type_defs import S3ClientConfig, ShardReader, ShardReaderFactory
 
 __all__ = [
+    "ConfigValidationError",
     "FailureSeverity",
     "get_logger",
+    "ManifestBuildError",
+    "ManifestParseError",
     "MetricEvent",
     "MetricsCollector",
-    "ManifestParseError",
+    "PublishCurrentError",
+    "PublishManifestError",
     "ReaderStateError",
+    "S3ClientConfig",
+    "S3TransientError",
+    "ShardAssignmentError",
+    "ShardCoverageError",
+    "ShardReader",
+    "ShardyfusionError",
+    "SlateDbApiError",
     "BuildResult",
     "BuildStats",
     "BuildDurations",
