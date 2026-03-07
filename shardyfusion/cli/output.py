@@ -58,7 +58,7 @@ def build_multiget_result(
     """
     lookup_keys = coerced_keys if coerced_keys is not None else keys
     results_list = []
-    for display_key, lookup_key in zip(keys, lookup_keys):
+    for display_key, lookup_key in zip(keys, lookup_keys, strict=True):
         raw = values.get(lookup_key)
         if raw is None:
             results_list.append({"key": display_key, "found": False})
