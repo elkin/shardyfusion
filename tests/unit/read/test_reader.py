@@ -1312,3 +1312,121 @@ def test_do_refresh_without_refresh_lock_raises(tmp_path) -> None:
         reader._do_refresh()
 
     reader.close()
+
+
+# ---------------------------------------------------------------------------
+# Parameter validation
+# ---------------------------------------------------------------------------
+
+
+class TestReaderParameterValidation:
+    """Validate that invalid constructor parameters are rejected eagerly."""
+
+    def test_max_workers_zero_raises(self, tmp_path) -> None:
+        manifests = {"mem://manifest/one": _manifest("mem://db/one")}
+        stores: dict[str, dict[bytes, bytes]] = {
+            "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
+        }
+        with pytest.raises(ValueError, match="positive integer"):
+            ConcurrentShardedReader(
+                s3_prefix="s3://bucket/prefix",
+                local_root=str(tmp_path),
+                manifest_store=_MutableManifestStore(manifests, "mem://manifest/one"),
+                reader_factory=_fake_reader_factory(stores),
+                max_workers=0,
+            )
+
+    def test_max_workers_negative_raises(self, tmp_path) -> None:
+        manifests = {"mem://manifest/one": _manifest("mem://db/one")}
+        stores: dict[str, dict[bytes, bytes]] = {
+            "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
+        }
+        with pytest.raises(ValueError, match="positive integer"):
+            ConcurrentShardedReader(
+                s3_prefix="s3://bucket/prefix",
+                local_root=str(tmp_path),
+                manifest_store=_MutableManifestStore(manifests, "mem://manifest/one"),
+                reader_factory=_fake_reader_factory(stores),
+                max_workers=-3,
+            )
+
+    def test_max_workers_one_is_valid(self, tmp_path) -> None:
+        manifests = {"mem://manifest/one": _manifest("mem://db/one")}
+        stores: dict[str, dict[bytes, bytes]] = {
+            "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
+        }
+        reader = ConcurrentShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=_MutableManifestStore(manifests, "mem://manifest/one"),
+            reader_factory=_fake_reader_factory(stores),
+            max_workers=1,
+        )
+        reader.close()
+
+    def test_pool_checkout_timeout_zero_raises(self, tmp_path) -> None:
+        manifests = {"mem://manifest/one": _manifest("mem://db/one")}
+        stores: dict[str, dict[bytes, bytes]] = {
+            "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
+        }
+        with pytest.raises(ValueError, match="must be > 0"):
+            ConcurrentShardedReader(
+                s3_prefix="s3://bucket/prefix",
+                local_root=str(tmp_path),
+                manifest_store=_MutableManifestStore(manifests, "mem://manifest/one"),
+                reader_factory=_fake_reader_factory(stores),
+                pool_checkout_timeout=0,
+            )
+
+    def test_pool_checkout_timeout_negative_raises(self, tmp_path) -> None:
+        manifests = {"mem://manifest/one": _manifest("mem://db/one")}
+        stores: dict[str, dict[bytes, bytes]] = {
+            "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
+        }
+        with pytest.raises(ValueError, match="must be > 0"):
+            ConcurrentShardedReader(
+                s3_prefix="s3://bucket/prefix",
+                local_root=str(tmp_path),
+                manifest_store=_MutableManifestStore(manifests, "mem://manifest/one"),
+                reader_factory=_fake_reader_factory(stores),
+                pool_checkout_timeout=-5.0,
+            )
+
+    def test_sharded_reader_max_workers_zero_raises(self, tmp_path) -> None:
+        """Validation applies to ShardedReader too (inherited from base)."""
+        manifests = {"mem://manifest/one": _manifest("mem://db/one")}
+        stores: dict[str, dict[bytes, bytes]] = {
+            "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
+        }
+        with pytest.raises(ValueError, match="positive integer"):
+            ShardedReader(
+                s3_prefix="s3://bucket/prefix",
+                local_root=str(tmp_path),
+                manifest_store=_MutableManifestStore(manifests, "mem://manifest/one"),
+                reader_factory=_fake_reader_factory(stores),
+                max_workers=0,
+            )
+
+
+class TestReaderPoolInternals:
+    """Verify defensive invariants on _ReaderPool."""
+
+    def test_reader_pool_queue_bounded(self) -> None:
+        from shardyfusion.reader.reader import _ReaderPool
+
+        readers = [_FakeReader({}), _FakeReader({}), _FakeReader({})]
+        pool = _ReaderPool(readers)
+        assert pool._indexes.maxsize == 3
+
+    def test_reader_pool_checkout_timeout_zero_raises(self) -> None:
+        from shardyfusion.reader.reader import _ReaderPool
+
+        with pytest.raises(ValueError, match="must be > 0"):
+            _ReaderPool([_FakeReader({})], checkout_timeout=0)
+
+    def test_reader_pool_readers_is_tuple(self) -> None:
+        from shardyfusion.reader.reader import _ReaderPool
+
+        readers = [_FakeReader({}), _FakeReader({})]
+        pool = _ReaderPool(readers)
+        assert isinstance(pool._readers, tuple)

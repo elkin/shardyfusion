@@ -182,9 +182,11 @@ class _ReaderPool:
     ) -> None:
         if not readers:
             raise ValueError("Reader pool requires at least one reader")
-        self._readers = readers
+        if checkout_timeout <= 0:
+            raise ValueError(f"checkout_timeout must be > 0, got {checkout_timeout}")
+        self._readers: tuple[ShardReader, ...] = tuple(readers)
         self._checkout_timeout = checkout_timeout
-        self._indexes: Queue[int] = Queue()
+        self._indexes: Queue[int] = Queue(maxsize=len(readers))
         for idx in range(len(readers)):
             self._indexes.put(idx)
 
@@ -286,6 +288,10 @@ class _BaseShardedReader:
         self.s3_prefix = s3_prefix
         self.local_root = local_root
         self.max_workers = max_workers
+        if max_workers is not None and (
+            not isinstance(max_workers, int) or max_workers < 1
+        ):
+            raise ValueError("max_workers must be a positive integer (>= 1)")
         self._metrics = metrics_collector
 
         if reader_factory is not None:
@@ -642,6 +648,11 @@ class ConcurrentShardedReader(_BaseShardedReader):
         if thread_safety not in {"lock", "pool"}:
             raise ValueError("thread_safety must be 'lock' or 'pool'")
 
+        if pool_checkout_timeout <= 0:
+            raise ValueError(
+                f"pool_checkout_timeout must be > 0, got {pool_checkout_timeout}"
+            )
+
         super().__init__(
             s3_prefix=s3_prefix,
             local_root=local_root,
@@ -887,10 +898,12 @@ class ConcurrentShardedReader(_BaseShardedReader):
 
     def close(self) -> None:
         state_to_close: _ReaderState | None = None
+        num_handles = 0
         with self._state_lock:
             if self._closed:
                 return
             self._closed = True
+            num_handles = len(self._state.handles)
             self._state.retired = True
             if self._state.refcount == 0:
                 state_to_close = self._state
@@ -904,9 +917,9 @@ class ConcurrentShardedReader(_BaseShardedReader):
             "reader_closed",
             logger=_logger,
             s3_prefix=self.s3_prefix,
-            num_handles_closed=len(self._state.handles),
+            num_handles_closed=num_handles,
         )
-        self._emit(MetricEvent.READER_CLOSED, {"num_handles": len(self._state.handles)})
+        self._emit(MetricEvent.READER_CLOSED, {"num_handles": num_handles})
 
     def _load_initial_state(self) -> _ReaderState:
         current = self._load_current()
