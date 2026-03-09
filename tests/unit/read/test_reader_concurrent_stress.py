@@ -333,3 +333,38 @@ def test_pool_mode_concurrent_gets() -> None:
 
     reader.close()
     assert not errors
+
+
+def test_pool_exhaustion_blocks_then_completes() -> None:
+    """pool_size=2, 4 threads doing get(); all complete within timeout."""
+    manifest_store = _VersionedManifestStore()
+    reader = ConcurrentShardedReader(
+        s3_prefix="s3://bucket/prefix",
+        local_root="/tmp/stress-test",
+        manifest_store=manifest_store,
+        reader_factory=_make_factory(),
+        thread_safety="pool",
+        pool_checkout_timeout=5.0,
+        max_workers=2,
+    )
+
+    errors: list[Exception] = []
+    barrier = threading.Barrier(4)
+
+    def worker() -> None:
+        try:
+            barrier.wait(timeout=5.0)
+            for _ in range(10):
+                reader.get(42)
+        except Exception as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10.0)
+
+    reader.close()
+    assert not errors
+    assert all(not t.is_alive() for t in threads)

@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from queue import Queue
+from queue import Empty, Queue
 from typing import Any, Literal, Self
 
 from shardyfusion.errors import (
@@ -116,17 +116,25 @@ class _ShardHandle:
 
 
 class _ReaderPool:
-    def __init__(self, readers: list[ShardReader]) -> None:
+    def __init__(
+        self, readers: list[ShardReader], *, checkout_timeout: float = 30.0
+    ) -> None:
         if not readers:
             raise ValueError("Reader pool requires at least one reader")
         self._readers = readers
+        self._checkout_timeout = checkout_timeout
         self._indexes: Queue[int] = Queue()
         for idx in range(len(readers)):
             self._indexes.put(idx)
 
     @contextmanager
     def checkout(self) -> Iterator[ShardReader]:
-        idx = self._indexes.get()
+        try:
+            idx = self._indexes.get(timeout=self._checkout_timeout)
+        except Empty:
+            raise SlateDbApiError(
+                f"Shard reader pool checkout timed out after {self._checkout_timeout}s"
+            ) from None
         try:
             yield self._readers[idx]
         finally:
@@ -566,6 +574,7 @@ class ConcurrentShardedReader(_BaseShardedReader):
         reader_factory: ShardReaderFactory | None = None,
         slate_env_file: str | None = None,
         thread_safety: Literal["lock", "pool"] = "lock",
+        pool_checkout_timeout: float = 30.0,
         max_workers: int | None = None,
         metrics_collector: MetricsCollector | None = None,
     ) -> None:
@@ -584,6 +593,7 @@ class ConcurrentShardedReader(_BaseShardedReader):
         )
 
         self.thread_safety = thread_safety
+        self._pool_checkout_timeout = pool_checkout_timeout
         # Lock ordering: _refresh_lock before _state_lock.  _refresh_lock
         # serialises the expensive I/O path (manifest load + reader open) so
         # only one thread builds new state at a time.  _state_lock protects
@@ -859,7 +869,9 @@ class ConcurrentShardedReader(_BaseShardedReader):
                     readers = [self._open_one_reader(shard) for _ in range(pool_size)]
                     handles[shard.db_id] = _ShardHandle(
                         mode="pool",
-                        pool=_ReaderPool(readers),
+                        pool=_ReaderPool(
+                            readers, checkout_timeout=self._pool_checkout_timeout
+                        ),
                     )
         except Exception:
             for handle in handles.values():

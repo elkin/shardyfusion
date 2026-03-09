@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 import types
 from dataclasses import dataclass
 from pathlib import Path
@@ -1077,3 +1078,52 @@ def test_concurrent_metadata_methods_raise_when_closed(tmp_path) -> None:
 
     with pytest.raises(ReaderStateError, match="Reader is closed"):
         _ = reader.key_encoding
+
+
+# ---------------------------------------------------------------------------
+# Commit 3: Pool checkout timeout
+# ---------------------------------------------------------------------------
+
+
+def test_pool_checkout_timeout_raises(tmp_path) -> None:
+    """Pool checkout raises SlateDbApiError after timeout."""
+    in_get = threading.Event()
+
+    class _SlowReader:
+        def get(self, key: bytes) -> bytes | None:
+            in_get.set()
+            time.sleep(2)
+            return None
+
+        def close(self) -> None:
+            pass
+
+    manifests = {"mem://manifest/one": _manifest("mem://db/one")}
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
+
+    with ConcurrentShardedReader(
+        s3_prefix="s3://bucket/prefix",
+        local_root=str(tmp_path),
+        manifest_store=manifest_store,
+        reader_factory=lambda *, db_url, local_dir, checkpoint_id: _SlowReader(),
+        thread_safety="pool",
+        pool_checkout_timeout=0.1,
+        max_workers=1,
+    ) as reader:
+        errors: list[Exception] = []
+
+        def hold_pool() -> None:
+            try:
+                reader.get(1)
+            except Exception as e:
+                errors.append(e)
+
+        t = threading.Thread(target=hold_pool)
+        t.start()
+        in_get.wait(timeout=5)
+
+        # The single pool reader is held; this checkout should time out.
+        with pytest.raises(SlateDbApiError, match="timed out"):
+            reader.get(1)
+
+        t.join(timeout=5)
