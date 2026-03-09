@@ -41,7 +41,9 @@ from .metrics import MetricEvent, MetricsCollector
 from .publish import DefaultS3Publisher, ManifestPublisher
 from .reader import (
     ConcurrentShardedReader,
+    ShardDetail,
     ShardedReader,
+    ShardReaderHandle,
     SlateDbReaderFactory,
     SnapshotInfo,
 )
@@ -95,6 +97,8 @@ __all__ = [
     "RequiredShardMeta",
     "ShardReaderFactory",
     "ConcurrentShardedReader",
+    "ShardReaderHandle",
+    "ShardDetail",
     "ShardedReader",
     "SlateDbReaderFactory",
     "SlateDbFactory",

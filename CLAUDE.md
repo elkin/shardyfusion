@@ -103,8 +103,9 @@ Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
 1. `ShardedReader` / `ConcurrentShardedReader` in `reader/reader.py` loads the `_CURRENT` pointer from S3 and dereferences the manifest.
 2. Builds a `SnapshotRouter` from the manifest sharding metadata (mirrors write-time sharding logic).
 3. `get(key)` / `multi_get(keys)` routes keys to shard IDs, then reads from the appropriate shard.
-4. `ShardedReader` swaps state directly on refresh. `ConcurrentShardedReader` atomically swaps readers using reference counting for safe cleanup of in-flight operations.
-5. `ConcurrentShardedReader` provides thread safety via `threading.Lock` (default) or `ThreadPoolExecutor` pool mode (`thread_safety` config).
+4. `shard_for_key(key)` / `shards_for_keys(keys)` return `RequiredShardMeta` for routing inspection without DB access. `reader_for_key(key)` / `readers_for_keys(keys)` return borrowed `ShardReaderHandle` handles for direct shard access.
+5. `ShardedReader` swaps state directly on refresh. `ConcurrentShardedReader` atomically swaps readers using reference counting for safe cleanup of in-flight operations. Borrowed `ShardReaderHandle` handles hold refcount increments, preventing cleanup of old state while borrows are outstanding.
+6. `ConcurrentShardedReader` provides thread safety via `threading.Lock` (default) or `ThreadPoolExecutor` pool mode (`thread_safety` config).
 
 ### CLI (`slate-reader`)
 
@@ -186,7 +187,7 @@ All errors inherit from `ShardyfusionError` with `retryable: bool`. Non-retryabl
 
 ## Public API Summary
 
-Core types exported from `shardyfusion.__init__` (always available, no optional extras required). See `__init__.py` for the full list.
+Core types exported from `shardyfusion.__init__` (always available, no optional extras required). See `__init__.py` for the full list. Reader types include `ShardedReader`, `ConcurrentShardedReader`, `ShardReaderHandle`, `ShardDetail`, `SnapshotInfo`, `SlateDbReaderFactory`.
 
 Writer functions are imported from subpackages (not re-exported at top level):
 - **Spark:** `from shardyfusion.writer.spark import write_sharded, write_single_db, DataFrameCacheContext, SparkConfOverrideContext`

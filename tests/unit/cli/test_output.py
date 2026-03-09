@@ -224,8 +224,16 @@ class TestFormatResult:
 class TestBuildShardsResult:
     def test_structure(self) -> None:
         from shardyfusion.cli.output import build_shards_result
+        from shardyfusion.reader.reader import ShardDetail
 
         shards = [
+            ShardDetail(
+                db_id=0, row_count=5, min_key=None, max_key=None, db_url="s3://x"
+            )
+        ]
+        result = build_shards_result(shards)
+        assert result["op"] == "shards"
+        assert result["shards"] == [
             {
                 "db_id": 0,
                 "row_count": 5,
@@ -234,9 +242,6 @@ class TestBuildShardsResult:
                 "db_url": "s3://x",
             }
         ]
-        result = build_shards_result(shards)
-        assert result["op"] == "shards"
-        assert result["shards"] == shards
 
 
 class TestBuildRouteResult:

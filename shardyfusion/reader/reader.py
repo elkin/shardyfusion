@@ -3,7 +3,7 @@
 import logging
 import threading
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -22,7 +22,7 @@ from shardyfusion.logging import (
     log_event,
     log_failure,
 )
-from shardyfusion.manifest import ParsedManifest
+from shardyfusion.manifest import ParsedManifest, RequiredShardMeta
 from shardyfusion.manifest_readers import (
     DefaultS3ManifestReader,
     ManifestReader,
@@ -46,6 +46,17 @@ class SnapshotInfo:
     manifest_ref: str
     key_encoding: str = "u64be"
     row_count: int = 0
+
+
+@dataclass(slots=True, frozen=True)
+class ShardDetail:
+    """Per-shard metadata exposed by ``shard_details()``."""
+
+    db_id: int
+    row_count: int
+    min_key: int | float | str | None
+    max_key: int | float | str | None
+    db_url: str
 
 
 @dataclass(slots=True)
@@ -79,11 +90,13 @@ class SlateDbReaderFactory:
 
 @dataclass(slots=True)
 class _SimpleReaderState:
-    """Lightweight reader state without refcounting — used by ShardedReader."""
+    """Lightweight reader state with borrow tracking — used by ShardedReader."""
 
     manifest_ref: str
     router: SnapshotRouter
     readers: dict[int, ShardReader]
+    borrow_count: int = 0
+    retired: bool = False
 
 
 @dataclass(slots=True)
@@ -133,6 +146,55 @@ class _ReaderPool:
                     logger=_logger,
                     error=exc,
                 )
+
+
+class ShardReaderHandle:
+    """Borrowed reference to a single shard's database handle.
+
+    Wraps either a raw ``ShardReader`` (from ``ShardedReader``) or a
+    ``_ShardHandle`` (from ``ConcurrentShardedReader``).  Calling
+    ``close()`` releases the borrow (decrements refcount / borrow count)
+    but does **not** close the underlying shard database.
+
+    Supports the context manager protocol::
+
+        with reader.reader_for_key(42) as handle:
+            raw = handle.get(key_bytes)
+    """
+
+    def __init__(
+        self,
+        handle: "_ShardHandle | ShardReader",
+        release_fn: "Callable[[], None] | None" = None,
+    ) -> None:
+        self._handle = handle
+        self._release_fn = release_fn
+        self._released = False
+
+    def get(self, key: bytes) -> bytes | None:
+        """Read a single key from the underlying shard."""
+        handle = self._handle
+        if isinstance(handle, _ShardHandle):
+            return _read_one(handle, key)
+        return handle.get(key)
+
+    def multi_get(self, keys: Sequence[bytes]) -> dict[bytes, bytes | None]:
+        """Read multiple keys from the underlying shard."""
+        return {key: self.get(key) for key in keys}
+
+    def close(self) -> None:
+        """Release the borrow.  Safe to call multiple times."""
+        if self._released:
+            return
+        self._released = True
+        if self._release_fn is not None:
+            self._release_fn()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
 
 
 # ---------------------------------------------------------------------------
@@ -289,13 +351,53 @@ class ShardedReader(_BaseShardedReader):
             row_count=sum(s.row_count for s in state.router.shards),
         )
 
-    def shard_details(self) -> list[dict[str, Any]]:
+    def shard_details(self) -> list[ShardDetail]:
         """Return per-shard metadata from the current manifest."""
         return _shard_details_from_router(self._state.router)
 
     def route_key(self, key: KeyInput) -> int:
         """Return the shard db_id a key would route to."""
         return self._state.router.route_one(key)
+
+    def shard_for_key(self, key: KeyInput) -> RequiredShardMeta:
+        """Return shard metadata for the shard a key routes to."""
+        db_id = self._state.router.route_one(key)
+        return self._state.router.shards[db_id]
+
+    def shards_for_keys(
+        self, keys: Sequence[KeyInput]
+    ) -> dict[KeyInput, RequiredShardMeta]:
+        """Return a mapping of keys to their shard metadata."""
+        router = self._state.router
+        return {key: router.shards[router.route_one(key)] for key in keys}
+
+    def reader_for_key(self, key: KeyInput) -> ShardReaderHandle:
+        """Return a borrowed read handle for the shard a key routes to."""
+        if self._closed:
+            raise ReaderStateError("Reader is closed")
+        state = self._state
+        state.borrow_count += 1
+        db_id = state.router.route_one(key)
+        return ShardReaderHandle(
+            state.readers[db_id], release_fn=lambda: self._release_simple_state(state)
+        )
+
+    def readers_for_keys(
+        self, keys: Sequence[KeyInput]
+    ) -> dict[KeyInput, ShardReaderHandle]:
+        """Return a mapping of keys to borrowed read handles."""
+        if self._closed:
+            raise ReaderStateError("Reader is closed")
+        state = self._state
+        unique_keys = dict.fromkeys(keys)
+        state.borrow_count += len(unique_keys)
+        return {
+            key: ShardReaderHandle(
+                state.readers[state.router.route_one(key)],
+                release_fn=lambda: self._release_simple_state(state),
+            )
+            for key in unique_keys
+        }
 
     def get(self, key: KeyInput) -> bytes | None:
         if self._closed:
@@ -389,7 +491,9 @@ class ShardedReader(_BaseShardedReader):
         new_state = self._build_simple_state(current_ref, manifest)
         old_state = self._state
         self._state = new_state
-        _close_simple_state(old_state)
+        old_state.retired = True
+        if old_state.borrow_count == 0:
+            _close_simple_state(old_state)
 
         log_event(
             "reader_refreshed",
@@ -404,8 +508,11 @@ class ShardedReader(_BaseShardedReader):
         if self._closed:
             return
         self._closed = True
-        num_readers = len(self._state.readers)
-        _close_simple_state(self._state)
+        state = self._state
+        num_readers = len(state.readers)
+        state.retired = True
+        if state.borrow_count == 0:
+            _close_simple_state(state)
         self._shutdown_executor()
 
         log_event(
@@ -415,6 +522,11 @@ class ShardedReader(_BaseShardedReader):
             num_handles_closed=num_readers,
         )
         self._emit(MetricEvent.READER_CLOSED, {"num_handles": num_readers})
+
+    def _release_simple_state(self, state: _SimpleReaderState) -> None:
+        state.borrow_count -= 1
+        if state.retired and state.borrow_count == 0:
+            _close_simple_state(state)
 
     def _load_initial_state(self) -> _SimpleReaderState:
         current = self._load_current()
@@ -508,13 +620,63 @@ class ConcurrentShardedReader(_BaseShardedReader):
             row_count=sum(s.row_count for s in state.router.shards),
         )
 
-    def shard_details(self) -> list[dict[str, Any]]:
+    def shard_details(self) -> list[ShardDetail]:
         """Return per-shard metadata from the current manifest."""
         return _shard_details_from_router(self._state.router)
 
     def route_key(self, key: KeyInput) -> int:
         """Return the shard db_id a key would route to."""
         return self._state.router.route_one(key)
+
+    def shard_for_key(self, key: KeyInput) -> RequiredShardMeta:
+        """Return shard metadata for the shard a key routes to."""
+        with self._use_state() as state:
+            db_id = state.router.route_one(key)
+            return state.router.shards[db_id]
+
+    def shards_for_keys(
+        self, keys: Sequence[KeyInput]
+    ) -> dict[KeyInput, RequiredShardMeta]:
+        """Return a mapping of keys to their shard metadata."""
+        with self._use_state() as state:
+            router = state.router
+            return {key: router.shards[router.route_one(key)] for key in keys}
+
+    def reader_for_key(self, key: KeyInput) -> ShardReaderHandle:
+        """Return a borrowed read handle for the shard a key routes to.
+
+        The returned handle holds a refcount on the current reader state.
+        Callers **must** call ``close()`` on the returned handle when done.
+        """
+        state = self._acquire_state()
+        db_id = state.router.route_one(key)
+        handle = state.handles[db_id]
+        return ShardReaderHandle(handle, release_fn=lambda: self._release_state(state))
+
+    def readers_for_keys(
+        self, keys: Sequence[KeyInput]
+    ) -> dict[KeyInput, ShardReaderHandle]:
+        """Return a mapping of keys to borrowed read handles.
+
+        Each returned handle holds one refcount increment.  Callers **must**
+        call ``close()`` on every returned handle when done.
+        """
+        unique_keys = dict.fromkeys(keys)
+        if not unique_keys:
+            return {}
+        with self._state_lock:
+            if self._closed:
+                raise ReaderStateError("Reader is closed")
+            state = self._state
+            state.refcount += len(unique_keys)
+        result: dict[KeyInput, ShardReaderHandle] = {}
+        for key in unique_keys:
+            db_id = state.router.route_one(key)
+            handle = state.handles[db_id]
+            result[key] = ShardReaderHandle(
+                handle, release_fn=lambda: self._release_state(state)
+            )
+        return result
 
     def get(self, key: KeyInput) -> bytes | None:
         mc = self._metrics
@@ -743,16 +905,16 @@ class ConcurrentShardedReader(_BaseShardedReader):
 # ---------------------------------------------------------------------------
 
 
-def _shard_details_from_router(router: SnapshotRouter) -> list[dict[str, Any]]:
+def _shard_details_from_router(router: SnapshotRouter) -> list[ShardDetail]:
     """Extract per-shard metadata from a router's shard list."""
     return [
-        {
-            "db_id": s.db_id,
-            "row_count": s.row_count,
-            "min_key": s.min_key,
-            "max_key": s.max_key,
-            "db_url": s.db_url,
-        }
+        ShardDetail(
+            db_id=s.db_id,
+            row_count=s.row_count,
+            min_key=s.min_key,
+            max_key=s.max_key,
+            db_url=s.db_url,
+        )
         for s in router.shards
     ]
 

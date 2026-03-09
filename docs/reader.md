@@ -173,6 +173,55 @@ info = reader.snapshot_info()
 print(info.run_id, info.num_dbs, info.sharding, info.manifest_ref)
 ```
 
+## Shard Metadata and Routing
+
+Both readers provide methods to inspect shard metadata and routing without performing database reads:
+
+```python
+# Per-shard summary (returns list[ShardDetail])
+for shard in reader.shard_details():
+    print(shard.db_id, shard.row_count, shard.min_key, shard.max_key, shard.db_url)
+
+# Which shard does a key route to?
+db_id = reader.route_key(42)
+
+# Full shard metadata for a key (returns RequiredShardMeta)
+meta = reader.shard_for_key(42)
+print(meta.db_id, meta.db_url, meta.row_count)
+
+# Batch: mapping of keys to their shard metadata
+mapping = reader.shards_for_keys([1, 42, 100])
+```
+
+## Direct Shard Access
+
+For advanced use cases, you can borrow a raw read handle for a specific shard.
+The returned `ShardReaderHandle` delegates to the underlying shard database
+but does **not** close the database when you call `close()` — it only releases
+the borrow (and decrements the refcount / borrow count).
+
+`ShardReaderHandle` supports the context manager protocol for automatic cleanup:
+
+```python
+with reader.reader_for_key(42) as handle:
+    raw = handle.get(key_bytes)           # single raw bytes lookup
+    batch = handle.multi_get([k1, k2])    # batch lookup on one shard
+
+# Batch variant: one handle per unique key
+handles = reader.readers_for_keys([1, 42, 100])
+try:
+    for key, h in handles.items():
+        print(key, h.get(encode(key)))
+finally:
+    for h in handles.values():
+        h.close()
+```
+
+!!! warning
+    Always close borrowed handles (or use `with`). For both reader variants,
+    each handle holds a borrow/refcount increment — unclosed handles prevent
+    cleanup of old state after `refresh()`.
+
 ## Metrics
 
 Pass a `MetricsCollector` to observe reader lifecycle events:

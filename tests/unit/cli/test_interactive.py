@@ -9,7 +9,7 @@ from typing import Any
 
 from shardyfusion.cli.config import OutputConfig
 from shardyfusion.cli.interactive import SlateReaderRepl
-from shardyfusion.reader.reader import SnapshotInfo
+from shardyfusion.reader.reader import ShardDetail, SnapshotInfo
 
 
 class _FakeReader:
@@ -47,22 +47,22 @@ class _FakeReader:
             row_count=len(self._store),
         )
 
-    def shard_details(self) -> list[dict[str, Any]]:
+    def shard_details(self) -> list[ShardDetail]:
         return [
-            {
-                "db_id": 0,
-                "row_count": 10,
-                "min_key": 0,
-                "max_key": 49,
-                "db_url": "s3://b/shard=00000",
-            },
-            {
-                "db_id": 1,
-                "row_count": 20,
-                "min_key": 50,
-                "max_key": 99,
-                "db_url": "s3://b/shard=00001",
-            },
+            ShardDetail(
+                db_id=0,
+                row_count=10,
+                min_key=0,
+                max_key=49,
+                db_url="s3://b/shard=00000",
+            ),
+            ShardDetail(
+                db_id=1,
+                row_count=20,
+                min_key=50,
+                max_key=99,
+                db_url="s3://b/shard=00001",
+            ),
         ]
 
     def route_key(self, key: Any) -> int:
