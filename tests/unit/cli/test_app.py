@@ -217,13 +217,6 @@ class TestSubcommands:
         assert parsed["key_encoding"] == "u64be"
         assert parsed["row_count"] == 0
 
-    def test_refresh(self) -> None:
-        result = _invoke(["refresh"])
-        assert result.exit_code == 0
-        parsed = json.loads(result.output)
-        assert parsed["op"] == "refresh"
-        assert parsed["changed"] is False
-
     def test_get_not_found(self) -> None:
         reader = _FakeReader(store={}, key_encoding="utf8")
         result = _invoke(["get", "missing"], reader=reader)

@@ -26,7 +26,6 @@ from .output import (
     build_get_result,
     build_info_result,
     build_multiget_result,
-    build_refresh_result,
     build_route_result,
     build_shards_result,
     emit,
@@ -294,22 +293,6 @@ def multiget_cmd(ctx: click.Context, keys: tuple[str, ...]) -> None:
             emit(result, output_cfg)
         except Exception as exc:
             result = build_error_result("multiget", None, str(exc))
-            emit(result, output_cfg, file=sys.stderr)
-            sys.exit(1)
-
-
-@cli.command("refresh")
-@click.pass_context
-def refresh_cmd(ctx: click.Context) -> None:
-    """Reload CURRENT and manifest."""
-    output_cfg = _get_output_cfg(ctx)
-    with _build_reader(ctx) as reader:
-        try:
-            changed = reader.refresh()
-            result = build_refresh_result(changed)
-            emit(result, output_cfg)
-        except Exception as exc:
-            result = build_error_result("refresh", None, str(exc))
             emit(result, output_cfg, file=sys.stderr)
             sys.exit(1)
 
