@@ -214,7 +214,7 @@ environments execute instead of being skipped.
 Short container prefix via `just`:
 
 ```bash
-just docker-build
+just d-build
 just d uv run tox -m quality
 just d uv run tox -m unit
 just d uv run tox -m integration
@@ -227,7 +227,7 @@ It uses container-only uv state and a container-only project venv path
 Container runtime defaults to `podman`; switch to Docker with:
 
 ```bash
-CONTAINER_ENGINE=docker just docker-build
+CONTAINER_ENGINE=docker just d-build
 CONTAINER_ENGINE=docker just d uv run tox -m quality
 ```
 

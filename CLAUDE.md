@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Package manager**: uv. Extras: `read`, `writer-spark` (requires Java), `writer-python`, `writer-dask`, `writer-ray`, `cli`. Full dev: `uv sync --all-extras --dev`.
 
-**Workflows**: Run `just --list` for all local and container (`d-*`) targets. Key entry points: `just fix` (auto-format), `just ci` (quality + unit + integration). Container default engine is Podman; override with `CONTAINER_ENGINE=docker`.
+**Workflows**: Run `just --list` for all local and container (`d-*`) targets. Key entry points: `just setup` (bootstrap a fresh clone), `just doctor` (verify environment), `just fix` (auto-format), `just ci` (quality + unit + integration), `just clean` / `just clean-all` (remove caches/artifacts). Container default engine is Podman; override with `CONTAINER_ENGINE=docker`.
 
 **Test matrix**: tox labels — `quality`, `unit`, `integration`, `e2e`. Targeted pytest: `uv run pytest -q tests/unit/<area>` (areas: `cli`, `writer`, `read`, `shared`).
 

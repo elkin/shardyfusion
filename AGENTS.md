@@ -37,13 +37,16 @@
   - `uv run tox -m unit` — unit tests across py311-py314 and Spark 3.5/4
   - `uv run tox -m integration` — integration tests across py311-py314
   - `uv run tox -m e2e` — end-to-end tests against Garage S3
-- Just shortcuts: `just sync`, `just fix`, `just quality`, `just quality-p`, `just unit`, `just unit-p`, `just integration`, `just integration-p`, `just ci`
+- Just shortcuts (grouped by category):
+  - Setup: `just setup` (bootstrap), `just doctor` (health check), `just clean`, `just clean-all`
+  - Dev: `just sync`, `just fix`, `just docs`, `just docs-serve`
+  - Test: `just quality`, `just unit`, `just integration`, `just ci`
 - Container workflows via `justfile`:
-  - Build image: `just docker-build`
-  - Run shell in container: `just docker-shell`
+  - Build image: `just d-build`
+  - Run shell in container: `just d-shell`
   - Run any local-style command in container: `just d <command>`
-  - Named recipes: `just d-quality`, `just d-unit`, `just d-integration`, `just d-e2e`, `just d-ci`
-  - Use Docker instead of Podman: `CONTAINER_ENGINE=docker just docker-build`
+  - Named recipes: `just d-quality`, `just d-unit`, `just d-integration`, `just d-e2e`, `just d-ci`, `just d-clean`
+  - Use Docker instead of Podman: `CONTAINER_ENGINE=docker just d-build`
   - Container runs use an isolated uv project env at `/opt/shardyfusion-venv` (not host `.venv`).
 
 ## Coding Style & Naming Conventions
