@@ -19,6 +19,7 @@ from shardyfusion.manifest import (
 from shardyfusion.metrics import MetricEvent
 from shardyfusion.reader import (
     ConcurrentShardedReader,
+    ShardedReader,
     SlateDbReaderFactory,
 )
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
@@ -373,7 +374,6 @@ def test_metrics_reader_get_not_found(tmp_path) -> None:
 
 
 def test_sharded_reader_get_basic(tmp_path) -> None:
-    from shardyfusion.reader import ShardedReader
 
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
     manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
@@ -392,7 +392,6 @@ def test_sharded_reader_get_basic(tmp_path) -> None:
 
 
 def test_sharded_reader_multi_get_sequential(tmp_path) -> None:
-    from shardyfusion.reader import ShardedReader
 
     manifests = {
         "mem://manifest/one": _manifest_2shard("mem://db/zero", "mem://db/one")
@@ -415,7 +414,6 @@ def test_sharded_reader_multi_get_sequential(tmp_path) -> None:
 
 
 def test_sharded_reader_multi_get_parallel(tmp_path) -> None:
-    from shardyfusion.reader import ShardedReader
 
     manifests = {
         "mem://manifest/one": _manifest_2shard("mem://db/zero", "mem://db/one")
@@ -439,7 +437,6 @@ def test_sharded_reader_multi_get_parallel(tmp_path) -> None:
 
 
 def test_sharded_reader_refresh(tmp_path) -> None:
-    from shardyfusion.reader import ShardedReader
 
     manifests = {
         "mem://manifest/one": _manifest("mem://db/one"),
@@ -466,7 +463,6 @@ def test_sharded_reader_refresh(tmp_path) -> None:
 
 
 def test_sharded_reader_refresh_unchanged(tmp_path) -> None:
-    from shardyfusion.reader import ShardedReader
 
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
     manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
@@ -484,7 +480,6 @@ def test_sharded_reader_refresh_unchanged(tmp_path) -> None:
 
 
 def test_sharded_reader_close_prevents_get(tmp_path) -> None:
-    from shardyfusion.reader import ShardedReader
 
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
     manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
@@ -502,7 +497,6 @@ def test_sharded_reader_close_prevents_get(tmp_path) -> None:
 
 
 def test_sharded_reader_close_prevents_refresh(tmp_path) -> None:
-    from shardyfusion.reader import ShardedReader
 
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
     manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
@@ -520,7 +514,6 @@ def test_sharded_reader_close_prevents_refresh(tmp_path) -> None:
 
 
 def test_sharded_reader_context_manager(tmp_path) -> None:
-    from shardyfusion.reader import ShardedReader
 
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
     manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
@@ -540,7 +533,6 @@ def test_sharded_reader_context_manager(tmp_path) -> None:
 
 
 def test_sharded_reader_missing_current_raises() -> None:
-    from shardyfusion.reader import ShardedReader
 
     with pytest.raises(ReaderStateError, match="CURRENT pointer not found"):
         ShardedReader(
@@ -551,7 +543,6 @@ def test_sharded_reader_missing_current_raises() -> None:
 
 
 def test_sharded_reader_metrics_lifecycle(tmp_path) -> None:
-    from shardyfusion.reader import ShardedReader
 
     mc = ListMetricsCollector()
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
@@ -576,7 +567,6 @@ def test_sharded_reader_metrics_lifecycle(tmp_path) -> None:
 
 
 def test_sharded_reader_multi_get_shard_failure(tmp_path) -> None:
-    from shardyfusion.reader import ShardedReader
 
     manifests = {
         "mem://manifest/one": _manifest_2shard("mem://db/zero", "mem://db/one")
@@ -625,3 +615,343 @@ def test_thread_safe_reader_executor_created_at_init(tmp_path) -> None:
         executor_id = id(reader._executor)
         reader.multi_get([1])
         assert id(reader._executor) == executor_id
+
+
+# ---------------------------------------------------------------------------
+# shard_for_key / shards_for_keys / reader_for_key / readers_for_keys tests
+# ---------------------------------------------------------------------------
+
+
+def _2shard_setup(tmp_path):
+    """Shared helper: 2-shard range reader (keys <=5 → shard 0, >=6 → shard 1)."""
+    manifests = {
+        "mem://manifest/one": _manifest_2shard("mem://db/zero", "mem://db/one")
+    }
+    manifest_reader = _MutableManifestStore(manifests, "mem://manifest/one")
+    stores: dict[str, dict[bytes, bytes]] = {
+        "mem://db/zero": {(1).to_bytes(8, "big", signed=False): b"a"},
+        "mem://db/one": {(6).to_bytes(8, "big", signed=False): b"b"},
+    }
+    return manifest_reader, stores
+
+
+class TestShardForKey:
+    """Tests for shard_for_key / shards_for_keys on both reader variants."""
+
+    def test_simple_reader_shard_for_key(self, tmp_path) -> None:
+        manifest_reader, stores = _2shard_setup(tmp_path)
+        with ShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        ) as reader:
+            meta_0 = reader.shard_for_key(1)
+            assert meta_0.db_id == 0
+            assert meta_0.db_url == "mem://db/zero"
+
+            meta_1 = reader.shard_for_key(6)
+            assert meta_1.db_id == 1
+            assert meta_1.db_url == "mem://db/one"
+
+    def test_concurrent_reader_shard_for_key(self, tmp_path) -> None:
+        manifest_reader, stores = _2shard_setup(tmp_path)
+        with ConcurrentShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        ) as reader:
+            meta_0 = reader.shard_for_key(1)
+            assert meta_0.db_id == 0
+
+            meta_1 = reader.shard_for_key(6)
+            assert meta_1.db_id == 1
+
+    def test_simple_reader_shards_for_keys(self, tmp_path) -> None:
+        manifest_reader, stores = _2shard_setup(tmp_path)
+        with ShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        ) as reader:
+            mapping = reader.shards_for_keys([1, 6])
+            assert mapping[1].db_id == 0
+            assert mapping[6].db_id == 1
+
+    def test_concurrent_reader_shards_for_keys(self, tmp_path) -> None:
+        manifest_reader, stores = _2shard_setup(tmp_path)
+        with ConcurrentShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        ) as reader:
+            mapping = reader.shards_for_keys([1, 6])
+            assert mapping[1].db_id == 0
+            assert mapping[6].db_id == 1
+
+
+class TestReaderForKey:
+    """Tests for reader_for_key / readers_for_keys on both reader variants."""
+
+    def test_simple_reader_for_key_reads_value(self, tmp_path) -> None:
+        manifest_reader, stores = _2shard_setup(tmp_path)
+        with ShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        ) as reader:
+            handle = reader.reader_for_key(1)
+            key_bytes = (1).to_bytes(8, "big", signed=False)
+            assert handle.get(key_bytes) == b"a"
+            handle.close()
+
+    def test_simple_readers_for_keys_reads_values(self, tmp_path) -> None:
+        manifest_reader, stores = _2shard_setup(tmp_path)
+        with ShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        ) as reader:
+            handles = reader.readers_for_keys([1, 6])
+            assert handles[1].get((1).to_bytes(8, "big", signed=False)) == b"a"
+            assert handles[6].get((6).to_bytes(8, "big", signed=False)) == b"b"
+            for h in handles.values():
+                h.close()
+
+    def test_close_does_not_close_underlying(self, tmp_path) -> None:
+        """Closing borrowed handle should not close the parent reader's shard."""
+        manifest_reader, stores = _2shard_setup(tmp_path)
+        with ShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        ) as reader:
+            handle = reader.reader_for_key(1)
+            handle.close()
+            # Parent reader should still work
+            assert reader.get(1) == b"a"
+
+    def test_reader_for_key_raises_when_closed(self, tmp_path) -> None:
+        manifest_reader, stores = _2shard_setup(tmp_path)
+        reader = ShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        )
+        reader.close()
+        with pytest.raises(ReaderStateError, match="Reader is closed"):
+            reader.reader_for_key(1)
+
+    def test_readers_for_keys_raises_when_closed(self, tmp_path) -> None:
+        manifest_reader, stores = _2shard_setup(tmp_path)
+        reader = ShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        )
+        reader.close()
+        with pytest.raises(ReaderStateError, match="Reader is closed"):
+            reader.readers_for_keys([1])
+
+    def test_concurrent_reader_for_key_reads_value(self, tmp_path) -> None:
+        manifest_reader, stores = _2shard_setup(tmp_path)
+        with ConcurrentShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        ) as reader:
+            handle = reader.reader_for_key(6)
+            assert handle.get((6).to_bytes(8, "big", signed=False)) == b"b"
+            handle.close()
+
+    def test_concurrent_reader_for_key_refcount(self, tmp_path) -> None:
+        """Verify refcount goes up on borrow and back down on close."""
+        manifest_reader, stores = _2shard_setup(tmp_path)
+        with ConcurrentShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        ) as reader:
+            assert reader._state.refcount == 0
+            h1 = reader.reader_for_key(1)
+            assert reader._state.refcount == 1
+            h2 = reader.reader_for_key(6)
+            assert reader._state.refcount == 2
+            h1.close()
+            assert reader._state.refcount == 1
+            h2.close()
+            assert reader._state.refcount == 0
+
+    def test_concurrent_readers_for_keys_dedup(self, tmp_path) -> None:
+        """Duplicate keys should be deduped; refcount = number of unique keys."""
+        manifest_reader, stores = _2shard_setup(tmp_path)
+        with ConcurrentShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        ) as reader:
+            handles = reader.readers_for_keys([1, 1, 6])
+            # Only 2 unique keys
+            assert len(handles) == 2
+            assert reader._state.refcount == 2
+            for h in handles.values():
+                h.close()
+            assert reader._state.refcount == 0
+
+    def test_concurrent_readers_for_keys_empty(self, tmp_path) -> None:
+        """Empty key list returns empty dict without touching refcount."""
+        manifest_reader, stores = _2shard_setup(tmp_path)
+        with ConcurrentShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        ) as reader:
+            handles = reader.readers_for_keys([])
+            assert handles == {}
+            assert reader._state.refcount == 0
+
+    def test_concurrent_reader_for_key_raises_when_closed(self, tmp_path) -> None:
+        manifest_reader, stores = _2shard_setup(tmp_path)
+        reader = ConcurrentShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        )
+        reader.close()
+        with pytest.raises(ReaderStateError, match="Reader is closed"):
+            reader.reader_for_key(1)
+
+    def test_shard_reader_handle_double_close_is_noop(self, tmp_path) -> None:
+        """Calling close() twice on ShardReaderHandle should not double-release."""
+        manifest_reader, stores = _2shard_setup(tmp_path)
+        with ConcurrentShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        ) as reader:
+            handle = reader.reader_for_key(1)
+            assert reader._state.refcount == 1
+            handle.close()
+            assert reader._state.refcount == 0
+            handle.close()  # no-op
+            assert reader._state.refcount == 0
+
+    def test_shard_reader_handle_context_manager(self, tmp_path) -> None:
+        """Verify ``with`` releases refcount on exit."""
+        manifest_reader, stores = _2shard_setup(tmp_path)
+        with ConcurrentShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        ) as reader:
+            with reader.reader_for_key(1) as handle:
+                assert reader._state.refcount == 1
+                assert handle.get((1).to_bytes(8, "big", signed=False)) == b"a"
+            assert reader._state.refcount == 0
+
+    def test_shard_reader_handle_multi_get(self, tmp_path) -> None:
+        """Verify batch reads on a single shard handle."""
+        manifest_reader, stores = _2shard_setup(tmp_path)
+        with ShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        ) as reader:
+            with reader.reader_for_key(1) as handle:
+                key_bytes = (1).to_bytes(8, "big", signed=False)
+                missing_bytes = (999).to_bytes(8, "big", signed=False)
+                result = handle.multi_get([key_bytes, missing_bytes])
+                assert result[key_bytes] == b"a"
+                assert result[missing_bytes] is None
+
+
+class TestSimpleReaderBorrowSafety:
+    """Tests for borrow safety on ShardedReader (deferred close)."""
+
+    def test_simple_reader_refresh_defers_close_with_borrow(self, tmp_path) -> None:
+        """Borrow a handle, refresh, verify handle still works, close handle."""
+        manifests = {
+            "mem://manifest/one": _manifest("mem://db/one"),
+            "mem://manifest/two": _manifest("mem://db/two"),
+        }
+        manifest_reader = _MutableManifestStore(manifests, "mem://manifest/one")
+        stores: dict[str, dict[bytes, bytes]] = {
+            "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"one"},
+            "mem://db/two": {(1).to_bytes(8, "big", signed=False): b"two"},
+        }
+
+        reader = ShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        )
+        key_bytes = (1).to_bytes(8, "big", signed=False)
+
+        # Borrow a handle from the old state
+        handle = reader.reader_for_key(1)
+        old_state = reader._state
+        assert old_state.borrow_count == 1
+
+        # Refresh — old state should be retired but NOT closed
+        manifest_reader.current_ref = "mem://manifest/two"
+        reader.refresh()
+        assert old_state.retired is True
+        # Handle should still work (old shard readers not yet closed)
+        assert handle.get(key_bytes) == b"one"
+
+        # New state should serve new data
+        assert reader.get(1) == b"two"
+
+        # Close handle — old state should now be cleaned up
+        handle.close()
+        assert old_state.borrow_count == 0
+
+        reader.close()
+
+    def test_simple_reader_close_defers_with_borrow(self, tmp_path) -> None:
+        """Borrow a handle, close parent, verify handle still works."""
+        manifests = {"mem://manifest/one": _manifest("mem://db/one")}
+        manifest_reader = _MutableManifestStore(manifests, "mem://manifest/one")
+        stores: dict[str, dict[bytes, bytes]] = {
+            "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
+        }
+
+        reader = ShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_reader,
+            reader_factory=_fake_reader_factory(stores),
+        )
+        key_bytes = (1).to_bytes(8, "big", signed=False)
+
+        handle = reader.reader_for_key(1)
+        state = reader._state
+        assert state.borrow_count == 1
+
+        # Close parent — state should be retired but not closed
+        reader.close()
+        assert state.retired is True
+
+        # Handle should still work
+        assert handle.get(key_bytes) == b"val"
+
+        # Release handle — triggers deferred cleanup
+        handle.close()
+        assert state.borrow_count == 0

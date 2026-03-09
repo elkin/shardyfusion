@@ -41,7 +41,9 @@ from .manifest_store import (
 from .metrics import MetricEvent, MetricsCollector
 from .reader import (
     ConcurrentShardedReader,
+    ShardDetail,
     ShardedReader,
+    ShardReaderHandle,
     SlateDbReaderFactory,
     SnapshotInfo,
 )
@@ -94,6 +96,8 @@ __all__ = [
     "S3ManifestStore",
     "ShardReaderFactory",
     "ConcurrentShardedReader",
+    "ShardReaderHandle",
+    "ShardDetail",
     "ShardedReader",
     "SlateDbReaderFactory",
     "SlateDbFactory",

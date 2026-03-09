@@ -83,9 +83,9 @@ def build_info_result(reader: Any) -> dict[str, Any]:
     return {"op": "info", **dataclasses.asdict(info)}
 
 
-def build_shards_result(shards: list[dict[str, Any]]) -> dict[str, Any]:
+def build_shards_result(shards: list[Any]) -> dict[str, Any]:
     """Build a dict representing per-shard details."""
-    return {"op": "shards", "shards": shards}
+    return {"op": "shards", "shards": [dataclasses.asdict(s) for s in shards]}
 
 
 def build_route_result(key: str, db_id: int) -> dict[str, Any]:
