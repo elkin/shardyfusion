@@ -1,11 +1,11 @@
 """Database-backed ManifestStore implementations (DB-API 2).
 
-Provides PostgreSQL, SQLite, and Comdb2 subclasses that store manifests
-as JSON in a single table. The "current" manifest is implicit — the row
-with the latest ``created_at`` timestamp.
+Provides PostgreSQL and Comdb2 subclasses that store manifests as JSON
+in a single table. The "current" manifest is implicit — the row with
+the latest ``created_at`` timestamp.
 
-No external dependencies are required beyond DB-API 2 drivers (stdlib
-``sqlite3`` for SQLite, user-provided ``psycopg2`` / comdb2 drivers).
+No external dependencies are required beyond DB-API 2 drivers
+(user-provided ``psycopg2`` / comdb2 drivers).
 """
 
 from abc import ABC, abstractmethod
@@ -221,34 +221,6 @@ class PostgresManifestStore(_DbManifestStoreBase):
             f"  payload = EXCLUDED.payload, "
             f"  content_type = EXCLUDED.content_type, "
             f"  created_at = NOW()"
-        )
-
-
-class SqliteManifestStore(_DbManifestStoreBase):
-    """SQLite manifest store using TEXT for JSON and datetime('now')."""
-
-    @property
-    def _param_marker(self) -> str:
-        return "?"
-
-    @property
-    def _create_table_ddl(self) -> str:
-        return (
-            f"CREATE TABLE IF NOT EXISTS {self._table_name} ("
-            f"  run_id       TEXT PRIMARY KEY,"
-            f"  name         TEXT NOT NULL,"
-            f"  payload      TEXT NOT NULL,"
-            f"  content_type TEXT NOT NULL DEFAULT 'application/json',"
-            f"  created_at   TEXT NOT NULL DEFAULT (datetime('now'))"
-            f")"
-        )
-
-    def _upsert_sql(self, param_marker: str) -> str:
-        p = param_marker
-        return (
-            f"INSERT OR REPLACE INTO {self._table_name} "
-            f"(run_id, name, payload, content_type) "
-            f"VALUES ({p}, {p}, {p}, {p})"
         )
 
 

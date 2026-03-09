@@ -52,15 +52,13 @@
 
 ::: shardyfusion.manifest
 
-## Publisher and Storage
+## Manifest Store and Storage
 
-::: shardyfusion.publish
+::: shardyfusion.manifest_store
+
+::: shardyfusion.db_manifest_store
 
 ::: shardyfusion.storage
-
-## Manifest Readers
-
-::: shardyfusion.manifest_readers
 
 ## Routing and Reader
 
