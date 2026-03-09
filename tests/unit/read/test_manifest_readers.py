@@ -5,8 +5,8 @@ import json
 import pytest
 
 from shardyfusion.errors import ManifestParseError
-from shardyfusion.manifest_readers import (
-    DefaultS3ManifestReader,
+from shardyfusion.manifest_store import (
+    S3ManifestStore,
     parse_json_manifest,
 )
 
@@ -90,12 +90,6 @@ def test_parse_json_manifest_rejects_bad_shard_coverage() -> None:
         parse_json_manifest(json.dumps(payload).encode("utf-8"))
 
 
-def test_default_reader_rejects_non_json_manifest_content_type() -> None:
-    reader = DefaultS3ManifestReader("s3://bucket/prefix")
-    with pytest.raises(ManifestParseError, match="supports only application/json"):
-        reader.load_manifest("s3://bucket/prefix/manifest", "application/x-custom")
-
-
 def test_parse_json_manifest_rejects_corrupt_json() -> None:
     with pytest.raises(ManifestParseError, match="Manifest validation failed"):
         parse_json_manifest(b"not-json{{{")
@@ -111,12 +105,10 @@ def test_load_current_rejects_corrupt_json(monkeypatch) -> None:
     def fake_try_get_bytes(url, *, s3_client=None, metrics_collector=None):
         return b"not-json{{{"
 
-    monkeypatch.setattr(
-        "shardyfusion.manifest_readers.try_get_bytes", fake_try_get_bytes
-    )
-    reader = DefaultS3ManifestReader("s3://bucket/prefix")
+    monkeypatch.setattr("shardyfusion.manifest_store.try_get_bytes", fake_try_get_bytes)
+    store = S3ManifestStore("s3://bucket/prefix")
     with pytest.raises(ManifestParseError, match="validation failed"):
-        reader.load_current()
+        store.load_current()
 
 
 def test_load_current_rejects_missing_manifest_ref(monkeypatch) -> None:
@@ -129,9 +121,7 @@ def test_load_current_rejects_missing_manifest_ref(monkeypatch) -> None:
             }
         ).encode("utf-8")
 
-    monkeypatch.setattr(
-        "shardyfusion.manifest_readers.try_get_bytes", fake_try_get_bytes
-    )
-    reader = DefaultS3ManifestReader("s3://bucket/prefix")
+    monkeypatch.setattr("shardyfusion.manifest_store.try_get_bytes", fake_try_get_bytes)
+    store = S3ManifestStore("s3://bucket/prefix")
     with pytest.raises(ManifestParseError, match="manifest_ref"):
-        reader.load_current()
+        store.load_current()

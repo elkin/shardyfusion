@@ -11,8 +11,7 @@ from shardyfusion._rate_limiter import TokenBucket
 from shardyfusion._writer_core import (
     ShardAttemptResult,
     assemble_build_result,
-    build_manifest_artifact,
-    publish_manifest_and_current,
+    publish_to_store,
     route_key,
     select_winners,
     update_min_max,
@@ -147,17 +146,12 @@ def write_sharded(
     winners = select_winners(attempts, num_dbs=config.num_dbs)
 
     manifest_started = time.perf_counter()
-    artifact = build_manifest_artifact(
+    manifest_ref = publish_to_store(
         config=config,
         run_id=run_id,
         resolved_sharding=config.sharding,
         winners=winners,
         key_col="_key",
-    )
-    publish_result = publish_manifest_and_current(
-        config=config,
-        run_id=run_id,
-        artifact=artifact,
         started=started,
     )
     manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
@@ -165,9 +159,7 @@ def write_sharded(
     result = assemble_build_result(
         run_id=run_id,
         winners=winners,
-        artifact=artifact,
-        manifest_ref=publish_result.manifest_ref,
-        current_ref=publish_result.current_ref,
+        manifest_ref=manifest_ref,
         attempts=attempts,
         shard_duration_ms=0,
         write_duration_ms=write_duration_ms,

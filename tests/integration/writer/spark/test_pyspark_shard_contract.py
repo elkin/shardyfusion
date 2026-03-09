@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.serde import ValueSpec
 from shardyfusion.testing import real_file_adapter_factory
 from shardyfusion.writer.spark import write_sharded
-from tests.helpers.tracking import InMemoryPublisher
 
 
 @pytest.mark.spark
@@ -16,11 +14,11 @@ def test_sharded_writer_contract_holds_for_pyspark(spark, tmp_path) -> None:
     rows = [(i, f"payload-{i}".encode()) for i in range(71)]
     df = spark.createDataFrame(rows, ["id", "payload"])
 
-    publisher = InMemoryPublisher()
+    store = InMemoryManifestStore()
     config = WriteConfig(
         num_dbs=5,
         s3_prefix="s3://bucket/prefix",
-        manifest=ManifestOptions(publisher=publisher),
+        manifest=ManifestOptions(store=store),
         adapter_factory=real_file_adapter_factory(str(tmp_path / "object-store")),
         output=OutputOptions(run_id="run-contract-1"),
     )
@@ -39,7 +37,8 @@ def test_sharded_writer_contract_holds_for_pyspark(spark, tmp_path) -> None:
     assert all("run_id=run-contract-1" in winner.db_url for winner in result.winners)
     assert all("/attempt=" in winner.db_url for winner in result.winners)
 
-    manifest = json.loads(result.manifest_artifact.payload.decode("utf-8"))
-    assert manifest["required"]["num_dbs"] == 5
-    assert manifest["required"]["run_id"] == "run-contract-1"
-    assert len(manifest["shards"]) == 5
+    # Verify manifest content via store
+    parsed = store.load_manifest(result.manifest_ref)
+    assert parsed.required_build.num_dbs == 5
+    assert parsed.required_build.run_id == "run-contract-1"
+    assert len(parsed.shards) == 5

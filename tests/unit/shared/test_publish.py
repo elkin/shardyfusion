@@ -1,10 +1,15 @@
 from __future__ import annotations
 
-from shardyfusion.manifest import ManifestArtifact
-from shardyfusion.publish import DefaultS3Publisher
+from shardyfusion.manifest import (
+    ManifestShardingSpec,
+    RequiredBuildMeta,
+    RequiredShardMeta,
+)
+from shardyfusion.manifest_store import S3ManifestStore
+from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 
 
-def test_default_s3_publisher_builds_expected_urls(monkeypatch) -> None:
+def test_s3_manifest_store_builds_expected_urls(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 
     def fake_create_s3_client(_cfg=None):
@@ -29,18 +34,44 @@ def test_default_s3_publisher_builds_expected_urls(monkeypatch) -> None:
             }
         )
 
-    monkeypatch.setattr("shardyfusion.publish.create_s3_client", fake_create_s3_client)
-    monkeypatch.setattr("shardyfusion.publish.put_bytes", fake_put_bytes)
-
-    publisher = DefaultS3Publisher("s3://bucket/prefix")
-    artifact = ManifestArtifact(payload=b"{}", content_type="application/json")
-
-    manifest_ref = publisher.publish_manifest(
-        name="manifest", artifact=artifact, run_id="run123"
+    monkeypatch.setattr(
+        "shardyfusion.manifest_store.create_s3_client", fake_create_s3_client
     )
-    current_ref = publisher.publish_current(name="_CURRENT", artifact=artifact)
+    monkeypatch.setattr("shardyfusion.manifest_store.put_bytes", fake_put_bytes)
+
+    store = S3ManifestStore("s3://bucket/prefix")
+
+    required_build = RequiredBuildMeta(
+        run_id="run123",
+        created_at="2026-01-01T00:00:00+00:00",
+        num_dbs=1,
+        s3_prefix="s3://bucket/prefix",
+        key_col="id",
+        key_encoding=KeyEncoding.U64BE,
+        sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
+        db_path_template="db={db_id:05d}",
+        tmp_prefix="_tmp",
+    )
+    shards = [
+        RequiredShardMeta(
+            db_id=0,
+            db_url="s3://bucket/prefix/db=00000",
+            attempt=0,
+            row_count=10,
+            checkpoint_id=None,
+            writer_info={},
+        ),
+    ]
+
+    manifest_ref = store.publish(
+        run_id="run123",
+        required_build=required_build,
+        shards=shards,
+        custom={},
+    )
 
     assert manifest_ref == "s3://bucket/prefix/manifests/run_id=run123/manifest"
-    assert current_ref == "s3://bucket/prefix/_CURRENT"
+    # Two put_bytes calls: manifest + CURRENT
+    assert len(calls) == 2
     assert calls[0]["url"] == manifest_ref
-    assert calls[1]["url"] == current_ref
+    assert calls[1]["url"] == "s3://bucket/prefix/_CURRENT"

@@ -176,9 +176,9 @@ Primary class:
 
 ### Reader initialization flow
 
-1. Select manifest reader implementation:
-   - default mode: uses `DefaultS3ManifestReader`
-   - custom mode: caller may provide `manifest_reader`
+1. Select manifest store implementation:
+   - default mode: uses `S3ManifestStore`
+   - custom mode: caller may provide `manifest_store`
 2. Load CURRENT pointer.
 3. Load manifest from CURRENT’s `manifest_ref`.
 4. Build `SnapshotRouter`.
@@ -260,11 +260,11 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[ConcurrentShardedReader init] --> B{custom publisher?}
-    B -->|no / default| C[DefaultS3ManifestReader]
-    B -->|yes| D{manifest_reader provided?}
+    A[ConcurrentShardedReader init] --> B{custom store?}
+    B -->|no / default| C[S3ManifestStore]
+    B -->|yes| D{manifest_store provided?}
     D -->|no| E[Raise ValueError]
-    D -->|yes| F[Use provided ManifestReader]
+    D -->|yes| F[Use provided ManifestStore]
     C --> G[load_current]
     F --> G
     G --> H[load_manifest]

@@ -115,9 +115,7 @@ class BuildResult:
 
     run_id: str
     winners: list[RequiredShardMeta]
-    manifest_artifact: ManifestArtifact
     manifest_ref: str
-    current_ref: str | None
     stats: BuildStats
 
 

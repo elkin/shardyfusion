@@ -7,7 +7,7 @@ import json
 import pytest
 
 from shardyfusion.errors import ManifestParseError
-from shardyfusion.manifest_readers import parse_json_manifest
+from shardyfusion.manifest_store import parse_json_manifest
 
 
 def _build_valid_manifest(num_dbs: int = 2) -> dict:

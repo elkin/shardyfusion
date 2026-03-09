@@ -44,10 +44,10 @@ def _build_reader(ctx: click.Context) -> Any:
     reader_cfg: ReaderConfig = params["reader_cfg"]
     s3_client_config = params["s3_client_config"]
 
-    from ..manifest_readers import DefaultS3ManifestReader
+    from ..manifest_store import S3ManifestStore
     from ..reader import ConcurrentShardedReader
 
-    manifest_reader = DefaultS3ManifestReader(
+    manifest_store = S3ManifestStore(
         s3_prefix,
         current_name=current_name,
         s3_client_config=s3_client_config,
@@ -57,7 +57,7 @@ def _build_reader(ctx: click.Context) -> Any:
         return ConcurrentShardedReader(
             s3_prefix=s3_prefix,
             local_root=reader_cfg.local_root,
-            manifest_reader=manifest_reader,
+            manifest_store=manifest_store,
             current_name=current_name,
             slate_env_file=reader_cfg.slate_env_file,
             thread_safety=reader_cfg.thread_safety,

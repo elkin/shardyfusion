@@ -147,20 +147,15 @@ reader = ShardedReader(
 
 The factory must conform to the `ShardReaderFactory` protocol — a callable accepting `db_url`, `local_dir`, and `checkpoint_id` keyword arguments, returning an object with `get(key: bytes) -> bytes | None` and `close()` methods.
 
-## Custom Manifest Reader
+## Custom Manifest Store
 
-For manifests not stored in the default S3 JSON format, provide a `ManifestReader`:
+For manifests not stored in the default S3 JSON format, provide a `ManifestStore`:
 
 ```python
-from shardyfusion.manifest_readers import FunctionManifestReader
-
 reader = ShardedReader(
     s3_prefix="s3://bucket/prefix",
     local_root="/tmp/reader",
-    manifest_reader=FunctionManifestReader(
-        load_current_fn=my_load_current,
-        load_manifest_fn=my_load_manifest,
-    ),
+    manifest_store=my_custom_store,  # implements ManifestStore protocol
 )
 ```
 

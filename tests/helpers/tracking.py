@@ -2,9 +2,6 @@
 
 TrackingAdapter / TrackingFactory record all write_batch calls so tests can
 inspect what the writer produced without touching S3 or SlateDB.
-
-InMemoryPublisher stores manifest artifacts in a plain dict so tests can
-verify manifest content without S3.
 """
 
 from __future__ import annotations
@@ -12,9 +9,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Self
-
-from shardyfusion.manifest import ManifestArtifact
-from shardyfusion.publish import ManifestPublisher
 
 
 class TrackingAdapter:
@@ -77,22 +71,3 @@ class RecordingTokenBucket:
 
     def acquire(self, tokens: int = 1) -> None:
         self.acquire_calls.append(tokens)
-
-
-class InMemoryPublisher(ManifestPublisher):
-    """Manifest publisher that stores artifacts in a plain dict."""
-
-    def __init__(self) -> None:
-        self.objects: dict[str, ManifestArtifact] = {}
-
-    def publish_manifest(
-        self, *, name: str, artifact: ManifestArtifact, run_id: str
-    ) -> str:
-        ref = f"mem://manifests/run_id={run_id}/{name}"
-        self.objects[ref] = artifact
-        return ref
-
-    def publish_current(self, *, name: str, artifact: ManifestArtifact) -> str | None:
-        ref = f"mem://{name}"
-        self.objects[ref] = artifact
-        return ref

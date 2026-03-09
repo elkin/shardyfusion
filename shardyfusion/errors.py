@@ -122,6 +122,16 @@ class ReaderStateError(ShardyfusionError):
     retryable = False
 
 
+class ManifestStoreError(ShardyfusionError):
+    """Transient manifest store failure (DB connection, query timeout, etc.).
+
+    Raised by database-backed ``ManifestStore`` implementations when the
+    underlying connection or query fails.  Typically retryable.
+    """
+
+    retryable = True
+
+
 class S3TransientError(ShardyfusionError):
     """Transient S3 error that may succeed on retry (throttle, 500, 503, timeout).
 

@@ -1,6 +1,5 @@
 """Framework-agnostic core functions shared by all writer implementations."""
 
-import json
 import logging
 import time
 from bisect import bisect_right
@@ -11,8 +10,6 @@ from datetime import UTC, datetime
 from .config import WriteConfig
 from .errors import (
     ConfigValidationError,
-    ManifestBuildError,
-    PublishCurrentError,
     PublishManifestError,
     ShardCoverageError,
 )
@@ -21,16 +18,13 @@ from .manifest import (
     BuildDurations,
     BuildResult,
     BuildStats,
-    CurrentPointer,
-    JsonManifestBuilder,
-    ManifestArtifact,
     ManifestShardingSpec,
     RequiredBuildMeta,
     RequiredShardMeta,
 )
+from .manifest_store import S3ManifestStore
 from .metrics import MetricEvent
 from .ordering import compare_ordered
-from .publish import DefaultS3Publisher
 from .routing import xxhash64_db_id  # SHARDING INVARIANT: direct import, not reimpl.
 from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
 from .type_defs import JsonObject, KeyLike
@@ -55,12 +49,6 @@ class PartitionWriteOutcome:
     attempts: list[ShardAttemptResult]
     winners: list[RequiredShardMeta]
     write_duration_ms: int
-
-
-@dataclass(slots=True)
-class _PublishResult:
-    manifest_ref: str
-    current_ref: str | None
 
 
 def route_key(
@@ -150,15 +138,16 @@ def _winner_sort_key(item: ShardAttemptResult) -> tuple[int, int, str]:
     return (item.attempt, normalized_task_attempt_id, item.db_url)
 
 
-def build_manifest_artifact(
+def publish_to_store(
     *,
     config: WriteConfig,
     run_id: str,
     resolved_sharding: ShardingSpec,
     winners: list[RequiredShardMeta],
     key_col: str = "_key",
-) -> ManifestArtifact:
-    """Build manifest bytes using configured builder and custom fields."""
+    started: float = 0.0,
+) -> str:
+    """Build required metadata and publish via the configured ManifestStore."""
 
     required_build = RequiredBuildMeta(
         run_id=run_id,
@@ -172,54 +161,23 @@ def build_manifest_artifact(
         key_encoding=config.key_encoding,
     )
 
-    builder = config.manifest.manifest_builder or JsonManifestBuilder()
-    for key, value in config.manifest.custom_manifest_fields.items():
-        builder.add_custom_field(key, value)
-
-    try:
-        return builder.build(
-            required_build=required_build,
-            shards=winners,
-            custom_fields=config.manifest.custom_manifest_fields,
-        )
-    except Exception as exc:  # pragma: no cover - custom builder surface
-        log_failure(
-            "manifest_build_failed",
-            severity=FailureSeverity.ERROR,
-            logger=_logger,
-            error=exc,
-            run_id=run_id,
-            builder_type=type(builder).__name__,
-            include_traceback=True,
-        )
-        raise ManifestBuildError("Failed to build manifest artifact") from exc
-
-
-def publish_manifest_and_current(
-    *,
-    config: WriteConfig,
-    run_id: str,
-    artifact: ManifestArtifact,
-    started: float = 0.0,
-) -> _PublishResult:
-    """Publish manifest and CURRENT pointer."""
-
-    mc = config.metrics_collector
-    publisher = config.manifest.publisher or DefaultS3Publisher(
+    store = config.manifest.store or S3ManifestStore(
         config.s3_prefix,
-        manifest_name=config.manifest.manifest_name,
-        current_name=config.manifest.current_name,
+        manifest_builder=config.manifest.manifest_builder,
         s3_client_config=config.manifest.s3_client_config,
-        metrics_collector=mc,
+        metrics_collector=config.metrics_collector,
     )
 
+    mc = config.metrics_collector
+
     try:
-        manifest_ref = publisher.publish_manifest(
-            name=config.manifest.manifest_name,
-            artifact=artifact,
+        manifest_ref = store.publish(
             run_id=run_id,
+            required_build=required_build,
+            shards=winners,
+            custom=config.manifest.custom_manifest_fields,
         )
-    except Exception as exc:  # pragma: no cover - runtime publisher failures
+    except Exception as exc:  # pragma: no cover - runtime store failures
         log_failure(
             "manifest_publish_failed",
             severity=FailureSeverity.ERROR,
@@ -245,57 +203,14 @@ def publish_manifest_and_current(
             },
         )
 
-    current_artifact = _build_current_artifact(
-        manifest_ref=manifest_ref,
-        manifest_content_type=artifact.content_type,
-        run_id=run_id,
-    )
-
-    try:
-        current_ref = publisher.publish_current(
-            name=config.manifest.current_name,
-            artifact=current_artifact,
-        )
-    except Exception as exc:  # pragma: no cover - runtime publisher failures
-        log_failure(
-            "current_publish_failed",
-            severity=FailureSeverity.CRITICAL,
-            logger=_logger,
-            error=exc,
-            run_id=run_id,
-            manifest_ref=manifest_ref,
-            include_traceback=True,
-        )
-        raise PublishCurrentError(
-            f"Manifest already published at {manifest_ref}; failed publishing CURRENT",
-            manifest_ref=manifest_ref,
-        ) from exc
-
-    log_event(
-        "current_published",
-        logger=_logger,
-        run_id=run_id,
-        current_ref=current_ref,
-        manifest_ref=manifest_ref,
-    )
-    if mc is not None:
-        mc.emit(
-            MetricEvent.CURRENT_PUBLISHED,
-            {
-                "elapsed_ms": int((time.perf_counter() - started) * 1000),
-            },
-        )
-
-    return _PublishResult(manifest_ref=manifest_ref, current_ref=current_ref)
+    return manifest_ref
 
 
 def assemble_build_result(
     *,
     run_id: str,
     winners: list[RequiredShardMeta],
-    artifact: ManifestArtifact,
     manifest_ref: str,
-    current_ref: str | None,
     attempts: list[ShardAttemptResult],
     shard_duration_ms: int,
     write_duration_ms: int,
@@ -320,29 +235,9 @@ def assemble_build_result(
     return BuildResult(
         run_id=run_id,
         winners=winners,
-        manifest_artifact=artifact,
         manifest_ref=manifest_ref,
-        current_ref=current_ref,
         stats=stats,
     )
-
-
-def _build_current_artifact(
-    *,
-    manifest_ref: str,
-    manifest_content_type: str,
-    run_id: str,
-) -> ManifestArtifact:
-    pointer = CurrentPointer(
-        manifest_ref=manifest_ref,
-        manifest_content_type=manifest_content_type,
-        run_id=run_id,
-        updated_at=_utc_now_iso(),
-    )
-    payload = json.dumps(
-        pointer.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
-    return ManifestArtifact(payload=payload, content_type="application/json")
 
 
 def _utc_now_iso() -> str:

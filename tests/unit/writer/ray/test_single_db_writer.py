@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import pathlib
 
 import pytest
@@ -19,6 +18,7 @@ from shardyfusion.errors import (
     ShardyfusionError,
 )
 from shardyfusion.manifest import BuildResult
+from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.serde import ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import KeyEncoding
 from shardyfusion.testing import (
@@ -30,7 +30,6 @@ from shardyfusion.writer.ray.single_db_writer import (
     write_single_db,
 )
 from tests.helpers.tracking import (
-    InMemoryPublisher,
     RecordingTokenBucket,
     TrackingAdapter,
     TrackingFactory,
@@ -55,7 +54,7 @@ def _make_config(
         batch_size=batch_size,
         adapter_factory=factory or TrackingFactory(),
         output=OutputOptions(run_id="test-run"),
-        manifest=ManifestOptions(publisher=InMemoryPublisher()),
+        manifest=ManifestOptions(store=InMemoryManifestStore()),
     )
 
 
@@ -259,13 +258,13 @@ def test_min_max_keys() -> None:
 
 
 def test_manifest_structure() -> None:
-    publisher = InMemoryPublisher()
+    store = InMemoryManifestStore()
     config = WriteConfig(
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
         adapter_factory=TrackingFactory(),
         output=OutputOptions(run_id="test-manifest"),
-        manifest=ManifestOptions(publisher=publisher),
+        manifest=ManifestOptions(store=store),
     )
 
     records = [{"id": k} for k in range(5)]
@@ -279,13 +278,12 @@ def test_manifest_structure() -> None:
     )
 
     assert result.manifest_ref.startswith("mem://manifests/")
-    assert result.current_ref == "mem://_CURRENT"
 
-    manifest_artifact = publisher.objects[result.manifest_ref]
-    manifest_data = json.loads(manifest_artifact.payload.decode("utf-8"))
-    assert manifest_data["required"]["num_dbs"] == 1
-    assert len(manifest_data["shards"]) == 1
-    assert manifest_data["shards"][0]["db_id"] == 0
+    # Parse manifest content via store
+    parsed = store.load_manifest(result.manifest_ref)
+    assert parsed.required_build.num_dbs == 1
+    assert len(parsed.shards) == 1
+    assert parsed.shards[0].db_id == 0
 
 
 def test_key_encoding_u32be() -> None:
@@ -371,7 +369,7 @@ def test_data_integrity_file_backed(tmp_path: pathlib.Path) -> None:
             run_id="test-run",
             local_root=str(tmp_path / "local"),
         ),
-        manifest=ManifestOptions(publisher=InMemoryPublisher()),
+        manifest=ManifestOptions(store=InMemoryManifestStore()),
     )
 
     records = [{"id": i} for i in range(50)]

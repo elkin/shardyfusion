@@ -19,6 +19,7 @@ from shardyfusion.config import (
 )
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.manifest import BuildResult
+from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.metrics import MetricEvent
 from shardyfusion.serde import ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import (
@@ -32,7 +33,7 @@ from shardyfusion.testing import (
     file_backed_load_db,
 )
 from shardyfusion.writer.dask import write_sharded
-from tests.helpers.tracking import InMemoryPublisher, RecordingTokenBucket
+from tests.helpers.tracking import RecordingTokenBucket
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -108,7 +109,7 @@ def _make_config(
         adapter_factory=factory or _TrackingFactory(),
         sharding=sharding or ShardingSpec(),
         output=OutputOptions(run_id="test-run"),
-        manifest=ManifestOptions(publisher=InMemoryPublisher()),
+        manifest=ManifestOptions(store=InMemoryManifestStore()),
     )
 
 
@@ -132,7 +133,7 @@ def _make_file_backed_config(
             run_id="test-run",
             local_root=str(tmp_path / "local"),
         ),
-        manifest=ManifestOptions(publisher=InMemoryPublisher()),
+        manifest=ManifestOptions(store=InMemoryManifestStore()),
     )
     return config, root_dir
 
@@ -168,7 +169,6 @@ def test_hash_routing_round_trip() -> None:
     assert sorted(w.db_id for w in result.winners) == [0, 1, 2, 3]
     assert sum(w.row_count for w in result.winners) == 40
     assert result.manifest_ref.startswith("mem://manifests/")
-    assert result.current_ref == "mem://_CURRENT"
 
 
 def test_range_explicit_boundaries() -> None:
@@ -210,7 +210,7 @@ def test_range_auto_computed_boundaries() -> None:
             boundaries=None,
         ),
         output=OutputOptions(run_id="test-run"),
-        manifest=ManifestOptions(publisher=InMemoryPublisher()),
+        manifest=ManifestOptions(store=InMemoryManifestStore()),
     )
 
     # 90 evenly distributed records — quantiles should produce reasonable boundaries
@@ -708,7 +708,6 @@ def test_metrics_emitted_on_write() -> None:
     assert MetricEvent.SHARDING_COMPLETED in event_names
     assert MetricEvent.SHARD_WRITES_COMPLETED in event_names
     assert MetricEvent.MANIFEST_PUBLISHED in event_names
-    assert MetricEvent.CURRENT_PUBLISHED in event_names
     assert MetricEvent.WRITE_COMPLETED in event_names
 
     # WRITE_STARTED should be first, WRITE_COMPLETED last

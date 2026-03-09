@@ -1,17 +1,22 @@
 """Configuration models for sharded SlateDB writes."""
 
+from __future__ import annotations
+
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from .errors import ConfigValidationError
 from .manifest import ManifestBuilder
 from .metrics import MetricsCollector
-from .publish import ManifestPublisher
 from .sharding_types import KeyEncoding, ShardingSpec
 from .slatedb_adapter import DbAdapterFactory
 from .type_defs import JsonObject, S3ClientConfig
+
+if TYPE_CHECKING:
+    from .manifest_store import ManifestStore
 
 _SAFE_SEGMENT_CHARS = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
@@ -32,14 +37,12 @@ class OutputOptions:
 
 @dataclass(slots=True)
 class ManifestOptions:
-    """Manifest/CURRENT build and publish settings."""
+    """Manifest build and publish settings."""
 
-    manifest_name: str = "manifest"
-    current_name: str = "_CURRENT"
     manifest_builder: ManifestBuilder | None = None
-    publisher: ManifestPublisher | None = None
+    store: ManifestStore | None = None
     custom_manifest_fields: JsonObject = field(default_factory=dict)
-    # Optional default-publisher transport overrides (boto3/Ceph RGW support).
+    # Optional default-store transport overrides (boto3/Ceph RGW support).
     s3_client_config: S3ClientConfig | None = None
 
 
@@ -62,7 +65,7 @@ class WriteConfig:
             Default: ``SlateDbFactory()``.
         sharding: Sharding strategy configuration (hash, range, or custom).
         output: Output path/layout settings.
-        manifest: Manifest/CURRENT build and publish settings.
+        manifest: Manifest build and publish settings.
         metrics_collector: Optional observer for write lifecycle events.
 
     Raises:
@@ -103,14 +106,6 @@ class WriteConfig:
 
         _validate_s3_prefix(self.s3_prefix)
         _validate_segment(self.output.tmp_prefix, field_name="output.tmp_prefix")
-        _validate_segment(
-            self.manifest.manifest_name,
-            field_name="manifest.manifest_name",
-        )
-        _validate_segment(
-            self.manifest.current_name,
-            field_name="manifest.current_name",
-        )
 
         try:
             self.output.db_path_template.format(db_id=0)

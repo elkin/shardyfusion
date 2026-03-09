@@ -10,8 +10,8 @@ import pytest
 
 from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
 from shardyfusion.errors import ShardyfusionError
+from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.writer.python.writer import _write_parallel
-from tests.helpers.tracking import InMemoryPublisher
 
 
 class _CrashingAdapter:
@@ -77,7 +77,7 @@ def _make_config(num_dbs: int = 2) -> WriteConfig:
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/test",
         adapter_factory=_good_factory,
-        manifest=ManifestOptions(publisher=InMemoryPublisher()),
+        manifest=ManifestOptions(store=InMemoryManifestStore()),
         output=OutputOptions(run_id="test-run"),
     )
 
@@ -88,7 +88,7 @@ def test_worker_crash_raises_error() -> None:
         num_dbs=2,
         s3_prefix="s3://bucket/test",
         adapter_factory=_crashing_factory,
-        manifest=ManifestOptions(publisher=InMemoryPublisher()),
+        manifest=ManifestOptions(store=InMemoryManifestStore()),
         output=OutputOptions(run_id="crash-test"),
     )
 

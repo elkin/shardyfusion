@@ -60,11 +60,10 @@ def test_single_db_ray_publishes_manifest_and_current(
     assert len(result.winners) == 1
     assert result.winners[0].row_count == 20
     assert result.manifest_ref.startswith(f"s3://{bucket}/single-db-ray/manifests/")
-    assert result.current_ref == f"s3://{bucket}/single-db-ray/_CURRENT"
 
     client = local_s3_service["client"]
     manifest_key = result.manifest_ref.split(f"s3://{bucket}/", 1)[1]
-    current_key = result.current_ref.split(f"s3://{bucket}/", 1)[1]
+    current_key = "single-db-ray/_CURRENT"
 
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
     current_obj = client.get_object(Bucket=bucket, Key=current_key)

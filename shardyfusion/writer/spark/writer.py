@@ -14,8 +14,7 @@ from shardyfusion._writer_core import (
     PartitionWriteOutcome,
     ShardAttemptResult,
     assemble_build_result,
-    build_manifest_artifact,
-    publish_manifest_and_current,
+    publish_to_store,
     select_winners,
     update_min_max,
 )
@@ -218,17 +217,12 @@ def _write_sharded_impl(
         )
 
     manifest_started = time.perf_counter()
-    artifact = build_manifest_artifact(
+    manifest_ref = publish_to_store(
         config=config,
         run_id=run_id,
         resolved_sharding=prepared_rows.resolved_sharding,
         winners=write_outcome.winners,
         key_col=key_col,
-    )
-    publish_result = publish_manifest_and_current(
-        config=config,
-        run_id=run_id,
-        artifact=artifact,
         started=started,
     )
     manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
@@ -236,9 +230,7 @@ def _write_sharded_impl(
     result = assemble_build_result(
         run_id=run_id,
         winners=write_outcome.winners,
-        artifact=artifact,
-        manifest_ref=publish_result.manifest_ref,
-        current_ref=publish_result.current_ref,
+        manifest_ref=manifest_ref,
         attempts=write_outcome.attempts,
         shard_duration_ms=prepared_rows.shard_duration_ms,
         write_duration_ms=write_outcome.write_duration_ms,

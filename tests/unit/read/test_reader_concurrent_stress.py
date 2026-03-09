@@ -31,8 +31,8 @@ class _FakeReader:
         self.closed = True
 
 
-class _VersionedManifestReader:
-    """ManifestReader that supports switching to a new manifest version."""
+class _VersionedManifestStore:
+    """ManifestStore that supports switching to a new manifest version."""
 
     def __init__(self) -> None:
         self._version = 1
@@ -41,6 +41,16 @@ class _VersionedManifestReader:
     def set_version(self, v: int) -> None:
         with self._lock:
             self._version = v
+
+    def publish(
+        self,
+        *,
+        run_id: str,
+        required_build: RequiredBuildMeta,
+        shards: list[RequiredShardMeta],
+        custom: dict[str, Any],
+    ) -> str:
+        raise NotImplementedError("publish not used in reader tests")
 
     def load_current(self) -> CurrentPointer:
         with self._lock:
@@ -52,10 +62,7 @@ class _VersionedManifestReader:
             updated_at="2026-01-01T00:00:00+00:00",
         )
 
-    def load_manifest(
-        self, ref: str, content_type: str | None = None
-    ) -> ParsedManifest:
-        _ = content_type
+    def load_manifest(self, ref: str) -> ParsedManifest:
         return ParsedManifest(
             required_build=_build(num_dbs=2),
             shards=[_shard(0), _shard(1)],
@@ -98,11 +105,11 @@ def _make_factory() -> Any:
 
 def test_concurrent_gets_no_errors() -> None:
     """10 threads calling get() simultaneously — no errors or crashes."""
-    manifest_reader = _VersionedManifestReader()
+    manifest_store = _VersionedManifestStore()
     reader = ConcurrentShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root="/tmp/stress-test",
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=_make_factory(),
         thread_safety="lock",
     )
@@ -131,11 +138,11 @@ def test_concurrent_gets_no_errors() -> None:
 
 def test_refresh_racing_with_gets() -> None:
     """refresh() during in-flight get() calls — no data corruption."""
-    manifest_reader = _VersionedManifestReader()
+    manifest_store = _VersionedManifestStore()
     reader = ConcurrentShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root="/tmp/stress-test",
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=_make_factory(),
         thread_safety="lock",
     )
@@ -153,7 +160,7 @@ def test_refresh_racing_with_gets() -> None:
     def refresh_worker() -> None:
         try:
             for i in range(5):
-                manifest_reader.set_version(i + 2)
+                manifest_store.set_version(i + 2)
                 reader.refresh()
                 time.sleep(0.01)
         except Exception as e:
@@ -177,11 +184,11 @@ def test_refresh_racing_with_gets() -> None:
 
 def test_pool_mode_concurrent_gets() -> None:
     """Pool mode handles concurrent gets without deadlock."""
-    manifest_reader = _VersionedManifestReader()
+    manifest_store = _VersionedManifestStore()
     reader = ConcurrentShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root="/tmp/stress-test",
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=_make_factory(),
         thread_safety="pool",
         max_workers=4,

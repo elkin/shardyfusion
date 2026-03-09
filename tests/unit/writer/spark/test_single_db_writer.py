@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -15,12 +14,12 @@ from shardyfusion.config import (
 )
 from shardyfusion.errors import ConfigValidationError, ShardyfusionError
 from shardyfusion.manifest import BuildResult
+from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.serde import ValueSpec
 from shardyfusion.sharding_types import KeyEncoding
 from shardyfusion.writer.spark.single_db_writer import write_single_db
 from shardyfusion.writer.spark.writer import DataFrameCacheContext
 from tests.helpers.tracking import (
-    InMemoryPublisher,
     RecordingTokenBucket,
     TrackingAdapter,
     TrackingFactory,
@@ -60,7 +59,7 @@ def _make_config(
         batch_size=batch_size,
         adapter_factory=factory or TrackingFactory(),
         output=OutputOptions(run_id="test-run"),
-        manifest=ManifestOptions(publisher=InMemoryPublisher()),
+        manifest=ManifestOptions(store=InMemoryManifestStore()),
     )
 
 
@@ -402,13 +401,13 @@ def test_min_max_keys(spark: SparkSession) -> None:
 
 @pytest.mark.spark
 def test_manifest_structure(spark: SparkSession) -> None:
-    publisher = InMemoryPublisher()
+    store = InMemoryManifestStore()
     config = WriteConfig(
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
         adapter_factory=TrackingFactory(),
         output=OutputOptions(run_id="test-manifest"),
-        manifest=ManifestOptions(publisher=publisher),
+        manifest=ManifestOptions(store=store),
     )
 
     df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
@@ -421,14 +420,12 @@ def test_manifest_structure(spark: SparkSession) -> None:
     )
 
     assert result.manifest_ref.startswith("mem://manifests/")
-    assert result.current_ref == "mem://_CURRENT"
 
-    # Parse manifest content
-    manifest_artifact = publisher.objects[result.manifest_ref]
-    manifest_data = json.loads(manifest_artifact.payload.decode("utf-8"))
-    assert manifest_data["required"]["num_dbs"] == 1
-    assert len(manifest_data["shards"]) == 1
-    assert manifest_data["shards"][0]["db_id"] == 0
+    # Parse manifest content via store
+    parsed = store.load_manifest(result.manifest_ref)
+    assert parsed.required_build.num_dbs == 1
+    assert len(parsed.shards) == 1
+    assert parsed.shards[0].db_id == 0
 
 
 @pytest.mark.spark

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import slatedb
 
@@ -11,12 +12,14 @@ from shardyfusion.manifest import (
     RequiredBuildMeta,
     RequiredShardMeta,
 )
-from shardyfusion.manifest_readers import ManifestReader, parse_json_manifest
+from shardyfusion.manifest_store import parse_json_manifest
 from shardyfusion.reader import ConcurrentShardedReader
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 
 
-class InMemoryManifestReader(ManifestReader):
+class InMemoryManifestStore:
+    """In-memory manifest store for reader integration tests."""
+
     def __init__(
         self,
         *,
@@ -28,6 +31,16 @@ class InMemoryManifestReader(ManifestReader):
         self.pointers = pointers
         self.manifests = manifests
 
+    def publish(
+        self,
+        *,
+        run_id: str,
+        required_build: RequiredBuildMeta,
+        shards: list[RequiredShardMeta],
+        custom: dict[str, Any],
+    ) -> str:
+        raise NotImplementedError("publish not used in reader tests")
+
     def load_current(self) -> CurrentPointer | None:
         payload = self.pointers.get(self.current_ref)
         if payload is None:
@@ -35,10 +48,7 @@ class InMemoryManifestReader(ManifestReader):
         obj = json.loads(payload.decode("utf-8"))
         return CurrentPointer.model_validate(obj)
 
-    def load_manifest(
-        self, ref: str, content_type: str | None = None
-    ) -> ParsedManifest:
-        _ = content_type
+    def load_manifest(self, ref: str) -> ParsedManifest:
         return parse_json_manifest(self.manifests[ref])
 
 
@@ -153,7 +163,7 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
     with ConcurrentShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(local_root),
-        manifest_reader=InMemoryManifestReader(
+        manifest_store=InMemoryManifestStore(
             current_ref="mem://current",
             pointers=pointers,
             manifests=manifests,

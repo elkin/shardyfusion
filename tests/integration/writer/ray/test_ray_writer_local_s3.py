@@ -65,11 +65,10 @@ def test_ray_writer_publishes_manifest_and_current_to_local_s3(
 
     assert len(result.winners) == 4
     assert result.manifest_ref.startswith(f"s3://{bucket}/ray-writer/manifests/")
-    assert result.current_ref == f"s3://{bucket}/ray-writer/_CURRENT"
 
     client = local_s3_service["client"]
     manifest_key = result.manifest_ref.split(f"s3://{bucket}/", 1)[1]
-    current_key = result.current_ref.split(f"s3://{bucket}/", 1)[1]
+    current_key = "ray-writer/_CURRENT"
 
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
     current_obj = client.get_object(Bucket=bucket, Key=current_key)

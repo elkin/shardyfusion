@@ -14,9 +14,9 @@ from shardyfusion.config import (
     ShardingSpec,
     WriteConfig,
 )
+from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.sharding_types import ShardingStrategy
 from shardyfusion.writer.ray import write_sharded
-from tests.helpers.tracking import InMemoryPublisher
 
 
 def _make_config(num_dbs: int = 2) -> WriteConfig:
@@ -24,7 +24,7 @@ def _make_config(num_dbs: int = 2) -> WriteConfig:
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/test",
         adapter_factory=lambda *, db_url, local_dir: MagicMock(),
-        manifest=ManifestOptions(publisher=InMemoryPublisher()),
+        manifest=ManifestOptions(store=InMemoryManifestStore()),
         output=OutputOptions(run_id="shuffle-test"),
     )
 

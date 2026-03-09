@@ -23,7 +23,7 @@ from shardyfusion.manifest import (
     RequiredBuildMeta,
     RequiredShardMeta,
 )
-from shardyfusion.manifest_readers import DefaultS3ManifestReader
+from shardyfusion.manifest_store import S3ManifestStore
 from shardyfusion.reader import ConcurrentShardedReader
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 from shardyfusion.type_defs import S3ClientConfig
@@ -144,13 +144,13 @@ def run_reader_loads_manifest_scenario(
         ContentType="application/json",
     )
 
-    # Build reader kwargs — inject manifest_reader for path-style addressing
+    # Build reader kwargs — inject manifest_store for path-style addressing
     reader_kwargs: dict[str, Any] = {
         "s3_prefix": s3_prefix,
         "local_root": str(local_root),
     }
     if s3_client_config is not None:
-        reader_kwargs["manifest_reader"] = DefaultS3ManifestReader(
+        reader_kwargs["manifest_store"] = S3ManifestStore(
             s3_prefix,
             s3_client_config=s3_client_config,
         )
@@ -229,16 +229,12 @@ def run_writer_publishes_manifest_scenario(
 
     assert len(result.winners) == 4
     assert result.manifest_ref.startswith(f"s3://{bucket}/writer-only/manifests/")
-    assert result.current_ref == f"s3://{bucket}/writer-only/_CURRENT"
 
-    manifest_bucket, manifest_key = (
-        bucket,
-        result.manifest_ref.split(f"s3://{bucket}/", 1)[1],
-    )
-    current_key = result.current_ref.split(f"s3://{bucket}/", 1)[1]
+    manifest_key = result.manifest_ref.split(f"s3://{bucket}/", 1)[1]
+    current_key = "writer-only/_CURRENT"
 
     client = s3_service["client"]
-    manifest_obj = client.get_object(Bucket=manifest_bucket, Key=manifest_key)
+    manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
     current_obj = client.get_object(Bucket=bucket, Key=current_key)
 
     manifest_payload = json.loads(manifest_obj["Body"].read().decode("utf-8"))
@@ -248,7 +244,6 @@ def run_writer_publishes_manifest_scenario(
     assert manifest_payload["required"]["num_dbs"] == 4
     assert len(manifest_payload["shards"]) == 4
     assert current_payload["manifest_ref"] == result.manifest_ref
-    assert current_payload["manifest_content_type"] == "application/json"
 
     # Verify each shard was physically written and can be read via real SlateDB.
     for winner in result.winners:
@@ -338,14 +333,14 @@ def run_writer_reader_refresh_scenario(
             checkpoint_id=checkpoint_id,
         )
 
-    # Build reader kwargs — inject manifest_reader for path-style addressing
+    # Build reader kwargs — inject manifest_store for path-style addressing
     reader_kwargs: dict[str, Any] = {
         "s3_prefix": s3_prefix,
         "local_root": str(tmp_path / "reader-cache"),
         "reader_factory": open_real_reader,
     }
     if s3_client_config is not None:
-        reader_kwargs["manifest_reader"] = DefaultS3ManifestReader(
+        reader_kwargs["manifest_store"] = S3ManifestStore(
             s3_prefix,
             s3_client_config=s3_client_config,
         )
@@ -440,10 +435,9 @@ def run_python_writer_publishes_manifest_scenario(
     assert result.manifest_ref.startswith(
         f"s3://{bucket}/python-writer-{mode_label}/manifests/"
     )
-    assert result.current_ref == f"s3://{bucket}/python-writer-{mode_label}/_CURRENT"
 
     manifest_key = result.manifest_ref.split(f"s3://{bucket}/", 1)[1]
-    current_key = result.current_ref.split(f"s3://{bucket}/", 1)[1]
+    current_key = f"python-writer-{mode_label}/_CURRENT"
 
     client = s3_service["client"]
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
@@ -456,7 +450,6 @@ def run_python_writer_publishes_manifest_scenario(
     assert manifest_payload["required"]["num_dbs"] == 4
     assert len(manifest_payload["shards"]) == 4
     assert current_payload["manifest_ref"] == result.manifest_ref
-    assert current_payload["manifest_content_type"] == "application/json"
 
     # Verify each shard was physically written and can be read via real SlateDB.
     total_rows = 0
@@ -545,10 +538,9 @@ def run_dask_writer_publishes_manifest_scenario(
 
     assert len(result.winners) == 4
     assert result.manifest_ref.startswith(f"s3://{bucket}/dask-writer/manifests/")
-    assert result.current_ref == f"s3://{bucket}/dask-writer/_CURRENT"
 
     manifest_key = result.manifest_ref.split(f"s3://{bucket}/", 1)[1]
-    current_key = result.current_ref.split(f"s3://{bucket}/", 1)[1]
+    current_key = "dask-writer/_CURRENT"
 
     client = s3_service["client"]
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
@@ -561,7 +553,6 @@ def run_dask_writer_publishes_manifest_scenario(
     assert manifest_payload["required"]["num_dbs"] == 4
     assert len(manifest_payload["shards"]) == 4
     assert current_payload["manifest_ref"] == result.manifest_ref
-    assert current_payload["manifest_content_type"] == "application/json"
 
     # Verify each shard was physically written and can be read via real SlateDB.
     total_rows = 0
@@ -653,7 +644,7 @@ def run_python_writer_reader_refresh_scenario(
         "reader_factory": open_real_reader,
     }
     if s3_client_config is not None:
-        reader_kwargs["manifest_reader"] = DefaultS3ManifestReader(
+        reader_kwargs["manifest_store"] = S3ManifestStore(
             s3_prefix,
             s3_client_config=s3_client_config,
         )
@@ -763,7 +754,7 @@ def run_dask_writer_reader_refresh_scenario(
         "reader_factory": open_real_reader,
     }
     if s3_client_config is not None:
-        reader_kwargs["manifest_reader"] = DefaultS3ManifestReader(
+        reader_kwargs["manifest_store"] = S3ManifestStore(
             s3_prefix,
             s3_client_config=s3_client_config,
         )
@@ -856,10 +847,9 @@ def run_ray_writer_publishes_manifest_scenario(
 
     assert len(result.winners) == 4
     assert result.manifest_ref.startswith(f"s3://{bucket}/ray-writer/manifests/")
-    assert result.current_ref == f"s3://{bucket}/ray-writer/_CURRENT"
 
     manifest_key = result.manifest_ref.split(f"s3://{bucket}/", 1)[1]
-    current_key = result.current_ref.split(f"s3://{bucket}/", 1)[1]
+    current_key = "ray-writer/_CURRENT"
 
     client = s3_service["client"]
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
@@ -872,7 +862,6 @@ def run_ray_writer_publishes_manifest_scenario(
     assert manifest_payload["required"]["num_dbs"] == 4
     assert len(manifest_payload["shards"]) == 4
     assert current_payload["manifest_ref"] == result.manifest_ref
-    assert current_payload["manifest_content_type"] == "application/json"
 
     # Verify each shard was physically written and can be read via real SlateDB.
     total_rows = 0
@@ -975,7 +964,7 @@ def run_ray_writer_reader_refresh_scenario(
         "reader_factory": open_real_reader,
     }
     if s3_client_config is not None:
-        reader_kwargs["manifest_reader"] = DefaultS3ManifestReader(
+        reader_kwargs["manifest_store"] = S3ManifestStore(
             s3_prefix,
             s3_client_config=s3_client_config,
         )

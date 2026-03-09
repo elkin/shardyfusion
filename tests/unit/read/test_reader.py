@@ -4,6 +4,7 @@ import sys
 import types
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -24,10 +25,20 @@ from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 from shardyfusion.testing import ListMetricsCollector
 
 
-class _MutableManifestReader:
+class _MutableManifestStore:
     def __init__(self, manifests: dict[str, ParsedManifest], initial_ref: str) -> None:
         self.manifests = manifests
         self.current_ref = initial_ref
+
+    def publish(
+        self,
+        *,
+        run_id: str,
+        required_build: RequiredBuildMeta,
+        shards: list[RequiredShardMeta],
+        custom: dict[str, Any],
+    ) -> str:
+        raise NotImplementedError("publish not used in reader tests")
 
     def load_current(self) -> CurrentPointer | None:
         return CurrentPointer(
@@ -37,10 +48,7 @@ class _MutableManifestReader:
             updated_at="2026-01-01T00:00:00+00:00",
         )
 
-    def load_manifest(
-        self, ref: str, content_type: str | None = None
-    ) -> ParsedManifest:
-        _ = content_type
+    def load_manifest(self, ref: str) -> ParsedManifest:
         return self.manifests[ref]
 
 
@@ -103,7 +111,7 @@ def test_refresh_swaps_manifest_ref_and_readers(tmp_path) -> None:
         "mem://manifest/one": _manifest("mem://db/one"),
         "mem://manifest/two": _manifest("mem://db/two"),
     }
-    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
 
     stores: dict[str, dict[bytes, bytes]] = {
         "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"one"},
@@ -113,11 +121,11 @@ def test_refresh_swaps_manifest_ref_and_readers(tmp_path) -> None:
     with ConcurrentShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=_fake_reader_factory(stores),
     ) as reader:
         assert reader.get(1) == b"one"
-        manifest_reader.current_ref = "mem://manifest/two"
+        manifest_store.current_ref = "mem://manifest/two"
 
         changed = reader.refresh()
         assert changed is True
@@ -157,15 +165,23 @@ def test_slate_db_reader_factory_uses_official_slatedbreader_signature(
     assert kwargs["env_file"] == "slatedb.env"
 
 
-class _NullManifestReader:
+class _NullManifestStore:
     """Always returns None for CURRENT (simulates missing pointer)."""
+
+    def publish(
+        self,
+        *,
+        run_id: str,
+        required_build: RequiredBuildMeta,
+        shards: list[RequiredShardMeta],
+        custom: dict[str, Any],
+    ) -> str:
+        raise NotImplementedError("publish not used in reader tests")
 
     def load_current(self) -> CurrentPointer | None:
         return None
 
-    def load_manifest(
-        self, ref: str, content_type: str | None = None
-    ) -> ParsedManifest:
+    def load_manifest(self, ref: str) -> ParsedManifest:
         raise AssertionError("load_manifest should not be called")
 
 
@@ -174,18 +190,18 @@ def test_load_initial_state_raises_reader_state_error_when_no_current() -> None:
         ConcurrentShardedReader(
             s3_prefix="s3://bucket/prefix",
             local_root="/tmp/unused",
-            manifest_reader=_NullManifestReader(),
+            manifest_store=_NullManifestStore(),
         )
 
 
 def test_closed_reader_get_raises_reader_state_error(tmp_path) -> None:
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
-    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
 
     reader = ConcurrentShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=lambda *, db_url, local_dir, checkpoint_id: _FakeReader({}),
     )
     reader.close()
@@ -196,12 +212,12 @@ def test_closed_reader_get_raises_reader_state_error(tmp_path) -> None:
 
 def test_closed_reader_refresh_raises_reader_state_error(tmp_path) -> None:
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
-    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
 
     reader = ConcurrentShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=lambda *, db_url, local_dir, checkpoint_id: _FakeReader({}),
     )
     reader.close()
@@ -212,12 +228,12 @@ def test_closed_reader_refresh_raises_reader_state_error(tmp_path) -> None:
 
 def test_context_manager_returns_self_and_calls_close(tmp_path) -> None:
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
-    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
 
     reader = ConcurrentShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=lambda *, db_url, local_dir, checkpoint_id: _FakeReader({}),
     )
 
@@ -274,7 +290,7 @@ def test_multi_get_shard_failure_raises_slate_db_api_error(tmp_path) -> None:
     manifests = {
         "mem://manifest/one": _manifest_2shard("mem://db/zero", "mem://db/one")
     }
-    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
 
     class _BrokenReader:
         def get(self, key: bytes) -> bytes | None:
@@ -286,7 +302,7 @@ def test_multi_get_shard_failure_raises_slate_db_api_error(tmp_path) -> None:
     with ConcurrentShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=lambda *, db_url, local_dir, checkpoint_id: _BrokenReader(),
         max_workers=2,
     ) as reader:
@@ -303,7 +319,7 @@ def test_multi_get_shard_failure_raises_slate_db_api_error(tmp_path) -> None:
 def test_metrics_emitted_on_reader_lifecycle(tmp_path) -> None:
     mc = ListMetricsCollector()
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
-    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
 
     stores: dict[str, dict[bytes, bytes]] = {
         "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
@@ -312,7 +328,7 @@ def test_metrics_emitted_on_reader_lifecycle(tmp_path) -> None:
     with ConcurrentShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=_fake_reader_factory(stores),
         metrics_collector=mc,
     ) as reader:
@@ -333,14 +349,14 @@ def test_metrics_emitted_on_reader_lifecycle(tmp_path) -> None:
 def test_metrics_reader_get_not_found(tmp_path) -> None:
     mc = ListMetricsCollector()
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
-    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
 
     stores: dict[str, dict[bytes, bytes]] = {"mem://db/one": {}}
 
     with ConcurrentShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=_fake_reader_factory(stores),
         metrics_collector=mc,
     ) as reader:
@@ -360,7 +376,7 @@ def test_sharded_reader_get_basic(tmp_path) -> None:
     from shardyfusion.reader import ShardedReader
 
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
-    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
     stores: dict[str, dict[bytes, bytes]] = {
         "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
     }
@@ -368,7 +384,7 @@ def test_sharded_reader_get_basic(tmp_path) -> None:
     with ShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=_fake_reader_factory(stores),
     ) as reader:
         assert reader.get(1) == b"val"
@@ -381,7 +397,7 @@ def test_sharded_reader_multi_get_sequential(tmp_path) -> None:
     manifests = {
         "mem://manifest/one": _manifest_2shard("mem://db/zero", "mem://db/one")
     }
-    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
     stores: dict[str, dict[bytes, bytes]] = {
         "mem://db/zero": {(1).to_bytes(8, "big", signed=False): b"a"},
         "mem://db/one": {(6).to_bytes(8, "big", signed=False): b"b"},
@@ -390,7 +406,7 @@ def test_sharded_reader_multi_get_sequential(tmp_path) -> None:
     with ShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=_fake_reader_factory(stores),
     ) as reader:
         got = reader.multi_get([1, 6])
@@ -404,7 +420,7 @@ def test_sharded_reader_multi_get_parallel(tmp_path) -> None:
     manifests = {
         "mem://manifest/one": _manifest_2shard("mem://db/zero", "mem://db/one")
     }
-    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
     stores: dict[str, dict[bytes, bytes]] = {
         "mem://db/zero": {(1).to_bytes(8, "big", signed=False): b"a"},
         "mem://db/one": {(6).to_bytes(8, "big", signed=False): b"b"},
@@ -413,7 +429,7 @@ def test_sharded_reader_multi_get_parallel(tmp_path) -> None:
     with ShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=_fake_reader_factory(stores),
         max_workers=2,
     ) as reader:
@@ -429,7 +445,7 @@ def test_sharded_reader_refresh(tmp_path) -> None:
         "mem://manifest/one": _manifest("mem://db/one"),
         "mem://manifest/two": _manifest("mem://db/two"),
     }
-    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
     stores: dict[str, dict[bytes, bytes]] = {
         "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"one"},
         "mem://db/two": {(1).to_bytes(8, "big", signed=False): b"two"},
@@ -438,11 +454,11 @@ def test_sharded_reader_refresh(tmp_path) -> None:
     with ShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=_fake_reader_factory(stores),
     ) as reader:
         assert reader.get(1) == b"one"
-        manifest_reader.current_ref = "mem://manifest/two"
+        manifest_store.current_ref = "mem://manifest/two"
 
         changed = reader.refresh()
         assert changed is True
@@ -453,7 +469,7 @@ def test_sharded_reader_refresh_unchanged(tmp_path) -> None:
     from shardyfusion.reader import ShardedReader
 
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
-    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
     stores: dict[str, dict[bytes, bytes]] = {
         "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
     }
@@ -461,7 +477,7 @@ def test_sharded_reader_refresh_unchanged(tmp_path) -> None:
     with ShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=_fake_reader_factory(stores),
     ) as reader:
         assert reader.refresh() is False
@@ -471,12 +487,12 @@ def test_sharded_reader_close_prevents_get(tmp_path) -> None:
     from shardyfusion.reader import ShardedReader
 
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
-    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
 
     reader = ShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=lambda *, db_url, local_dir, checkpoint_id: _FakeReader({}),
     )
     reader.close()
@@ -489,12 +505,12 @@ def test_sharded_reader_close_prevents_refresh(tmp_path) -> None:
     from shardyfusion.reader import ShardedReader
 
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
-    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
 
     reader = ShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=lambda *, db_url, local_dir, checkpoint_id: _FakeReader({}),
     )
     reader.close()
@@ -507,12 +523,12 @@ def test_sharded_reader_context_manager(tmp_path) -> None:
     from shardyfusion.reader import ShardedReader
 
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
-    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
 
     reader = ShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=lambda *, db_url, local_dir, checkpoint_id: _FakeReader({}),
     )
 
@@ -530,7 +546,7 @@ def test_sharded_reader_missing_current_raises() -> None:
         ShardedReader(
             s3_prefix="s3://bucket/prefix",
             local_root="/tmp/unused",
-            manifest_reader=_NullManifestReader(),
+            manifest_store=_NullManifestStore(),
         )
 
 
@@ -539,7 +555,7 @@ def test_sharded_reader_metrics_lifecycle(tmp_path) -> None:
 
     mc = ListMetricsCollector()
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
-    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
     stores: dict[str, dict[bytes, bytes]] = {
         "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
     }
@@ -547,7 +563,7 @@ def test_sharded_reader_metrics_lifecycle(tmp_path) -> None:
     with ShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=_fake_reader_factory(stores),
         metrics_collector=mc,
     ) as reader:
@@ -565,7 +581,7 @@ def test_sharded_reader_multi_get_shard_failure(tmp_path) -> None:
     manifests = {
         "mem://manifest/one": _manifest_2shard("mem://db/zero", "mem://db/one")
     }
-    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
 
     class _BrokenReader:
         def get(self, key: bytes) -> bytes | None:
@@ -577,7 +593,7 @@ def test_sharded_reader_multi_get_shard_failure(tmp_path) -> None:
     with ShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=lambda *, db_url, local_dir, checkpoint_id: _BrokenReader(),
         max_workers=2,
     ) as reader:
@@ -593,7 +609,7 @@ def test_sharded_reader_multi_get_shard_failure(tmp_path) -> None:
 def test_thread_safe_reader_executor_created_at_init(tmp_path) -> None:
     """Verify ConcurrentShardedReader creates _executor at init, not per multi_get."""
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
-    manifest_reader = _MutableManifestReader(manifests, "mem://manifest/one")
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
     stores: dict[str, dict[bytes, bytes]] = {
         "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
     }
@@ -601,7 +617,7 @@ def test_thread_safe_reader_executor_created_at_init(tmp_path) -> None:
     with ConcurrentShardedReader(
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
-        manifest_reader=manifest_reader,
+        manifest_store=manifest_store,
         reader_factory=_fake_reader_factory(stores),
         max_workers=2,
     ) as reader:
