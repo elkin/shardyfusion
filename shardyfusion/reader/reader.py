@@ -603,28 +603,31 @@ class ConcurrentShardedReader(_BaseShardedReader):
 
     @property
     def key_encoding(self) -> KeyEncoding:
-        return KeyEncoding.from_value(self._state.router.key_encoding)
+        with self._use_state() as state:
+            return KeyEncoding.from_value(state.router.key_encoding)
 
     def snapshot_info(self) -> SnapshotInfo:
-        state = self._state
-        rb = state.router.required_build
-        return SnapshotInfo(
-            run_id=rb.run_id,
-            num_dbs=rb.num_dbs,
-            sharding=rb.sharding.strategy.value,
-            created_at=rb.created_at,
-            manifest_ref=state.manifest_ref,
-            key_encoding=rb.key_encoding.value,
-            row_count=sum(s.row_count for s in state.router.shards),
-        )
+        with self._use_state() as state:
+            rb = state.router.required_build
+            return SnapshotInfo(
+                run_id=rb.run_id,
+                num_dbs=rb.num_dbs,
+                sharding=rb.sharding.strategy.value,
+                created_at=rb.created_at,
+                manifest_ref=state.manifest_ref,
+                key_encoding=rb.key_encoding.value,
+                row_count=sum(s.row_count for s in state.router.shards),
+            )
 
     def shard_details(self) -> list[ShardDetail]:
         """Return per-shard metadata from the current manifest."""
-        return _shard_details_from_router(self._state.router)
+        with self._use_state() as state:
+            return _shard_details_from_router(state.router)
 
     def route_key(self, key: KeyInput) -> int:
         """Return the shard db_id a key would route to."""
-        return self._state.router.route_one(key)
+        with self._use_state() as state:
+            return state.router.route_one(key)
 
     def shard_for_key(self, key: KeyInput) -> RequiredShardMeta:
         """Return shard metadata for the shard a key routes to."""

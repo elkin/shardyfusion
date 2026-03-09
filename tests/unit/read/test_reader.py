@@ -1046,3 +1046,34 @@ def test_concurrent_reader_superseded_refresh_cleans_up(tmp_path) -> None:
     assert len(superseded_closed) == 1
 
     reader.close()
+
+
+# ---------------------------------------------------------------------------
+# Commit 2: Metadata methods raise when closed
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_metadata_methods_raise_when_closed(tmp_path) -> None:
+    """snapshot_info, shard_details, route_key, key_encoding raise on closed reader."""
+    manifests = {"mem://manifest/one": _manifest("mem://db/one")}
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
+
+    reader = ConcurrentShardedReader(
+        s3_prefix="s3://bucket/prefix",
+        local_root=str(tmp_path),
+        manifest_store=manifest_store,
+        reader_factory=lambda *, db_url, local_dir, checkpoint_id: _FakeReader({}),
+    )
+    reader.close()
+
+    with pytest.raises(ReaderStateError, match="Reader is closed"):
+        reader.snapshot_info()
+
+    with pytest.raises(ReaderStateError, match="Reader is closed"):
+        reader.shard_details()
+
+    with pytest.raises(ReaderStateError, match="Reader is closed"):
+        reader.route_key(1)
+
+    with pytest.raises(ReaderStateError, match="Reader is closed"):
+        _ = reader.key_encoding
