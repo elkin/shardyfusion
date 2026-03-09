@@ -964,8 +964,8 @@ class TestSimpleReaderBorrowSafety:
 # ---------------------------------------------------------------------------
 
 
-def test_concurrent_reader_superseded_refresh_cleans_up(tmp_path) -> None:
-    """When refresh is superseded by another, the discarded state is closed."""
+def test_concurrent_reader_serialized_refresh_cleans_up(tmp_path) -> None:
+    """Two threads call refresh(); _refresh_lock serializes them, old state is closed."""
     closed_urls: list[str] = []
 
     class _TrackingReader:
@@ -996,9 +996,7 @@ def test_concurrent_reader_superseded_refresh_cleans_up(tmp_path) -> None:
 
     manifest_store.current_ref = "mem://manifest/v2"
 
-    # Make the first post-init load_manifest call slow so a second thread
-    # can race ahead and swap state first (bypasses _refresh_lock via
-    # _do_refresh for testing the CAS guard).
+    # Slow down load_manifest so thread 2 queues behind _refresh_lock.
     entered_load = threading.Event()
     proceed = threading.Event()
     original_load = manifest_store.load_manifest
@@ -1016,35 +1014,38 @@ def test_concurrent_reader_superseded_refresh_cleans_up(tmp_path) -> None:
     results: list[bool | None] = [None, None]
     errors: list[Exception] = []
 
-    def slow_refresh() -> None:
+    def first_refresh() -> None:
         try:
-            results[0] = reader._do_refresh()
+            results[0] = reader.refresh()
         except Exception as e:
             errors.append(e)
 
-    def fast_refresh() -> None:
+    def second_refresh() -> None:
+        # Wait until first thread is inside load_manifest (holding _refresh_lock)
         entered_load.wait(timeout=5)
+        proceed.set()  # Unblock the slow load
         try:
-            results[1] = reader._do_refresh()
+            results[1] = reader.refresh()
         except Exception as e:
             errors.append(e)
-        proceed.set()
 
-    t_slow = threading.Thread(target=slow_refresh)
-    t_fast = threading.Thread(target=fast_refresh)
-    t_slow.start()
-    t_fast.start()
-    t_fast.join(timeout=5)
-    t_slow.join(timeout=5)
+    t1 = threading.Thread(target=first_refresh)
+    t2 = threading.Thread(target=second_refresh)
+    t1.start()
+    t2.start()
+    t1.join(timeout=5)
+    t2.join(timeout=5)
 
     assert not errors
-    assert results[1] is True  # Fast thread won
-    assert results[0] is False  # Slow thread superseded (CAS guard)
+    # First thread updates v1 → v2
+    assert results[0] is True
+    # Second thread sees v2 already active, short-circuits
+    assert results[1] is False
     assert reader._state.manifest_ref == "mem://manifest/v2"
 
-    # The superseded new_state (built by slow thread) must be closed.
-    superseded_closed = [u for u in closed_urls if u == "mem://db/v2"]
-    assert len(superseded_closed) == 1
+    # Old v1 state was properly closed
+    v1_closed = [u for u in closed_urls if u == "mem://db/v1"]
+    assert len(v1_closed) == 1
 
     reader.close()
 
@@ -1210,5 +1211,104 @@ def test_concurrent_reader_refresh_fails_reader_stays_on_old_manifest(
     # Reader should still serve from old manifest
     assert reader.get(1) == b"val"
     assert reader._state.manifest_ref == "mem://manifest/one"
+
+    reader.close()
+
+
+# ---------------------------------------------------------------------------
+# Lock ordering validation
+# ---------------------------------------------------------------------------
+
+
+class TestOrderedLock:
+    """Verify _OrderedLock detects lock ordering violations."""
+
+    def test_correct_order_succeeds(self) -> None:
+        """Acquiring locks in ascending level order raises no error."""
+        from shardyfusion.reader.reader import _OrderedLock
+
+        lock_a = _OrderedLock(0, "first")
+        lock_b = _OrderedLock(1, "second")
+
+        with lock_a:
+            with lock_b:
+                assert lock_a.locked()
+                assert lock_b.locked()
+
+    def test_reverse_order_raises(self) -> None:
+        """Acquiring a lower-level lock while holding a higher one raises."""
+        from shardyfusion.reader.reader import _OrderedLock
+
+        lock_a = _OrderedLock(0, "first")
+        lock_b = _OrderedLock(1, "second")
+
+        with lock_b:
+            with pytest.raises(AssertionError, match="Lock ordering violation"):
+                lock_a.__enter__()
+
+    def test_same_level_raises(self) -> None:
+        """Acquiring two locks at the same level raises (prevents self-deadlock)."""
+        from shardyfusion.reader.reader import _OrderedLock
+
+        lock_x = _OrderedLock(0, "x")
+        lock_y = _OrderedLock(0, "y")
+
+        with lock_x:
+            with pytest.raises(AssertionError, match="Lock ordering violation"):
+                lock_y.__enter__()
+
+    def test_standalone_acquisition_succeeds(self) -> None:
+        """Acquiring a higher-level lock without holding any other lock works."""
+        from shardyfusion.reader.reader import _OrderedLock
+
+        lock_b = _OrderedLock(1, "second")
+
+        with lock_b:
+            assert lock_b.locked()
+
+    def test_reader_lock_ordering_holds(self, tmp_path) -> None:
+        """ConcurrentShardedReader operations don't trigger ordering violations."""
+        manifests = {"mem://manifest/one": _manifest("mem://db/one")}
+        stores: dict[str, dict[bytes, bytes]] = {
+            "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
+        }
+
+        reader = ConcurrentShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=_MutableManifestStore(manifests, "mem://manifest/one"),
+            reader_factory=_fake_reader_factory(stores),
+        )
+
+        # Exercise all code paths that touch locks
+        reader.get(1)
+        reader.snapshot_info()
+        reader.shard_details()
+        reader.route_key(1)
+        _ = reader.key_encoding
+        reader.shard_for_key(1)
+        reader.shards_for_keys([1])
+        with reader.reader_for_key(1) as h:
+            h.get((1).to_bytes(8, "big", signed=False))
+        reader.refresh()
+        reader.close()
+
+
+def test_do_refresh_without_refresh_lock_raises(tmp_path) -> None:
+    """Calling _do_refresh directly without _refresh_lock raises AssertionError."""
+    manifests = {"mem://manifest/one": _manifest("mem://db/one")}
+    stores: dict[str, dict[bytes, bytes]] = {
+        "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
+    }
+
+    reader = ConcurrentShardedReader(
+        s3_prefix="s3://bucket/prefix",
+        local_root=str(tmp_path),
+        manifest_store=_MutableManifestStore(manifests, "mem://manifest/one"),
+        reader_factory=_fake_reader_factory(stores),
+    )
+
+    with pytest.raises(AssertionError, match="_refresh_lock"):
+        reader._do_refresh()
 
     reader.close()

@@ -32,6 +32,67 @@ from shardyfusion.type_defs import KeyInput, ShardReader, ShardReaderFactory
 _logger = get_logger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Lock ordering validator
+# ---------------------------------------------------------------------------
+
+# Lock ordering levels (lower number = must be acquired first):
+#   _refresh_lock  = 0  — serialises refresh I/O
+#   _state_lock    = 1  — guards state pointer + refcount
+_LOCK_REFRESH = 0
+_LOCK_STATE = 1
+
+
+class _OrderedLock:
+    """Lock wrapper that validates acquisition ordering in debug builds.
+
+    Each thread tracks its currently-held lock levels via thread-local
+    storage.  Acquiring a lock whose level is ``<=`` the maximum already
+    held by the current thread raises ``AssertionError``, catching
+    reverse-order acquisition at development/test time.
+
+    Under ``python -O`` the tracking is compiled away and this behaves
+    as a plain ``threading.Lock``.
+    """
+
+    _tls = threading.local()
+    __slots__ = ("_lock", "_level", "_name")
+
+    def __init__(self, level: int, name: str) -> None:
+        self._lock = threading.Lock()
+        self._level = level
+        self._name = name
+
+    def __enter__(self) -> "_OrderedLock":
+        if __debug__:
+            stack = getattr(self._tls, "stack", None)
+            if stack is None:
+                stack = []
+                self._tls.stack = stack  # type: ignore[attr-defined]
+            if stack:
+                top_level, top_name = stack[-1]
+                if top_level >= self._level:
+                    raise AssertionError(
+                        f"Lock ordering violation: acquiring {self._name} "
+                        f"(level={self._level}) while holding {top_name} "
+                        f"(level={top_level})"
+                    )
+            stack.append((self._level, self._name))
+        self._lock.acquire()
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self._lock.release()
+        if __debug__:
+            stack: list[tuple[int, str]] = getattr(self._tls, "stack", [])
+            if stack and stack[-1][0] == self._level:
+                stack.pop()
+
+    def locked(self) -> bool:
+        """Return ``True`` if the lock is currently held by any thread."""
+        return self._lock.locked()
+
+
 @dataclass(slots=True, frozen=True)
 class SnapshotInfo:
     """Read-only snapshot of manifest metadata."""
@@ -598,8 +659,8 @@ class ConcurrentShardedReader(_BaseShardedReader):
         # serialises the expensive I/O path (manifest load + reader open) so
         # only one thread builds new state at a time.  _state_lock protects
         # brief state swaps and refcount updates (no I/O held).
-        self._refresh_lock = threading.Lock()
-        self._state_lock = threading.Lock()
+        self._refresh_lock = _OrderedLock(_LOCK_REFRESH, "_refresh_lock")
+        self._state_lock = _OrderedLock(_LOCK_STATE, "_state_lock")
         self._state = self._load_initial_state()
 
         log_event(
@@ -762,6 +823,7 @@ class ConcurrentShardedReader(_BaseShardedReader):
             return self._do_refresh()
 
     def _do_refresh(self) -> bool:
+        assert self._refresh_lock.locked(), "_do_refresh requires _refresh_lock"
         current = self._manifest_store.load_current()
         if current is None:
             log_failure(
