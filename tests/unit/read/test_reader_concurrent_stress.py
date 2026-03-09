@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from shardyfusion.errors import ReaderStateError
 from shardyfusion.manifest import (
     CurrentPointer,
     ManifestShardingSpec,
@@ -368,3 +371,83 @@ def test_pool_exhaustion_blocks_then_completes() -> None:
     reader.close()
     assert not errors
     assert all(not t.is_alive() for t in threads)
+
+
+def test_pool_mode_refresh_with_concurrent_gets() -> None:
+    """Pool mode: 4 reader threads + 1 refresh thread — no errors/deadlocks."""
+    manifest_store = _VersionedManifestStore()
+    reader = ConcurrentShardedReader(
+        s3_prefix="s3://bucket/prefix",
+        local_root="/tmp/stress-test",
+        manifest_store=manifest_store,
+        reader_factory=_make_factory(),
+        thread_safety="pool",
+        max_workers=4,
+    )
+
+    errors: list[Exception] = []
+    stop = threading.Event()
+
+    def get_worker() -> None:
+        try:
+            while not stop.is_set():
+                reader.get(42)
+        except Exception as e:
+            errors.append(e)
+
+    def refresh_worker() -> None:
+        try:
+            for i in range(5):
+                manifest_store.set_version(i + 2)
+                reader.refresh()
+                time.sleep(0.01)
+        except Exception as e:
+            errors.append(e)
+
+    get_threads = [threading.Thread(target=get_worker) for _ in range(4)]
+    refresh_thread = threading.Thread(target=refresh_worker)
+
+    for t in get_threads:
+        t.start()
+    refresh_thread.start()
+
+    refresh_thread.join(timeout=10.0)
+    stop.set()
+    for t in get_threads:
+        t.join(timeout=5.0)
+
+    reader.close()
+    assert not errors
+
+
+def test_close_during_inflight_borrowed_handle() -> None:
+    """close() while handle is borrowed: close returns, handle works, cleanup on release."""
+    manifest_store = _VersionedManifestStore()
+    reader = ConcurrentShardedReader(
+        s3_prefix="s3://bucket/prefix",
+        local_root="/tmp/stress-test",
+        manifest_store=manifest_store,
+        reader_factory=_make_factory(),
+    )
+
+    # Borrow a handle
+    handle = reader.reader_for_key(42)
+    state = reader._state
+    assert state.refcount == 1
+
+    # Close the reader — should succeed immediately
+    reader.close()
+    assert state.retired is True
+    assert state.refcount == 1  # Still held by borrow
+
+    # Borrowed handle should still work
+    key_bytes = (42).to_bytes(8, byteorder="big")
+    assert handle.get(key_bytes) == b"value-42"
+
+    # Subsequent get() should raise
+    with pytest.raises(ReaderStateError, match="Reader is closed"):
+        reader.get(42)
+
+    # Release handle — triggers deferred cleanup
+    handle.close()
+    assert state.refcount == 0

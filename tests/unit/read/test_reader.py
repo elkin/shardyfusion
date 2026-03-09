@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from shardyfusion.errors import ReaderStateError, SlateDbApiError
+from shardyfusion.errors import ManifestParseError, ReaderStateError, SlateDbApiError
 from shardyfusion.manifest import (
     CurrentPointer,
     ManifestShardingSpec,
@@ -1127,3 +1127,88 @@ def test_pool_checkout_timeout_raises(tmp_path) -> None:
             reader.get(1)
 
         t.join(timeout=5)
+
+
+# ---------------------------------------------------------------------------
+# Commit 4: Borrowed handle survives refresh, refresh failure
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_reader_borrowed_handle_survives_refresh(tmp_path) -> None:
+    """Borrow handle, refresh, verify handle reads old data, reader reads new data."""
+    manifests = {
+        "mem://manifest/one": _manifest("mem://db/one"),
+        "mem://manifest/two": _manifest("mem://db/two"),
+    }
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
+    stores: dict[str, dict[bytes, bytes]] = {
+        "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"one"},
+        "mem://db/two": {(1).to_bytes(8, "big", signed=False): b"two"},
+    }
+
+    reader = ConcurrentShardedReader(
+        s3_prefix="s3://bucket/prefix",
+        local_root=str(tmp_path),
+        manifest_store=manifest_store,
+        reader_factory=_fake_reader_factory(stores),
+    )
+    key_bytes = (1).to_bytes(8, "big", signed=False)
+
+    # Borrow handle from old state
+    handle = reader.reader_for_key(1)
+    old_state = reader._state
+    assert old_state.refcount == 1
+
+    # Refresh to new manifest
+    manifest_store.current_ref = "mem://manifest/two"
+    reader.refresh()
+    assert old_state.retired is True
+
+    # Borrowed handle still reads old data
+    assert handle.get(key_bytes) == b"one"
+    # Reader reads new data
+    assert reader.get(1) == b"two"
+
+    # Release handle — triggers deferred cleanup
+    handle.close()
+    assert old_state.refcount == 0
+
+    reader.close()
+
+
+def test_concurrent_reader_refresh_fails_reader_stays_on_old_manifest(
+    tmp_path,
+) -> None:
+    """If load_manifest raises during refresh, reader keeps serving from old manifest."""
+    manifests = {"mem://manifest/one": _manifest("mem://db/one")}
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
+    stores: dict[str, dict[bytes, bytes]] = {
+        "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
+    }
+
+    reader = ConcurrentShardedReader(
+        s3_prefix="s3://bucket/prefix",
+        local_root=str(tmp_path),
+        manifest_store=manifest_store,
+        reader_factory=_fake_reader_factory(stores),
+    )
+
+    # Point to a new manifest that will fail to load
+    manifest_store.current_ref = "mem://manifest/broken"
+    original_load = manifest_store.load_manifest
+
+    def failing_load(ref: str) -> ParsedManifest:
+        if ref == "mem://manifest/broken":
+            raise ManifestParseError("corrupt manifest")
+        return original_load(ref)
+
+    manifest_store.load_manifest = failing_load  # type: ignore[assignment]
+
+    with pytest.raises(ManifestParseError, match="corrupt manifest"):
+        reader.refresh()
+
+    # Reader should still serve from old manifest
+    assert reader.get(1) == b"val"
+    assert reader._state.manifest_ref == "mem://manifest/one"
+
+    reader.close()
