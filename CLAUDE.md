@@ -104,8 +104,8 @@ Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
 2. Builds a `SnapshotRouter` from the manifest sharding metadata (mirrors write-time sharding logic).
 3. `get(key)` / `multi_get(keys)` routes keys to shard IDs, then reads from the appropriate shard.
 4. `shard_for_key(key)` / `shards_for_keys(keys)` return `RequiredShardMeta` for routing inspection without DB access. `reader_for_key(key)` / `readers_for_keys(keys)` return borrowed `ShardReaderHandle` handles for direct shard access.
-5. `ShardedReader` swaps state directly on refresh. `ConcurrentShardedReader` atomically swaps readers using reference counting for safe cleanup of in-flight operations. Borrowed `ShardReaderHandle` handles hold refcount increments, preventing cleanup of old state while borrows are outstanding.
-6. `ConcurrentShardedReader` provides thread safety via `threading.Lock` (default) or `ThreadPoolExecutor` pool mode (`thread_safety` config).
+5. `ShardedReader` swaps state directly on refresh. `ConcurrentShardedReader` serialises refresh I/O via `_refresh_lock` and atomically swaps readers using reference counting with a compare-and-swap guard for safe cleanup. Borrowed `ShardReaderHandle` handles hold refcount increments, preventing cleanup of old state while borrows are outstanding.
+6. `ConcurrentShardedReader` provides thread safety via `threading.Lock` (default) or `ThreadPoolExecutor` pool mode (`thread_safety` config). Pool mode supports configurable checkout timeout (`pool_checkout_timeout`, default 30s).
 
 ### CLI (`slate-reader`)
 
@@ -183,7 +183,7 @@ The invariant: `pmod(xxhash64(payload, seed=42), num_dbs)` where:
 
 ### Error Hierarchy
 
-All errors inherit from `ShardyfusionError` with `retryable: bool`. Non-retryable: config/programmer errors (`ConfigValidationError`, `ShardAssignmentError`, `ManifestParseError`, `ReaderStateError`, etc.). Retryable: transient infra (`PublishManifestError`, `PublishCurrentError`, `S3TransientError`). See `errors.py` for full catalog.
+All errors inherit from `ShardyfusionError` with `retryable: bool`. Non-retryable: config/programmer errors (`ConfigValidationError`, `ShardAssignmentError`, `ManifestParseError`, `ReaderStateError`, `SlateDbApiError`, etc.). Retryable: transient infra (`PublishManifestError`, `PublishCurrentError`, `S3TransientError`). See `errors.py` for full catalog.
 
 ## Public API Summary
 
@@ -218,7 +218,7 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **SlateDB import is deferred**: `slatedb_adapter.py` imports the `slatedb` module inside `__init__`, not at module load. Tests monkeypatch `sys.modules["slatedb"]` to provide fakes.
 - **Python writer parallel mode uses `spawn`**: `multiprocessing.get_context("spawn")` is hardcoded. All objects passed to workers must be picklable. Min/max key tracking happens in the main process.
 - **Rate limiter releases lock before sleeping**: `TokenBucket.acquire()` releases the lock during the sleep interval, allowing other threads to proceed without starvation.
-- **Reader reference counting**: `refresh()` atomically swaps `_ReaderState` but defers closing old handles until `refcount` drops to zero. Never close handles that might have in-flight reads.
+- **Reader reference counting**: `refresh()` serialises I/O via `_refresh_lock`, atomically swaps `_ReaderState` with a compare-and-swap guard, and defers closing old handles until `refcount` drops to zero. Pool-mode checkout has a configurable timeout (default 30s) — raises `SlateDbApiError` when exhausted. Metadata methods (`key_encoding`, `snapshot_info`, `shard_details`, `route_key`) use `_use_state()` and raise `ReaderStateError` on a closed reader.
 - **Garage requires path-style addressing**: E2E tests set `addressing_style: "path"` in `S3ClientConfig` because Garage doesn't support virtual-hosted-style.
 - **Session-scoped test fixtures**: PySpark and S3 (moto/Garage) fixtures are session-scoped for performance. Tests share the same Spark session and S3 service.
 - **Writer scenario imports are deferred**: `tests/helpers/s3_test_scenarios.py` imports writer modules inside function bodies so reader-only test collection doesn't fail.
