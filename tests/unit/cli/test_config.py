@@ -5,11 +5,15 @@ from __future__ import annotations
 import pytest
 
 from shardyfusion.cli.config import (
+    ManifestStoreConfig,
     ReaderConfig,
+    build_connection_factory,
     build_s3_client_config,
     coerce_cli_key,
     coerce_s3_option,
+    load_reader_config,
     resolve_current_url,
+    resolve_dsn,
     split_current_url,
 )
 
@@ -137,3 +141,173 @@ class TestBuildS3ClientConfig:
     def test_overrides_applied(self) -> None:
         cfg = build_s3_client_config(None, {"connect_timeout": 99})
         assert cfg["connect_timeout"] == 99
+
+
+# ---------------------------------------------------------------------------
+# ManifestStoreConfig
+# ---------------------------------------------------------------------------
+
+
+class TestManifestStoreConfig:
+    def test_defaults(self) -> None:
+        cfg = ManifestStoreConfig()
+        assert cfg.backend == "s3"
+        assert cfg.dsn is None
+        assert cfg.table_name == "shardyfusion_manifests"
+        assert cfg.ensure_table is True
+
+    def test_postgres_backend(self) -> None:
+        cfg = ManifestStoreConfig(backend="postgres", dsn="host=localhost dbname=mydb")
+        assert cfg.backend == "postgres"
+        assert cfg.dsn == "host=localhost dbname=mydb"
+
+    def test_comdb2_backend(self) -> None:
+        cfg = ManifestStoreConfig(backend="comdb2", dsn="mydb")
+        assert cfg.backend == "comdb2"
+
+    def test_custom_table_name(self) -> None:
+        cfg = ManifestStoreConfig(table_name="my_manifests")
+        assert cfg.table_name == "my_manifests"
+
+    def test_invalid_backend_rejected(self) -> None:
+        with pytest.raises(Exception):
+            ManifestStoreConfig(backend="sqlite")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# ReaderConfig new fields
+# ---------------------------------------------------------------------------
+
+
+class TestReaderConfigNewFields:
+    def test_pool_checkout_timeout_default(self) -> None:
+        cfg = ReaderConfig()
+        assert cfg.pool_checkout_timeout == 30.0
+
+    def test_pool_checkout_timeout_custom(self) -> None:
+        cfg = ReaderConfig(pool_checkout_timeout=15.0)
+        assert cfg.pool_checkout_timeout == 15.0
+
+    def test_pool_checkout_timeout_must_be_positive(self) -> None:
+        with pytest.raises(Exception):
+            ReaderConfig(pool_checkout_timeout=0)
+
+    def test_pool_checkout_timeout_negative_rejected(self) -> None:
+        with pytest.raises(Exception):
+            ReaderConfig(pool_checkout_timeout=-1.0)
+
+    def test_s3_prefix_default_none(self) -> None:
+        cfg = ReaderConfig()
+        assert cfg.s3_prefix is None
+
+    def test_s3_prefix_set(self) -> None:
+        cfg = ReaderConfig(s3_prefix="s3://bucket/prefix")
+        assert cfg.s3_prefix == "s3://bucket/prefix"
+
+    def test_s3_prefix_empty_string_becomes_none(self) -> None:
+        cfg = ReaderConfig(s3_prefix="")
+        assert cfg.s3_prefix is None
+
+
+# ---------------------------------------------------------------------------
+# load_reader_config with [manifest_store]
+# ---------------------------------------------------------------------------
+
+
+class TestLoadReaderConfigManifestStore:
+    def test_defaults_without_file(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("SLATE_READER_CONFIG", raising=False)
+        monkeypatch.chdir(tmp_path)  # no reader.toml here
+        reader_cfg, store_cfg, output_cfg = load_reader_config(None)
+        assert store_cfg.backend == "s3"
+        assert reader_cfg.pool_checkout_timeout == 30.0
+
+    def test_with_manifest_store_section(self, tmp_path: Any) -> None:
+        toml_content = """\
+[reader]
+s3_prefix = "s3://bucket/prefix"
+pool_checkout_timeout = 10.0
+
+[manifest_store]
+backend = "postgres"
+dsn = "host=localhost dbname=test"
+table_name = "my_table"
+ensure_table = false
+"""
+        config_file = tmp_path / "reader.toml"
+        config_file.write_text(toml_content)
+
+        reader_cfg, store_cfg, output_cfg = load_reader_config(str(config_file))
+        assert reader_cfg.s3_prefix == "s3://bucket/prefix"
+        assert reader_cfg.pool_checkout_timeout == 10.0
+        assert store_cfg.backend == "postgres"
+        assert store_cfg.dsn == "host=localhost dbname=test"
+        assert store_cfg.table_name == "my_table"
+        assert store_cfg.ensure_table is False
+
+    def test_without_manifest_store_section(self, tmp_path: Any) -> None:
+        toml_content = """\
+[reader]
+current_url = "s3://bucket/prefix/_CURRENT"
+"""
+        config_file = tmp_path / "reader.toml"
+        config_file.write_text(toml_content)
+
+        reader_cfg, store_cfg, output_cfg = load_reader_config(str(config_file))
+        assert store_cfg.backend == "s3"
+        assert store_cfg.dsn is None
+
+
+# ---------------------------------------------------------------------------
+# resolve_dsn
+# ---------------------------------------------------------------------------
+
+
+class TestResolveDsn:
+    def test_config_dsn_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SLATE_READER_MANIFEST_DSN", "from-env")
+        cfg = ManifestStoreConfig(backend="postgres", dsn="from-config")
+        assert resolve_dsn(cfg) == "from-config"
+
+    def test_env_var_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SLATE_READER_MANIFEST_DSN", "from-env")
+        cfg = ManifestStoreConfig(backend="postgres")
+        assert resolve_dsn(cfg) == "from-env"
+
+    def test_missing_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("SLATE_READER_MANIFEST_DSN", raising=False)
+        cfg = ManifestStoreConfig(backend="postgres")
+        with pytest.raises(SystemExit, match="DSN is required"):
+            resolve_dsn(cfg)
+
+
+# ---------------------------------------------------------------------------
+# build_connection_factory
+# ---------------------------------------------------------------------------
+
+
+class TestBuildConnectionFactory:
+    def test_postgres_returns_callable(self) -> None:
+        factory = build_connection_factory("postgres", "host=localhost dbname=test")
+        assert callable(factory)
+
+    def test_comdb2_returns_callable(self) -> None:
+        factory = build_connection_factory("comdb2", "mydb")
+        assert callable(factory)
+
+    def test_postgres_missing_driver(self) -> None:
+        factory = build_connection_factory("postgres", "host=localhost")
+        # The ImportError happens when calling the factory, not creating it
+        with pytest.raises(ImportError, match="psycopg2"):
+            factory()
+
+    def test_comdb2_missing_driver(self) -> None:
+        factory = build_connection_factory("comdb2", "mydb")
+        with pytest.raises(ImportError, match="comdb2"):
+            factory()
+
+    def test_invalid_backend_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported"):
+            build_connection_factory("sqlite", "test.db")  # type: ignore[arg-type]

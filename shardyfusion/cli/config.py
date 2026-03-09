@@ -5,8 +5,9 @@ import stat
 import sys
 import tempfile
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -17,19 +18,30 @@ from ..type_defs import S3ClientConfig
 # ---------------------------------------------------------------------------
 
 
+class ManifestStoreConfig(BaseModel):
+    """Manifest store backend settings from [manifest_store] in reader.toml."""
+
+    backend: Literal["s3", "postgres", "comdb2"] = "s3"
+    dsn: str | None = None
+    table_name: str = "shardyfusion_manifests"
+    ensure_table: bool = True
+
+
 class ReaderConfig(BaseModel):
     """Non-sensitive reader settings from [reader] in reader.toml."""
 
     current_url: str | None = None
+    s3_prefix: str | None = None
     local_root: str = Field(
         default_factory=lambda: str(Path(tempfile.gettempdir()) / "shardyfusion")
     )
     thread_safety: Literal["lock", "pool"] = "lock"
+    pool_checkout_timeout: float = Field(default=30.0, gt=0)
     max_workers: int = Field(default=4, ge=1)
     slate_env_file: str | None = None
     credentials_profile: str = "default"
 
-    @field_validator("current_url", mode="before")
+    @field_validator("current_url", "s3_prefix", mode="before")
     @classmethod
     def _empty_str_to_none(cls, v: object) -> object:
         if v == "":
@@ -110,22 +122,23 @@ def _find_file(
 
 def load_reader_config(
     config_path: str | None = None,
-) -> tuple[ReaderConfig, OutputConfig]:
-    """Load and return (ReaderConfig, OutputConfig) from the resolved reader.toml.
+) -> tuple[ReaderConfig, ManifestStoreConfig, OutputConfig]:
+    """Load and return (ReaderConfig, ManifestStoreConfig, OutputConfig) from reader.toml.
 
     Falls back to defaults when no file is found.
     """
     path = _find_file(config_path, "SLATE_READER_CONFIG", _READER_SEARCH_PATHS)
     if path is None:
-        return ReaderConfig(), OutputConfig()
+        return ReaderConfig(), ManifestStoreConfig(), OutputConfig()
 
     with open(path, "rb") as fh:
         data = tomllib.load(fh)
 
     reader_cfg = ReaderConfig.model_validate(data.get("reader", {}))
+    store_cfg = ManifestStoreConfig.model_validate(data.get("manifest_store", {}))
     output_cfg = OutputConfig.model_validate(data.get("output", {}))
 
-    return reader_cfg, output_cfg
+    return reader_cfg, store_cfg, output_cfg
 
 
 def load_credentials_profile(
@@ -239,6 +252,65 @@ def split_current_url(current_url: str) -> tuple[str, str]:
             f"Cannot split CURRENT URL into prefix and name: {current_url!r}"
         )
     return current_url[:idx], current_url[idx + 1 :]
+
+
+# ---------------------------------------------------------------------------
+# Manifest store helpers
+# ---------------------------------------------------------------------------
+
+
+def resolve_dsn(store_cfg: ManifestStoreConfig) -> str:
+    """Resolve DSN from config value or ``SLATE_READER_MANIFEST_DSN`` env var.
+
+    Raises ``SystemExit`` when neither is set and a DB backend is selected.
+    """
+    if store_cfg.dsn:
+        return store_cfg.dsn
+    env = os.getenv("SLATE_READER_MANIFEST_DSN")
+    if env:
+        return env
+    raise SystemExit(
+        f"Error: DSN is required for '{store_cfg.backend}' manifest store. "
+        "Set dsn in [manifest_store] or the SLATE_READER_MANIFEST_DSN env var."
+    )
+
+
+def build_connection_factory(
+    backend: Literal["postgres", "comdb2"], dsn: str
+) -> Callable[[], Any]:
+    """Return a zero-arg callable that opens a fresh DB-API 2 connection.
+
+    The driver module is imported lazily so the CLI doesn't require DB
+    drivers unless a DB backend is actually configured.
+    """
+    if backend == "postgres":
+
+        def _connect_postgres() -> Any:
+            try:
+                import psycopg2
+            except ImportError:
+                raise ImportError(
+                    "psycopg2 is required for the 'postgres' manifest store backend. "
+                    "Install it with: pip install psycopg2-binary"
+                ) from None
+            return psycopg2.connect(dsn)
+
+        return _connect_postgres
+
+    if backend == "comdb2":
+
+        def _connect_comdb2() -> Any:
+            try:
+                import comdb2  # type: ignore[import-untyped]
+            except ImportError:
+                raise ImportError(
+                    "comdb2 driver is required for the 'comdb2' manifest store backend."
+                ) from None
+            return comdb2.connect(dsn)
+
+        return _connect_comdb2
+
+    raise ValueError(f"Unsupported DB backend: {backend!r}")
 
 
 # ---------------------------------------------------------------------------

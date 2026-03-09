@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import click.testing
 
-from shardyfusion.cli.app import cli
+from shardyfusion.cli.app import _build_manifest_store, cli
+from shardyfusion.cli.config import ManifestStoreConfig
 from shardyfusion.reader.reader import ShardDetail, SnapshotInfo
 
 # ---------------------------------------------------------------------------
@@ -258,3 +259,177 @@ class TestSubcommands:
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["db_id"] == 1
+
+
+# ---------------------------------------------------------------------------
+# _build_manifest_store dispatch
+# ---------------------------------------------------------------------------
+
+
+class TestBuildManifestStore:
+    def test_s3_backend(self) -> None:
+        store_cfg = ManifestStoreConfig(backend="s3")
+        params: dict[str, Any] = {
+            "s3_prefix": "s3://bucket/prefix",
+            "current_name": "_CURRENT",
+            "s3_client_config": {},
+        }
+        with patch(
+            "shardyfusion.manifest_store.S3ManifestStore", autospec=True
+        ) as mock_cls:
+            mock_cls.return_value = MagicMock()
+            store = _build_manifest_store(store_cfg, params)
+            mock_cls.assert_called_once_with(
+                "s3://bucket/prefix",
+                current_name="_CURRENT",
+                s3_client_config={},
+            )
+            assert store is mock_cls.return_value
+
+    def test_postgres_backend(self) -> None:
+        store_cfg = ManifestStoreConfig(
+            backend="postgres", dsn="host=localhost dbname=test"
+        )
+        params: dict[str, Any] = {
+            "s3_prefix": "s3://bucket/prefix",
+            "current_name": "_CURRENT",
+            "s3_client_config": {},
+        }
+        with patch(
+            "shardyfusion.db_manifest_store.PostgresManifestStore", autospec=True
+        ) as mock_cls:
+            mock_cls.return_value = MagicMock()
+            store = _build_manifest_store(store_cfg, params)
+            mock_cls.assert_called_once()
+            assert store is mock_cls.return_value
+
+    def test_comdb2_backend(self) -> None:
+        store_cfg = ManifestStoreConfig(backend="comdb2", dsn="mydb")
+        params: dict[str, Any] = {
+            "s3_prefix": "s3://bucket/prefix",
+            "current_name": "_CURRENT",
+            "s3_client_config": {},
+        }
+        with patch(
+            "shardyfusion.db_manifest_store.Comdb2ManifestStore", autospec=True
+        ) as mock_cls:
+            mock_cls.return_value = MagicMock()
+            store = _build_manifest_store(store_cfg, params)
+            mock_cls.assert_called_once()
+            assert store is mock_cls.return_value
+
+
+# ---------------------------------------------------------------------------
+# DB backend: s3_prefix required, --current-url warns
+# ---------------------------------------------------------------------------
+
+
+class TestDbBackendCliFlow:
+    def _write_config(self, tmp_path: Any, toml_content: str) -> str:
+        config_file = tmp_path / "reader.toml"
+        config_file.write_text(toml_content)
+        return str(config_file)
+
+    def test_db_backend_requires_s3_prefix(self, tmp_path: Any) -> None:
+        cfg_path = self._write_config(
+            tmp_path,
+            """\
+[manifest_store]
+backend = "postgres"
+dsn = "host=localhost dbname=test"
+""",
+        )
+        reader = _FakeReader()
+        runner = click.testing.CliRunner()
+        with patch("shardyfusion.cli.app._build_reader", return_value=reader):
+            result = runner.invoke(
+                cli,
+                ["--config", cfg_path, "info"],
+                env={"SLATE_READER_CURRENT": ""},
+            )
+        assert result.exit_code != 0
+        assert "s3_prefix is required" in (result.output + (result.stderr or ""))
+
+    def test_db_backend_current_url_warns(self, tmp_path: Any) -> None:
+        cfg_path = self._write_config(
+            tmp_path,
+            """\
+[reader]
+s3_prefix = "s3://bucket/prefix"
+
+[manifest_store]
+backend = "postgres"
+dsn = "host=localhost dbname=test"
+""",
+        )
+        reader = _FakeReader()
+        runner = click.testing.CliRunner()
+        with patch("shardyfusion.cli.app._build_reader", return_value=reader):
+            result = runner.invoke(
+                cli,
+                ["--config", cfg_path, "--current-url", "s3://b/p/_CURRENT", "info"],
+            )
+        assert result.exit_code == 0
+        assert "--current-url is ignored" in result.output
+
+    def test_db_backend_works_without_current_url(self, tmp_path: Any) -> None:
+        cfg_path = self._write_config(
+            tmp_path,
+            """\
+[reader]
+s3_prefix = "s3://bucket/prefix"
+
+[manifest_store]
+backend = "postgres"
+dsn = "host=localhost dbname=test"
+""",
+        )
+        reader = _FakeReader()
+        runner = click.testing.CliRunner()
+        with patch("shardyfusion.cli.app._build_reader", return_value=reader):
+            result = runner.invoke(
+                cli,
+                ["--config", cfg_path, "info"],
+            )
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["op"] == "info"
+
+
+# ---------------------------------------------------------------------------
+# pool_checkout_timeout pass-through
+# ---------------------------------------------------------------------------
+
+
+class TestPoolCheckoutTimeout:
+    def test_timeout_passed_to_reader(self, tmp_path: Any) -> None:
+        cfg_path = tmp_path / "reader.toml"
+        cfg_path.write_text(
+            """\
+[reader]
+current_url = "s3://bucket/prefix/_CURRENT"
+pool_checkout_timeout = 15.0
+"""
+        )
+        reader = _FakeReader()
+        captured_kwargs: dict[str, Any] = {}
+
+        def _capture_reader(**kwargs: Any) -> _FakeReader:
+            captured_kwargs.update(kwargs)
+            return reader
+
+        with (
+            patch(
+                "shardyfusion.reader.ConcurrentShardedReader",
+                side_effect=_capture_reader,
+            ),
+            patch(
+                "shardyfusion.cli.app._build_manifest_store",
+                return_value=MagicMock(),
+            ),
+        ):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(cli, ["--config", str(cfg_path), "info"])
+
+        assert result.exit_code == 0
+        assert captured_kwargs.get("pool_checkout_timeout") == 15.0

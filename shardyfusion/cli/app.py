@@ -7,14 +7,17 @@ import click
 
 from .batch import run_script
 from .config import (
+    ManifestStoreConfig,
     OutputConfig,
     ReaderConfig,
+    build_connection_factory,
     build_s3_client_config,
     coerce_cli_key,
     coerce_s3_option,
     load_credentials_profile,
     load_reader_config,
     resolve_current_url,
+    resolve_dsn,
     split_current_url,
 )
 from .interactive import SlateReaderRepl
@@ -36,31 +39,61 @@ from .output import (
 _CTX_INIT_PARAMS = "slate_init_params"
 
 
+def _build_manifest_store(
+    store_cfg: ManifestStoreConfig,
+    params: dict[str, Any],
+) -> Any:
+    """Create the manifest store for the configured backend."""
+    if store_cfg.backend == "s3":
+        from ..manifest_store import S3ManifestStore
+
+        return S3ManifestStore(
+            params["s3_prefix"],
+            current_name=params["current_name"],
+            s3_client_config=params["s3_client_config"],
+        )
+
+    # DB backends (postgres / comdb2)
+    dsn = resolve_dsn(store_cfg)
+    conn_factory = build_connection_factory(store_cfg.backend, dsn)  # type: ignore[arg-type]
+
+    if store_cfg.backend == "postgres":
+        from ..db_manifest_store import PostgresManifestStore
+
+        return PostgresManifestStore(
+            conn_factory,
+            table_name=store_cfg.table_name,
+            ensure_table=store_cfg.ensure_table,
+        )
+
+    from ..db_manifest_store import Comdb2ManifestStore
+
+    return Comdb2ManifestStore(
+        conn_factory,
+        table_name=store_cfg.table_name,
+        ensure_table=store_cfg.ensure_table,
+    )
+
+
 def _build_reader(ctx: click.Context) -> Any:
     """Construct a ConcurrentShardedReader from the parameters stored in ctx.obj."""
     params = ctx.obj[_CTX_INIT_PARAMS]
-    s3_prefix: str = params["s3_prefix"]
-    current_name: str = params["current_name"]
     reader_cfg: ReaderConfig = params["reader_cfg"]
-    s3_client_config = params["s3_client_config"]
+    store_cfg: ManifestStoreConfig = params["store_cfg"]
 
-    from ..manifest_store import S3ManifestStore
     from ..reader import ConcurrentShardedReader
 
-    manifest_store = S3ManifestStore(
-        s3_prefix,
-        current_name=current_name,
-        s3_client_config=s3_client_config,
-    )
+    manifest_store = _build_manifest_store(store_cfg, params)
 
     try:
         return ConcurrentShardedReader(
-            s3_prefix=s3_prefix,
+            s3_prefix=params["s3_prefix"],
             local_root=reader_cfg.local_root,
             manifest_store=manifest_store,
-            current_name=current_name,
+            current_name=params.get("current_name", "_CURRENT"),
             slate_env_file=reader_cfg.slate_env_file,
             thread_safety=reader_cfg.thread_safety,
+            pool_checkout_timeout=reader_cfg.pool_checkout_timeout,
             max_workers=reader_cfg.max_workers,
         )
     except Exception as exc:
@@ -154,8 +187,8 @@ def cli(
         except ValueError as exc:
             raise click.UsageError(str(exc)) from exc
 
-    # Load reader + output config
-    reader_cfg, output_cfg = load_reader_config(config_path)
+    # Load reader + manifest-store + output config
+    reader_cfg, store_cfg, output_cfg = load_reader_config(config_path)
 
     # Apply --output-format override
     if output_format:
@@ -164,10 +197,6 @@ def cli(
             value_encoding=output_cfg.value_encoding,
             null_repr=output_cfg.null_repr,
         )
-
-    # Resolve CURRENT URL
-    resolved_url = resolve_current_url(current_url, reader_cfg)
-    s3_prefix, current_name = split_current_url(resolved_url)
 
     # Load credentials profile
     profile = load_credentials_profile(
@@ -178,11 +207,31 @@ def cli(
     # Build S3 client config (credentials + connection options + per-invocation overrides)
     s3_client_config = build_s3_client_config(profile, s3_overrides)
 
+    # Resolve S3 prefix and CURRENT name based on backend
+    if store_cfg.backend == "s3":
+        resolved_url = resolve_current_url(current_url, reader_cfg)
+        s3_prefix, current_name = split_current_url(resolved_url)
+    else:
+        # DB backends: s3_prefix is required in config (shard DBs are still on S3)
+        if current_url:
+            click.echo(
+                "Warning: --current-url is ignored for DB manifest store backends.",
+                err=True,
+            )
+        if not reader_cfg.s3_prefix:
+            raise click.UsageError(
+                f"s3_prefix is required in [reader] when using "
+                f"'{store_cfg.backend}' manifest store."
+            )
+        s3_prefix = reader_cfg.s3_prefix
+        current_name = "_CURRENT"
+
     # Store init parameters in context for lazy reader construction in subcommands
     ctx.obj[_CTX_INIT_PARAMS] = {
         "s3_prefix": s3_prefix,
         "current_name": current_name,
         "reader_cfg": reader_cfg,
+        "store_cfg": store_cfg,
         "output_cfg": output_cfg,
         "s3_client_config": s3_client_config,
     }
