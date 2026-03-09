@@ -109,7 +109,7 @@ Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
 
 ### CLI (`slate-reader`)
 
-Entry point: `cli/app.py:main`. Subcommands: `get KEY`, `multiget KEY [KEY ...]`, `info`, `refresh`, `exec --script FILE`. No subcommand → interactive REPL (`cmd.Cmd` with `slate> ` prompt).
+Entry point: `cli/app.py:main`. Subcommands: `get KEY`, `multiget KEY [KEY ...]`, `info`, `shards`, `route KEY`, `refresh`, `exec --script FILE`. No subcommand → interactive REPL (`cmd.Cmd` with `slate> ` prompt).
 
 Key coercion: CLI keys are strings; when manifest uses integer encoding (`u64be`/`u32be`), keys are auto-coerced to `int` via `cli/config.py:coerce_cli_key()`.
 
@@ -137,8 +137,7 @@ These are all Protocols, allowing user-provided implementations:
 | Protocol | Default Implementation | Purpose |
 |---|---|---|
 | `ManifestBuilder` | `JsonManifestBuilder` | Manifest serialization format |
-| `ManifestPublisher` | `DefaultS3Publisher` | Where/how to publish manifests |
-| `ManifestReader` | `DefaultS3ManifestReader` | How to load manifest/CURRENT |
+| `ManifestStore` | `S3ManifestStore` | Unified manifest read/write (publish + load) |
 | `DbAdapterFactory` | `SlateDbFactory` | How to open shard databases |
 
 `ValueSpec` controls how DataFrame rows are serialized to bytes: `binary_col`, `json_cols`, or a callable encoder.

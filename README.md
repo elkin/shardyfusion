@@ -167,6 +167,8 @@ reader.refresh()
 reader.close()
 ```
 
+For multi-threaded services, use `ConcurrentShardedReader` — see the [reader docs](https://slatedb.github.io/shardyfusion/reader/).
+
 ## Development Workflow
 
 ### Lint and style
