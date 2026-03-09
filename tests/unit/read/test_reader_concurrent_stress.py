@@ -182,6 +182,126 @@ def test_refresh_racing_with_gets() -> None:
     assert not errors
 
 
+class _SteppingManifestStore:
+    """Returns auto-incrementing versions on each ``load_current()`` call."""
+
+    def __init__(self) -> None:
+        self._counter = 0
+        self._lock = threading.Lock()
+
+    def publish(
+        self,
+        *,
+        run_id: str,
+        required_build: RequiredBuildMeta,
+        shards: list[RequiredShardMeta],
+        custom: dict[str, Any],
+    ) -> str:
+        raise NotImplementedError
+
+    def load_current(self) -> CurrentPointer:
+        with self._lock:
+            self._counter += 1
+            v = self._counter
+        return CurrentPointer(
+            manifest_ref=f"s3://bucket/manifest-v{v}.json",
+            manifest_content_type="application/json",
+            run_id=f"run-v{v}",
+            updated_at="2026-01-01T00:00:00+00:00",
+        )
+
+    def load_manifest(self, ref: str) -> ParsedManifest:
+        return ParsedManifest(
+            required_build=_build(),
+            shards=[_shard(0), _shard(1)],
+        )
+
+
+def test_concurrent_refresh_no_rollback() -> None:
+    """Two threads refresh simultaneously; reader must hold the latest manifest."""
+    store = _SteppingManifestStore()
+    reader = ConcurrentShardedReader(
+        s3_prefix="s3://bucket/prefix",
+        local_root="/tmp/stress-test",
+        manifest_store=store,
+        reader_factory=_make_factory(),
+    )
+    # Init consumed version 1.
+    assert reader._state.manifest_ref == "s3://bucket/manifest-v1.json"
+
+    errors: list[Exception] = []
+    barrier = threading.Barrier(2)
+
+    def do_refresh() -> None:
+        try:
+            barrier.wait(timeout=5.0)
+            reader.refresh()
+        except Exception as e:
+            errors.append(e)
+
+    t1 = threading.Thread(target=do_refresh)
+    t2 = threading.Thread(target=do_refresh)
+    t1.start()
+    t2.start()
+    t1.join(timeout=5.0)
+    t2.join(timeout=5.0)
+
+    assert not errors
+    # With _refresh_lock serialization, the reader must hold the latest
+    # version (v3), never rolled back to v2.
+    assert reader._state.manifest_ref == "s3://bucket/manifest-v3.json"
+    reader.close()
+
+
+def test_refresh_deduplication_single_manifest_load() -> None:
+    """Two threads refresh to same version; load_manifest called only once."""
+    store = _VersionedManifestStore()
+    load_manifest_count = 0
+    original_load = store.load_manifest
+    count_lock = threading.Lock()
+
+    def counting_load(ref: str) -> ParsedManifest:
+        nonlocal load_manifest_count
+        with count_lock:
+            load_manifest_count += 1
+        return original_load(ref)
+
+    store.load_manifest = counting_load  # type: ignore[assignment]
+
+    reader = ConcurrentShardedReader(
+        s3_prefix="s3://bucket/prefix",
+        local_root="/tmp/stress-test",
+        manifest_store=store,
+        reader_factory=_make_factory(),
+    )
+    initial_count = load_manifest_count  # 1 from init
+
+    store.set_version(2)
+
+    errors: list[Exception] = []
+    barrier = threading.Barrier(2)
+
+    def do_refresh() -> None:
+        try:
+            barrier.wait(timeout=5.0)
+            reader.refresh()
+        except Exception as e:
+            errors.append(e)
+
+    t1 = threading.Thread(target=do_refresh)
+    t2 = threading.Thread(target=do_refresh)
+    t1.start()
+    t2.start()
+    t1.join(timeout=5.0)
+    t2.join(timeout=5.0)
+
+    assert not errors
+    # Only one thread should have loaded the manifest for v2.
+    # The second thread sees the already-updated state and short-circuits.
+    assert load_manifest_count == initial_count + 1
+    reader.close()
+
+
 def test_pool_mode_concurrent_gets() -> None:
     """Pool mode handles concurrent gets without deadlock."""
     manifest_store = _VersionedManifestStore()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 import types
 from dataclasses import dataclass
 from pathlib import Path
@@ -955,3 +956,93 @@ class TestSimpleReaderBorrowSafety:
         # Release handle — triggers deferred cleanup
         handle.close()
         assert state.borrow_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Commit 1: Superseded refresh cleans up discarded state
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_reader_superseded_refresh_cleans_up(tmp_path) -> None:
+    """When refresh is superseded by another, the discarded state is closed."""
+    closed_urls: list[str] = []
+
+    class _TrackingReader:
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+        def get(self, key: bytes) -> bytes | None:
+            return None
+
+        def close(self) -> None:
+            closed_urls.append(self.url)
+
+    manifests = {
+        "mem://manifest/v1": _manifest("mem://db/v1"),
+        "mem://manifest/v2": _manifest("mem://db/v2"),
+    }
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/v1")
+
+    reader = ConcurrentShardedReader(
+        s3_prefix="s3://bucket/prefix",
+        local_root=str(tmp_path),
+        manifest_store=manifest_store,
+        reader_factory=lambda *, db_url, local_dir, checkpoint_id: _TrackingReader(
+            db_url
+        ),
+    )
+    assert reader._state.manifest_ref == "mem://manifest/v1"
+
+    manifest_store.current_ref = "mem://manifest/v2"
+
+    # Make the first post-init load_manifest call slow so a second thread
+    # can race ahead and swap state first (bypasses _refresh_lock via
+    # _do_refresh for testing the CAS guard).
+    entered_load = threading.Event()
+    proceed = threading.Event()
+    original_load = manifest_store.load_manifest
+    slow_done = threading.Event()
+
+    def slow_once_load_manifest(ref: str) -> ParsedManifest:
+        if not slow_done.is_set():
+            slow_done.set()
+            entered_load.set()
+            proceed.wait(timeout=5)
+        return original_load(ref)
+
+    manifest_store.load_manifest = slow_once_load_manifest  # type: ignore[assignment]
+
+    results: list[bool | None] = [None, None]
+    errors: list[Exception] = []
+
+    def slow_refresh() -> None:
+        try:
+            results[0] = reader._do_refresh()
+        except Exception as e:
+            errors.append(e)
+
+    def fast_refresh() -> None:
+        entered_load.wait(timeout=5)
+        try:
+            results[1] = reader._do_refresh()
+        except Exception as e:
+            errors.append(e)
+        proceed.set()
+
+    t_slow = threading.Thread(target=slow_refresh)
+    t_fast = threading.Thread(target=fast_refresh)
+    t_slow.start()
+    t_fast.start()
+    t_fast.join(timeout=5)
+    t_slow.join(timeout=5)
+
+    assert not errors
+    assert results[1] is True  # Fast thread won
+    assert results[0] is False  # Slow thread superseded (CAS guard)
+    assert reader._state.manifest_ref == "mem://manifest/v2"
+
+    # The superseded new_state (built by slow thread) must be closed.
+    superseded_closed = [u for u in closed_urls if u == "mem://db/v2"]
+    assert len(superseded_closed) == 1
+
+    reader.close()

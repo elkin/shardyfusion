@@ -584,6 +584,11 @@ class ConcurrentShardedReader(_BaseShardedReader):
         )
 
         self.thread_safety = thread_safety
+        # Lock ordering: _refresh_lock before _state_lock.  _refresh_lock
+        # serialises the expensive I/O path (manifest load + reader open) so
+        # only one thread builds new state at a time.  _state_lock protects
+        # brief state swaps and refcount updates (no I/O held).
+        self._refresh_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._state = self._load_initial_state()
 
@@ -740,6 +745,10 @@ class ConcurrentShardedReader(_BaseShardedReader):
         return ordered
 
     def refresh(self) -> bool:
+        with self._refresh_lock:
+            return self._do_refresh()
+
+    def _do_refresh(self) -> bool:
         current = self._manifest_store.load_current()
         if current is None:
             log_failure(
@@ -754,7 +763,8 @@ class ConcurrentShardedReader(_BaseShardedReader):
         with self._state_lock:
             if self._closed:
                 raise ReaderStateError("Reader is closed")
-            if current_ref == self._state.manifest_ref:
+            old_ref_snapshot = self._state.manifest_ref
+            if current_ref == old_ref_snapshot:
                 log_event(
                     "reader_refresh_unchanged",
                     logger=_logger,
@@ -772,6 +782,17 @@ class ConcurrentShardedReader(_BaseShardedReader):
             if self._closed:
                 _close_state(new_state)
                 raise ReaderStateError("Reader is closed")
+            if self._state.manifest_ref != old_ref_snapshot:
+                # Another refresh already advanced past us; discard our work.
+                _close_state(new_state)
+                log_event(
+                    "reader_refresh_superseded",
+                    logger=_logger,
+                    current_ref=current_ref,
+                    active_ref=self._state.manifest_ref,
+                )
+                self._emit(MetricEvent.READER_REFRESHED, {"changed": False})
+                return False
             old_state = self._state
             self._state = new_state
             old_state.retired = True
