@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+from pydantic import ValidationError
 
 from shardyfusion.cli.config import (
     ManifestStoreConfig,
@@ -170,7 +173,7 @@ class TestManifestStoreConfig:
         assert cfg.table_name == "my_manifests"
 
     def test_invalid_backend_rejected(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ManifestStoreConfig(backend="sqlite")  # type: ignore[arg-type]
 
 
@@ -189,11 +192,11 @@ class TestReaderConfigNewFields:
         assert cfg.pool_checkout_timeout == 15.0
 
     def test_pool_checkout_timeout_must_be_positive(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ReaderConfig(pool_checkout_timeout=0)
 
     def test_pool_checkout_timeout_negative_rejected(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ReaderConfig(pool_checkout_timeout=-1.0)
 
     def test_s3_prefix_default_none(self) -> None:
@@ -216,7 +219,7 @@ class TestReaderConfigNewFields:
 
 class TestLoadReaderConfigManifestStore:
     def test_defaults_without_file(
-        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("SLATE_READER_CONFIG", raising=False)
         monkeypatch.chdir(tmp_path)  # no reader.toml here
@@ -224,7 +227,7 @@ class TestLoadReaderConfigManifestStore:
         assert store_cfg.backend == "s3"
         assert reader_cfg.pool_checkout_timeout == 30.0
 
-    def test_with_manifest_store_section(self, tmp_path: Any) -> None:
+    def test_with_manifest_store_section(self, tmp_path: Path) -> None:
         toml_content = """\
 [reader]
 s3_prefix = "s3://bucket/prefix"
@@ -247,7 +250,7 @@ ensure_table = false
         assert store_cfg.table_name == "my_table"
         assert store_cfg.ensure_table is False
 
-    def test_without_manifest_store_section(self, tmp_path: Any) -> None:
+    def test_without_manifest_store_section(self, tmp_path: Path) -> None:
         toml_content = """\
 [reader]
 current_url = "s3://bucket/prefix/_CURRENT"
