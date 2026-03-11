@@ -60,8 +60,6 @@ jobs:
       - name: Type check (pyright — Spark writer)
         run: uv run pyright -p pyright/sparkwriter.json
 
-      - name: Schema drift check
-        run: uv run python scripts/generate_schemas.py --check
 
   package:
     name: Package Build

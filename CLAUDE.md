@@ -24,7 +24,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Type checking**: `uv run pyright shardyfusion` (all code) or per-path configs in `pyright/` directory.
 
-**JSON schemas**: `shardyfusion/schemas/` ships `manifest.schema.json` and `current-pointer.schema.json` (generated from Pydantic models via `scripts/generate_schemas.py`; `--check` mode in quality tox label). Included in the package via `pyproject.toml` package-data.
+**JSON schemas**: Available on demand via `slate-reader schema` (manifest) and `slate-reader schema --type current-pointer`. Generated at runtime from Pydantic models (`ParsedManifest.model_json_schema()` / `CurrentPointer.model_json_schema()`).
 
 Container venv is at `/opt/shardyfusion-venv`, not the host `.venv`.
 
@@ -61,7 +61,7 @@ The library is split into six independent paths that share config, manifest mode
 ### Module Dependency Graph
 
 ```
-Layer 0 — Core types & errors: errors.py, type_defs.py, sharding_types.py, ordering.py, logging.py, metrics.py, schemas/
+Layer 0 — Core types & errors: errors.py, type_defs.py, sharding_types.py, ordering.py, logging.py, metrics.py
 Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py
 Layer 2 — Storage, publish, routing, manifest: storage.py, manifest.py, publish.py, routing.py, manifest_readers.py
 Layer 3 — Writer core: _writer_core.py (shared by all writers)
@@ -109,7 +109,7 @@ Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
 
 ### CLI (`slate-reader`)
 
-Entry point: `cli/app.py:main`. Subcommands: `get KEY`, `multiget KEY [KEY ...]`, `info`, `shards`, `route KEY`, `refresh`, `exec --script FILE`. No subcommand → interactive REPL (`cmd.Cmd` with `slate> ` prompt).
+Entry point: `cli/app.py:main`. Subcommands: `get KEY`, `multiget KEY [KEY ...]`, `info`, `shards`, `route KEY`, `refresh`, `exec --script FILE`, `schema [--type manifest|current-pointer]`. No subcommand → interactive REPL (`cmd.Cmd` with `slate> ` prompt).
 
 Key coercion: CLI keys are strings; when manifest uses integer encoding (`u64be`/`u32be`), keys are auto-coerced to `int` via `cli/config.py:coerce_cli_key()`.
 
