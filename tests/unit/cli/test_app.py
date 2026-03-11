@@ -1,4 +1,4 @@
-"""Unit tests for the slate-reader Click CLI (app.py).
+"""Unit tests for the shardy Click CLI (app.py).
 
 All tests mock the reader construction to avoid real S3 / SlateDB dependencies.
 """
@@ -95,7 +95,7 @@ def _invoke(
     if reader is None:
         reader = _FakeReader()
 
-    effective_env = {"SLATE_READER_CURRENT": "s3://bucket/prefix/_CURRENT"}
+    effective_env = {"SHARDY_CURRENT": "s3://bucket/prefix/_CURRENT"}
     if env:
         effective_env.update(env)
 
@@ -114,7 +114,7 @@ class TestVersionFlag:
         runner = click.testing.CliRunner()
         result = runner.invoke(cli, ["--version"])
         assert result.exit_code == 0
-        assert "slate-reader" in result.output
+        assert "shardy" in result.output
 
 
 class TestCurrentUrlOption:
@@ -181,7 +181,7 @@ class TestKeyCoercion:
 class TestMultigetStdin:
     def test_reads_keys_from_stdin(self) -> None:
         reader = _FakeReader(store={1: b"a", 2: b"b"}, key_encoding="u64be")
-        effective_env = {"SLATE_READER_CURRENT": "s3://bucket/prefix/_CURRENT"}
+        effective_env = {"SHARDY_CURRENT": "s3://bucket/prefix/_CURRENT"}
         with patch("shardyfusion.cli.app._build_reader", return_value=reader):
             runner = click.testing.CliRunner()
             result = runner.invoke(
@@ -195,7 +195,7 @@ class TestMultigetStdin:
 
     def test_empty_stdin_errors(self) -> None:
         reader = _FakeReader()
-        effective_env = {"SLATE_READER_CURRENT": "s3://bucket/prefix/_CURRENT"}
+        effective_env = {"SHARDY_CURRENT": "s3://bucket/prefix/_CURRENT"}
         with patch("shardyfusion.cli.app._build_reader", return_value=reader):
             runner = click.testing.CliRunner()
             result = runner.invoke(cli, ["multiget", "-"], input="", env=effective_env)
@@ -338,7 +338,7 @@ dsn = "host=localhost dbname=test"
             result = runner.invoke(
                 cli,
                 ["--config", cfg_path, "info"],
-                env={"SLATE_READER_CURRENT": ""},
+                env={"SHARDY_CURRENT": ""},
             )
         assert result.exit_code != 0
         assert "s3_prefix is required" in (result.output + (result.stderr or ""))

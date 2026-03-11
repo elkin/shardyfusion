@@ -3,7 +3,7 @@
 
 [reader]
 # Full S3 URL to the CURRENT pointer.
-# Optional: omit to require the positional argument or SLATE_READER_CURRENT env var.
+# Optional: omit to require the positional argument or SHARDY_CURRENT env var.
 current_url = "s3://bucket/prefix/_CURRENT"
 
 # Local directory for shard data cache (default: /tmp/shardyfusion on Linux/macOS).

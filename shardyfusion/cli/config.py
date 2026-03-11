@@ -96,12 +96,12 @@ class CredentialsProfile(BaseModel):
 
 _READER_SEARCH_PATHS = [
     Path("reader.toml"),
-    Path.home() / ".config" / "slatefusion" / "reader.toml",
+    Path.home() / ".config" / "shardy" / "reader.toml",
 ]
 
 _CREDS_SEARCH_PATHS = [
     Path("credentials.toml"),
-    Path.home() / ".config" / "slatefusion" / "credentials.toml",
+    Path.home() / ".config" / "shardy" / "credentials.toml",
 ]
 
 
@@ -127,7 +127,7 @@ def load_reader_config(
 
     Falls back to defaults when no file is found.
     """
-    path = _find_file(config_path, "SLATE_READER_CONFIG", _READER_SEARCH_PATHS)
+    path = _find_file(config_path, "SHARDY_CONFIG", _READER_SEARCH_PATHS)
     if path is None:
         return ReaderConfig(), ManifestStoreConfig(), OutputConfig()
 
@@ -150,7 +150,7 @@ def load_credentials_profile(
     Returns None when no credentials file is found (boto3 chain is used as fallback).
     Warns when the file has permissions wider than 0600 on UNIX.
     """
-    path = _find_file(credentials_path, "SLATE_READER_CREDENTIALS", _CREDS_SEARCH_PATHS)
+    path = _find_file(credentials_path, "SHARDY_CREDENTIALS", _CREDS_SEARCH_PATHS)
     if path is None:
         return None
 
@@ -232,14 +232,14 @@ def resolve_current_url(
     """Resolve CURRENT URL from positional arg -> env var -> config file."""
     if positional:
         return positional
-    env = os.getenv("SLATE_READER_CURRENT")
+    env = os.getenv("SHARDY_CURRENT")
     if env:
         return env
     if reader_cfg.current_url:
         return reader_cfg.current_url
     raise SystemExit(
         "Error: CURRENT URL is required. Provide it via --current-url, "
-        "set SLATE_READER_CURRENT env var, or set current_url in reader.toml."
+        "set SHARDY_CURRENT env var, or set current_url in reader.toml."
     )
 
 
@@ -260,18 +260,18 @@ def split_current_url(current_url: str) -> tuple[str, str]:
 
 
 def resolve_dsn(store_cfg: ManifestStoreConfig) -> str:
-    """Resolve DSN from config value or ``SLATE_READER_MANIFEST_DSN`` env var.
+    """Resolve DSN from config value or ``SHARDY_MANIFEST_DSN`` env var.
 
     Raises ``SystemExit`` when neither is set and a DB backend is selected.
     """
     if store_cfg.dsn:
         return store_cfg.dsn
-    env = os.getenv("SLATE_READER_MANIFEST_DSN")
+    env = os.getenv("SHARDY_MANIFEST_DSN")
     if env:
         return env
     raise SystemExit(
         f"Error: DSN is required for '{store_cfg.backend}' manifest store. "
-        "Set dsn in [manifest_store] or the SLATE_READER_MANIFEST_DSN env var."
+        "Set dsn in [manifest_store] or the SHARDY_MANIFEST_DSN env var."
     )
 
 

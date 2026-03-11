@@ -182,7 +182,7 @@ var nodes = [
   { id:'reader',          label:'Reader',           sub:'reader/reader.py',         w:175, h:60, layer:'entry',   bc:'#4ecdc4',
     desc:'Loads CURRENT pointer, dereferences manifest, builds SnapshotRouter. get()/multi_get() with atomic refresh() and reference counting.',
     exp:'ShardedReader, ConcurrentShardedReader, SlateDbReaderFactory' },
-  { id:'cli',             label:'CLI (slate-reader)',sub:'cli/app.py',              w:185, h:60, layer:'entry',   bc:'#22d3ee',
+  { id:'cli',             label:'CLI (shardy)',sub:'cli/app.py',              w:185, h:60, layer:'entry',   bc:'#22d3ee',
     desc:'Click CLI: get, multiget, info, refresh, exec subcommands. Interactive REPL via cmd.Cmd. Auto-coerces keys for integer encodings.',
     exp:'main() \u2014 submodules: config, output, interactive, batch' },
   { id:'spark-sharding',  label:'Spark Sharding',   sub:'writer/spark/sharding.py', w:175, h:60, layer:'helpers', bc:'#f7b733',

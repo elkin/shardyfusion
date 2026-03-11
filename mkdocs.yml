@@ -27,7 +27,7 @@ nav:
   - Getting Started: getting-started.md
   - Writer Side: writer.md
   - Reader Side: reader.md
-  - CLI (slate-reader): cli.md
+  - CLI (shardy): cli.md
   - Error Handling: error-handling.md
   - Observability: observability.md
   - Architecture: how-it-works.md

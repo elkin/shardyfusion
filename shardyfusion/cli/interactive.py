@@ -1,4 +1,4 @@
-"""Interactive REPL for the slate-reader CLI, backed by ConcurrentShardedReader."""
+"""Interactive REPL for the shardy CLI, backed by ConcurrentShardedReader."""
 
 import cmd
 import shlex
@@ -18,11 +18,11 @@ from .output import (
 )
 
 
-class SlateReaderRepl(cmd.Cmd):
+class ShardyRepl(cmd.Cmd):
     """cmd.Cmd REPL that wraps a single reader instance."""
 
     intro = ""
-    prompt = "slate> "
+    prompt = "shardy> "
 
     def __init__(self, reader: Any, output_cfg: OutputConfig) -> None:
         super().__init__()

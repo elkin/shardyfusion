@@ -88,7 +88,7 @@ Issues = "https://github.com/slatedb/shardyfusion/issues"
 Changelog = "https://github.com/slatedb/shardyfusion/blob/main/CHANGELOG.md"
 
 [project.scripts]
-slate-reader = "shardyfusion.cli.app:main"
+shardy = "shardyfusion.cli.app:main"
 
 [dependency-groups]
 dev = [

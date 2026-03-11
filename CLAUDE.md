@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Pure-Python iterator-based writer (no Spark/Java needed)
 - Manifest + `_CURRENT` publishing protocol (default S3, pluggable interfaces)
 - Reader-side routing helpers for service-side `get` and `multi_get`
-- `slate-reader` CLI for interactive and batch lookups against published snapshots
+- `shardy` CLI for interactive and batch lookups against published snapshots
 - Token-bucket rate limiter (`max_writes_per_second`) for all writer paths
 
 ## Tooling
@@ -24,7 +24,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Type checking**: `uv run pyright shardyfusion` (all code) or per-path configs in `pyright/` directory.
 
-**JSON schemas**: Available on demand via `slate-reader schema` (manifest) and `slate-reader schema --type current-pointer`. Generated at runtime from Pydantic models (`ParsedManifest.model_json_schema()` / `CurrentPointer.model_json_schema()`).
+**JSON schemas**: Available on demand via `shardy schema` (manifest) and `shardy schema --type current-pointer`. Generated at runtime from Pydantic models (`ParsedManifest.model_json_schema()` / `CurrentPointer.model_json_schema()`).
 
 Container venv is at `/opt/shardyfusion-venv`, not the host `.venv`.
 
@@ -107,9 +107,9 @@ Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
 5. `ShardedReader` swaps state directly on refresh. `ConcurrentShardedReader` serialises refresh I/O via `_refresh_lock` and atomically swaps readers using reference counting with a compare-and-swap guard for safe cleanup. Borrowed `ShardReaderHandle` handles hold refcount increments, preventing cleanup of old state while borrows are outstanding.
 6. `ConcurrentShardedReader` provides thread safety via `threading.Lock` (default) or `ThreadPoolExecutor` pool mode (`thread_safety` config). Pool mode supports configurable checkout timeout (`pool_checkout_timeout`, default 30s).
 
-### CLI (`slate-reader`)
+### CLI (`shardy`)
 
-Entry point: `cli/app.py:main`. Subcommands: `get KEY`, `multiget KEY [KEY ...]`, `info`, `shards`, `route KEY`, `exec --script FILE`, `schema [--type manifest|current-pointer]`. No subcommand → interactive REPL (`cmd.Cmd` with `slate> ` prompt; REPL-only commands include `refresh`).
+Entry point: `cli/app.py:main`. Subcommands: `get KEY`, `multiget KEY [KEY ...]`, `info`, `shards`, `route KEY`, `exec --script FILE`, `schema [--type manifest|current-pointer]`. No subcommand → interactive REPL (`cmd.Cmd` with `shardy> ` prompt; REPL-only commands include `refresh`).
 
 Key coercion: CLI keys are strings; when manifest uses integer encoding (`u64be`/`u32be`), keys are auto-coerced to `int` via `cli/config.py:coerce_cli_key()`.
 

@@ -1,4 +1,4 @@
-"""Tests for SlateReaderRepl interactive REPL."""
+"""Tests for ShardyRepl interactive REPL."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from io import StringIO
 from typing import Any
 
 from shardyfusion.cli.config import OutputConfig
-from shardyfusion.cli.interactive import SlateReaderRepl
+from shardyfusion.cli.interactive import ShardyRepl
 from shardyfusion.reader.reader import ShardDetail, SnapshotInfo
 
 
@@ -74,9 +74,9 @@ class _FakeReader:
 
 def _make_repl(
     store: dict[Any, bytes] | None = None,
-) -> SlateReaderRepl:
+) -> ShardyRepl:
     reader = _FakeReader(store=store)
-    return SlateReaderRepl(reader, OutputConfig())
+    return ShardyRepl(reader, OutputConfig())
 
 
 def test_do_get_found() -> None:

@@ -86,7 +86,7 @@ class TestResolveCurrentUrl:
         assert result == "s3://positional/_CURRENT"
 
     def test_env_var_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SLATE_READER_CURRENT", "s3://from-env/_CURRENT")
+        monkeypatch.setenv("SHARDY_CURRENT", "s3://from-env/_CURRENT")
         result = resolve_current_url(None, ReaderConfig())
         assert result == "s3://from-env/_CURRENT"
 
@@ -96,7 +96,7 @@ class TestResolveCurrentUrl:
         assert result == "s3://from-config/_CURRENT"
 
     def test_missing_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("SLATE_READER_CURRENT", raising=False)
+        monkeypatch.delenv("SHARDY_CURRENT", raising=False)
         with pytest.raises(SystemExit, match="CURRENT URL is required"):
             resolve_current_url(None, ReaderConfig())
 
@@ -221,7 +221,7 @@ class TestLoadReaderConfigManifestStore:
     def test_defaults_without_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("SLATE_READER_CONFIG", raising=False)
+        monkeypatch.delenv("SHARDY_CONFIG", raising=False)
         monkeypatch.chdir(tmp_path)  # no reader.toml here
         reader_cfg, store_cfg, output_cfg = load_reader_config(None)
         assert store_cfg.backend == "s3"
@@ -270,17 +270,17 @@ current_url = "s3://bucket/prefix/_CURRENT"
 
 class TestResolveDsn:
     def test_config_dsn_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SLATE_READER_MANIFEST_DSN", "from-env")
+        monkeypatch.setenv("SHARDY_MANIFEST_DSN", "from-env")
         cfg = ManifestStoreConfig(backend="postgres", dsn="from-config")
         assert resolve_dsn(cfg) == "from-config"
 
     def test_env_var_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SLATE_READER_MANIFEST_DSN", "from-env")
+        monkeypatch.setenv("SHARDY_MANIFEST_DSN", "from-env")
         cfg = ManifestStoreConfig(backend="postgres")
         assert resolve_dsn(cfg) == "from-env"
 
     def test_missing_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("SLATE_READER_MANIFEST_DSN", raising=False)
+        monkeypatch.delenv("SHARDY_MANIFEST_DSN", raising=False)
         cfg = ManifestStoreConfig(backend="postgres")
         with pytest.raises(SystemExit, match="DSN is required"):
             resolve_dsn(cfg)

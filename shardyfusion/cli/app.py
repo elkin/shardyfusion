@@ -1,4 +1,4 @@
-"""Click CLI application for slate-reader."""
+"""Click CLI application for shardy."""
 
 import sys
 from typing import Any
@@ -20,7 +20,6 @@ from .config import (
     resolve_dsn,
     split_current_url,
 )
-from .interactive import SlateReaderRepl
 from .output import (
     build_error_result,
     build_get_result,
@@ -35,7 +34,7 @@ from .output import (
 # Shared context keys
 # ---------------------------------------------------------------------------
 
-_CTX_INIT_PARAMS = "slate_init_params"
+_CTX_INIT_PARAMS = "shardy_init_params"
 
 
 def _build_manifest_store(
@@ -112,15 +111,14 @@ def _get_output_cfg(ctx: click.Context) -> OutputConfig:
     invoke_without_command=True,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
-@click.version_option(package_name="shardyfusion", prog_name="slate-reader")
+@click.version_option(package_name="shardyfusion", prog_name="shardy")
 @click.option(
     "--current-url",
     "current_url",
     default=None,
     metavar="URL",
     help=(
-        "S3 URL to the _CURRENT pointer "
-        "(overrides SLATE_READER_CURRENT env and reader.toml)."
+        "S3 URL to the _CURRENT pointer (overrides SHARDY_CURRENT env and reader.toml)."
     ),
 )
 @click.option(
@@ -128,7 +126,7 @@ def _get_output_cfg(ctx: click.Context) -> OutputConfig:
     "config_path",
     default=None,
     metavar="PATH",
-    help="Path to reader.toml (overrides SLATE_READER_CONFIG env and default search).",
+    help="Path to reader.toml (overrides SHARDY_CONFIG env and default search).",
 )
 @click.option(
     "--credentials",
@@ -137,7 +135,7 @@ def _get_output_cfg(ctx: click.Context) -> OutputConfig:
     metavar="PATH",
     help=(
         "Path to credentials.toml "
-        "(overrides SLATE_READER_CREDENTIALS env and default search)."
+        "(overrides SHARDY_CREDENTIALS env and default search)."
     ),
 )
 @click.option(
@@ -164,10 +162,10 @@ def cli(
     s3_options: tuple[str, ...],
     output_format: str | None,
 ) -> None:
-    """slate-reader — interactive and batch lookups for sharded SlateDB snapshots.
+    """shardy — interactive and batch lookups for sharded SlateDB snapshots.
 
     \b
-    CURRENT_URL may be supplied via --current-url, the SLATE_READER_CURRENT
+    CURRENT_URL may be supplied via --current-url, the SHARDY_CURRENT
     environment variable, or as current_url in reader.toml.
 
     \b
@@ -241,8 +239,10 @@ def cli(
 
     # If no subcommand was invoked, enter interactive mode
     if ctx.invoked_subcommand is None:
+        from .interactive import ShardyRepl
+
         with _build_reader(ctx) as reader:
-            repl = SlateReaderRepl(reader, output_cfg)
+            repl = ShardyRepl(reader, output_cfg)
             repl.print_banner()
             repl.cmdloop()
 

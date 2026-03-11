@@ -19,7 +19,7 @@ shardyfusion solves the problem of building and reading sharded key-value snapsh
   - **Python** (`writer-python`) — pure-Python iterator-based, no Java required
 - Manifest + `_CURRENT` publishing protocol (default S3, pluggable interfaces)
 - Reader-side routing helpers for service-side `get` and `multi_get`
-- `slate-reader` CLI for interactive and batch lookups
+- `shardy` CLI for interactive and batch lookups
 - Token-bucket rate limiting for all writer paths
 - Pluggable interfaces for manifest building, publishing, and reading
 

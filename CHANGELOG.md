@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Lock ordering validation** for `ConcurrentShardedReader` internal locks (debug builds only).
 
 #### CLI
-- **`slate-reader`** command-line tool with `get`, `multiget`, `info`, `shards`, `route`, `refresh`, and `exec` subcommands.
+- **`shardy`** command-line tool with `get`, `multiget`, `info`, `shards`, `route`, `refresh`, and `exec` subcommands.
 - **Interactive REPL** mode (no subcommand → `slate>` prompt).
 - **stdin support** for `multiget -` (pipe keys from stdin).
 - **`--version` flag**.

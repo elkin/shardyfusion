@@ -1,4 +1,4 @@
-"""CLI entry point for the slate-reader utility."""
+"""CLI entry point for the shardy utility."""
 
 from .app import main
 

@@ -1,4 +1,4 @@
-"""Batch / script execution for the slate-reader CLI."""
+"""Batch / script execution for the shardy CLI."""
 
 import sys
 from typing import IO, Any
