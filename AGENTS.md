@@ -9,7 +9,7 @@
   - Reader path (sync): `reader/reader.py`, `routing.py`, `manifest_store.py`, `db_manifest_store.py`
   - Reader path (async): `reader/async_reader.py`, `routing.py`, `manifest_store.py` (`AsyncS3ManifestStore`)
   - CLI path: `cli/app.py`, `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
-  - Shared models/protocols: `config.py`, `manifest.py`, `publish.py`, `storage.py`, `testing.py`
+  - Shared models/protocols: `config.py`, `manifest.py`, `manifest_store.py`, `storage.py`, `testing.py`
   - Core utilities: `errors.py`, `type_defs.py`, `sharding_types.py`, `ordering.py`, `logging.py`, `serde.py`, `_rate_limiter.py`
 - Tests: `tests/`
   - Unit: `tests/unit/shared`, `tests/unit/read`, `tests/unit/writer`, `tests/unit/cli`

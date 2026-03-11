@@ -420,7 +420,7 @@ async def _async_retry_s3_operation(
 
 
 # ---------------------------------------------------------------------------
-# Parsing helpers (migrated from manifest_readers.py)
+# Parsing helpers
 # ---------------------------------------------------------------------------
 
 
