@@ -8,7 +8,7 @@ from uuid import uuid4
 from pyspark import StorageLevel
 from pyspark.sql import DataFrame
 
-from shardyfusion._rate_limiter import TokenBucket
+from shardyfusion._rate_limiter import RateLimiter, TokenBucket
 from shardyfusion._writer_core import (
     ShardAttemptResult,
     assemble_build_result,
@@ -199,7 +199,7 @@ def _stream_to_single_db(
 
     factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory()
 
-    bucket: TokenBucket | None = None
+    bucket: RateLimiter | None = None
     if max_writes_per_second is not None:
         bucket = TokenBucket(max_writes_per_second)
 

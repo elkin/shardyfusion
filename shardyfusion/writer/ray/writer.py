@@ -11,7 +11,7 @@ import pandas as pd
 import ray.data
 from ray.data import DataContext
 
-from shardyfusion._rate_limiter import TokenBucket
+from shardyfusion._rate_limiter import RateLimiter, TokenBucket
 from shardyfusion._writer_core import (
     ShardAttemptResult,
     assemble_build_result,
@@ -481,7 +481,7 @@ def _write_one_shard(
 
     factory: DbAdapterFactory = runtime.adapter_factory or SlateDbFactory()
 
-    bucket: TokenBucket | None = None
+    bucket: RateLimiter | None = None
     if runtime.max_writes_per_second is not None:
         bucket = TokenBucket(runtime.max_writes_per_second, metrics_collector=mc)
 

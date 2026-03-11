@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TypeVar
 from uuid import uuid4
 
-from shardyfusion._rate_limiter import TokenBucket
+from shardyfusion._rate_limiter import RateLimiter, TokenBucket
 from shardyfusion._writer_core import (
     ShardAttemptResult,
     assemble_build_result,
@@ -234,7 +234,7 @@ def _write_single_process(
 
     attempt = 0
     num_dbs = config.num_dbs
-    bucket: TokenBucket | None = None
+    bucket: RateLimiter | None = None
     if max_writes_per_second is not None:
         bucket = TokenBucket(
             max_writes_per_second, metrics_collector=config.metrics_collector
@@ -346,7 +346,7 @@ def _shard_worker(
     local_dir = _make_local_dir(config, run_id, db_id, attempt)
     local_dir.mkdir(parents=True, exist_ok=True)
 
-    bucket: TokenBucket | None = None
+    bucket: RateLimiter | None = None
     if max_writes_per_second is not None:
         bucket = TokenBucket(
             max_writes_per_second, metrics_collector=config.metrics_collector

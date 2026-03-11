@@ -9,7 +9,7 @@ from uuid import uuid4
 from pyspark import RDD, StorageLevel, TaskContext
 from pyspark.sql import DataFrame, Row
 
-from shardyfusion._rate_limiter import TokenBucket
+from shardyfusion._rate_limiter import RateLimiter, TokenBucket
 from shardyfusion._writer_core import (
     PartitionWriteOutcome,
     ShardAttemptResult,
@@ -427,7 +427,7 @@ def write_one_shard_partition(
 
     factory = runtime.adapter_factory or default_adapter_factory
 
-    bucket: TokenBucket | None = None
+    bucket: RateLimiter | None = None
     if runtime.max_writes_per_second is not None:
         bucket = TokenBucket(
             runtime.max_writes_per_second, metrics_collector=runtime.metrics_collector

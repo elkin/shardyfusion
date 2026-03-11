@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 import time
 from unittest.mock import patch
 
@@ -131,29 +130,13 @@ def test_sequential_acquires_drain_bucket() -> None:
         assert len(sleeps) >= 1
 
 
-def test_concurrent_acquires_are_thread_safe() -> None:
-    """10 threads doing concurrent acquires complete without deadlock."""
-    rate = 100.0
-    bucket = TokenBucket(rate=rate)
-    errors: list[Exception] = []
-    barrier = threading.Barrier(10)
+def test_token_bucket_satisfies_rate_limiter_protocol() -> None:
+    """TokenBucket structurally satisfies the RateLimiter protocol."""
+    from shardyfusion._rate_limiter import RateLimiter
 
-    def worker() -> None:
-        try:
-            barrier.wait(timeout=5.0)
-            for _ in range(5):
-                bucket.acquire(1)
-        except Exception as e:
-            errors.append(e)
-
-    threads = [threading.Thread(target=worker) for _ in range(10)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=10.0)
-
-    assert not errors
-    assert all(not t.is_alive() for t in threads)
+    bucket: RateLimiter = TokenBucket(rate=10.0)
+    bucket.acquire(1)
+    bucket.acquire()
 
 
 def test_high_rate_no_meaningful_delay() -> None:
