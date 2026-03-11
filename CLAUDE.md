@@ -53,7 +53,7 @@ The library is split into six independent paths that share config, manifest mode
 `writer/python/writer.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
 
 **Reader path** (no Spark/Java needed):
-`reader/reader.py` → `routing.py` → `manifest_readers.py`
+`reader/reader.py` → `routing.py` → `manifest_store.py`, `db_manifest_store.py`
 
 **CLI path** (requires click + pyyaml):
 `cli/app.py` → `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
@@ -63,7 +63,7 @@ The library is split into six independent paths that share config, manifest mode
 ```
 Layer 0 — Core types & errors: errors.py, type_defs.py, sharding_types.py, ordering.py, logging.py, metrics.py
 Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py
-Layer 2 — Storage, publish, routing, manifest: storage.py, manifest.py, publish.py, routing.py, manifest_readers.py
+Layer 2 — Storage, publish, routing, manifest: storage.py, manifest.py, publish.py, routing.py, manifest_store.py, db_manifest_store.py
 Layer 3 — Writer core: _writer_core.py (shared by all writers)
 Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/reader.py, cli/app.py
 Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
@@ -109,7 +109,7 @@ Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
 
 ### CLI (`slate-reader`)
 
-Entry point: `cli/app.py:main`. Subcommands: `get KEY`, `multiget KEY [KEY ...]`, `info`, `shards`, `route KEY`, `refresh`, `exec --script FILE`, `schema [--type manifest|current-pointer]`. No subcommand → interactive REPL (`cmd.Cmd` with `slate> ` prompt).
+Entry point: `cli/app.py:main`. Subcommands: `get KEY`, `multiget KEY [KEY ...]`, `info`, `shards`, `route KEY`, `exec --script FILE`, `schema [--type manifest|current-pointer]`. No subcommand → interactive REPL (`cmd.Cmd` with `slate> ` prompt; REPL-only commands include `refresh`).
 
 Key coercion: CLI keys are strings; when manifest uses integer encoding (`u64be`/`u32be`), keys are auto-coerced to `int` via `cli/config.py:coerce_cli_key()`.
 

@@ -6,7 +6,7 @@
   - Writer path (Dask): `writer/dask/writer.py`, `writer/dask/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
   - Writer path (Ray): `writer/ray/writer.py`, `writer/ray/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
   - Writer path (Python): `writer/python/writer.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
-  - Reader path: `reader/reader.py`, `routing.py`, `manifest_readers.py`
+  - Reader path: `reader/reader.py`, `routing.py`, `manifest_store.py`, `db_manifest_store.py`
   - CLI path: `cli/app.py`, `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
   - Shared models/protocols: `config.py`, `manifest.py`, `publish.py`, `storage.py`, `testing.py`
   - Core utilities: `errors.py`, `type_defs.py`, `sharding_types.py`, `ordering.py`, `logging.py`, `serde.py`, `_rate_limiter.py`
