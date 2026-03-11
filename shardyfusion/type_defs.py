@@ -33,6 +33,22 @@ class ShardReaderFactory(Protocol):
         ...
 
 
+class AsyncShardReader(Protocol):
+    """Async counterpart of ShardReader for use with AsyncShardedReader."""
+
+    async def get(self, key: bytes) -> bytes | None: ...
+
+    async def close(self) -> None: ...
+
+
+class AsyncShardReaderFactory(Protocol):
+    """Factory for opening one async shard reader."""
+
+    async def __call__(
+        self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
+    ) -> AsyncShardReader: ...
+
+
 class S3ClientConfig(TypedDict, total=False):
     """Supported explicit overrides for boto3 S3 client construction."""
 

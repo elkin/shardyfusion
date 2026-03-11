@@ -65,6 +65,9 @@ graph LR
 # Reader-side dependencies only (no Spark)
 uv sync --extra read
 
+# Async reader (includes aiobotocore for native async S3)
+uv sync --extra read-async
+
 # Spark writer (includes PySpark, requires Java)
 uv sync --extra writer-spark
 
@@ -167,7 +170,7 @@ reader.refresh()
 reader.close()
 ```
 
-For multi-threaded services, use `ConcurrentShardedReader` — see the [reader docs](https://slatedb.github.io/shardyfusion/reader/).
+For multi-threaded services, use `ConcurrentShardedReader`. For asyncio services, use `AsyncShardedReader` — see the [reader docs](https://slatedb.github.io/shardyfusion/reader/).
 
 ## Development Workflow
 

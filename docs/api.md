@@ -66,6 +66,8 @@
 
 ::: shardyfusion.reader.reader
 
+::: shardyfusion.reader.async_reader
+
 ## Serde
 
 ::: shardyfusion.serde

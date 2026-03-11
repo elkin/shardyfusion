@@ -48,6 +48,9 @@ jobs:
       - name: Type check (pyright — reader)
         run: uv run pyright -p pyright/read.json
 
+      - name: Type check (pyright — async reader)
+        run: uv run pyright -p pyright/read-async.json
+
       - name: Type check (pyright — Python writer)
         run: uv run pyright -p pyright/pythonwriter.json
 

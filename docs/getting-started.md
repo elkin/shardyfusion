@@ -12,6 +12,9 @@
 # Reader-side only
 uv sync --extra read
 
+# Async reader (includes aiobotocore for native async S3)
+uv sync --extra read-async
+
 # Spark writer (includes PySpark, requires Java)
 uv sync --extra writer-spark
 

@@ -28,6 +28,10 @@ read = [
   "slatedb",
   "boto3>=1.28",
 ]
+read-async = [
+  "shardyfusion[read]",
+  "aiobotocore>=2.12",
+]
 writer-spark = [
   "pyspark>=3.3",
   "slatedb",
@@ -57,11 +61,13 @@ all = [
   "ray[data]>=2.20; python_version<'3.14'",
   "slatedb",
   "boto3>=1.28",
+  "aiobotocore>=2.12",
   "click>=8.0",
   "pyyaml>=6.0",
 ]
 test = [
   "pytest>=7.4",
+  "pytest-asyncio>=0.23",
   "pytest-xdist>=3.6",
   "pytest-cov>=5.0",
   "numpy>=1.24",

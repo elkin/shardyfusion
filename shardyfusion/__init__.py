@@ -33,6 +33,8 @@ from .manifest import (
     RequiredShardMeta,
 )
 from .manifest_store import (
+    AsyncManifestStore,
+    AsyncS3ManifestStore,
     InMemoryManifestStore,
     ManifestStore,
     S3ManifestStore,
@@ -40,6 +42,9 @@ from .manifest_store import (
 )
 from .metrics import MetricEvent, MetricsCollector
 from .reader import (
+    AsyncShardedReader,
+    AsyncShardReaderHandle,
+    AsyncSlateDbReaderFactory,
     ConcurrentShardedReader,
     ShardDetail,
     ShardedReader,
@@ -55,9 +60,22 @@ from .slatedb_adapter import (
     DbAdapterFactory,
     SlateDbFactory,
 )
-from .type_defs import S3ClientConfig, ShardReader, ShardReaderFactory
+from .type_defs import (
+    AsyncShardReader,
+    AsyncShardReaderFactory,
+    S3ClientConfig,
+    ShardReader,
+    ShardReaderFactory,
+)
 
 __all__ = [
+    "AsyncManifestStore",
+    "AsyncS3ManifestStore",
+    "AsyncShardedReader",
+    "AsyncShardReader",
+    "AsyncShardReaderFactory",
+    "AsyncShardReaderHandle",
+    "AsyncSlateDbReaderFactory",
     "ConfigValidationError",
     "FailureSeverity",
     "get_logger",

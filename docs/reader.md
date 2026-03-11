@@ -2,10 +2,11 @@
 
 ## Overview
 
-The reader side provides two classes for looking up keys across sharded SlateDB snapshots:
+The reader side provides three classes for looking up keys across sharded SlateDB snapshots:
 
 - **`ShardedReader`** — non-thread-safe, for single-threaded services
 - **`ConcurrentShardedReader`** — thread-safe with lock or pool concurrency modes
+- **`AsyncShardedReader`** — for asyncio services (FastAPI, aiohttp, etc.)
 
 Both readers follow the same lifecycle:
 
@@ -242,3 +243,92 @@ reader = ShardedReader(
 ```
 
 Events emitted: `READER_INITIALIZED`, `READER_GET`, `READER_MULTI_GET`, `READER_REFRESHED`, `READER_CLOSED`.
+
+## AsyncShardedReader
+
+For asyncio-based services (FastAPI, aiohttp, etc.), `AsyncShardedReader` provides a fully async interface that avoids blocking the event loop.
+
+### Installation
+
+```bash
+# Minimal (uses asyncio.to_thread for S3 calls)
+uv sync --extra read
+
+# With native async S3 (recommended)
+uv sync --extra read-async
+```
+
+When the `read-async` extra is installed, aiobotocore is available and `AsyncShardedReader` automatically uses `AsyncS3ManifestStore` for native async S3 I/O. Without it, S3 calls are delegated to threads via `asyncio.to_thread()`.
+
+### Basic Usage
+
+```python
+from shardyfusion import AsyncShardedReader
+
+# Use the async factory (since __init__ can't do async I/O)
+reader = await AsyncShardedReader.open(
+    s3_prefix="s3://bucket/prefix",
+    local_root="/tmp/shardyfusion-reader",
+)
+
+value = await reader.get(123)
+values = await reader.multi_get([1, 2, 3])
+
+changed = await reader.refresh()
+await reader.close()
+```
+
+### Async Context Manager
+
+```python
+async with await AsyncShardedReader.open(
+    s3_prefix="s3://bucket/prefix",
+    local_root="/tmp/shardyfusion-reader",
+) as reader:
+    value = await reader.get(123)
+```
+
+### Concurrency Control
+
+`multi_get` fans out reads across shards using `asyncio.TaskGroup`. To limit the number of concurrent shard reads, pass `max_concurrency`:
+
+```python
+reader = await AsyncShardedReader.open(
+    s3_prefix="s3://bucket/prefix",
+    local_root="/tmp/shardyfusion-reader",
+    max_concurrency=4,  # at most 4 concurrent shard reads
+)
+```
+
+### Sync Metadata Methods
+
+Routing and metadata methods are synchronous (no I/O involved):
+
+```python
+info = reader.snapshot_info()
+db_id = reader.route_key(42)
+meta = reader.shard_for_key(42)
+details = reader.shard_details()
+```
+
+### Direct Shard Access
+
+Borrow async handles for direct shard access:
+
+```python
+async with reader.reader_for_key(42) as handle:
+    raw = await handle.get(key_bytes)
+    batch = await handle.multi_get([k1, k2])
+```
+
+### Custom Async Reader Factory
+
+```python
+reader = await AsyncShardedReader.open(
+    s3_prefix="s3://bucket/prefix",
+    local_root="/tmp/reader",
+    reader_factory=my_async_factory,  # implements AsyncShardReaderFactory
+)
+```
+
+The factory must be an async callable returning an object with `async def get(key: bytes) -> bytes | None` and `async def close() -> None`.

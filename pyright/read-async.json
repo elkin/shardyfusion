@@ -7,8 +7,7 @@
     "../shardyfusion/writer/dask",
     "../shardyfusion/writer/ray",
     "../shardyfusion/writer/python",
-    "../shardyfusion/cli",
-    "../shardyfusion/reader/async_reader.py"
+    "../shardyfusion/cli"
   ],
   "extraPaths": [".."],
   "reportArgumentType": "error",

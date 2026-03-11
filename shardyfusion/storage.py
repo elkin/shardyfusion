@@ -161,24 +161,27 @@ def join_s3(base: str, *parts: str) -> str:
     return "/".join(clean)
 
 
-class _S3ClientKwargs(TypedDict, total=False):
+class _ResolvedS3Config(TypedDict, total=False):
+    """Resolved S3 client kwargs shared by boto3 and aiobotocore."""
+
     endpoint_url: str
     region_name: str
-    access_key_id: str
-    secret_access_key: str
-    session_token: str
+    aws_access_key_id: str
+    aws_secret_access_key: str
+    aws_session_token: str
+    config: object  # botocore.config.Config
+    verify: bool | str
 
 
-def create_s3_client(s3_client_config: S3ClientConfig | None = None):
-    """Create boto3 S3 client with optional explicit/ENV overrides."""
+def _resolve_s3_config(
+    s3_client_config: S3ClientConfig | None = None,
+) -> _ResolvedS3Config:
+    """Resolve S3 client kwargs from explicit config and environment variables.
 
-    try:
-        import boto3
-        from botocore.config import Config as BotocoreConfig
-    except ImportError as exc:  # pragma: no cover - depends on runtime environment
-        raise PublishManifestError(
-            "boto3 is required for default S3 publishing"
-        ) from exc
+    Returns a dict suitable for passing to ``boto3.client("s3", ...)`` or
+    ``aiobotocore.get_session().create_client("s3", ...)``.
+    """
+    from botocore.config import Config as BotocoreConfig
 
     config = s3_client_config or {}
     endpoint_url = config.get("endpoint_url") or os.getenv("SLATEDB_S3_ENDPOINT_URL")
@@ -200,18 +203,6 @@ def create_s3_client(s3_client_config: S3ClientConfig | None = None):
         or os.getenv("S3_SESSION_TOKEN")
         or os.getenv("AWS_SESSION_TOKEN")
     )
-
-    kwargs: _S3ClientKwargs = {}
-    if endpoint_url:
-        kwargs["endpoint_url"] = endpoint_url
-    if region_name:
-        kwargs["region_name"] = region_name
-    if access_key_id:
-        kwargs["access_key_id"] = access_key_id
-    if secret_access_key:
-        kwargs["secret_access_key"] = secret_access_key
-    if session_token:
-        kwargs["session_token"] = session_token
 
     # Assemble botocore Config from optional connection options
     boto_config_kwargs: dict[str, object] = {}
@@ -247,20 +238,39 @@ def create_s3_client(s3_client_config: S3ClientConfig | None = None):
         BotocoreConfig(**boto_config_kwargs) if boto_config_kwargs else None
     )
 
-    verify = config.get("verify_ssl")
-    client_kwargs: dict[str, object] = {
-        "endpoint_url": kwargs.get("endpoint_url"),
-        "region_name": kwargs.get("region_name"),
-        "aws_access_key_id": kwargs.get("access_key_id"),
-        "aws_secret_access_key": kwargs.get("secret_access_key"),
-        "aws_session_token": kwargs.get("session_token"),
-    }
+    result: _ResolvedS3Config = {}
+    if endpoint_url:
+        result["endpoint_url"] = endpoint_url
+    if region_name:
+        result["region_name"] = region_name
+    if access_key_id:
+        result["aws_access_key_id"] = access_key_id
+    if secret_access_key:
+        result["aws_secret_access_key"] = secret_access_key
+    if session_token:
+        result["aws_session_token"] = session_token
     if botocore_config is not None:
-        client_kwargs["config"] = botocore_config
-    if verify is not None and verify is not True:
-        client_kwargs["verify"] = verify
+        result["config"] = botocore_config
 
-    return boto3.client("s3", **client_kwargs)
+    verify = config.get("verify_ssl")
+    if verify is not None and verify is not True:
+        result["verify"] = verify
+
+    return result
+
+
+def create_s3_client(s3_client_config: S3ClientConfig | None = None):
+    """Create boto3 S3 client with optional explicit/ENV overrides."""
+
+    try:
+        import boto3
+    except ImportError as exc:  # pragma: no cover - depends on runtime environment
+        raise PublishManifestError(
+            "boto3 is required for default S3 publishing"
+        ) from exc
+
+    resolved = _resolve_s3_config(s3_client_config)
+    return boto3.client("s3", **resolved)
 
 
 def put_bytes(

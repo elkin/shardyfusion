@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Tooling
 
-**Package manager**: uv. Extras: `read`, `writer-spark` (requires Java), `writer-python`, `writer-dask`, `writer-ray`, `cli`. Full dev: `uv sync --all-extras --dev`.
+**Package manager**: uv. Extras: `read`, `read-async` (adds aiobotocore for native async S3), `writer-spark` (requires Java), `writer-python`, `writer-dask`, `writer-ray`, `cli`. Full dev: `uv sync --all-extras --dev`.
 
 **Workflows**: Run `just --list` for all local and container (`d-*`) targets. Key entry points: `just setup` (bootstrap a fresh clone), `just doctor` (verify environment), `just fix` (auto-format), `just ci` (quality + unit + integration), `just clean` / `just clean-all` (remove caches/artifacts). Container default engine is Podman; override with `CONTAINER_ENGINE=docker`.
 
@@ -52,8 +52,11 @@ The library is split into six independent paths that share config, manifest mode
 **Writer path (Python)** (no Spark/Java needed):
 `writer/python/writer.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
 
-**Reader path** (no Spark/Java needed):
+**Reader path (sync)** (no Spark/Java needed):
 `reader/reader.py` → `routing.py` → `manifest_store.py`, `db_manifest_store.py`
+
+**Reader path (async)** (no Spark/Java needed; optional `aiobotocore` for native async S3):
+`reader/async_reader.py` → `routing.py` → `manifest_store.py` (`AsyncS3ManifestStore` / `_SyncManifestStoreAdapter`)
 
 **CLI path** (requires click + pyyaml):
 `cli/app.py` → `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
@@ -65,7 +68,7 @@ Layer 0 — Core types & errors: errors.py, type_defs.py, sharding_types.py, ord
 Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py
 Layer 2 — Storage, publish, routing, manifest: storage.py, manifest.py, publish.py, routing.py, manifest_store.py, db_manifest_store.py
 Layer 3 — Writer core: _writer_core.py (shared by all writers)
-Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/reader.py, cli/app.py
+Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/reader.py, reader/async_reader.py, cli/app.py
 Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
 ```
 
@@ -107,6 +110,17 @@ Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
 5. `ShardedReader` swaps state directly on refresh. `ConcurrentShardedReader` serialises refresh I/O via `_refresh_lock` and atomically swaps readers using reference counting with a compare-and-swap guard for safe cleanup. Borrowed `ShardReaderHandle` handles hold refcount increments, preventing cleanup of old state while borrows are outstanding.
 6. `ConcurrentShardedReader` provides thread safety via `threading.Lock` (default) or `ThreadPoolExecutor` pool mode (`thread_safety` config). Pool mode supports configurable checkout timeout (`pool_checkout_timeout`, default 30s).
 
+### Async Read Pipeline
+
+`AsyncShardedReader` in `reader/async_reader.py` mirrors the sync reader API using asyncio:
+
+1. Constructed via `@classmethod async def open(...)` (since `__init__` can't do async I/O).
+2. S3 manifest loading uses `AsyncS3ManifestStore` (native aiobotocore, auto-detected) or `_SyncManifestStoreAdapter` (wraps sync `ManifestStore` via `asyncio.to_thread()`).
+3. `async get(key)` / `async multi_get(keys)` route keys and read from async shard readers. `multi_get` fans out via `asyncio.TaskGroup` with optional `asyncio.Semaphore` for concurrency limiting (`max_concurrency`).
+4. `async refresh()` serialises via `asyncio.Lock`. Same swap-and-retire pattern as sync, with deferred cleanup via `loop.create_task()` when retired state's borrow count hits 0.
+5. Sync metadata methods (`key_encoding`, `snapshot_info()`, `shard_details()`, `route_key()`) and borrow methods (`reader_for_key()`, `readers_for_keys()`) work identically to the sync reader.
+6. Supports `async with` context manager via `__aenter__`/`__aexit__`.
+
 ### CLI (`shardy`)
 
 Entry point: `cli/app.py:main`. Subcommands: `get KEY`, `multiget KEY [KEY ...]`, `info`, `shards`, `route KEY`, `exec --script FILE`, `schema [--type manifest|current-pointer]`. No subcommand → interactive REPL (`cmd.Cmd` with `shardy> ` prompt; REPL-only commands include `refresh`).
@@ -138,6 +152,9 @@ These are all Protocols, allowing user-provided implementations:
 |---|---|---|
 | `ManifestBuilder` | `JsonManifestBuilder` | Manifest serialization format |
 | `ManifestStore` | `S3ManifestStore` | Unified manifest read/write (publish + load) |
+| `AsyncManifestStore` | `AsyncS3ManifestStore` | Async read-only manifest loading |
+| `AsyncShardReader` | `_SlateDbAsyncShardReader` | Async shard reader (get/close) |
+| `AsyncShardReaderFactory` | `AsyncSlateDbReaderFactory` | Async factory for opening shard readers |
 | `DbAdapterFactory` | `SlateDbFactory` | How to open shard databases |
 
 `ValueSpec` controls how DataFrame rows are serialized to bytes: `binary_col`, `json_cols`, or a callable encoder.
@@ -186,7 +203,7 @@ All errors inherit from `ShardyfusionError` with `retryable: bool`. Non-retryabl
 
 ## Public API Summary
 
-Core types exported from `shardyfusion.__init__` (always available, no optional extras required). See `__init__.py` for the full list. Reader types include `ShardedReader`, `ConcurrentShardedReader`, `ShardReaderHandle`, `ShardDetail`, `SnapshotInfo`, `SlateDbReaderFactory`.
+Core types exported from `shardyfusion.__init__` (always available, no optional extras required). See `__init__.py` for the full list. Reader types include `ShardedReader`, `ConcurrentShardedReader`, `ShardReaderHandle`, `ShardDetail`, `SnapshotInfo`, `SlateDbReaderFactory`. Async reader types include `AsyncShardedReader`, `AsyncShardReaderHandle`, `AsyncSlateDbReaderFactory`, `AsyncShardReader`, `AsyncShardReaderFactory`, `AsyncManifestStore`, `AsyncS3ManifestStore`.
 
 Writer functions are imported from subpackages (not re-exported at top level):
 - **Spark:** `from shardyfusion.writer.spark import write_sharded, write_single_db, DataFrameCacheContext, SparkConfOverrideContext`
@@ -218,6 +235,8 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **Python writer parallel mode uses `spawn`**: `multiprocessing.get_context("spawn")` is hardcoded. All objects passed to workers must be picklable. Min/max key tracking happens in the main process.
 - **Rate limiter releases lock before sleeping**: `TokenBucket.acquire()` releases the lock during the sleep interval, allowing other threads to proceed without starvation.
 - **Reader reference counting**: `refresh()` serialises I/O via `_refresh_lock`, atomically swaps `_ReaderState` with a compare-and-swap guard, and defers closing old handles until `refcount` drops to zero. Pool-mode checkout has a configurable timeout (default 30s) — raises `SlateDbApiError` when exhausted. Metadata methods (`key_encoding`, `snapshot_info`, `shard_details`, `route_key`) use `_use_state()` and raise `ReaderStateError` on a closed reader.
+- **Async reader uses `open()` classmethod**: `AsyncShardedReader.__init__` does no I/O. Use `await AsyncShardedReader.open(...)` or `async with AsyncShardedReader(...)`. The `_SyncManifestStoreAdapter` wraps sync `ManifestStore` via `asyncio.to_thread()` when aiobotocore is not installed.
+- **Async manifest store auto-detection**: When `manifest_store=None`, the async reader probes for `aiobotocore` at runtime. If available, uses `AsyncS3ManifestStore` (native async S3). Otherwise, falls back to `_SyncManifestStoreAdapter` wrapping a sync `S3ManifestStore`. When a sync `ManifestStore` is passed explicitly, it's duck-type detected via `inspect.iscoroutinefunction()` and wrapped automatically.
 - **Garage requires path-style addressing**: E2E tests set `addressing_style: "path"` in `S3ClientConfig` because Garage doesn't support virtual-hosted-style.
 - **Session-scoped test fixtures**: PySpark and S3 (moto/Garage) fixtures are session-scoped for performance. Tests share the same Spark session and S3 service.
 - **Writer scenario imports are deferred**: `tests/helpers/s3_test_scenarios.py` imports writer modules inside function bodies so reader-only test collection doesn't fail.
