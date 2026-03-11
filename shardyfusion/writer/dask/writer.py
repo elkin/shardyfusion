@@ -323,7 +323,7 @@ def _verify_routing_agreement(
 ) -> None:
     """Sample rows and verify db_id column matches Python routing."""
 
-    sampled = ddf_with_id[[key_col, DB_ID_COL]].head(sample_size)
+    sampled = ddf_with_id[[key_col, DB_ID_COL]].head(sample_size, npartitions=-1)
     if sampled.empty:
         return
 
