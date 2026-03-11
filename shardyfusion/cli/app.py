@@ -175,6 +175,10 @@ def cli(
     """
     ctx.ensure_object(dict)
 
+    # schema subcommand needs no reader/S3 setup
+    if ctx.invoked_subcommand == "schema":
+        return
+
     # Parse --s3-option KEY=VALUE pairs
     s3_overrides: dict[str, bool | int | str] = {}
     for opt in s3_options:
@@ -382,6 +386,40 @@ def exec_cmd(ctx: click.Context, script_path: str, output_path: str | None) -> N
 
     if error_count:
         sys.exit(1)
+
+
+@cli.command("schema")
+@click.option(
+    "--type",
+    "schema_type",
+    default="manifest",
+    type=click.Choice(["manifest", "current-pointer"], case_sensitive=False),
+    help="Which schema to print (default: manifest).",
+)
+def schema_cmd(schema_type: str) -> None:
+    """Print the JSON Schema for manifest or current-pointer formats."""
+    import json
+
+    from ..manifest import CurrentPointer, ParsedManifest
+
+    if schema_type == "manifest":
+        schema = {
+            **ParsedManifest.model_json_schema(mode="serialization"),
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://github.com/slatedb/shardyfusion/schemas/manifest.schema.json",
+            "title": "SlateDB Sharded Manifest",
+            "description": "JSON manifest published to S3 by the sharded writer.",
+        }
+    else:
+        schema = {
+            **CurrentPointer.model_json_schema(),
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "https://github.com/slatedb/shardyfusion/schemas/current-pointer.schema.json",
+            "title": "SlateDB Sharded CURRENT Pointer",
+            "description": "JSON pointer published to S3 at _CURRENT.",
+        }
+
+    click.echo(json.dumps(schema, indent=2))
 
 
 # ---------------------------------------------------------------------------

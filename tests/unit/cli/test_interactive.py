@@ -195,3 +195,31 @@ def test_print_banner() -> None:
     with redirect_stdout(buf):
         repl.print_banner()
     # Just verify it doesn't crash
+
+
+def test_do_schema_manifest_default() -> None:
+    repl = _make_repl()
+    buf = StringIO()
+    with redirect_stdout(buf):
+        repl.onecmd("schema")
+    parsed = json.loads(buf.getvalue())
+    assert parsed["title"] == "SlateDB Sharded Manifest"
+    assert parsed["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+
+
+def test_do_schema_current_pointer() -> None:
+    repl = _make_repl()
+    buf = StringIO()
+    with redirect_stdout(buf):
+        repl.onecmd("schema current-pointer")
+    parsed = json.loads(buf.getvalue())
+    assert parsed["title"] == "SlateDB Sharded CURRENT Pointer"
+    assert "manifest_ref" in parsed["properties"]
+
+
+def test_do_schema_invalid_type() -> None:
+    repl = _make_repl()
+    buf = StringIO()
+    with redirect_stdout(buf):
+        repl.onecmd("schema bogus")
+    # Should print error to stderr but not crash

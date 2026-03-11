@@ -112,6 +112,36 @@ class SlateReaderRepl(cmd.Cmd):
         except Exception as exc:
             self._error("route", raw_key, str(exc))
 
+    def do_schema(self, line: str) -> None:
+        """schema [manifest|current-pointer] — Print JSON Schema (default: manifest)."""
+        import json
+
+        from ..manifest import CurrentPointer, ParsedManifest
+
+        schema_type = line.strip().lower() if line.strip() else "manifest"
+        if schema_type not in ("manifest", "current-pointer"):
+            self._error("schema", None, "Usage: schema [manifest|current-pointer]")
+            return
+
+        if schema_type == "manifest":
+            schema = {
+                **ParsedManifest.model_json_schema(mode="serialization"),
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "$id": "https://github.com/slatedb/shardyfusion/schemas/manifest.schema.json",
+                "title": "SlateDB Sharded Manifest",
+                "description": "JSON manifest published to S3 by the sharded writer.",
+            }
+        else:
+            schema = {
+                **CurrentPointer.model_json_schema(),
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "$id": "https://github.com/slatedb/shardyfusion/schemas/current-pointer.schema.json",
+                "title": "SlateDB Sharded CURRENT Pointer",
+                "description": "JSON pointer published to S3 at _CURRENT.",
+            }
+
+        print(json.dumps(schema, indent=2))
+
     def do_quit(self, line: str) -> bool:
         """quit — Exit the REPL."""
         return True
