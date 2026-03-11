@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from shardyfusion.async_manifest_store import _SyncManifestStoreAdapter
 from shardyfusion.errors import ReaderStateError
 from shardyfusion.manifest import (
     CurrentPointer,
@@ -14,7 +15,6 @@ from shardyfusion.manifest import (
     RequiredBuildMeta,
     RequiredShardMeta,
 )
-from shardyfusion.manifest_store import _SyncManifestStoreAdapter
 from shardyfusion.metrics import MetricEvent
 from shardyfusion.reader import AsyncShardedReader
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy

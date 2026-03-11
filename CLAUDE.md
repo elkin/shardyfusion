@@ -56,7 +56,7 @@ The library is split into six independent paths that share config, manifest mode
 `reader/reader.py` → `routing.py` → `manifest_store.py`, `db_manifest_store.py`
 
 **Reader path (async)** (no Spark/Java needed; optional `aiobotocore` for native async S3):
-`reader/async_reader.py` → `routing.py` → `manifest_store.py` (`AsyncS3ManifestStore` / `_SyncManifestStoreAdapter`)
+`reader/async_reader.py` → `routing.py` → `async_manifest_store.py` (`AsyncS3ManifestStore` / `_SyncManifestStoreAdapter`)
 
 **CLI path** (requires click + pyyaml):
 `cli/app.py` → `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
@@ -66,7 +66,7 @@ The library is split into six independent paths that share config, manifest mode
 ```
 Layer 0 — Core types & errors: errors.py, type_defs.py, sharding_types.py, ordering.py, logging.py, metrics.py
 Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py
-Layer 2 — Storage, routing, manifest: storage.py, manifest.py, routing.py, manifest_store.py, db_manifest_store.py
+Layer 2 — Storage, routing, manifest: storage.py, manifest.py, routing.py, manifest_store.py, async_manifest_store.py, db_manifest_store.py
 Layer 3 — Writer core: _writer_core.py (shared by all writers)
 Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/reader.py, reader/async_reader.py, cli/app.py
 Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py

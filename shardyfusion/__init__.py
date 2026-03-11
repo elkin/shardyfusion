@@ -1,5 +1,9 @@
 """Public API for shardyfusion."""
 
+from .async_manifest_store import (
+    AsyncManifestStore,
+    AsyncS3ManifestStore,
+)
 from .config import (
     ManifestOptions,
     OutputOptions,
@@ -33,8 +37,6 @@ from .manifest import (
     RequiredShardMeta,
 )
 from .manifest_store import (
-    AsyncManifestStore,
-    AsyncS3ManifestStore,
     InMemoryManifestStore,
     ManifestStore,
     S3ManifestStore,
