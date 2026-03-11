@@ -10,6 +10,31 @@ uv_project_env := "/opt/shardyfusion-venv"
 _default:
     @just --list
 
+_check-venv:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -d .venv ]; then
+        echo "error: .venv/ not found — run 'just setup' first" >&2
+        exit 1
+    fi
+    if ! .venv/bin/python -c "import shardyfusion" 2>/dev/null; then
+        echo "error: dependencies out of sync — run 'just setup' to fix" >&2
+        exit 1
+    fi
+
+_check-java:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v java &>/dev/null; then
+        echo "error: java not found — install Java 17+" >&2
+        exit 1
+    fi
+    java_ver=$(java -version 2>&1 | head -1 | sed -E 's/.*"([0-9]+).*/\1/')
+    if [ "$java_ver" -lt 17 ] 2>/dev/null; then
+        echo "error: Java 17+ required (found Java $java_ver)" >&2
+        exit 1
+    fi
+
 # ── Setup ────────────────────────────────────────────────────────────────────
 
 # Bootstrap a fresh clone (idempotent)
@@ -114,18 +139,18 @@ sync:
 
 # Auto-fix ruff lint and format issues
 [group('dev')]
-fix:
+fix: _check-venv
     uv run ruff check --fix .
     uv run ruff format .
 
 # Build documentation
 [group('dev')]
-docs:
+docs: _check-venv
     uv run mkdocs build --strict
 
 # Serve documentation locally with live reload
 [group('dev')]
-docs-serve:
+docs-serve: _check-venv
     uv run mkdocs serve
 
 # ── Test ─────────────────────────────────────────────────────────────────────
@@ -133,20 +158,20 @@ docs-serve:
 # Lint, format, type checks, package build, docs check
 [group('test')]
 [arg('p', short='p', help='tox parallel envs')]
-quality p="2":
+quality p="2": _check-venv _check-java
     uv run tox p -m quality -p {{p}}
 
 # Unit tests
 [group('test')]
 [arg('n', short='n', help='pytest-xdist workers')]
 [arg('p', short='p', help='tox parallel envs')]
-unit n="4" p="2":
+unit n="4" p="2": _check-venv _check-java
     PYTEST_WORKERS={{n}} uv run tox p -m unit -p {{p}}
 
 # Integration tests
 [group('test')]
 [arg('p', short='p', help='tox parallel envs')]
-integration p="2":
+integration p="2": _check-venv _check-java
     uv run tox p -m integration -p {{p}}
 
 # Quality + unit + integration in sequence
