@@ -35,6 +35,7 @@ class MetricEvent(str, Enum):
     S3_RETRY = "s3.retry"
     S3_RETRY_EXHAUSTED = "s3.retry_exhausted"
     RATE_LIMITER_THROTTLED = "rate_limiter.throttled"
+    RATE_LIMITER_DENIED = "rate_limiter.denied"
 
 
 class MetricsCollector(Protocol):

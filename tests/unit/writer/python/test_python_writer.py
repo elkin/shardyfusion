@@ -308,10 +308,12 @@ def test_rate_limiter_acquire_count_matches_batch_writes(
 
     assert len(_patch_token_bucket) == 1
     bucket = _patch_token_bucket[0]
-    # 7 rows / batch_size 3 → batches of [3, 3, 1] → 3 acquire calls
-    assert len(bucket.acquire_calls) == 3
-    assert bucket.acquire_calls == [3, 3, 1]
-    assert sum(bucket.acquire_calls) == 7
+    # 7 rows / batch_size 3 → mid-loop try_acquire for full batches, acquire for flush
+    # Mid-loop: 2 full batches of 3 via try_acquire
+    # Flush: 1 trailing batch of 1 via acquire
+    assert bucket.try_acquire_calls == [3, 3]
+    assert bucket.acquire_calls == [1]
+    assert sum(bucket.try_acquire_calls) + sum(bucket.acquire_calls) == 7
 
 
 def test_rate_limiter_single_batch_single_acquire(
@@ -329,7 +331,9 @@ def test_rate_limiter_single_batch_single_acquire(
 
     assert len(_patch_token_bucket) == 1
     bucket = _patch_token_bucket[0]
-    # All 5 rows fit in one batch → single acquire for all 5
+    # All 5 rows fit in one batch — never hits batch_size mid-loop,
+    # so only the flush phase calls acquire
+    assert bucket.try_acquire_calls == []
     assert bucket.acquire_calls == [5]
 
 
@@ -348,8 +352,9 @@ def test_rate_limiter_exact_batch_boundary(
 
     assert len(_patch_token_bucket) == 1
     bucket = _patch_token_bucket[0]
-    # 6 rows / batch_size 3 → exactly 2 full batches, no trailing partial
-    assert bucket.acquire_calls == [3, 3]
+    # 6 rows / batch_size 3 → 2 full batches via try_acquire, no trailing partial
+    assert bucket.try_acquire_calls == [3, 3]
+    assert bucket.acquire_calls == []
 
 
 def test_rate_limiter_shared_bucket_across_shards(
@@ -376,9 +381,11 @@ def test_rate_limiter_shared_bucket_across_shards(
     # Python sequential writer uses ONE shared bucket for all shards
     assert len(_patch_token_bucket) == 1
     bucket = _patch_token_bucket[0]
-    # batch_size=1 → each row is its own batch → 6 acquire(1) calls total
-    assert len(bucket.acquire_calls) == 6
-    assert sum(bucket.acquire_calls) == 6
+    # batch_size=1 → each row hits batch_size mid-loop → 6 try_acquire(1) calls
+    assert len(bucket.try_acquire_calls) == 6
+    assert sum(bucket.try_acquire_calls) == 6
+    # No trailing partial batches → no blocking acquire calls
+    assert bucket.acquire_calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -647,6 +654,125 @@ def test_parallel_rate_limited_write(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Metrics tests
 # ---------------------------------------------------------------------------
+
+
+def test_try_acquire_denial_defers_batch_without_data_loss(
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    """When try_acquire is denied, the batch stays in memory and is flushed later."""
+    from shardyfusion._rate_limiter import AcquireResult
+
+    # Make the bucket deny the first try_acquire, then allow everything else
+    denial_count = [0]
+
+    class DenyFirstTokenBucket:
+        instances: list[DenyFirstTokenBucket] = []
+
+        def __init__(self, rate: float, **kwargs: object) -> None:
+            self.rate = rate
+            self.acquire_calls: list[int] = []
+            self.try_acquire_calls: list[int] = []
+            DenyFirstTokenBucket.instances.append(self)
+
+        def acquire(self, tokens: int = 1) -> None:
+            self.acquire_calls.append(tokens)
+
+        def try_acquire(self, tokens: int = 1) -> AcquireResult:
+            self.try_acquire_calls.append(tokens)
+            if denial_count[0] == 0:
+                denial_count[0] += 1
+                return AcquireResult(acquired=False, deficit=0.5)
+            return AcquireResult(acquired=True, deficit=0.0)
+
+    import shardyfusion.writer.python.writer as writer_mod
+
+    original = writer_mod.TokenBucket
+    writer_mod.TokenBucket = DenyFirstTokenBucket  # type: ignore[assignment,misc]
+    try:
+        factory = _TrackingFactory()
+        config = _make_config(num_dbs=1, factory=factory, batch_size=3)
+
+        # 7 records → first batch of 3 is denied, deferred; second batch of 3 succeeds
+        result = write_sharded(
+            list(range(7)),
+            config,
+            key_fn=lambda r: r,
+            value_fn=lambda r: b"v",
+            max_writes_per_second=100.0,
+        )
+
+        assert result.stats.rows_written == 7
+
+        # All 7 records should still be written — nothing lost
+        adapter = factory.adapters[0]
+        total_pairs = sum(len(call) for call in adapter.write_calls)
+        assert total_pairs == 7
+
+        bucket = DenyFirstTokenBucket.instances[0]
+        # try_acquire(3) denied → batch stays at 3, record 3 grows it to 4
+        # try_acquire(4) succeeds → write 4, records 4-6 form batch of 3
+        # try_acquire(3) succeeds → write 3, nothing left for flush
+        assert bucket.try_acquire_calls == [3, 4, 3]
+        assert bucket.acquire_calls == []
+    finally:
+        writer_mod.TokenBucket = original  # type: ignore[assignment,misc]
+
+
+def test_deferred_batch_falls_back_to_blocking_acquire_at_cap(
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    """When a deferred batch reaches 2*batch_size, the writer falls back to blocking acquire."""
+    from shardyfusion._rate_limiter import AcquireResult
+
+    class AlwaysDenyTokenBucket:
+        instances: list[AlwaysDenyTokenBucket] = []
+
+        def __init__(self, rate: float, **kwargs: object) -> None:
+            self.rate = rate
+            self.acquire_calls: list[int] = []
+            self.try_acquire_calls: list[int] = []
+            AlwaysDenyTokenBucket.instances.append(self)
+
+        def acquire(self, tokens: int = 1) -> None:
+            self.acquire_calls.append(tokens)
+
+        def try_acquire(self, tokens: int = 1) -> AcquireResult:
+            self.try_acquire_calls.append(tokens)
+            return AcquireResult(acquired=False, deficit=1.0)
+
+    import shardyfusion.writer.python.writer as writer_mod
+
+    original = writer_mod.TokenBucket
+    writer_mod.TokenBucket = AlwaysDenyTokenBucket  # type: ignore[assignment,misc]
+    try:
+        factory = _TrackingFactory()
+        # batch_size=3, cap at 6 → after 6 records, must fall back to blocking acquire
+        config = _make_config(num_dbs=1, factory=factory, batch_size=3)
+
+        result = write_sharded(
+            list(range(10)),
+            config,
+            key_fn=lambda r: r,
+            value_fn=lambda r: b"v",
+            max_writes_per_second=100.0,
+        )
+
+        assert result.stats.rows_written == 10
+
+        adapter = factory.adapters[0]
+        total_pairs = sum(len(call) for call in adapter.write_calls)
+        assert total_pairs == 10
+
+        bucket = AlwaysDenyTokenBucket.instances[0]
+        # 10 records, batch_size=3, cap=6:
+        # Records 0-5: try_acquire denied 4 times (at sizes 3,4,5,6),
+        #   at size 6 (==cap) → acquire(6), write 6
+        # Records 6-9: try_acquire denied 2 times (at sizes 3,4),
+        #   flush phase → acquire(4), write 4
+        assert bucket.try_acquire_calls == [3, 4, 5, 6, 3, 4]
+        assert bucket.acquire_calls == [6, 4]
+    finally:
+        writer_mod.TokenBucket = original  # type: ignore[assignment,misc]
 
 
 def test_metrics_emitted_on_write() -> None:

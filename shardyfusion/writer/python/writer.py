@@ -278,10 +278,14 @@ def _write_single_process(
             )
 
             if len(batches[db_id]) >= config.batch_size:
-                if bucket is not None:
+                if bucket is None or bucket.try_acquire(len(batches[db_id])):
+                    adapters[db_id].write_batch(batches[db_id])
+                    batches[db_id].clear()
+                elif len(batches[db_id]) >= 2 * config.batch_size:
+                    # Cap deferred growth to avoid OOM; block until tokens available
                     bucket.acquire(len(batches[db_id]))
-                adapters[db_id].write_batch(batches[db_id])
-                batches[db_id].clear()
+                    adapters[db_id].write_batch(batches[db_id])
+                    batches[db_id].clear()
 
         # Flush remaining
         for db_id in range(num_dbs):

@@ -10,6 +10,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Self
 
+from shardyfusion._rate_limiter import AcquireResult
+
 
 class TrackingAdapter:
     """In-memory adapter that records all write_batch calls."""
@@ -55,7 +57,7 @@ class TrackingFactory:
 
 
 class RecordingTokenBucket:
-    """Fake TokenBucket that records __init__ and acquire calls without delay.
+    """Fake TokenBucket that records __init__, acquire, and try_acquire calls without delay.
 
     Class-level ``instances`` list collects all created instances.  Reset it
     via ``RecordingTokenBucket.instances = []`` before each test (typically in
@@ -67,7 +69,12 @@ class RecordingTokenBucket:
     def __init__(self, rate: float, **kwargs: object) -> None:
         self.rate = rate
         self.acquire_calls: list[int] = []
+        self.try_acquire_calls: list[int] = []
         RecordingTokenBucket.instances.append(self)
 
     def acquire(self, tokens: int = 1) -> None:
         self.acquire_calls.append(tokens)
+
+    def try_acquire(self, tokens: int = 1) -> AcquireResult:
+        self.try_acquire_calls.append(tokens)
+        return AcquireResult(acquired=True, deficit=0.0)
