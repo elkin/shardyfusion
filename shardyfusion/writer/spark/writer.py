@@ -154,8 +154,8 @@ def _write_sharded_impl(
         run_id=run_id,
         num_dbs=config.num_dbs,
         s3_prefix=config.s3_prefix,
-        strategy=config.sharding.strategy.value,
-        key_encoding=config.key_encoding.value,
+        strategy=config.sharding.strategy,
+        key_encoding=config.key_encoding,
         writer_type="spark",
     )
     if mc is not None:

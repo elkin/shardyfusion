@@ -523,7 +523,7 @@ async def test_snapshot_info(tmp_path) -> None:
         info = reader.snapshot_info()
         assert info.run_id == "run"
         assert info.num_dbs == 1
-        assert info.sharding == "hash"
+        assert info.sharding == ShardingStrategy.HASH
         assert info.manifest_ref == "mem://manifest/one"
 
 

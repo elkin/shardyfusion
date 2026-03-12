@@ -3,6 +3,7 @@
 import base64
 import dataclasses
 import json
+from datetime import datetime
 from typing import Any
 
 from .config import OutputConfig
@@ -80,7 +81,11 @@ def build_refresh_result(changed: bool) -> dict[str, Any]:
 def build_info_result(reader: Any) -> dict[str, Any]:
     """Extract manifest metadata from a reader instance."""
     info = reader.snapshot_info()
-    return {"op": "info", **dataclasses.asdict(info)}
+    d = dataclasses.asdict(info)
+    for k, v in d.items():
+        if isinstance(v, datetime):
+            d[k] = v.isoformat()
+    return {"op": "info", **d}
 
 
 def build_shards_result(shards: list[Any]) -> dict[str, Any]:

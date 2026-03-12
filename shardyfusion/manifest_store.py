@@ -9,6 +9,7 @@ backends can use a single atomic transaction.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from pydantic import ValidationError
@@ -189,7 +190,7 @@ class InMemoryManifestStore:
             manifest_ref=self._latest_ref,
             manifest_content_type="application/json",
             run_id=self._latest_run_id,
-            updated_at="1970-01-01T00:00:00+00:00",
+            updated_at=datetime.min.replace(tzinfo=UTC),
         )
 
     def load_manifest(self, ref: str) -> ParsedManifest:
@@ -244,13 +245,12 @@ def _build_current_artifact(
     manifest_content_type: str,
     run_id: str,
 ) -> ManifestArtifact:
-    from datetime import UTC, datetime
 
     pointer = CurrentPointer(
         manifest_ref=manifest_ref,
         manifest_content_type=manifest_content_type,
         run_id=run_id,
-        updated_at=datetime.now(UTC).isoformat(),
+        updated_at=datetime.now(UTC),
     )
     payload = json.dumps(
         pointer.model_dump(mode="json"), sort_keys=True, separators=(",", ":")

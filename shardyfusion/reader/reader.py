@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Any, Literal, Self
@@ -26,7 +27,7 @@ from shardyfusion.manifest import ParsedManifest, RequiredShardMeta
 from shardyfusion.manifest_store import ManifestStore, S3ManifestStore
 from shardyfusion.metrics import MetricEvent, MetricsCollector
 from shardyfusion.routing import SnapshotRouter
-from shardyfusion.sharding_types import KeyEncoding
+from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 from shardyfusion.type_defs import KeyInput, ShardReader, ShardReaderFactory
 
 _logger = get_logger(__name__)
@@ -99,10 +100,10 @@ class SnapshotInfo:
 
     run_id: str
     num_dbs: int
-    sharding: str
-    created_at: str
+    sharding: ShardingStrategy
+    created_at: datetime
     manifest_ref: str
-    key_encoding: str = "u64be"
+    key_encoding: KeyEncoding = KeyEncoding.U64BE
     row_count: int = 0
 
 
@@ -416,10 +417,10 @@ class ShardedReader(_BaseShardedReader):
         return SnapshotInfo(
             run_id=rb.run_id,
             num_dbs=rb.num_dbs,
-            sharding=rb.sharding.strategy.value,
+            sharding=rb.sharding.strategy,
             created_at=rb.created_at,
             manifest_ref=state.manifest_ref,
-            key_encoding=rb.key_encoding.value,
+            key_encoding=rb.key_encoding,
             row_count=sum(s.row_count for s in state.router.shards),
         )
 
@@ -694,10 +695,10 @@ class ConcurrentShardedReader(_BaseShardedReader):
             return SnapshotInfo(
                 run_id=rb.run_id,
                 num_dbs=rb.num_dbs,
-                sharding=rb.sharding.strategy.value,
+                sharding=rb.sharding.strategy,
                 created_at=rb.created_at,
                 manifest_ref=state.manifest_ref,
-                key_encoding=rb.key_encoding.value,
+                key_encoding=rb.key_encoding,
                 row_count=sum(s.row_count for s in state.router.shards),
             )
 

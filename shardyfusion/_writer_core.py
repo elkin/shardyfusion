@@ -151,7 +151,7 @@ def publish_to_store(
 
     required_build = RequiredBuildMeta(
         run_id=run_id,
-        created_at=_utc_now_iso(),
+        created_at=_utc_now(),
         num_dbs=config.num_dbs,
         s3_prefix=config.s3_prefix,
         key_col=key_col,
@@ -240,8 +240,8 @@ def assemble_build_result(
     )
 
 
-def _utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 def manifest_safe_sharding(sharding: ShardingSpec) -> ManifestShardingSpec:

@@ -6,6 +6,7 @@ All tests mock the reader construction to avoid real S3 / SlateDB dependencies.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -14,6 +15,9 @@ import click.testing
 from shardyfusion.cli.app import _build_manifest_store, cli
 from shardyfusion.cli.config import ManifestStoreConfig
 from shardyfusion.reader.reader import ShardDetail, SnapshotInfo
+from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
+
+_FAKE_CREATED_AT = datetime.fromisoformat("2026-01-01T00:00:00+00:00")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -48,10 +52,10 @@ class _FakeReader:
         return SnapshotInfo(
             run_id="test-run",
             num_dbs=2,
-            sharding="hash",
-            created_at="2026-01-01T00:00:00+00:00",
+            sharding=ShardingStrategy.HASH,
+            created_at=_FAKE_CREATED_AT,
             manifest_ref="manifest-001.json",
-            key_encoding=self._key_encoding,
+            key_encoding=KeyEncoding.from_value(self._key_encoding),
             row_count=len(self._store),
         )
 

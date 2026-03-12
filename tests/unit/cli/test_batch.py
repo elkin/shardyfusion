@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from datetime import datetime
 from io import StringIO
 from typing import Any
 
@@ -12,6 +13,9 @@ import pytest
 from shardyfusion.cli.batch import load_script, run_script
 from shardyfusion.cli.config import OutputConfig
 from shardyfusion.reader.reader import ShardDetail, SnapshotInfo
+from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
+
+_FAKE_CREATED_AT = datetime.fromisoformat("2026-01-01T00:00:00+00:00")
 
 
 class _FakeReader:
@@ -35,10 +39,10 @@ class _FakeReader:
         return SnapshotInfo(
             run_id="test-run",
             num_dbs=2,
-            sharding="hash",
-            created_at="2026-01-01T00:00:00+00:00",
+            sharding=ShardingStrategy.HASH,
+            created_at=_FAKE_CREATED_AT,
             manifest_ref="s3://bucket/manifests/test",
-            key_encoding="u64be",
+            key_encoding=KeyEncoding.U64BE,
             row_count=len(self._store),
         )
 

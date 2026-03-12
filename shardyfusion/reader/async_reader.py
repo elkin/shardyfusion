@@ -247,10 +247,10 @@ class AsyncShardedReader:
         return SnapshotInfo(
             run_id=rb.run_id,
             num_dbs=rb.num_dbs,
-            sharding=rb.sharding.strategy.value,
+            sharding=rb.sharding.strategy,
             created_at=rb.created_at,
             manifest_ref=state.manifest_ref,
-            key_encoding=rb.key_encoding.value,
+            key_encoding=rb.key_encoding,
             row_count=sum(s.row_count for s in state.router.shards),
         )
 

@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -33,7 +34,7 @@ class RequiredBuildMeta(BaseModel):
     model_config = ConfigDict(use_enum_values=False)
 
     run_id: str
-    created_at: str
+    created_at: datetime
     num_dbs: int = Field(gt=0)
     s3_prefix: str
     key_col: str
@@ -85,7 +86,7 @@ class CurrentPointer(BaseModel):
     manifest_ref: str
     manifest_content_type: str
     run_id: str
-    updated_at: str
+    updated_at: datetime
     format_version: int = 1
 
 

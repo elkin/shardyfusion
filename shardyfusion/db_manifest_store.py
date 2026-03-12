@@ -10,6 +10,7 @@ No external dependencies are required beyond DB-API 2 drivers
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 from .errors import ConfigValidationError, ManifestParseError, ManifestStoreError
@@ -156,7 +157,7 @@ class _DbManifestStoreBase(ABC):
             manifest_ref=str(run_id),
             manifest_content_type=str(content_type),
             run_id=str(run_id),
-            updated_at=str(created_at),
+            updated_at=datetime.fromisoformat(str(created_at)),
         )
 
     def load_manifest(self, ref: str) -> ParsedManifest:
