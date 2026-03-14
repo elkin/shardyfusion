@@ -1,7 +1,6 @@
-"""Configurable metrics collection for observability."""
+"""Metric event definitions."""
 
 from enum import Enum, unique
-from typing import Any, Protocol
 
 
 @unique
@@ -37,12 +36,7 @@ class MetricEvent(str, Enum):
     RATE_LIMITER_THROTTLED = "rate_limiter.throttled"
     RATE_LIMITER_DENIED = "rate_limiter.denied"
 
-
-class MetricsCollector(Protocol):
-    """Protocol for receiving metric events.
-
-    Implementations must be thread-safe.  The ``emit()`` method is called
-    synchronously; buffer internally if blocking is a concern.
-    """
-
-    def emit(self, event: MetricEvent, payload: dict[str, Any]) -> None: ...
+    # Circuit breaker
+    CIRCUIT_BREAKER_OPENED = "circuit_breaker.opened"
+    CIRCUIT_BREAKER_CLOSED = "circuit_breaker.closed"
+    CIRCUIT_BREAKER_REJECTED = "circuit_breaker.rejected"
