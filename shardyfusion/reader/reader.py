@@ -1,5 +1,7 @@
 """Service-side sharded SlateDB reader helpers."""
 
+from __future__ import annotations
+
 import logging
 import threading
 import time
@@ -12,6 +14,7 @@ from pathlib import Path
 from queue import Empty, Queue
 from typing import Any, Literal, Self
 
+from shardyfusion._rate_limiter import RateLimiter
 from shardyfusion.errors import (
     ReaderStateError,
     ShardyfusionError,
@@ -64,7 +67,7 @@ class _OrderedLock:
         self._level = level
         self._name = name
 
-    def __enter__(self) -> "_OrderedLock":
+    def __enter__(self) -> _OrderedLock:
         if __debug__:
             stack = getattr(self._tls, "stack", None)
             if stack is None:
@@ -118,6 +121,18 @@ class ShardDetail:
     db_url: str
 
 
+@dataclass(slots=True, frozen=True)
+class ReaderHealth:
+    """Diagnostic snapshot of reader state."""
+
+    status: Literal["healthy", "degraded", "unhealthy"]
+    manifest_ref: str
+    manifest_age_seconds: float
+    num_shards: int
+    is_closed: bool
+    circuit_breaker_state: str | None
+
+
 @dataclass(slots=True)
 class SlateDbReaderFactory:
     """Picklable reader factory that captures SlateDB-specific config."""
@@ -164,7 +179,7 @@ class _ReaderState:
 
     manifest_ref: str
     router: SnapshotRouter
-    handles: dict[int, "_ShardHandle"]
+    handles: dict[int, _ShardHandle]
     refcount: int = 0
     retired: bool = False
 
@@ -173,8 +188,8 @@ class _ReaderState:
 class _ShardHandle:
     mode: str
     reader: ShardReader | None = None
-    lock: "threading.Lock | None" = None
-    pool: "_ReaderPool | None" = None
+    lock: threading.Lock | None = None
+    pool: _ReaderPool | None = None
 
 
 class _ReaderPool:
@@ -233,8 +248,8 @@ class ShardReaderHandle:
 
     def __init__(
         self,
-        handle: "_ShardHandle | ShardReader",
-        release_fn: "Callable[[], None] | None" = None,
+        handle: _ShardHandle | ShardReader,
+        release_fn: Callable[[], None] | None = None,
     ) -> None:
         self._handle = handle
         self._release_fn = release_fn
@@ -285,6 +300,7 @@ class _BaseShardedReader:
         slate_env_file: str | None = None,
         max_workers: int | None = None,
         metrics_collector: MetricsCollector | None = None,
+        rate_limiter: RateLimiter | None = None,
     ) -> None:
         self.s3_prefix = s3_prefix
         self.local_root = local_root
@@ -294,6 +310,7 @@ class _BaseShardedReader:
         ):
             raise ValueError("max_workers must be a positive integer (>= 1)")
         self._metrics = metrics_collector
+        self._rate_limiter = rate_limiter
 
         if reader_factory is not None:
             self._reader_factory: ShardReaderFactory = reader_factory
@@ -310,6 +327,7 @@ class _BaseShardedReader:
             )
 
         self._closed = False
+        self._init_time = time.monotonic()
 
         # Shared executor for multi_get parallelism (created once, reused)
         if max_workers is not None and max_workers > 1:
@@ -385,6 +403,7 @@ class ShardedReader(_BaseShardedReader):
         slate_env_file: str | None = None,
         max_workers: int | None = None,
         metrics_collector: MetricsCollector | None = None,
+        rate_limiter: RateLimiter | None = None,
     ) -> None:
         super().__init__(
             s3_prefix=s3_prefix,
@@ -395,6 +414,7 @@ class ShardedReader(_BaseShardedReader):
             slate_env_file=slate_env_file,
             max_workers=max_workers,
             metrics_collector=metrics_collector,
+            rate_limiter=rate_limiter,
         )
         self._state = self._load_initial_state()
 
@@ -427,6 +447,30 @@ class ShardedReader(_BaseShardedReader):
     def shard_details(self) -> list[ShardDetail]:
         """Return per-shard metadata from the current manifest."""
         return _shard_details_from_router(self._state.router)
+
+    def health(self, *, staleness_threshold_s: float | None = None) -> ReaderHealth:
+        """Return a diagnostic snapshot of reader state."""
+        if self._closed:
+            return ReaderHealth(
+                status="unhealthy",
+                manifest_ref="",
+                manifest_age_seconds=0.0,
+                num_shards=0,
+                is_closed=True,
+                circuit_breaker_state=None,
+            )
+        age = time.monotonic() - self._init_time
+        status: Literal["healthy", "degraded", "unhealthy"] = "healthy"
+        if staleness_threshold_s is not None and age > staleness_threshold_s:
+            status = "degraded"
+        return ReaderHealth(
+            status=status,
+            manifest_ref=self._state.manifest_ref,
+            manifest_age_seconds=round(age, 2),
+            num_shards=len(self._state.readers),
+            is_closed=False,
+            circuit_breaker_state=None,
+        )
 
     def route_key(self, key: KeyInput) -> int:
         """Return the shard db_id a key would route to."""
@@ -476,6 +520,9 @@ class ShardedReader(_BaseShardedReader):
         if self._closed:
             raise ReaderStateError("Reader is closed")
 
+        if self._rate_limiter is not None:
+            self._rate_limiter.acquire(1)
+
         mc = self._metrics
         t0 = time.perf_counter() if mc is not None else 0.0
 
@@ -498,6 +545,9 @@ class ShardedReader(_BaseShardedReader):
     def multi_get(self, keys: Sequence[KeyInput]) -> dict[KeyInput, bytes | None]:
         if self._closed:
             raise ReaderStateError("Reader is closed")
+
+        if self._rate_limiter is not None:
+            self._rate_limiter.acquire(len(keys))
 
         mc = self._metrics
         t0 = time.perf_counter() if mc is not None else 0.0
@@ -645,6 +695,7 @@ class ConcurrentShardedReader(_BaseShardedReader):
         pool_checkout_timeout: float = 30.0,
         max_workers: int | None = None,
         metrics_collector: MetricsCollector | None = None,
+        rate_limiter: RateLimiter | None = None,
     ) -> None:
         if thread_safety not in {"lock", "pool"}:
             raise ValueError("thread_safety must be 'lock' or 'pool'")
@@ -663,6 +714,7 @@ class ConcurrentShardedReader(_BaseShardedReader):
             slate_env_file=slate_env_file,
             max_workers=max_workers,
             metrics_collector=metrics_collector,
+            rate_limiter=rate_limiter,
         )
 
         self.thread_safety = thread_safety
@@ -706,6 +758,32 @@ class ConcurrentShardedReader(_BaseShardedReader):
         """Return per-shard metadata from the current manifest."""
         with self._use_state() as state:
             return _shard_details_from_router(state.router)
+
+    def health(self, *, staleness_threshold_s: float | None = None) -> ReaderHealth:
+        """Return a diagnostic snapshot of reader state."""
+        with self._state_lock:
+            if self._closed:
+                return ReaderHealth(
+                    status="unhealthy",
+                    manifest_ref="",
+                    manifest_age_seconds=0.0,
+                    num_shards=0,
+                    is_closed=True,
+                    circuit_breaker_state=None,
+                )
+            state = self._state
+        age = time.monotonic() - self._init_time
+        status: Literal["healthy", "degraded", "unhealthy"] = "healthy"
+        if staleness_threshold_s is not None and age > staleness_threshold_s:
+            status = "degraded"
+        return ReaderHealth(
+            status=status,
+            manifest_ref=state.manifest_ref,
+            manifest_age_seconds=round(age, 2),
+            num_shards=len(state.handles),
+            is_closed=False,
+            circuit_breaker_state=None,
+        )
 
     def route_key(self, key: KeyInput) -> int:
         """Return the shard db_id a key would route to."""
@@ -763,6 +841,9 @@ class ConcurrentShardedReader(_BaseShardedReader):
         return result
 
     def get(self, key: KeyInput) -> bytes | None:
+        if self._rate_limiter is not None:
+            self._rate_limiter.acquire(1)
+
         mc = self._metrics
         t0 = time.perf_counter() if mc is not None else 0.0
 
@@ -784,6 +865,9 @@ class ConcurrentShardedReader(_BaseShardedReader):
         return result
 
     def multi_get(self, keys: Sequence[KeyInput]) -> dict[KeyInput, bytes | None]:
+        if self._rate_limiter is not None:
+            self._rate_limiter.acquire(len(keys))
+
         mc = self._metrics
         t0 = time.perf_counter() if mc is not None else 0.0
 

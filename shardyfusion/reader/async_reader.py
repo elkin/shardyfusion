@@ -7,12 +7,12 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Literal, Self
 
+from shardyfusion._rate_limiter import RateLimiter
 from shardyfusion.async_manifest_store import (
     AsyncManifestStore,
     AsyncS3ManifestStore,
-    _SyncManifestStoreAdapter,
 )
 from shardyfusion.errors import ReaderStateError, SlateDbApiError
 from shardyfusion.logging import (
@@ -22,9 +22,9 @@ from shardyfusion.logging import (
     log_failure,
 )
 from shardyfusion.manifest import ParsedManifest, RequiredShardMeta
-from shardyfusion.manifest_store import ManifestStore, S3ManifestStore
 from shardyfusion.metrics import MetricEvent, MetricsCollector
 from shardyfusion.reader.reader import (
+    ReaderHealth,
     ShardDetail,
     SnapshotInfo,
     _shard_details_from_router,
@@ -154,29 +154,32 @@ class AsyncShardedReader:
         *,
         s3_prefix: str,
         local_root: str,
-        manifest_store: AsyncManifestStore | ManifestStore | None = None,
+        manifest_store: AsyncManifestStore | None = None,
         current_name: str = "_CURRENT",
         reader_factory: AsyncShardReaderFactory | None = None,
         slate_env_file: str | None = None,
         s3_client_config: S3ClientConfig | None = None,
         max_concurrency: int | None = None,
         metrics_collector: MetricsCollector | None = None,
+        rate_limiter: RateLimiter | None = None,
     ) -> None:
         self.s3_prefix = s3_prefix
         self.local_root = local_root
         self._metrics = metrics_collector
         self._max_concurrency = max_concurrency
+        self._rate_limiter = rate_limiter
         self._refresh_lock = asyncio.Lock()
         self._closed = False
+        self._init_time = time.monotonic()
 
         # State is set by open(), not __init__.
         self._state: _AsyncReaderState | None = None
 
         # Resolve manifest store
         if manifest_store is not None:
-            self._manifest_store = _wrap_manifest_store(manifest_store)
+            self._manifest_store = manifest_store
         else:
-            self._manifest_store = _default_async_manifest_store(
+            self._manifest_store = AsyncS3ManifestStore(
                 s3_prefix,
                 current_name=current_name,
                 s3_client_config=s3_client_config,
@@ -195,13 +198,14 @@ class AsyncShardedReader:
         *,
         s3_prefix: str,
         local_root: str,
-        manifest_store: AsyncManifestStore | ManifestStore | None = None,
+        manifest_store: AsyncManifestStore | None = None,
         current_name: str = "_CURRENT",
         reader_factory: AsyncShardReaderFactory | None = None,
         slate_env_file: str | None = None,
         s3_client_config: S3ClientConfig | None = None,
         max_concurrency: int | None = None,
         metrics_collector: MetricsCollector | None = None,
+        rate_limiter: RateLimiter | None = None,
     ) -> AsyncShardedReader:
         """Create and initialize an async sharded reader."""
         instance = cls(
@@ -214,6 +218,7 @@ class AsyncShardedReader:
             s3_client_config=s3_client_config,
             max_concurrency=max_concurrency,
             metrics_collector=metrics_collector,
+            rate_limiter=rate_limiter,
         )
         state = await instance._load_initial_state()
         instance._state = state
@@ -256,6 +261,39 @@ class AsyncShardedReader:
 
     def shard_details(self) -> list[ShardDetail]:
         return _shard_details_from_router(self._require_state().router)
+
+    def health(self, *, staleness_threshold_s: float | None = None) -> ReaderHealth:
+        """Return a diagnostic snapshot of reader state."""
+        if self._closed:
+            return ReaderHealth(
+                status="unhealthy",
+                manifest_ref="",
+                manifest_age_seconds=0.0,
+                num_shards=0,
+                is_closed=True,
+                circuit_breaker_state=None,
+            )
+        if self._state is None:
+            return ReaderHealth(
+                status="unhealthy",
+                manifest_ref="",
+                manifest_age_seconds=0.0,
+                num_shards=0,
+                is_closed=False,
+                circuit_breaker_state=None,
+            )
+        age = time.monotonic() - self._init_time
+        status: Literal["healthy", "degraded", "unhealthy"] = "healthy"
+        if staleness_threshold_s is not None and age > staleness_threshold_s:
+            status = "degraded"
+        return ReaderHealth(
+            status=status,
+            manifest_ref=self._state.manifest_ref,
+            manifest_age_seconds=round(age, 2),
+            num_shards=len(self._state.readers),
+            is_closed=False,
+            circuit_breaker_state=None,
+        )
 
     def route_key(self, key: KeyInput) -> int:
         return self._require_state().router.route_one(key)
@@ -302,6 +340,9 @@ class AsyncShardedReader:
     async def get(self, key: KeyInput) -> bytes | None:
         state = self._require_state()
 
+        if self._rate_limiter is not None:
+            await _async_acquire(self._rate_limiter, 1)
+
         mc = self._metrics
         t0 = time.perf_counter() if mc is not None else 0.0
 
@@ -321,6 +362,9 @@ class AsyncShardedReader:
 
     async def multi_get(self, keys: Sequence[KeyInput]) -> dict[KeyInput, bytes | None]:
         state = self._require_state()
+
+        if self._rate_limiter is not None:
+            await _async_acquire(self._rate_limiter, len(keys))
 
         mc = self._metrics
         t0 = time.perf_counter() if mc is not None else 0.0
@@ -502,56 +546,24 @@ class AsyncShardedReader:
 # ---------------------------------------------------------------------------
 
 
-def _wrap_manifest_store(
-    store: AsyncManifestStore | ManifestStore,
-) -> AsyncManifestStore:
-    """Wrap a sync ManifestStore if needed; return async stores unchanged."""
-    if isinstance(store, _SyncManifestStoreAdapter | AsyncS3ManifestStore):
-        return store
-    if _is_async_manifest_store(store):
-        return store  # type: ignore[return-value]
-    return _SyncManifestStoreAdapter(store)  # type: ignore[arg-type]
+async def _async_acquire(limiter: RateLimiter, tokens: int) -> None:
+    """Acquire tokens from a rate limiter, using async sleep if available.
 
+    If the limiter has an ``acquire_async`` method (like ``TokenBucket``),
+    use it directly.  Otherwise, fall back to a ``try_acquire`` + ``asyncio.sleep``
+    loop — still non-blocking for the event loop.
+    """
+    acquire_async = getattr(limiter, "acquire_async", None)
+    if acquire_async is not None:
+        await acquire_async(tokens)
+        return
 
-def _is_async_manifest_store(obj: Any) -> bool:
-    """Duck-type check for AsyncManifestStore protocol compliance."""
-    import inspect
-
-    load_current = getattr(obj, "load_current", None)
-    load_manifest = getattr(obj, "load_manifest", None)
-    return (
-        load_current is not None
-        and inspect.iscoroutinefunction(load_current)
-        and load_manifest is not None
-        and inspect.iscoroutinefunction(load_manifest)
-    )
-
-
-def _default_async_manifest_store(
-    s3_prefix: str,
-    *,
-    current_name: str = "_CURRENT",
-    s3_client_config: S3ClientConfig | None = None,
-    metrics_collector: MetricsCollector | None = None,
-) -> AsyncManifestStore:
-    """Build the default async manifest store, preferring aiobotocore if available."""
-    try:
-        import aiobotocore  # noqa: F401
-
-        return AsyncS3ManifestStore(
-            s3_prefix,
-            current_name=current_name,
-            s3_client_config=s3_client_config,
-            metrics_collector=metrics_collector,
-        )
-    except ImportError:
-        sync_store = S3ManifestStore(
-            s3_prefix,
-            current_name=current_name,
-            s3_client_config=s3_client_config,
-            metrics_collector=metrics_collector,
-        )
-        return _SyncManifestStoreAdapter(sync_store)
+    # Fallback: try_acquire is guaranteed non-blocking (pure arithmetic).
+    while True:
+        result = limiter.try_acquire(tokens)
+        if result:
+            return
+        await asyncio.sleep(result.deficit)
 
 
 async def _close_async_state(state: _AsyncReaderState) -> None:
