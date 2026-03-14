@@ -166,7 +166,6 @@ def publish_to_store(
         manifest_builder=config.manifest.manifest_builder,
         s3_client_config=config.manifest.s3_client_config,
         metrics_collector=config.metrics_collector,
-        retry_config=config.retry_config,
     )
 
     mc = config.metrics_collector

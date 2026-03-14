@@ -17,7 +17,6 @@ from .type_defs import JsonObject, S3ClientConfig
 
 if TYPE_CHECKING:
     from .manifest_store import ManifestStore
-    from .type_defs import RetryConfig
 
 _SAFE_SEGMENT_CHARS = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
@@ -85,7 +84,6 @@ class WriteConfig:
     manifest: ManifestOptions = field(default_factory=ManifestOptions)
 
     metrics_collector: MetricsCollector | None = None
-    retry_config: RetryConfig | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.sharding, ShardingSpec):

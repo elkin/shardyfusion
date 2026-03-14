@@ -12,10 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from queue import Empty, Queue
-from typing import TYPE_CHECKING, Any, Literal, Self
-
-if TYPE_CHECKING:
-    from shardyfusion.type_defs import RetryConfig
+from typing import Any, Literal, Self
 
 from shardyfusion._rate_limiter import RateLimiter
 from shardyfusion.errors import (
@@ -308,7 +305,6 @@ class _BaseShardedReader:
         max_workers: int | None = None,
         metrics_collector: MetricsCollector | None = None,
         rate_limiter: RateLimiter | None = None,
-        retry_config: RetryConfig | None = None,
     ) -> None:
         self.s3_prefix = s3_prefix
         self.local_root = local_root
@@ -332,7 +328,6 @@ class _BaseShardedReader:
                 s3_prefix,
                 current_name=current_name,
                 metrics_collector=metrics_collector,
-                retry_config=retry_config,
             )
 
         self._closed = False
@@ -413,7 +408,6 @@ class ShardedReader(_BaseShardedReader):
         max_workers: int | None = None,
         metrics_collector: MetricsCollector | None = None,
         rate_limiter: RateLimiter | None = None,
-        retry_config: RetryConfig | None = None,
     ) -> None:
         super().__init__(
             s3_prefix=s3_prefix,
@@ -425,7 +419,6 @@ class ShardedReader(_BaseShardedReader):
             max_workers=max_workers,
             metrics_collector=metrics_collector,
             rate_limiter=rate_limiter,
-            retry_config=retry_config,
         )
         self._state = self._load_initial_state()
 
@@ -707,7 +700,6 @@ class ConcurrentShardedReader(_BaseShardedReader):
         max_workers: int | None = None,
         metrics_collector: MetricsCollector | None = None,
         rate_limiter: RateLimiter | None = None,
-        retry_config: RetryConfig | None = None,
     ) -> None:
         if thread_safety not in {"lock", "pool"}:
             raise ValueError("thread_safety must be 'lock' or 'pool'")
@@ -727,7 +719,6 @@ class ConcurrentShardedReader(_BaseShardedReader):
             max_workers=max_workers,
             metrics_collector=metrics_collector,
             rate_limiter=rate_limiter,
-            retry_config=retry_config,
         )
 
         self.thread_safety = thread_safety
