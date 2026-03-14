@@ -91,18 +91,6 @@ class OtelCollector:
             "shardyfusion.rate_limiter_denied", description="Rate limiter denial events"
         )
 
-        # Circuit breaker
-        self._circuit_breaker_opened = meter.create_counter(
-            "shardyfusion.circuit_breaker_opened", description="Circuit breaker opened"
-        )
-        self._circuit_breaker_closed = meter.create_counter(
-            "shardyfusion.circuit_breaker_closed", description="Circuit breaker closed"
-        )
-        self._circuit_breaker_rejected = meter.create_counter(
-            "shardyfusion.circuit_breaker_rejected",
-            description="Circuit breaker rejections",
-        )
-
     def emit(self, event: MetricEvent, payload: dict[str, Any]) -> None:
         """Handle a metric event by updating the appropriate OTel instruments."""
         if event == MetricEvent.WRITE_STARTED:
@@ -135,10 +123,4 @@ class OtelCollector:
                 self._rate_limiter_wait.record(payload["wait_seconds"])
         elif event == MetricEvent.RATE_LIMITER_DENIED:
             self._rate_limiter_denied.add(1)
-        elif event == MetricEvent.CIRCUIT_BREAKER_OPENED:
-            self._circuit_breaker_opened.add(1)
-        elif event == MetricEvent.CIRCUIT_BREAKER_CLOSED:
-            self._circuit_breaker_closed.add(1)
-        elif event == MetricEvent.CIRCUIT_BREAKER_REJECTED:
-            self._circuit_breaker_rejected.add(1)
         # Unknown events silently ignored

@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from ._circuit_breaker import CircuitBreaker
     from .type_defs import RetryConfig
 
 from pydantic import ValidationError
@@ -75,9 +74,7 @@ class S3ManifestStore:
         s3_client_config: S3ClientConfig | None = None,
         metrics_collector: MetricsCollector | None = None,
         retry_config: RetryConfig | None = None,
-        circuit_breaker: CircuitBreaker | None = None,
     ) -> None:
-        from ._circuit_breaker import CircuitBreaker as _CB
         from .type_defs import RetryConfig as _RC
 
         self.s3_prefix = s3_prefix.rstrip("/")
@@ -87,7 +84,6 @@ class S3ManifestStore:
         self._s3_client = create_s3_client(s3_client_config)
         self._metrics = metrics_collector
         self._retry_config: _RC | None = retry_config
-        self._circuit_breaker: _CB | None = circuit_breaker
 
     def publish(
         self,
@@ -118,7 +114,6 @@ class S3ManifestStore:
             s3_client=self._s3_client,
             metrics_collector=self._metrics,
             retry_config=self._retry_config,
-            circuit_breaker=self._circuit_breaker,
         )
 
         current_artifact = _build_current_artifact(
@@ -135,7 +130,6 @@ class S3ManifestStore:
             s3_client=self._s3_client,
             metrics_collector=self._metrics,
             retry_config=self._retry_config,
-            circuit_breaker=self._circuit_breaker,
         )
 
         return manifest_url
@@ -147,7 +141,6 @@ class S3ManifestStore:
             s3_client=self._s3_client,
             metrics_collector=self._metrics,
             retry_config=self._retry_config,
-            circuit_breaker=self._circuit_breaker,
         )
         if payload is None:
             return None
@@ -166,7 +159,6 @@ class S3ManifestStore:
                 s3_client=self._s3_client,
                 metrics_collector=self._metrics,
                 retry_config=self._retry_config,
-                circuit_breaker=self._circuit_breaker,
             )
         except Exception as exc:
             log_failure(

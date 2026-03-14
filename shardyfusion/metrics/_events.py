@@ -35,8 +35,3 @@ class MetricEvent(str, Enum):
     S3_RETRY_EXHAUSTED = "s3.retry_exhausted"
     RATE_LIMITER_THROTTLED = "rate_limiter.throttled"
     RATE_LIMITER_DENIED = "rate_limiter.denied"
-
-    # Circuit breaker
-    CIRCUIT_BREAKER_OPENED = "circuit_breaker.opened"
-    CIRCUIT_BREAKER_CLOSED = "circuit_breaker.closed"
-    CIRCUIT_BREAKER_REJECTED = "circuit_breaker.rejected"

@@ -106,23 +106,6 @@ class PrometheusCollector:
             registry=self._registry,
         )
 
-        # Circuit breaker
-        self._circuit_breaker_opened = Counter(
-            f"{p}circuit_breaker_opened_total",
-            "Circuit breaker opened",
-            registry=self._registry,
-        )
-        self._circuit_breaker_closed = Counter(
-            f"{p}circuit_breaker_closed_total",
-            "Circuit breaker closed",
-            registry=self._registry,
-        )
-        self._circuit_breaker_rejected = Counter(
-            f"{p}circuit_breaker_rejected_total",
-            "Circuit breaker rejections",
-            registry=self._registry,
-        )
-
     def emit(self, event: MetricEvent, payload: dict[str, Any]) -> None:
         """Handle a metric event by updating the appropriate Prometheus instruments."""
         if event == MetricEvent.WRITE_STARTED:
@@ -155,10 +138,4 @@ class PrometheusCollector:
                 self._rate_limiter_wait.observe(payload["wait_seconds"])
         elif event == MetricEvent.RATE_LIMITER_DENIED:
             self._rate_limiter_denied.inc()
-        elif event == MetricEvent.CIRCUIT_BREAKER_OPENED:
-            self._circuit_breaker_opened.inc()
-        elif event == MetricEvent.CIRCUIT_BREAKER_CLOSED:
-            self._circuit_breaker_closed.inc()
-        elif event == MetricEvent.CIRCUIT_BREAKER_REJECTED:
-            self._circuit_breaker_rejected.inc()
         # Unknown events are silently ignored (forward-compatible)

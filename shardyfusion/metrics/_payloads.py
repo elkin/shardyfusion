@@ -79,16 +79,3 @@ class RateLimiterThrottledPayload(TypedDict):
 class RateLimiterDeniedPayload(TypedDict):
     deficit_seconds: float
     limiter_type: str
-
-
-class CircuitBreakerOpenedPayload(TypedDict, total=False):
-    reason: str
-    failure_count: int
-
-
-class CircuitBreakerClosedPayload(TypedDict):
-    pass
-
-
-class CircuitBreakerRejectedPayload(TypedDict):
-    pass
