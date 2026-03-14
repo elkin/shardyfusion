@@ -25,12 +25,13 @@ plugins:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - Architecture: how-it-works.md
   - Writer Side: writer.md
   - Reader Side: reader.md
+  - Manifest Stores: manifest-stores.md
   - CLI (shardy): cli.md
-  - Error Handling: error-handling.md
   - Observability: observability.md
-  - Architecture: how-it-works.md
+  - Error Handling: error-handling.md
   - Operations: operations.md
   - Cloud Testing: cloud-testing.md
   - Release Process: release.md

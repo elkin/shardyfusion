@@ -56,6 +56,8 @@
 
 ::: shardyfusion.manifest_store
 
+::: shardyfusion.async_manifest_store
+
 ::: shardyfusion.db_manifest_store
 
 ::: shardyfusion.storage

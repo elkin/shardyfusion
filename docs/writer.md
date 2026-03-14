@@ -92,7 +92,91 @@ Manifest + CURRENT behavior:
 2. manifest is published first
 3. `_CURRENT` JSON pointer is published second
 
-See `Architecture` for end-to-end data flow details.
+See [Architecture](how-it-works.md) for end-to-end data flow details.
+
+## Single-Shard Writers
+
+For datasets that don't need sharding (lookup tables, small reference data, configuration snapshots), use `write_single_db` to write everything into a single SlateDB database. Available for Spark, Dask, and Ray backends.
+
+### When to Use
+
+- Small datasets where sharding adds unnecessary complexity
+- Lookup tables that fit in a single shard
+- Datasets where you want sorted key order within the database
+
+### Spark
+
+```python
+from shardyfusion import WriteConfig, ValueSpec
+from shardyfusion.writer.spark import write_single_db
+
+config = WriteConfig(num_dbs=1, s3_prefix="s3://bucket/prefix")
+
+result = write_single_db(
+    df,
+    config,
+    key_col="id",
+    value_spec=ValueSpec.binary_col("payload"),
+    sort_keys=True,               # default: sort by key before writing
+    num_partitions=None,           # default: use Spark's default parallelism
+    prefetch_partitions=True,      # default: prefetch next partition during write
+    cache_input=True,              # default: persist input DataFrame
+    storage_level=None,            # default: MEMORY_AND_DISK
+    spark_conf_overrides=None,     # optional Spark conf overrides
+    max_writes_per_second=None,    # optional rate limit
+)
+```
+
+### Dask
+
+```python
+from shardyfusion import WriteConfig, ValueSpec
+from shardyfusion.writer.dask import write_single_db
+
+config = WriteConfig(num_dbs=1, s3_prefix="s3://bucket/prefix")
+
+result = write_single_db(
+    ddf,
+    config,
+    key_col="id",
+    value_spec=ValueSpec.binary_col("payload"),
+    sort_keys=True,
+    num_partitions=None,
+    prefetch_partitions=True,
+    cache_input=True,
+    max_writes_per_second=None,
+)
+```
+
+### Ray
+
+```python
+from shardyfusion import WriteConfig, ValueSpec
+from shardyfusion.writer.ray import write_single_db
+
+config = WriteConfig(num_dbs=1, s3_prefix="s3://bucket/prefix")
+
+result = write_single_db(
+    ds,
+    config,
+    key_col="id",
+    value_spec=ValueSpec.binary_col("payload"),
+    sort_keys=True,
+    max_writes_per_second=None,
+)
+```
+
+### Parameters
+
+| Parameter | Spark | Dask | Ray | Default | Description |
+|---|---|---|---|---|---|
+| `sort_keys` | Yes | Yes | Yes | `True` | Sort rows by key before writing |
+| `num_partitions` | Yes | Yes | — | `None` | Number of partitions for distributed sorting |
+| `prefetch_partitions` | Yes | Yes | — | `True` | Prefetch next partition during write |
+| `cache_input` | Yes | Yes | — | `True` | Persist/materialize input before processing |
+| `storage_level` | Yes | — | — | `None` | Spark StorageLevel for caching |
+| `spark_conf_overrides` | Yes | — | — | `None` | Temporary Spark configuration |
+| `max_writes_per_second` | Yes | Yes | Yes | `None` | Rate limit (ops/sec) |
 
 ## Rate Limiting
 
@@ -175,6 +259,21 @@ result = write_sharded(
 )
 ```
 
+### Bytes-per-second Rate Limiting
+
+In addition to ops/sec limiting (`max_writes_per_second`), all backends support `max_write_bytes_per_second` to throttle by payload size:
+
+```python
+result = write_sharded(
+    df, config, key_col="id",
+    value_spec=ValueSpec.binary_col("payload"),
+    max_writes_per_second=10_000.0,        # ops/sec limit
+    max_write_bytes_per_second=50_000_000.0,  # 50 MB/sec limit
+)
+```
+
+The two limits use independent `TokenBucket` instances — both must be satisfied before a batch is written. The ops bucket acquires tokens equal to the number of rows; the bytes bucket acquires tokens equal to the serialized payload size in bytes.
+
 ### Interaction with `batch_size`
 
 `batch_size` (from `WriteConfig`, default 50,000) controls how many rows are
@@ -185,3 +284,28 @@ orthogonal:
 - Smaller `batch_size` → more frequent but smaller acquire calls.
 - Larger `batch_size` → fewer but bigger acquire calls.
 - Neither setting affects the other; they can be tuned independently.
+
+## Structured Logging in Writers
+
+All writer pipelines integrate with shardyfusion's [structured logging](observability.md#structured-logging) system. Key fields (`run_id`, `db_id`, `attempt`) are automatically bound to log context during writes via `LogContext`.
+
+### Enabling JSON Logging
+
+```python
+from shardyfusion.logging import configure_logging, LogContext
+
+# Enable structured JSON logging for the shardyfusion.* hierarchy
+configure_logging(level=logging.INFO, json_format=True)
+
+# Wrap a write call with additional context
+with LogContext(pipeline="daily-build", env="production"):
+    result = write_sharded(df, config, key_col="id", value_spec=ValueSpec.binary_col("payload"))
+```
+
+Log output includes both the writer's internal fields and your custom context:
+
+```json
+{"timestamp": "2026-03-14 10:30:00,000", "level": "INFO", "logger": "shardyfusion.writer", "event": "write_started", "run_id": "abc123", "pipeline": "daily-build", "env": "production"}
+```
+
+See [Observability](observability.md) for the full logging API (LogContext nesting, FailureSeverity, JsonFormatter).

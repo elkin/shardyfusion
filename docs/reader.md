@@ -230,6 +230,134 @@ finally:
     each handle holds a borrow/refcount increment — unclosed handles prevent
     cleanup of old state after `refresh()`.
 
+## Reader Health
+
+All readers expose a `health()` method that returns a diagnostic snapshot:
+
+```python
+health = reader.health()
+print(health.status)              # "healthy", "degraded", or "unhealthy"
+print(health.manifest_ref)        # current manifest reference
+print(health.manifest_age_seconds)  # seconds since manifest was published
+print(health.num_shards)          # number of active shards
+print(health.is_closed)           # whether the reader has been closed
+```
+
+`ReaderHealth` fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | `Literal["healthy", "degraded", "unhealthy"]` | Overall reader health |
+| `manifest_ref` | `str` | Reference to the currently loaded manifest |
+| `manifest_age_seconds` | `float` | Age of the manifest in seconds |
+| `num_shards` | `int` | Number of shards in the current snapshot |
+| `is_closed` | `bool` | Whether the reader has been closed |
+
+Use `staleness_threshold_s` to control when a manifest is considered stale (which affects the `status` field):
+
+```python
+health = reader.health(staleness_threshold_s=300.0)  # 5 minutes
+```
+
+### Health Check Integration
+
+```python
+from fastapi import FastAPI
+from shardyfusion import ConcurrentShardedReader
+
+app = FastAPI()
+reader = ConcurrentShardedReader(...)
+
+@app.get("/health")
+def health_check():
+    h = reader.health(staleness_threshold_s=600.0)
+    status_code = 200 if h.status == "healthy" else 503
+    return {"status": h.status, "manifest_age_s": h.manifest_age_seconds}, status_code
+```
+
+!!! warning
+    Calling `health()` on a closed reader raises `ReaderStateError`.
+
+## Cold-Start Fallback
+
+If the latest manifest is malformed (e.g., partial write, schema migration in progress), the reader can fall back to a previous valid manifest instead of failing outright.
+
+```mermaid
+flowchart TD
+    A["load_current()"] --> B["load_manifest(ref)"]
+    B -->|Success| C["Open shard readers"]
+    B -->|ManifestParseError| D{"max_fallback_attempts > 0?"}
+    D -->|No| E["Raise ManifestParseError"]
+    D -->|Yes| F["list_manifests(limit=N+1)"]
+    F --> G["Try each manifest\n(newest first, skip current)"]
+    G -->|Found valid| C
+    G -->|All invalid| E
+```
+
+### On Cold Start
+
+When a reader is first constructed and `load_manifest()` raises `ManifestParseError`, the reader walks backward through `list_manifests()` to find a valid manifest:
+
+```python
+reader = ConcurrentShardedReader(
+    s3_prefix="s3://bucket/prefix",
+    local_root="/tmp/reader",
+    max_fallback_attempts=3,  # default: try up to 3 previous manifests
+)
+```
+
+Set `max_fallback_attempts=0` to disable fallback and fail immediately on a malformed manifest.
+
+### On Refresh
+
+During `refresh()`, if the new manifest is malformed, the reader silently skips it and keeps its current good state. `refresh()` returns `False` in this case — no error is raised.
+
+```python
+changed = reader.refresh()  # False if new manifest was malformed → kept old state
+```
+
+This applies to all reader variants: `ShardedReader`, `ConcurrentShardedReader`, and `AsyncShardedReader`.
+
+## Reader-Side Rate Limiting
+
+All reader constructors accept a `rate_limiter` parameter to throttle read operations:
+
+```python
+from shardyfusion import ConcurrentShardedReader, TokenBucket
+
+limiter = TokenBucket(rate=1000.0)  # 1000 reads/sec
+
+reader = ConcurrentShardedReader(
+    s3_prefix="s3://bucket/prefix",
+    local_root="/tmp/reader",
+    rate_limiter=limiter,
+)
+
+# Each get() and multi_get() call acquires tokens before reading
+value = reader.get(42)  # blocks if rate limit exceeded
+```
+
+### Async Reader Rate Limiting
+
+`AsyncShardedReader` uses `acquire_async()` (based on `asyncio.sleep`) — it never blocks the event loop:
+
+```python
+from shardyfusion import AsyncShardedReader, TokenBucket
+
+limiter = TokenBucket(rate=1000.0)
+
+reader = await AsyncShardedReader.open(
+    s3_prefix="s3://bucket/prefix",
+    local_root="/tmp/reader",
+    rate_limiter=limiter,
+)
+
+value = await reader.get(42)  # uses asyncio.sleep if throttled
+```
+
+!!! note
+    The rate limiter uses `try_acquire()` (pure arithmetic, guaranteed non-blocking) paired with `asyncio.sleep` for the wait — no `asyncio.to_thread()` delegation required.
+
 ## Metrics
 
 Pass a `MetricsCollector` to observe reader lifecycle events:

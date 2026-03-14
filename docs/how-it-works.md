@@ -86,6 +86,55 @@ Entrypoint: `shardyfusion.writer.python.write_sharded`
   - then lowest `task_attempt_id`,
   - then stable tie-break on URL.
 
+## Manifest Lifecycle
+
+Every write ends with a two-phase publish. This guarantees that the manifest payload exists before the current pointer references it — readers never dereference a dangling pointer.
+
+```mermaid
+sequenceDiagram
+    participant W as Writer
+    participant S3 as S3 / ManifestStore
+    participant R as Reader
+
+    W->>S3: 1. PUT manifest payload
+    Note over S3: manifests/{timestamp}_run_id={id}/manifest
+    W->>S3: 2. PUT _CURRENT pointer
+    Note over S3: _CURRENT → manifest ref
+
+    R->>S3: GET _CURRENT
+    S3-->>R: ManifestRef (ref, run_id, published_at)
+    R->>S3: GET manifest by ref
+    S3-->>R: ParsedManifest (required, shards, custom)
+```
+
+### Manifest Format
+
+The manifest is a JSON object with three top-level keys:
+
+- **`required`** — library-owned build metadata (`RequiredBuildMeta`): run_id, num_dbs, s3_prefix, sharding strategy, key_encoding, etc.
+- **`shards`** — list of winner shard metadata (`RequiredShardMeta`): db_id, db_url, row_count, min/max key, checkpoint_id
+- **`custom`** — user-defined fields passed via `ManifestOptions.custom_manifest_fields`
+
+### CURRENT Pointer Format
+
+A small JSON object pointing to the current manifest:
+
+```json
+{
+  "manifest_ref": "s3://bucket/prefix/manifests/2026-03-14T10:30:00.000000Z_run_id=abc123/manifest",
+  "manifest_content_type": "application/json",
+  "run_id": "abc123",
+  "updated_at": "2026-03-14T10:30:01Z",
+  "format_version": 1
+}
+```
+
+### ManifestRef
+
+`ManifestRef` is the backend-agnostic handle that abstracts away whether the manifest lives in S3 or a database. Returned by `load_current()` and `list_manifests()`, it carries `ref` (the backend-specific reference), `run_id`, and `published_at`.
+
+See [Manifest Stores](manifest-stores.md) for details on S3, database, and in-memory backends.
+
 ## S3/Object Layout
 
 Assume:
@@ -101,13 +150,14 @@ Write artifacts:
   - `s3://bucket/prefix/_tmp/run_id=9f.../db=00000/attempt=00/...`
   - `s3://bucket/prefix/_tmp/run_id=9f.../db=00001/attempt=00/...`
   - ...
-- Manifest object:
-  - `s3://bucket/prefix/manifests/run_id=9f.../manifest`
+- Manifest object (timestamp-prefixed for chronological listing):
+  - `s3://bucket/prefix/manifests/2026-03-14T10:30:00.000000Z_run_id=9f.../manifest`
 - CURRENT pointer object (JSON):
   - `s3://bucket/prefix/_CURRENT`
 
 Notes:
 
+- Manifest S3 keys are timestamp-prefixed (e.g., `2026-03-14T10:30:00.000000Z_run_id=abc123/manifest`) so that `list_manifests()` can use S3 `CommonPrefixes` for chronological ordering.
 - Manifest stores winner shard URLs (`db_url`) and required routing/build metadata.
 - Non-winning attempt paths are not automatically cleaned by the library.
 
@@ -170,9 +220,7 @@ Extra runtime controls on `write_sharded` (vary by backend):
 
 ## Reader Side
 
-Primary class:
-
-- `ConcurrentShardedReader(...)`
+Primary classes: `ShardedReader`, `ConcurrentShardedReader`, `AsyncShardedReader`. See [Reader Side](reader.md) for full usage docs.
 
 ### Reader initialization flow
 
@@ -180,7 +228,7 @@ Primary class:
    - default mode: uses `S3ManifestStore`
    - custom mode: caller may provide `manifest_store`
 2. Load CURRENT pointer.
-3. Load manifest from CURRENT’s `manifest_ref`.
+3. Load manifest from CURRENT’s `manifest_ref`. If the manifest is malformed, [cold-start fallback](reader.md#cold-start-fallback) attempts previous manifests.
 4. Build `SnapshotRouter`.
 5. Open one SlateDB reader handle per shard (lock mode or pool mode).
 

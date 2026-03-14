@@ -83,6 +83,8 @@ uv run shardy route 42
 | `--config PATH` | Path to `reader.toml` (overrides `SHARDY_CONFIG` env) |
 | `--credentials PATH` | Path to `credentials.toml` (overrides `SHARDY_CREDENTIALS` env) |
 | `--s3-option KEY=VALUE` | Override S3 connection option (repeatable) |
+| `--ref REF` | Load a specific manifest by reference (mutually exclusive with `--offset`) |
+| `--offset N` | Load a manifest at position N in history — 0 is latest, 1 is previous, etc. (mutually exclusive with `--ref`) |
 | `--output-format FORMAT` | Output format: `json`, `jsonl` (default), `table`, `text` |
 | `--version` | Show version and exit |
 
@@ -96,6 +98,9 @@ uv run shardy route 42
 | `shards` | — | Show per-shard details (db_id, row_count, min/max key, URL) |
 | `route` | `KEY` | Show which shard a key routes to (without performing a lookup) |
 | `refresh` | — | Reload `_CURRENT` and manifest |
+| `history` | `[--limit N]` | List recent published manifests |
+| `rollback` | `--ref REF \| --run-id RUN_ID \| --offset N` | Roll back the current pointer to a previous manifest |
+| `schema` | `[--type manifest\|current-pointer]` | Print the JSON Schema for manifest or current-pointer formats |
 | `exec` | `--script FILE [--output FILE]` | Execute a YAML batch script |
 
 ## Key Coercion
@@ -175,14 +180,14 @@ When no subcommand is given, the CLI enters a `cmd.Cmd` REPL:
 $ uv run shardy --current-url s3://bucket/prefix/_CURRENT
 
 Loaded manifest run_id=2024-01-15T12:00:00Z  (4 shards, hash sharding)
-slate> get 42
+shardy> get 42
 {
   "op": "get",
   "key": "42",
   "found": true,
   "value": "aGVsbG8="
 }
-slate> info
+shardy> info
 {
   "op": "info",
   "run_id": "2024-01-15T12:00:00Z",
@@ -192,28 +197,112 @@ slate> info
   "row_count": 1000000,
   ...
 }
-slate> route 42
+shardy> route 42
 {
   "op": "route",
   "key": "42",
   "db_id": 2
 }
-slate> shards
+shardy> shards
 {
   "op": "shards",
   "shards": [...]
 }
-slate> refresh
+shardy> refresh
 {
   "op": "refresh",
   "changed": false
 }
-slate> quit
+shardy> quit
 ```
 
 Interactive mode defaults to `json` (pretty-printed with indentation) output instead of `jsonl`.
+
 REPL commands: `get KEY`, `multiget KEY [KEY ...]`, `info`, `shards`, `route KEY`,
-`refresh`, `quit`/`exit`/`Ctrl-D`.
+`refresh`, `history [LIMIT]`, `use (--offset N | --ref REF | --latest)`,
+`quit`/`exit`/`Ctrl-D`.
+
+### REPL-Only Commands
+
+#### `history [LIMIT]`
+
+List recent manifests within the REPL:
+
+```
+shardy> history
+shardy> history 5
+```
+
+#### `use`
+
+Switch to a different manifest without restarting the REPL:
+
+```
+shardy> use --offset 1       # switch to the previous manifest
+shardy> use --ref s3://...   # switch to a specific manifest ref
+shardy> use --latest         # switch back to the latest manifest
+```
+
+After `use`, all subsequent lookups operate against the selected manifest until `use --latest` or `refresh` is called.
+
+## Manifest History
+
+List recent published manifests to see the history of snapshot builds:
+
+```bash
+uv run shardy --current-url s3://bucket/prefix/_CURRENT history
+uv run shardy --current-url s3://bucket/prefix/_CURRENT history --limit 5
+```
+
+Output shows each manifest's reference, run ID, and publication timestamp in reverse chronological order.
+
+## Rollback
+
+Roll back the current pointer to a previous manifest. Exactly one targeting option is required:
+
+```bash
+# Roll back by manifest reference
+uv run shardy rollback --ref s3://bucket/prefix/manifests/2026-03-13.../manifest
+
+# Roll back by run ID
+uv run shardy rollback --run-id abc123
+
+# Roll back by offset (1 = previous, 2 = two versions ago)
+uv run shardy rollback --offset 1
+```
+
+Rollback calls `set_current()` on the manifest store, updating the `_CURRENT` pointer. The old manifest data remains intact — rollback only changes which manifest is "current".
+
+!!! warning
+    Rollback affects all readers loading from this `_CURRENT` pointer. Readers will pick up the rolled-back manifest on their next `refresh()`.
+
+## Schema
+
+Print the JSON Schema for manifest or current-pointer formats. Generated at runtime from the Pydantic models:
+
+```bash
+# Manifest schema (default)
+uv run shardy schema
+
+# Current-pointer schema
+uv run shardy schema --type current-pointer
+```
+
+The schemas are useful for validating external tools that produce or consume shardyfusion manifests.
+
+## Loading a Specific Manifest
+
+The `--ref` and `--offset` global options let you target a specific manifest for any subcommand:
+
+```bash
+# Look up a key against the previous manifest
+uv run shardy --offset 1 get 42
+
+# Inspect a specific manifest's metadata
+uv run shardy --ref s3://bucket/prefix/manifests/.../manifest info
+```
+
+These options are mutually exclusive. The reader loads the targeted manifest instead of following the `_CURRENT` pointer.
 
 ## Batch Scripts
 
