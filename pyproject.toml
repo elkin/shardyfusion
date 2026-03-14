@@ -55,6 +55,8 @@ cli = [
   "click>=8.0",
   "pyyaml>=6.0",
 ]
+metrics-prometheus = ["prometheus-client>=0.20"]
+metrics-otel = ["opentelemetry-api>=1.28"]
 all = [
   "pyspark>=3.3",
   "dask[dataframe]>=2024.1; python_version<'3.14'",
@@ -131,7 +133,7 @@ ignore = [
   "E501",
   "UP042",
 ]
-per-file-ignores = { "shardyfusion/__init__.py" = ["F401"], "shardyfusion/writer/spark/__init__.py" = ["F401"], "shardyfusion/writer/python/__init__.py" = ["F401"], "shardyfusion/writer/dask/__init__.py" = ["F401"], "shardyfusion/writer/ray/__init__.py" = ["F401"], "shardyfusion/reader/__init__.py" = ["F401"] }
+per-file-ignores = { "shardyfusion/__init__.py" = ["F401"], "shardyfusion/writer/spark/__init__.py" = ["F401"], "shardyfusion/writer/python/__init__.py" = ["F401"], "shardyfusion/writer/dask/__init__.py" = ["F401"], "shardyfusion/writer/ray/__init__.py" = ["F401"], "shardyfusion/reader/__init__.py" = ["F401"], "shardyfusion/metrics/__init__.py" = ["F401"] }
 
 [tool.ruff.format]
 quote-style = "double"

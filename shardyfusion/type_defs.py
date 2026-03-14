@@ -64,3 +64,48 @@ class S3ClientConfig(TypedDict, total=False):
     connect_timeout: int  # seconds
     read_timeout: int  # seconds
     max_attempts: int  # total attempts (initial + retries)
+
+
+# ---------------------------------------------------------------------------
+# Tracing Protocols (Layer 0 — no opentelemetry import)
+# ---------------------------------------------------------------------------
+
+from dataclasses import dataclass  # noqa: E402
+from typing import Any  # noqa: E402
+
+
+class Span(Protocol):
+    """Minimal span interface satisfied by OTel's ``opentelemetry.trace.Span``."""
+
+    def set_attribute(self, key: str, value: Any) -> None: ...
+    def set_status(self, status: Any, description: str | None = None) -> None: ...
+    def record_exception(self, exception: BaseException) -> None: ...
+    def __enter__(self) -> "Span": ...
+    def __exit__(self, *args: object) -> None: ...
+
+
+class Tracer(Protocol):
+    """Minimal tracer interface satisfied by OTel's ``opentelemetry.trace.Tracer``.
+
+    Users who don't install the ``metrics-otel`` extra simply don't pass a
+    tracer — zero overhead, zero imports.
+    """
+
+    def start_as_current_span(self, name: str, **kwargs: Any) -> Span: ...
+
+
+# ---------------------------------------------------------------------------
+# Retry configuration
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True, frozen=True)
+class RetryConfig:
+    """Configurable retry parameters for S3 operations.
+
+    Default values preserve current hardcoded behavior.
+    """
+
+    max_retries: int = 3
+    initial_backoff_s: float = 1.0
+    backoff_multiplier: float = 2.0
