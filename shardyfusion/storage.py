@@ -1,15 +1,18 @@
 """S3 small-object helpers used by the default publisher."""
 
+from __future__ import annotations
+
 import os
 import time
 from collections.abc import Callable, Mapping
 from typing import Any, TypedDict
 from urllib.parse import urlparse
 
-from .errors import PublishManifestError
+from ._circuit_breaker import CircuitBreaker
+from .errors import PublishManifestError, S3TransientError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
 from .metrics import MetricEvent, MetricsCollector
-from .type_defs import S3ClientConfig
+from .type_defs import RetryConfig, S3ClientConfig
 
 _logger = get_logger(__name__)
 
@@ -71,6 +74,8 @@ def _retry_s3_operation(
     operation_name: str,
     url: str,
     metrics_collector: MetricsCollector | None = None,
+    retry_config: RetryConfig | None = None,
+    circuit_breaker: CircuitBreaker | None = None,
 ):
     """Execute *operation* with exponential-backoff retries on transient S3 errors.
 
@@ -78,10 +83,27 @@ def _retry_s3_operation(
     exception after exhausting all retries.
     """
 
-    last_exc: BaseException | None = None
-    delay = _DEFAULT_INITIAL_BACKOFF_S
+    if circuit_breaker is not None and not circuit_breaker.allow_request():
+        raise S3TransientError(f"Circuit breaker is open for {operation_name} on {url}")
 
-    for attempt in range(_DEFAULT_MAX_RETRIES + 1):
+    max_retries = (
+        retry_config.max_retries if retry_config is not None else _DEFAULT_MAX_RETRIES
+    )
+    initial_backoff = (
+        retry_config.initial_backoff_s
+        if retry_config is not None
+        else _DEFAULT_INITIAL_BACKOFF_S
+    )
+    backoff_multiplier = (
+        retry_config.backoff_multiplier
+        if retry_config is not None
+        else _DEFAULT_BACKOFF_MULTIPLIER
+    )
+
+    last_exc: BaseException | None = None
+    delay = initial_backoff
+
+    for attempt in range(max_retries + 1):
         try:
             result = operation()
             if attempt > 0:
@@ -92,10 +114,12 @@ def _retry_s3_operation(
                     url=url,
                     attempts=attempt + 1,
                 )
+            if circuit_breaker is not None:
+                circuit_breaker.record_success()
             return result
         except Exception as exc:
             last_exc = exc
-            if not _is_transient_s3_error(exc) or attempt == _DEFAULT_MAX_RETRIES:
+            if not _is_transient_s3_error(exc) or attempt == max_retries:
                 if attempt > 0:
                     log_failure(
                         "s3_operation_failed_after_retries",
@@ -113,6 +137,8 @@ def _retry_s3_operation(
                                 "attempts": attempt + 1,
                             },
                         )
+                if circuit_breaker is not None:
+                    circuit_breaker.record_failure()
                 raise
 
             log_failure(
@@ -123,7 +149,7 @@ def _retry_s3_operation(
                 operation=operation_name,
                 url=url,
                 attempt=attempt + 1,
-                max_retries=_DEFAULT_MAX_RETRIES,
+                max_retries=max_retries,
                 retry_delay_s=delay,
             )
             if metrics_collector is not None:
@@ -131,12 +157,12 @@ def _retry_s3_operation(
                     MetricEvent.S3_RETRY,
                     {
                         "attempt": attempt + 1,
-                        "max_retries": _DEFAULT_MAX_RETRIES,
+                        "max_retries": max_retries,
                         "delay_s": delay,
                     },
                 )
             time.sleep(delay)
-            delay *= _DEFAULT_BACKOFF_MULTIPLIER
+            delay *= backoff_multiplier
 
     # Unreachable, but makes the type checker happy.
     raise last_exc  # type: ignore[misc]
@@ -281,6 +307,8 @@ def put_bytes(
     *,
     s3_client: Any = None,
     metrics_collector: MetricsCollector | None = None,
+    retry_config: RetryConfig | None = None,
+    circuit_breaker: CircuitBreaker | None = None,
 ) -> None:
     """PUT bytes to S3 URL with automatic retry on transient S3 errors."""
 
@@ -303,6 +331,8 @@ def put_bytes(
         operation_name="put_object",
         url=url,
         metrics_collector=metrics_collector,
+        retry_config=retry_config,
+        circuit_breaker=circuit_breaker,
     )
 
 
@@ -311,6 +341,8 @@ def get_bytes(
     *,
     s3_client: Any = None,
     metrics_collector: MetricsCollector | None = None,
+    retry_config: RetryConfig | None = None,
+    circuit_breaker: CircuitBreaker | None = None,
 ) -> bytes:
     """Read object bytes from S3 URL with automatic retry on transient errors."""
 
@@ -326,6 +358,8 @@ def get_bytes(
         operation_name="get_object",
         url=url,
         metrics_collector=metrics_collector,
+        retry_config=retry_config,
+        circuit_breaker=circuit_breaker,
     )
 
 
@@ -334,6 +368,8 @@ def try_get_bytes(
     *,
     s3_client: Any = None,
     metrics_collector: MetricsCollector | None = None,
+    retry_config: RetryConfig | None = None,
+    circuit_breaker: CircuitBreaker | None = None,
 ) -> bytes | None:
     """Read object bytes and return None when object is not found.
 
@@ -361,4 +397,6 @@ def try_get_bytes(
         operation_name="try_get_object",
         url=url,
         metrics_collector=metrics_collector,
+        retry_config=retry_config,
+        circuit_breaker=circuit_breaker,
     )
