@@ -136,148 +136,147 @@ def write_sharded(
         PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
     """
 
+    from shardyfusion.logging import LogContext
+
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
 
     mc = config.metrics_collector
 
-    log_event(
-        "write_started",
-        logger=_logger,
-        run_id=run_id,
-        num_dbs=config.num_dbs,
-        s3_prefix=config.s3_prefix,
-        strategy=config.sharding.strategy,
-        key_encoding=config.key_encoding,
-        writer_type="dask",
-    )
-    if mc is not None:
-        mc.emit(MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
+    with LogContext(run_id=run_id):
+        log_event(
+            "write_started",
+            logger=_logger,
+            num_dbs=config.num_dbs,
+            s3_prefix=config.s3_prefix,
+            strategy=config.sharding.strategy,
+            key_encoding=config.key_encoding,
+            writer_type="dask",
+        )
+        if mc is not None:
+            mc.emit(MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
 
-    # --- Phase 1: Sharding ---
-    shard_started = time.perf_counter()
-    resolved_sharding = _validate_and_resolve_sharding(config, ddf, key_col)
+        # --- Phase 1: Sharding ---
+        shard_started = time.perf_counter()
+        resolved_sharding = _validate_and_resolve_sharding(config, ddf, key_col)
 
-    ddf_with_id = add_db_id_column(
-        ddf,
-        key_col=key_col,
-        num_dbs=config.num_dbs,
-        sharding=resolved_sharding,
-        key_encoding=config.key_encoding,
-    )
-
-    if verify_routing:
-        _verify_routing_agreement(
-            ddf_with_id,
+        ddf_with_id = add_db_id_column(
+            ddf,
             key_col=key_col,
             num_dbs=config.num_dbs,
-            resolved_sharding=resolved_sharding,
+            sharding=resolved_sharding,
             key_encoding=config.key_encoding,
         )
 
-    shard_duration_ms = int((time.perf_counter() - shard_started) * 1000)
+        if verify_routing:
+            _verify_routing_agreement(
+                ddf_with_id,
+                key_col=key_col,
+                num_dbs=config.num_dbs,
+                resolved_sharding=resolved_sharding,
+                key_encoding=config.key_encoding,
+            )
 
-    log_event(
-        "sharding_completed",
-        logger=_logger,
-        run_id=run_id,
-        duration_ms=shard_duration_ms,
-    )
-    if mc is not None:
-        mc.emit(
-            MetricEvent.SHARDING_COMPLETED,
-            {
-                "elapsed_ms": int((time.perf_counter() - started) * 1000),
-                "duration_ms": shard_duration_ms,
-            },
+        shard_duration_ms = int((time.perf_counter() - shard_started) * 1000)
+
+        log_event(
+            "sharding_completed",
+            logger=_logger,
+            duration_ms=shard_duration_ms,
+        )
+        if mc is not None:
+            mc.emit(
+                MetricEvent.SHARDING_COMPLETED,
+                {
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                    "duration_ms": shard_duration_ms,
+                },
+            )
+
+        # --- Phase 2: Write ---
+        runtime = _build_partition_write_runtime(
+            config=config,
+            run_id=run_id,
+            key_col=key_col,
+            value_spec=value_spec,
+            max_writes_per_second=max_writes_per_second,
+            max_write_bytes_per_second=max_write_bytes_per_second,
+            sort_within_partitions=sort_within_partitions,
+            started=started,
         )
 
-    # --- Phase 2: Write ---
-    runtime = _build_partition_write_runtime(
-        config=config,
-        run_id=run_id,
-        key_col=key_col,
-        value_spec=value_spec,
-        max_writes_per_second=max_writes_per_second,
-        max_write_bytes_per_second=max_write_bytes_per_second,
-        sort_within_partitions=sort_within_partitions,
-        started=started,
-    )
+        write_started = time.perf_counter()
+        ddf_shuffled = ddf_with_id.shuffle(on=DB_ID_COL, npartitions=config.num_dbs)
+        ddf_results = ddf_shuffled.map_partitions(
+            _write_partition,
+            runtime=runtime,
+            meta=_RESULT_META,
+        )
+        results_pdf = ddf_results.compute()
 
-    write_started = time.perf_counter()
-    ddf_shuffled = ddf_with_id.shuffle(on=DB_ID_COL, npartitions=config.num_dbs)
-    ddf_results = ddf_shuffled.map_partitions(
-        _write_partition,
-        runtime=runtime,
-        meta=_RESULT_META,
-    )
-    results_pdf = ddf_results.compute()
+        attempts = _results_pdf_to_attempts(results_pdf)
+        attempts = _fill_empty_shards(attempts, config, run_id)
+        write_duration_ms = int((time.perf_counter() - write_started) * 1000)
 
-    attempts = _results_pdf_to_attempts(results_pdf)
-    attempts = _fill_empty_shards(attempts, config, run_id)
-    write_duration_ms = int((time.perf_counter() - write_started) * 1000)
+        rows_written = sum(a.row_count for a in attempts)
+        log_event(
+            "shard_writes_completed",
+            logger=_logger,
+            num_winners=len(attempts),
+            rows_written=rows_written,
+            duration_ms=write_duration_ms,
+        )
+        if mc is not None:
+            mc.emit(
+                MetricEvent.SHARD_WRITES_COMPLETED,
+                {
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                    "duration_ms": write_duration_ms,
+                    "rows_written": rows_written,
+                },
+            )
 
-    rows_written = sum(a.row_count for a in attempts)
-    log_event(
-        "shard_writes_completed",
-        logger=_logger,
-        run_id=run_id,
-        num_winners=len(attempts),
-        rows_written=rows_written,
-        duration_ms=write_duration_ms,
-    )
-    if mc is not None:
-        mc.emit(
-            MetricEvent.SHARD_WRITES_COMPLETED,
-            {
-                "elapsed_ms": int((time.perf_counter() - started) * 1000),
-                "duration_ms": write_duration_ms,
-                "rows_written": rows_written,
-            },
+        # --- Phase 3: Publish ---
+        winners = select_winners(attempts, num_dbs=config.num_dbs)
+
+        manifest_started = time.perf_counter()
+        manifest_ref = publish_to_store(
+            config=config,
+            run_id=run_id,
+            resolved_sharding=resolved_sharding,
+            winners=winners,
+            key_col=key_col,
+            started=started,
+        )
+        manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
+
+        result = assemble_build_result(
+            run_id=run_id,
+            winners=winners,
+            manifest_ref=manifest_ref,
+            attempts=attempts,
+            shard_duration_ms=shard_duration_ms,
+            write_duration_ms=write_duration_ms,
+            manifest_duration_ms=manifest_duration_ms,
+            started=started,
         )
 
-    # --- Phase 3: Publish ---
-    winners = select_winners(attempts, num_dbs=config.num_dbs)
-
-    manifest_started = time.perf_counter()
-    manifest_ref = publish_to_store(
-        config=config,
-        run_id=run_id,
-        resolved_sharding=resolved_sharding,
-        winners=winners,
-        key_col=key_col,
-        started=started,
-    )
-    manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
-
-    result = assemble_build_result(
-        run_id=run_id,
-        winners=winners,
-        manifest_ref=manifest_ref,
-        attempts=attempts,
-        shard_duration_ms=shard_duration_ms,
-        write_duration_ms=write_duration_ms,
-        manifest_duration_ms=manifest_duration_ms,
-        started=started,
-    )
-
-    log_event(
-        "write_completed",
-        logger=_logger,
-        run_id=run_id,
-        total_ms=result.stats.durations.total_ms,
-        rows_written=result.stats.rows_written,
-    )
-    if mc is not None:
-        mc.emit(
-            MetricEvent.WRITE_COMPLETED,
-            {
-                "elapsed_ms": int((time.perf_counter() - started) * 1000),
-                "rows_written": result.stats.rows_written,
-            },
+        log_event(
+            "write_completed",
+            logger=_logger,
+            total_ms=result.stats.durations.total_ms,
+            rows_written=result.stats.rows_written,
         )
+        if mc is not None:
+            mc.emit(
+                MetricEvent.WRITE_COMPLETED,
+                {
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                    "rows_written": result.stats.rows_written,
+                },
+            )
 
-    return result
+        return result
 
 
 # ---------------------------------------------------------------------------

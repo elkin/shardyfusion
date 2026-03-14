@@ -83,109 +83,109 @@ def write_sharded(
         ShardyfusionError: If a worker process fails in parallel mode.
     """
 
+    from shardyfusion.logging import LogContext
+
     _validate_sharding(config)
     run_id = config.output.run_id or uuid4().hex
     started = time.perf_counter()
     mc = config.metrics_collector
 
-    log_event(
-        "write_started",
-        logger=_logger,
-        run_id=run_id,
-        num_dbs=config.num_dbs,
-        s3_prefix=config.s3_prefix,
-        strategy=config.sharding.strategy,
-        key_encoding=config.key_encoding,
-        writer_type="python",
-    )
-    if mc is not None:
-        mc.emit(MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
+    with LogContext(run_id=run_id):
+        log_event(
+            "write_started",
+            logger=_logger,
+            num_dbs=config.num_dbs,
+            s3_prefix=config.s3_prefix,
+            strategy=config.sharding.strategy,
+            key_encoding=config.key_encoding,
+            writer_type="python",
+        )
+        if mc is not None:
+            mc.emit(MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
 
-    factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory()
+        factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory()
 
-    if parallel:
-        attempts = _write_parallel(
-            records=records,
+        if parallel:
+            attempts = _write_parallel(
+                records=records,
+                config=config,
+                run_id=run_id,
+                factory=factory,
+                key_fn=key_fn,
+                value_fn=value_fn,
+                max_queue_size=max_queue_size,
+                max_writes_per_second=max_writes_per_second,
+                max_write_bytes_per_second=max_write_bytes_per_second,
+            )
+        else:
+            attempts = _write_single_process(
+                records=records,
+                config=config,
+                run_id=run_id,
+                factory=factory,
+                key_fn=key_fn,
+                value_fn=value_fn,
+                max_writes_per_second=max_writes_per_second,
+                max_write_bytes_per_second=max_write_bytes_per_second,
+            )
+
+        write_duration_ms = int((time.perf_counter() - started) * 1000)
+
+        rows_written = sum(a.row_count for a in attempts)
+        log_event(
+            "shard_writes_completed",
+            logger=_logger,
+            rows_written=rows_written,
+            duration_ms=write_duration_ms,
+        )
+        if mc is not None:
+            mc.emit(
+                MetricEvent.SHARD_WRITES_COMPLETED,
+                {
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                    "duration_ms": write_duration_ms,
+                    "rows_written": rows_written,
+                },
+            )
+
+        winners = select_winners(attempts, num_dbs=config.num_dbs)
+
+        manifest_started = time.perf_counter()
+        manifest_ref = publish_to_store(
             config=config,
             run_id=run_id,
-            factory=factory,
-            key_fn=key_fn,
-            value_fn=value_fn,
-            max_queue_size=max_queue_size,
-            max_writes_per_second=max_writes_per_second,
-            max_write_bytes_per_second=max_write_bytes_per_second,
+            resolved_sharding=config.sharding,
+            winners=winners,
+            key_col="_key",
+            started=started,
         )
-    else:
-        attempts = _write_single_process(
-            records=records,
-            config=config,
+        manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
+
+        result = assemble_build_result(
             run_id=run_id,
-            factory=factory,
-            key_fn=key_fn,
-            value_fn=value_fn,
-            max_writes_per_second=max_writes_per_second,
-            max_write_bytes_per_second=max_write_bytes_per_second,
+            winners=winners,
+            manifest_ref=manifest_ref,
+            attempts=attempts,
+            shard_duration_ms=0,
+            write_duration_ms=write_duration_ms,
+            manifest_duration_ms=manifest_duration_ms,
+            started=started,
         )
 
-    write_duration_ms = int((time.perf_counter() - started) * 1000)
-
-    rows_written = sum(a.row_count for a in attempts)
-    log_event(
-        "shard_writes_completed",
-        logger=_logger,
-        run_id=run_id,
-        rows_written=rows_written,
-        duration_ms=write_duration_ms,
-    )
-    if mc is not None:
-        mc.emit(
-            MetricEvent.SHARD_WRITES_COMPLETED,
-            {
-                "elapsed_ms": int((time.perf_counter() - started) * 1000),
-                "duration_ms": write_duration_ms,
-                "rows_written": rows_written,
-            },
+        log_event(
+            "write_completed",
+            logger=_logger,
+            total_ms=result.stats.durations.total_ms,
+            rows_written=result.stats.rows_written,
         )
-
-    winners = select_winners(attempts, num_dbs=config.num_dbs)
-
-    manifest_started = time.perf_counter()
-    manifest_ref = publish_to_store(
-        config=config,
-        run_id=run_id,
-        resolved_sharding=config.sharding,
-        winners=winners,
-        key_col="_key",
-        started=started,
-    )
-    manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
-
-    result = assemble_build_result(
-        run_id=run_id,
-        winners=winners,
-        manifest_ref=manifest_ref,
-        attempts=attempts,
-        shard_duration_ms=0,
-        write_duration_ms=write_duration_ms,
-        manifest_duration_ms=manifest_duration_ms,
-        started=started,
-    )
-
-    log_event(
-        "write_completed",
-        logger=_logger,
-        run_id=run_id,
-        total_ms=result.stats.durations.total_ms,
-        rows_written=result.stats.rows_written,
-    )
-    if mc is not None:
-        mc.emit(
-            MetricEvent.WRITE_COMPLETED,
-            {
-                "elapsed_ms": int((time.perf_counter() - started) * 1000),
-                "rows_written": result.stats.rows_written,
-            },
-        )
+        if mc is not None:
+            mc.emit(
+                MetricEvent.WRITE_COMPLETED,
+                {
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                    "rows_written": result.stats.rows_written,
+                },
+            )
 
     return result
 
