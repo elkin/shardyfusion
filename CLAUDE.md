@@ -64,13 +64,13 @@ The library is split into six independent paths that share config, manifest mode
 ### Module Dependency Graph
 
 ```
-Layer 0 — Core types & errors: errors.py, type_defs.py (incl. Tracer/Span/RetryConfig), sharding_types.py, ordering.py, logging.py (incl. LogContext/JsonFormatter), metrics/ (package: _events.py, _protocol.py, _payloads.py)
-Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py, _circuit_breaker.py
-Layer 2 — Storage, routing, manifest: storage.py (w/ RetryConfig + CircuitBreaker), manifest.py, routing.py, manifest_store.py, async_manifest_store.py, db_manifest_store.py
+Layer 0 — Core types & errors: errors.py, type_defs.py (incl. RetryConfig), sharding_types.py, ordering.py, logging.py (incl. LogContext/JsonFormatter), metrics/ (package: _events.py, _protocol.py)
+Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py
+Layer 2 — Storage, routing, manifest: storage.py (w/ RetryConfig), manifest.py, routing.py, manifest_store.py, async_manifest_store.py, db_manifest_store.py
 Layer 3 — Writer core: _writer_core.py (shared by all writers)
 Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/reader.py (w/ ReaderHealth), reader/async_reader.py, cli/app.py
 Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
-Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus extra), metrics/otel.py + metrics/tracing.py (metrics-otel extra)
+Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus extra), metrics/otel.py (metrics-otel extra)
 ```
 
 ### Write Pipeline
@@ -162,7 +162,37 @@ These are all Protocols, allowing user-provided implementations:
 
 ### Metrics & Observability
 
-`MetricsCollector` (Protocol in `metrics.py`) is an optional observer: set `WriteConfig.metrics_collector` or pass it to the reader. The `MetricEvent` enum defines events across writer lifecycle (e.g., `WRITE_STARTED`, `SHARD_WRITE_COMPLETED`), reader lifecycle (`READER_GET`, `READER_REFRESHED`), and infrastructure (`S3_RETRY`, `RATE_LIMITER_THROTTLED`). Collectors receive `(event, **kwargs)` and should silently ignore unknown events for forward compatibility.
+`MetricsCollector` (Protocol in `metrics/_protocol.py`) is an optional observer: set `WriteConfig.metrics_collector` or pass it to the reader. The `MetricEvent` enum (in `metrics/_events.py`) defines events across writer lifecycle (e.g., `WRITE_STARTED`, `SHARD_WRITE_COMPLETED`), reader lifecycle (`READER_GET`, `READER_REFRESHED`), and infrastructure (`S3_RETRY`, `RATE_LIMITER_THROTTLED`). Collectors receive `(event, payload_dict)` and should silently ignore unknown events for forward compatibility.
+
+The `metrics/` package (`_events.py`, `_protocol.py`, `_payloads.py`) is always available. Optional publishers require extras:
+- **`PrometheusCollector`** (`metrics/prometheus.py`): requires `metrics-prometheus` extra. Uses isolated `CollectorRegistry` for test safety.
+- **`OtelCollector`** (`metrics/otel.py`): requires `metrics-otel` extra. Accepts optional `meter_provider` for test isolation.
+
+
+### Rate Limiting
+
+Token-bucket rate limiter in `_rate_limiter.py`. `RateLimiter` Protocol + `TokenBucket` implementation.
+- **ops/sec**: `max_writes_per_second` on `WriteConfig` — limits write_batch calls.
+- **bytes/sec**: `max_write_bytes_per_second` on `WriteConfig` — limits payload bytes. Each uses an independent `TokenBucket` instance.
+- **Reader-side**: readers accept `rate_limiter` parameter for reads/sec limiting. `AsyncShardedReader` uses `acquire_async()` (asyncio-safe).
+- **`try_acquire()`**: non-blocking, pure arithmetic — safe for async code without `to_thread()`.
+- **`acquire_async()`**: async version using `asyncio.sleep` — safe for event loops.
+
+### Logging
+
+Structured logging in `logging.py`:
+- **`get_logger(name)`**: returns a logger in the `shardyfusion.*` hierarchy.
+- **`log_event()` / `log_failure()`**: emit structured log lines with `extra={"slatedb": fields}`.
+- **`LogContext`**: context manager that binds fields to all log calls within its scope (via `contextvars`). Nesting supported.
+- **`JsonFormatter`**: formats log records as single-line JSON with `timestamp`, `level`, `logger`, `event`, plus slatedb fields.
+- **`configure_logging()`**: convenience to set handler/level on the `shardyfusion` logger hierarchy.
+
+### Reader Health
+
+`ReaderHealth` dataclass (in `reader/reader.py`) returned by `reader.health()`:
+- `status` (`"healthy"`, `"degraded"`, `"unhealthy"`), `manifest_ref`, `manifest_age_seconds`, `num_shards`, `is_closed`.
+
+
 
 ### Key Encodings
 
@@ -204,7 +234,7 @@ All errors inherit from `ShardyfusionError` with `retryable: bool`. Non-retryabl
 
 ## Public API Summary
 
-Core types exported from `shardyfusion.__init__` (always available, no optional extras required). See `__init__.py` for the full list. Reader types include `ShardedReader`, `ConcurrentShardedReader`, `ShardReaderHandle`, `ShardDetail`, `SnapshotInfo`, `SlateDbReaderFactory`. Async reader types include `AsyncShardedReader`, `AsyncShardReaderHandle`, `AsyncSlateDbReaderFactory`, `AsyncShardReader`, `AsyncShardReaderFactory`, `AsyncManifestStore`, `AsyncS3ManifestStore`.
+Core types exported from `shardyfusion.__init__` (always available, no optional extras required). See `__init__.py` for the full list. Reader types include `ShardedReader`, `ConcurrentShardedReader`, `ShardReaderHandle`, `ShardDetail`, `SnapshotInfo`, `SlateDbReaderFactory`, `ReaderHealth`. Async reader types include `AsyncShardedReader`, `AsyncShardReaderHandle`, `AsyncSlateDbReaderFactory`, `AsyncShardReader`, `AsyncShardReaderFactory`, `AsyncManifestStore`, `AsyncS3ManifestStore`. Rate limiting: `AcquireResult`, `RateLimiter`, `TokenBucket`. Retry: `RetryConfig`. Logging: `LogContext`, `JsonFormatter`, `configure_logging`. All are in `__all__`.
 
 Writer functions are imported from subpackages (not re-exported at top level):
 - **Spark:** `from shardyfusion.writer.spark import write_sharded, write_single_db, DataFrameCacheContext, SparkConfOverrideContext`
@@ -214,7 +244,8 @@ Writer functions are imported from subpackages (not re-exported at top level):
 
 ## Testing Notes
 
-- **`tests/unit/`** — fast, no Spark; use pytest-xdist (`-n 2`). Areas: `shared/`, `read/`, `writer/` (+ `writer/spark/`, `writer/python/`, `writer/dask/`, `writer/ray/`), `cli/`
+- **`tests/unit/`** — fast, no Spark; use pytest-xdist (`-n 2`). Areas: `shared/`, `read/`, `writer/` (+ `writer/spark/`, `writer/python/`, `writer/dask/`, `writer/ray/`), `metrics/`, `cli/`
+- **`tests/unit/metrics/`** — `PrometheusCollector` and `OtelCollector` tests. Run via dedicated tox envs (`prometheus-unit`, `otel-unit`) that install the `metrics-prometheus`/`metrics-otel` extras. OTel tests also need `opentelemetry-sdk` (provided as tox dep). These are **not** in `tests/unit/shared/` to avoid collection in envs without the extras.
 - **`tests/integration/`** — S3 via `moto`; Spark writer tests require Spark + Java
 - **`tests/e2e/`** — Garage S3 via compose; `just d-e2e`
 - **`tests/helpers/`** — `s3_test_scenarios.py` (shared scenarios for moto/Garage), `tracking.py` (test doubles: `TrackingAdapter`, `TrackingFactory`, `RecordingTokenBucket`, `InMemoryPublisher`)
@@ -245,6 +276,9 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **Ray writer rejects `CUSTOM_EXPR` sharding**: Same as Dask — only `HASH` and `RANGE` are supported.
 - **Ray writer temporarily sets `DataContext.shuffle_strategy`**: During repartition, the Ray writer sets `DataContext.shuffle_strategy = "HASH_SHUFFLE"` and restores the previous value in a `try/finally` block.
 - **Ray tests need `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0`**: Ray ≥ 2.47 auto-detects `uv run` in the process tree and overrides worker Python to create fresh venvs. The env var is set in `tox.ini` for raywriter envs. For direct pytest, either set the var or use `uv run --extra writer-ray pytest ...`.
+- **`acquire_async()` uses `asyncio.sleep`**: Safe for event loops — never calls `time.sleep`. The sync `acquire()` uses `time.sleep` and must not be called from async code.
+- **`try_acquire()` is pure arithmetic**: Guaranteed non-blocking (replenish + compare + deduct). Safe to call from async code directly without `to_thread()`.
+- **`RetryConfig` is S3-specific**: Lives on `S3ManifestStore` (and `AsyncS3ManifestStore`), not on reader/writer constructors. Controls exponential backoff for transient S3 errors.
 
 ## Environment Notes
 
