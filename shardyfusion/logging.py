@@ -13,12 +13,6 @@ _log_context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
     "shardyfusion_log_context",
 )
 
-_SEVERITY_TO_LOG_LEVEL: dict[str, int] = {
-    "WARNING": logging.WARNING,
-    "ERROR": logging.ERROR,
-    "FATAL": logging.CRITICAL,
-}
-
 
 class FailureSeverity(str, Enum):
     """Severity classification for operational failures.
