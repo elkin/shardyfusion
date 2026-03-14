@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from unittest.mock import patch
 
+import pytest
+
 from shardyfusion._rate_limiter import AcquireResult, TokenBucket
 
 
@@ -367,3 +369,93 @@ def test_try_acquire_no_metrics_on_success() -> None:
 
     denied_events = [e for e in events if e[0] == MetricEvent.RATE_LIMITER_DENIED]
     assert len(denied_events) == 0
+
+
+# ---------------------------------------------------------------------------
+# acquire_async tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_acquire_async_immediate_when_full() -> None:
+    """Full bucket acquire_async returns without sleeping."""
+
+    clock = [0.0]
+
+    def fake_monotonic() -> float:
+        return clock[0]
+
+    sleeps: list[float] = []
+
+    async def fake_async_sleep(secs: float) -> None:
+        sleeps.append(secs)
+        clock[0] += secs
+
+    with (
+        patch("shardyfusion._rate_limiter.time.monotonic", side_effect=fake_monotonic),
+        patch("asyncio.sleep", side_effect=fake_async_sleep),
+    ):
+        bucket = TokenBucket(rate=10.0)
+        await bucket.acquire_async(1)
+
+    assert len(sleeps) == 0
+
+
+@pytest.mark.asyncio
+async def test_acquire_async_sleeps_on_deficit() -> None:
+    """Drained bucket acquire_async sleeps via asyncio.sleep."""
+
+    clock = [0.0]
+
+    def fake_monotonic() -> float:
+        return clock[0]
+
+    sleeps: list[float] = []
+
+    async def fake_async_sleep(secs: float) -> None:
+        sleeps.append(secs)
+        clock[0] += secs
+
+    with (
+        patch("shardyfusion._rate_limiter.time.monotonic", side_effect=fake_monotonic),
+        patch("asyncio.sleep", side_effect=fake_async_sleep),
+    ):
+        bucket = TokenBucket(rate=5.0)
+
+        # Drain
+        for _ in range(5):
+            bucket.try_acquire(1)
+
+        # Should trigger async sleep
+        await bucket.acquire_async(1)
+
+    assert len(sleeps) >= 1
+    assert sleeps[0] > 0
+
+
+@pytest.mark.asyncio
+async def test_acquire_async_never_calls_time_sleep() -> None:
+    """acquire_async must never use time.sleep — only asyncio.sleep."""
+
+    clock = [0.0]
+
+    def fake_monotonic() -> float:
+        return clock[0]
+
+    async def fake_async_sleep(secs: float) -> None:
+        clock[0] += secs
+
+    with (
+        patch("shardyfusion._rate_limiter.time.monotonic", side_effect=fake_monotonic),
+        patch("shardyfusion._rate_limiter.time.sleep") as mock_sync_sleep,
+        patch("asyncio.sleep", side_effect=fake_async_sleep),
+    ):
+        bucket = TokenBucket(rate=5.0)
+
+        # Drain
+        for _ in range(5):
+            bucket.try_acquire(1)
+
+        await bucket.acquire_async(1)
+
+    mock_sync_sleep.assert_not_called()

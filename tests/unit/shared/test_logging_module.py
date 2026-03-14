@@ -2,6 +2,8 @@
 
 import logging
 
+import pytest
+
 from shardyfusion.logging import (
     FailureSeverity,
     get_logger,
@@ -131,6 +133,124 @@ class TestLogFailure:
         with caplog.at_level(logging.CRITICAL, logger="shardyfusion"):
             log_failure("should_skip", severity=FailureSeverity.ERROR)
         assert len(caplog.records) == 0
+
+
+class TestLogContext:
+    def test_fields_merged_into_log_event(self, caplog):
+        from shardyfusion.logging import LogContext
+
+        with caplog.at_level(logging.INFO, logger="shardyfusion"):
+            with LogContext(run_id="abc", writer_type="spark"):
+                log_event("test_event", shard=0)
+        record = caplog.records[0]
+        assert record.slatedb == {"run_id": "abc", "writer_type": "spark", "shard": 0}  # type: ignore[attr-defined]
+
+    def test_nesting_inner_overrides_outer(self, caplog):
+        from shardyfusion.logging import LogContext
+
+        with caplog.at_level(logging.INFO, logger="shardyfusion"):
+            with LogContext(run_id="outer", mode="batch"):
+                with LogContext(run_id="inner"):
+                    log_event("nested")
+        record = caplog.records[0]
+        # Inner overrides 'run_id', outer 'mode' is preserved
+        assert record.slatedb["run_id"] == "inner"  # type: ignore[attr-defined]
+        assert record.slatedb["mode"] == "batch"  # type: ignore[attr-defined]
+
+    def test_outer_restored_after_exit(self, caplog):
+        from shardyfusion.logging import LogContext
+
+        with caplog.at_level(logging.INFO, logger="shardyfusion"):
+            with LogContext(run_id="outer"):
+                with LogContext(run_id="inner"):
+                    pass
+                log_event("after_inner")
+        record = caplog.records[0]
+        assert record.slatedb["run_id"] == "outer"  # type: ignore[attr-defined]
+
+
+class TestJsonFormatter:
+    def test_produces_valid_json(self):
+        import json
+
+        from shardyfusion.logging import JsonFormatter
+
+        formatter = JsonFormatter()
+        record = logging.LogRecord(
+            name="shardyfusion.test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg="test_event",
+            args=(),
+            exc_info=None,
+        )
+        record.slatedb = {"run_id": "abc", "shard": 0}  # type: ignore[attr-defined]
+        output = formatter.format(record)
+        parsed = json.loads(output)
+
+        assert parsed["level"] == "INFO"
+        assert parsed["logger"] == "shardyfusion.test"
+        assert parsed["event"] == "test_event"
+        assert parsed["run_id"] == "abc"
+        assert parsed["shard"] == 0
+        assert "timestamp" in parsed
+
+    def test_no_slatedb_fields(self):
+        import json
+
+        from shardyfusion.logging import JsonFormatter
+
+        formatter = JsonFormatter()
+        record = logging.LogRecord(
+            name="shardyfusion.test",
+            level=logging.WARNING,
+            pathname="test.py",
+            lineno=1,
+            msg="bare_event",
+            args=(),
+            exc_info=None,
+        )
+        output = formatter.format(record)
+        parsed = json.loads(output)
+        assert parsed["event"] == "bare_event"
+        assert parsed["level"] == "WARNING"
+
+
+class TestConfigureLogging:
+    @pytest.fixture(autouse=True)
+    def _preserve_logger(self):
+        """Save and restore shardyfusion logger state around each test."""
+        logger = logging.getLogger("shardyfusion")
+        original_level = logger.level
+        original_handlers = list(logger.handlers)
+        yield
+        logger.handlers[:] = original_handlers
+        logger.setLevel(original_level)
+
+    def test_sets_handler_on_shardyfusion_logger(self):
+        import io
+
+        from shardyfusion.logging import configure_logging
+
+        stream = io.StringIO()
+        configure_logging(level=logging.DEBUG, stream=stream)
+
+        logger = logging.getLogger("shardyfusion")
+        assert logger.level == logging.DEBUG
+        assert len(logger.handlers) == 1
+        assert logger.handlers[0].stream is stream  # type: ignore[attr-defined]
+
+    def test_json_format_option(self):
+        import io
+
+        from shardyfusion.logging import JsonFormatter, configure_logging
+
+        stream = io.StringIO()
+        configure_logging(level=logging.INFO, json_format=True, stream=stream)
+
+        logger = logging.getLogger("shardyfusion")
+        assert isinstance(logger.handlers[0].formatter, JsonFormatter)
 
 
 def _is_descendant(child: logging.Logger, ancestor: logging.Logger) -> bool:

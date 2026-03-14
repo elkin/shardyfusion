@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from shardyfusion._rate_limiter import AcquireResult
 from shardyfusion.manifest import (
     CurrentPointer,
@@ -217,3 +219,107 @@ class TestConcurrentShardedReaderRateLimiter:
             reader.multi_get([42, 42, 42])
 
         assert limiter.acquire_calls == [3]
+
+
+# ---------------------------------------------------------------------------
+# AsyncShardedReader tests
+# ---------------------------------------------------------------------------
+
+
+class _AsyncRecordingLimiter:
+    """Records acquire_async() calls for assertion."""
+
+    def __init__(self) -> None:
+        self.acquire_async_calls: list[int] = []
+
+    def acquire(self, tokens: int = 1) -> None:
+        raise AssertionError("sync acquire should not be called in async reader")
+
+    def try_acquire(self, tokens: int = 1) -> AcquireResult:
+        return AcquireResult(acquired=True, deficit=0.0)
+
+    async def acquire_async(self, tokens: int = 1) -> None:
+        self.acquire_async_calls.append(tokens)
+
+
+@dataclass
+class _FakeAsyncReader:
+    store: dict[bytes, bytes]
+
+    async def get(self, key: bytes) -> bytes | None:
+        return self.store.get(key)
+
+    async def close(self) -> None:
+        return None
+
+
+class _AsyncStaticManifestStore:
+    def __init__(self, manifest: ParsedManifest) -> None:
+        self._manifest = manifest
+
+    async def load_current(self) -> CurrentPointer:
+        return CurrentPointer(
+            manifest_ref="mem://manifest/v1",
+            manifest_content_type="application/json",
+            run_id="run",
+            updated_at="2026-01-01T00:00:00+00:00",
+        )
+
+    async def load_manifest(self, ref: str) -> ParsedManifest:
+        return self._manifest
+
+
+def _make_async_factory(stores: dict[str, dict[bytes, bytes]]) -> Any:
+    async def factory(
+        *, db_url: str, local_dir: Path, checkpoint_id: str | None
+    ) -> Any:
+        return _FakeAsyncReader(stores[db_url])
+
+    return factory
+
+
+class TestAsyncShardedReaderRateLimiter:
+    @pytest.mark.asyncio
+    async def test_get_acquires_one_token(self, tmp_path: Path) -> None:
+        """get() calls acquire_async(1) before the read."""
+        from shardyfusion.reader import AsyncShardedReader
+
+        limiter = _AsyncRecordingLimiter()
+        stores = {"mem://db/0": {KEY_BYTES: b"value"}}
+
+        reader = await AsyncShardedReader.open(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=_AsyncStaticManifestStore(_manifest()),
+            reader_factory=_make_async_factory(stores),
+            rate_limiter=limiter,
+        )
+        try:
+            result = await reader.get(42)
+        finally:
+            await reader.close()
+
+        assert result == b"value"
+        assert limiter.acquire_async_calls == [1]
+
+    @pytest.mark.asyncio
+    async def test_multi_get_acquires_key_count(self, tmp_path: Path) -> None:
+        """multi_get calls acquire_async(len(keys))."""
+        from shardyfusion.reader import AsyncShardedReader
+
+        limiter = _AsyncRecordingLimiter()
+        stores = {"mem://db/0": {KEY_BYTES: b"value"}}
+
+        reader = await AsyncShardedReader.open(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=_AsyncStaticManifestStore(_manifest()),
+            reader_factory=_make_async_factory(stores),
+            rate_limiter=limiter,
+        )
+        try:
+            await reader.multi_get([42, 42, 42])
+        finally:
+            await reader.close()
+
+        assert limiter.acquire_async_calls == [3]
