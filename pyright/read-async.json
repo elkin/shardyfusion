@@ -1,15 +1,21 @@
 {
   "pythonVersion": "3.11",
   "typeCheckingMode": "standard",
-  "include": ["../shardyfusion"],
+  "include": [
+    "../shardyfusion"
+  ],
   "exclude": [
     "../shardyfusion/writer/spark",
     "../shardyfusion/writer/dask",
     "../shardyfusion/writer/ray",
     "../shardyfusion/writer/python",
-    "../shardyfusion/cli"
+    "../shardyfusion/cli",
+    "../shardyfusion/metrics/prometheus.py",
+    "../shardyfusion/metrics/otel.py"
   ],
-  "extraPaths": [".."],
+  "extraPaths": [
+    ".."
+  ],
   "reportArgumentType": "error",
   "reportMissingParameterType": "error",
   "reportUnsupportedDunderAll": false

@@ -66,6 +66,8 @@ all = [
   "aiobotocore>=2.12",
   "click>=8.0",
   "pyyaml>=6.0",
+  "prometheus-client>=0.20",
+  "opentelemetry-api>=1.28",
 ]
 test = [
   "pytest>=7.4",
