@@ -427,6 +427,7 @@ def _shard_worker(
             severity=FailureSeverity.ERROR,
             logger=_logger,
             error=exc,
+            run_id=run_id,
             db_id=db_id,
         )
         raise ShardyfusionError(f"Shard write failed for db_id={db_id}: {exc}") from exc

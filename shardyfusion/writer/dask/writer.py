@@ -459,6 +459,7 @@ def _write_one_shard(
     log_event(
         "shard_write_started",
         logger=_logger,
+        run_id=runtime.run_id,
         db_id=db_id,
         attempt=attempt,
         db_url=db_url,
@@ -552,6 +553,7 @@ def _write_one_shard(
             severity=FailureSeverity.ERROR,
             logger=_logger,
             error=exc,
+            run_id=runtime.run_id,
             db_id=db_id,
             attempt=attempt,
             db_url=db_url,
@@ -566,6 +568,7 @@ def _write_one_shard(
     log_event(
         "shard_write_completed",
         logger=_logger,
+        run_id=runtime.run_id,
         db_id=db_id,
         attempt=attempt,
         row_count=row_count,
