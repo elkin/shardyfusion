@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,7 @@ import pytest
 
 from shardyfusion.errors import ReaderStateError
 from shardyfusion.manifest import (
-    CurrentPointer,
+    ManifestRef,
     ManifestShardingSpec,
     ParsedManifest,
     RequiredBuildMeta,
@@ -55,14 +56,13 @@ class _VersionedManifestStore:
     ) -> str:
         raise NotImplementedError("publish not used in reader tests")
 
-    def load_current(self) -> CurrentPointer:
+    def load_current(self) -> ManifestRef:
         with self._lock:
             v = self._version
-        return CurrentPointer(
-            manifest_ref=f"s3://bucket/manifest-v{v}.json",
-            manifest_content_type="application/json",
+        return ManifestRef(
+            ref=f"s3://bucket/manifest-v{v}.json",
             run_id=f"run-v{v}",
-            updated_at="2026-01-01T00:00:00+00:00",
+            published_at=datetime.now(UTC),
         )
 
     def load_manifest(self, ref: str) -> ParsedManifest:
@@ -70,6 +70,12 @@ class _VersionedManifestStore:
             required_build=_build(num_dbs=2),
             shards=[_shard(0), _shard(1)],
         )
+
+    def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
+        return []
+
+    def set_current(self, ref: str) -> None:
+        pass
 
 
 def _build(num_dbs: int = 2) -> RequiredBuildMeta:
@@ -202,15 +208,14 @@ class _SteppingManifestStore:
     ) -> str:
         raise NotImplementedError
 
-    def load_current(self) -> CurrentPointer:
+    def load_current(self) -> ManifestRef:
         with self._lock:
             self._counter += 1
             v = self._counter
-        return CurrentPointer(
-            manifest_ref=f"s3://bucket/manifest-v{v}.json",
-            manifest_content_type="application/json",
+        return ManifestRef(
+            ref=f"s3://bucket/manifest-v{v}.json",
             run_id=f"run-v{v}",
-            updated_at="2026-01-01T00:00:00+00:00",
+            published_at=datetime.now(UTC),
         )
 
     def load_manifest(self, ref: str) -> ParsedManifest:
@@ -218,6 +223,12 @@ class _SteppingManifestStore:
             required_build=_build(),
             shards=[_shard(0), _shard(1)],
         )
+
+    def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
+        return []
+
+    def set_current(self, ref: str) -> None:
+        pass
 
 
 def test_concurrent_refresh_no_rollback() -> None:

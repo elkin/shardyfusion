@@ -45,5 +45,5 @@ def test_write_sharded_flow_with_in_memory_store(spark, tmp_path) -> None:
     # Verify CURRENT pointer
     current = store.load_current()
     assert current is not None
-    assert current.manifest_ref == result.manifest_ref
+    assert current.ref == result.manifest_ref
     assert current.run_id == result.run_id

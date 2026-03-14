@@ -16,6 +16,7 @@ from typing import Any, Literal, Self
 
 from shardyfusion._rate_limiter import RateLimiter
 from shardyfusion.errors import (
+    ManifestParseError,
     ReaderStateError,
     ShardyfusionError,
     SlateDbApiError,
@@ -26,7 +27,7 @@ from shardyfusion.logging import (
     log_event,
     log_failure,
 )
-from shardyfusion.manifest import ParsedManifest, RequiredShardMeta
+from shardyfusion.manifest import ManifestRef, ParsedManifest, RequiredShardMeta
 from shardyfusion.manifest_store import ManifestStore, S3ManifestStore
 from shardyfusion.metrics import MetricEvent, MetricsCollector
 from shardyfusion.routing import SnapshotRouter
@@ -302,12 +303,14 @@ class _BaseShardedReader:
         reader_factory: ShardReaderFactory | None = None,
         slate_env_file: str | None = None,
         max_workers: int | None = None,
+        max_fallback_attempts: int = 3,
         metrics_collector: MetricsCollector | None = None,
         rate_limiter: RateLimiter | None = None,
     ) -> None:
         self.s3_prefix = s3_prefix
         self.local_root = local_root
         self.max_workers = max_workers
+        self._max_fallback_attempts = max_fallback_attempts
         if max_workers is not None and (
             not isinstance(max_workers, int) or max_workers < 1
         ):
@@ -340,8 +343,8 @@ class _BaseShardedReader:
         else:
             self._executor = None
 
-    def _load_current(self) -> Any:
-        """Load CURRENT pointer, raising ReaderStateError if missing."""
+    def _load_current(self) -> ManifestRef:
+        """Load current manifest pointer, raising ReaderStateError if missing."""
         current = self._manifest_store.load_current()
         if current is None:
             log_failure(
@@ -405,6 +408,7 @@ class ShardedReader(_BaseShardedReader):
         reader_factory: ShardReaderFactory | None = None,
         slate_env_file: str | None = None,
         max_workers: int | None = None,
+        max_fallback_attempts: int = 3,
         metrics_collector: MetricsCollector | None = None,
         rate_limiter: RateLimiter | None = None,
     ) -> None:
@@ -416,6 +420,7 @@ class ShardedReader(_BaseShardedReader):
             reader_factory=reader_factory,
             slate_env_file=slate_env_file,
             max_workers=max_workers,
+            max_fallback_attempts=max_fallback_attempts,
             metrics_collector=metrics_collector,
             rate_limiter=rate_limiter,
         )
@@ -598,7 +603,7 @@ class ShardedReader(_BaseShardedReader):
             raise ReaderStateError("Reader is closed")
 
         current = self._load_current()
-        current_ref = current.manifest_ref
+        current_ref = current.ref
 
         if current_ref == self._state.manifest_ref:
             log_event(
@@ -609,7 +614,18 @@ class ShardedReader(_BaseShardedReader):
             self._emit(MetricEvent.READER_REFRESHED, {"changed": False})
             return False
 
-        manifest = self._manifest_store.load_manifest(current_ref)
+        try:
+            manifest = self._manifest_store.load_manifest(current_ref)
+        except ManifestParseError:
+            log_failure(
+                "reader_refresh_malformed_manifest",
+                severity=FailureSeverity.ERROR,
+                logger=_logger,
+                manifest_ref=current_ref,
+            )
+            self._emit(MetricEvent.READER_REFRESHED, {"changed": False})
+            return False
+
         new_state = self._build_simple_state(current_ref, manifest)
         old_state = self._state
         self._state = new_state
@@ -652,8 +668,47 @@ class ShardedReader(_BaseShardedReader):
 
     def _load_initial_state(self) -> _SimpleReaderState:
         current = self._load_current()
-        manifest = self._manifest_store.load_manifest(current.manifest_ref)
-        return self._build_simple_state(current.manifest_ref, manifest)
+        try:
+            manifest = self._manifest_store.load_manifest(current.ref)
+            return self._build_simple_state(current.ref, manifest)
+        except ManifestParseError:
+            if self._max_fallback_attempts == 0:
+                raise
+            return self._fallback_to_previous(failed_ref=current.ref)
+
+    def _fallback_to_previous(self, *, failed_ref: str) -> _SimpleReaderState:
+        """Walk backward through manifest history to find a valid manifest."""
+        log_failure(
+            "reader_cold_start_fallback",
+            severity=FailureSeverity.ERROR,
+            logger=_logger,
+            failed_ref=failed_ref,
+            max_attempts=self._max_fallback_attempts,
+        )
+        refs = self._manifest_store.list_manifests(
+            limit=self._max_fallback_attempts + 1
+        )
+        for ref in refs:
+            if ref.ref == failed_ref:
+                continue
+            try:
+                manifest = self._manifest_store.load_manifest(ref.ref)
+                log_event(
+                    "reader_fallback_succeeded",
+                    logger=_logger,
+                    fallback_ref=ref.ref,
+                    skipped_ref=failed_ref,
+                )
+                return self._build_simple_state(ref.ref, manifest)
+            except ManifestParseError:
+                log_failure(
+                    "reader_fallback_skip_malformed",
+                    severity=FailureSeverity.ERROR,
+                    logger=_logger,
+                    manifest_ref=ref.ref,
+                )
+                continue
+        raise ReaderStateError("No valid manifest found after fallback")
 
     def _build_simple_state(
         self, manifest_ref: str, manifest: ParsedManifest
@@ -695,6 +750,7 @@ class ConcurrentShardedReader(_BaseShardedReader):
         thread_safety: Literal["lock", "pool"] = "lock",
         pool_checkout_timeout: float = 30.0,
         max_workers: int | None = None,
+        max_fallback_attempts: int = 3,
         metrics_collector: MetricsCollector | None = None,
         rate_limiter: RateLimiter | None = None,
     ) -> None:
@@ -714,6 +770,7 @@ class ConcurrentShardedReader(_BaseShardedReader):
             reader_factory=reader_factory,
             slate_env_file=slate_env_file,
             max_workers=max_workers,
+            max_fallback_attempts=max_fallback_attempts,
             metrics_collector=metrics_collector,
             rate_limiter=rate_limiter,
         )
@@ -929,7 +986,7 @@ class ConcurrentShardedReader(_BaseShardedReader):
             )
             raise ReaderStateError("CURRENT pointer not found during refresh")
 
-        current_ref = current.manifest_ref
+        current_ref = current.ref
         with self._state_lock:
             if self._closed:
                 raise ReaderStateError("Reader is closed")
@@ -943,7 +1000,17 @@ class ConcurrentShardedReader(_BaseShardedReader):
                 self._emit(MetricEvent.READER_REFRESHED, {"changed": False})
                 return False
 
-        manifest = self._manifest_store.load_manifest(current_ref)
+        try:
+            manifest = self._manifest_store.load_manifest(current_ref)
+        except ManifestParseError:
+            log_failure(
+                "reader_refresh_malformed_manifest",
+                severity=FailureSeverity.ERROR,
+                logger=_logger,
+                manifest_ref=current_ref,
+            )
+            self._emit(MetricEvent.READER_REFRESHED, {"changed": False})
+            return False
         new_state = self._build_state(current_ref, manifest)
 
         old_state: _ReaderState
@@ -1007,8 +1074,47 @@ class ConcurrentShardedReader(_BaseShardedReader):
 
     def _load_initial_state(self) -> _ReaderState:
         current = self._load_current()
-        manifest = self._manifest_store.load_manifest(current.manifest_ref)
-        return self._build_state(current.manifest_ref, manifest)
+        try:
+            manifest = self._manifest_store.load_manifest(current.ref)
+            return self._build_state(current.ref, manifest)
+        except ManifestParseError:
+            if self._max_fallback_attempts == 0:
+                raise
+            return self._fallback_to_previous_concurrent(failed_ref=current.ref)
+
+    def _fallback_to_previous_concurrent(self, *, failed_ref: str) -> _ReaderState:
+        """Walk backward through manifest history to find a valid manifest."""
+        log_failure(
+            "reader_cold_start_fallback",
+            severity=FailureSeverity.ERROR,
+            logger=_logger,
+            failed_ref=failed_ref,
+            max_attempts=self._max_fallback_attempts,
+        )
+        refs = self._manifest_store.list_manifests(
+            limit=self._max_fallback_attempts + 1
+        )
+        for ref in refs:
+            if ref.ref == failed_ref:
+                continue
+            try:
+                manifest = self._manifest_store.load_manifest(ref.ref)
+                log_event(
+                    "reader_fallback_succeeded",
+                    logger=_logger,
+                    fallback_ref=ref.ref,
+                    skipped_ref=failed_ref,
+                )
+                return self._build_state(ref.ref, manifest)
+            except ManifestParseError:
+                log_failure(
+                    "reader_fallback_skip_malformed",
+                    severity=FailureSeverity.ERROR,
+                    logger=_logger,
+                    manifest_ref=ref.ref,
+                )
+                continue
+        raise ReaderStateError("No valid manifest found after fallback")
 
     def _build_state(self, manifest_ref: str, manifest: ParsedManifest) -> _ReaderState:
         router = SnapshotRouter(manifest.required_build, manifest.shards)

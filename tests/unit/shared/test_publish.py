@@ -71,7 +71,9 @@ def test_s3_manifest_store_builds_expected_urls(monkeypatch) -> None:
         custom={},
     )
 
-    assert manifest_ref == "s3://bucket/prefix/manifests/run_id=run123/manifest"
+    # Timestamp-prefixed path: manifests/{timestamp}_run_id=run123/manifest
+    assert "run_id=run123/manifest" in manifest_ref
+    assert manifest_ref.startswith("s3://bucket/prefix/manifests/")
     # Two put_bytes calls: manifest + CURRENT
     assert len(calls) == 2
     assert calls[0]["url"] == manifest_ref

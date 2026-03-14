@@ -73,6 +73,29 @@ def _build_manifest_store(
     )
 
 
+def _resolve_manifest_ref(
+    store: Any,
+    *,
+    ref: str | None,
+    offset: int | None,
+) -> str | None:
+    """Resolve --ref / --offset to a manifest ref string, or None for default."""
+    if ref is not None and offset is not None:
+        raise click.UsageError("--ref and --offset are mutually exclusive")
+    if ref is not None:
+        return ref
+    if offset is not None:
+        if offset < 0:
+            raise click.UsageError("--offset must be >= 0")
+        refs = store.list_manifests(limit=offset + 1)
+        if offset >= len(refs):
+            raise click.ClickException(
+                f"Offset {offset} out of range (only {len(refs)} manifests available)"
+            )
+        return refs[offset].ref
+    return None
+
+
 def _build_reader(ctx: click.Context) -> Any:
     """Construct a ConcurrentShardedReader from the parameters stored in ctx.obj."""
     params = ctx.obj[_CTX_INIT_PARAMS]
@@ -82,6 +105,15 @@ def _build_reader(ctx: click.Context) -> Any:
     from ..reader import ConcurrentShardedReader
 
     manifest_store = _build_manifest_store(store_cfg, params)
+
+    # If --ref or --offset was given, point the store at that manifest first
+    target_ref = _resolve_manifest_ref(
+        manifest_store,
+        ref=params.get("manifest_ref"),
+        offset=params.get("manifest_offset"),
+    )
+    if target_ref is not None:
+        manifest_store.set_current(target_ref)
 
     try:
         return ConcurrentShardedReader(
@@ -153,6 +185,21 @@ def _get_output_cfg(ctx: click.Context) -> OutputConfig:
     type=click.Choice(["json", "jsonl", "table", "text"], case_sensitive=False),
     help="Output format: json | jsonl | table | text.",
 )
+@click.option(
+    "--ref",
+    "manifest_ref",
+    default=None,
+    metavar="REF",
+    help="Load a specific manifest by ref (mutually exclusive with --offset).",
+)
+@click.option(
+    "--offset",
+    "manifest_offset",
+    default=None,
+    type=int,
+    metavar="N",
+    help="Load the Nth previous manifest (0=latest, 1=previous, etc.).",
+)
 @click.pass_context
 def cli(
     ctx: click.Context,
@@ -161,6 +208,8 @@ def cli(
     credentials_path: str | None,
     s3_options: tuple[str, ...],
     output_format: str | None,
+    manifest_ref: str | None,
+    manifest_offset: int | None,
 ) -> None:
     """shardy — interactive and batch lookups for sharded SlateDB snapshots.
 
@@ -235,6 +284,8 @@ def cli(
         "store_cfg": store_cfg,
         "output_cfg": output_cfg,
         "s3_client_config": s3_client_config,
+        "manifest_ref": manifest_ref,
+        "manifest_offset": manifest_offset,
     }
 
     # If no subcommand was invoked, enter interactive mode
@@ -385,6 +436,100 @@ def exec_cmd(ctx: click.Context, script_path: str, output_path: str | None) -> N
                 out_file.close()
 
     if error_count:
+        sys.exit(1)
+
+
+@cli.command("history")
+@click.option("--limit", default=10, type=int, help="Maximum manifests to list.")
+@click.pass_context
+def history_cmd(ctx: click.Context, limit: int) -> None:
+    """List recent published manifests."""
+    from .output import build_history_result
+
+    output_cfg = _get_output_cfg(ctx)
+    params = ctx.obj[_CTX_INIT_PARAMS]
+    store_cfg: ManifestStoreConfig = params["store_cfg"]
+    manifest_store = _build_manifest_store(store_cfg, params)
+
+    try:
+        refs = manifest_store.list_manifests(limit=limit)
+        result = build_history_result(refs)
+        emit(result, output_cfg)
+    except Exception as exc:
+        result = build_error_result("history", None, str(exc))
+        emit(result, output_cfg, file=sys.stderr)
+        sys.exit(1)
+
+
+@cli.command("rollback")
+@click.option(
+    "--ref",
+    "target_ref",
+    default=None,
+    metavar="REF",
+    help="Manifest ref to roll back to.",
+)
+@click.option(
+    "--run-id",
+    "target_run_id",
+    default=None,
+    metavar="RUN_ID",
+    help="Run ID to roll back to.",
+)
+@click.option(
+    "--offset",
+    "target_offset",
+    default=None,
+    type=int,
+    metavar="N",
+    help="Roll back N versions (e.g. 1 = previous).",
+)
+@click.pass_context
+def rollback_cmd(
+    ctx: click.Context,
+    target_ref: str | None,
+    target_run_id: str | None,
+    target_offset: int | None,
+) -> None:
+    """Roll back the current pointer to a previous manifest."""
+    output_cfg = _get_output_cfg(ctx)
+    params = ctx.obj[_CTX_INIT_PARAMS]
+    store_cfg: ManifestStoreConfig = params["store_cfg"]
+    manifest_store = _build_manifest_store(store_cfg, params)
+
+    provided = sum(x is not None for x in (target_ref, target_run_id, target_offset))
+    if provided != 1:
+        raise click.UsageError(
+            "Exactly one of --ref, --run-id, or --offset is required"
+        )
+
+    try:
+        if target_ref is not None:
+            ref = target_ref
+        elif target_offset is not None:
+            refs = manifest_store.list_manifests(limit=target_offset + 1)
+            if target_offset >= len(refs):
+                raise click.ClickException(
+                    f"Offset {target_offset} out of range (only {len(refs)} manifests available)"
+                )
+            ref = refs[target_offset].ref
+        else:
+            # --run-id: find the ref by scanning history
+            refs = manifest_store.list_manifests(limit=100)
+            matching = [r for r in refs if r.run_id == target_run_id]
+            if not matching:
+                raise click.ClickException(
+                    f"No manifest found with run_id={target_run_id}"
+                )
+            ref = matching[0].ref
+
+        manifest_store.set_current(ref)
+        click.echo(f"Rolled back _CURRENT to: {ref}")
+    except click.ClickException:
+        raise
+    except Exception as exc:
+        result = build_error_result("rollback", None, str(exc))
+        emit(result, output_cfg, file=sys.stderr)
         sys.exit(1)
 
 

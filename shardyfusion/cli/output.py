@@ -98,6 +98,21 @@ def build_route_result(key: str, db_id: int) -> dict[str, Any]:
     return {"op": "route", "key": key, "db_id": db_id}
 
 
+def build_history_result(refs: list[Any]) -> dict[str, Any]:
+    """Build a dict representing manifest history listing."""
+    entries = []
+    for i, ref in enumerate(refs):
+        entries.append(
+            {
+                "offset": i,
+                "run_id": ref.run_id,
+                "published_at": ref.published_at.isoformat(),
+                "ref": ref.ref,
+            }
+        )
+    return {"op": "history", "manifests": entries}
+
+
 def build_error_result(op: str, key_hint: str | None, error: str) -> dict[str, Any]:
     result: dict[str, Any] = {"op": op, "error": error}
     if key_hint is not None:
@@ -146,6 +161,13 @@ def format_result(result: dict[str, Any], fmt: str) -> str:
                     parts.append(f"max={s['max_key']}")
                 lines.append("  ".join(parts))
             return "\n".join(lines)
+        if op == "history":
+            lines = []
+            for m in result.get("manifests", []):
+                lines.append(
+                    f"[{m['offset']}] {m['published_at']}  run_id={m['run_id']}"
+                )
+            return "\n".join(lines) if lines else "(no manifests)"
         if op == "route":
             return f"{result.get('key', '')} -> shard {result.get('db_id', '?')}"
         if "error" in result:
@@ -181,6 +203,16 @@ def format_result(result: dict[str, Any], fmt: str) -> str:
                 max_k = str(s.get("max_key") or "")
                 lines.append(
                     f"{s['db_id']:>5}  {s['row_count']:>8}  {min_k:>10}  {max_k:>10}  {s['db_url']}"
+                )
+            return "\n".join(lines)
+        if op == "history":
+            manifests = result.get("manifests", [])
+            header = f"{'#':>3}  {'PUBLISHED_AT':>26}  {'RUN_ID'}"
+            sep = "-" * len(header)
+            lines = [header, sep]
+            for m in manifests:
+                lines.append(
+                    f"{m['offset']:>3}  {m['published_at']:>26}  {m['run_id']}"
                 )
             return "\n".join(lines)
         # Fall back to JSON for other ops in table mode

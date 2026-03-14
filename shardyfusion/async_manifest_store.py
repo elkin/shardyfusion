@@ -9,13 +9,14 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from pydantic import ValidationError
-
-from .errors import ManifestParseError
 from .logging import FailureSeverity, get_logger, log_failure
-from .manifest import CurrentPointer, ParsedManifest
-from .manifest_store import parse_json_manifest
+from .manifest import ManifestRef, ParsedManifest
+from .manifest_store import (
+    ManifestStore,
+    parse_json_manifest,
+)
 from .metrics import MetricsCollector
+from .storage import join_s3, parse_s3_url
 from .type_defs import S3ClientConfig
 
 _logger = get_logger(__name__)
@@ -24,9 +25,11 @@ _logger = get_logger(__name__)
 class AsyncManifestStore(Protocol):
     """Read-only async manifest loading (no publish — that's writer-side)."""
 
-    async def load_current(self) -> CurrentPointer | None: ...
+    async def load_current(self) -> ManifestRef | None: ...
 
     async def load_manifest(self, ref: str) -> ParsedManifest: ...
+
+    async def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]: ...
 
 
 class AsyncS3ManifestStore:
@@ -41,6 +44,7 @@ class AsyncS3ManifestStore:
         self,
         s3_prefix: str,
         *,
+        manifest_name: str = "manifest",
         current_name: str = "_CURRENT",
         s3_client_config: S3ClientConfig | None = None,
         metrics_collector: MetricsCollector | None = None,
@@ -48,23 +52,20 @@ class AsyncS3ManifestStore:
         import aiobotocore.session  # type: ignore[import-not-found]
 
         self.s3_prefix = s3_prefix.rstrip("/")
+        self.manifest_name = manifest_name
         self.current_name = current_name
         self._session = aiobotocore.session.get_session()
         self._resolved = _resolve_s3_config_for_aiobotocore(s3_client_config)
         self._metrics = metrics_collector
 
-    async def load_current(self) -> CurrentPointer | None:
+    async def load_current(self) -> ManifestRef | None:
+        from .manifest_store import parse_current_pointer_to_ref
+
         current_url = f"{self.s3_prefix}/{self.current_name}"
         payload = await self._try_get_bytes(current_url)
         if payload is None:
             return None
-
-        try:
-            return CurrentPointer.model_validate_json(payload)
-        except ValidationError as exc:
-            raise ManifestParseError(
-                f"CURRENT pointer validation failed: {exc}"
-            ) from exc
+        return parse_current_pointer_to_ref(payload)
 
     async def load_manifest(self, ref: str) -> ParsedManifest:
         try:
@@ -79,6 +80,29 @@ class AsyncS3ManifestStore:
             )
             raise
         return parse_json_manifest(payload)
+
+    async def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
+        from .manifest_store import parse_manifest_dir_entry
+
+        manifests_prefix = join_s3(self.s3_prefix, "manifests") + "/"
+        bucket, key_prefix = parse_s3_url(manifests_prefix)
+
+        refs: list[ManifestRef] = []
+        async with self._session.create_client("s3", **self._resolved) as client:
+            paginator = client.get_paginator("list_objects_v2")
+            async for page in paginator.paginate(  # type: ignore[union-attr]
+                Bucket=bucket, Prefix=key_prefix, Delimiter="/"
+            ):
+                for entry in page.get("CommonPrefixes", []):
+                    dir_name = entry["Prefix"][len(key_prefix) :]
+                    ref = parse_manifest_dir_entry(
+                        dir_name, self.s3_prefix, self.manifest_name
+                    )
+                    if ref is not None:
+                        refs.append(ref)
+
+        refs.sort(key=lambda r: r.published_at, reverse=True)
+        return refs[:limit]
 
     async def _get_bytes(self, url: str) -> bytes:
         return await _async_retry_s3_operation(
@@ -99,8 +123,6 @@ class AsyncS3ManifestStore:
         )
 
     async def _do_get_bytes(self, url: str) -> bytes:
-        from .storage import parse_s3_url
-
         bucket, key = parse_s3_url(url)
         async with self._session.create_client("s3", **self._resolved) as client:
             obj = await client.get_object(Bucket=bucket, Key=key)  # type: ignore[misc]
@@ -108,8 +130,6 @@ class AsyncS3ManifestStore:
                 return await stream.read()
 
     async def _do_try_get_bytes(self, url: str) -> bytes | None:
-        from .storage import parse_s3_url
-
         bucket, key = parse_s3_url(url)
         async with self._session.create_client("s3", **self._resolved) as client:
             try:
@@ -124,6 +144,31 @@ class AsyncS3ManifestStore:
                 raise
             async with obj["Body"] as stream:
                 return await stream.read()
+
+
+class _SyncManifestStoreAdapter:
+    """Wraps a sync ``ManifestStore`` for use with ``AsyncShardedReader``.
+
+    S3 calls are offloaded to a thread via ``asyncio.to_thread()``.
+    """
+
+    def __init__(self, store: ManifestStore) -> None:
+        self._store = store
+
+    async def load_current(self) -> ManifestRef | None:
+        import asyncio
+
+        return await asyncio.to_thread(self._store.load_current)
+
+    async def load_manifest(self, ref: str) -> ParsedManifest:
+        import asyncio
+
+        return await asyncio.to_thread(self._store.load_manifest, ref)
+
+    async def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
+        import asyncio
+
+        return await asyncio.to_thread(self._store.list_manifests, limit=limit)
 
 
 def _resolve_s3_config_for_aiobotocore(

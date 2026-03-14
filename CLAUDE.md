@@ -104,38 +104,42 @@ Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus ext
 
 ### Read Pipeline
 
-1. `ShardedReader` / `ConcurrentShardedReader` in `reader/reader.py` loads the `_CURRENT` pointer from S3 and dereferences the manifest.
+1. `ShardedReader` / `ConcurrentShardedReader` in `reader/reader.py` loads the `_CURRENT` pointer from S3 and dereferences the manifest. On cold start, if `load_manifest()` raises `ManifestParseError`, the reader falls back to previous manifests via `list_manifests()` (up to `max_fallback_attempts`, default 3).
 2. Builds a `SnapshotRouter` from the manifest sharding metadata (mirrors write-time sharding logic).
 3. `get(key)` / `multi_get(keys)` routes keys to shard IDs, then reads from the appropriate shard.
 4. `shard_for_key(key)` / `shards_for_keys(keys)` return `RequiredShardMeta` for routing inspection without DB access. `reader_for_key(key)` / `readers_for_keys(keys)` return borrowed `ShardReaderHandle` handles for direct shard access.
-5. `ShardedReader` swaps state directly on refresh. `ConcurrentShardedReader` serialises refresh I/O via `_refresh_lock` and atomically swaps readers using reference counting with a compare-and-swap guard for safe cleanup. Borrowed `ShardReaderHandle` handles hold refcount increments, preventing cleanup of old state while borrows are outstanding.
+5. `ShardedReader` swaps state directly on refresh. `ConcurrentShardedReader` serialises refresh I/O via `_refresh_lock` and atomically swaps readers using reference counting with a compare-and-swap guard for safe cleanup. Borrowed `ShardReaderHandle` handles hold refcount increments, preventing cleanup of old state while borrows are outstanding. On `refresh()`, a malformed manifest is silently skipped (returns `False`), keeping the previous good state.
 6. `ConcurrentShardedReader` provides thread safety via `threading.Lock` (default) or `ThreadPoolExecutor` pool mode (`thread_safety` config). Pool mode supports configurable checkout timeout (`pool_checkout_timeout`, default 30s).
 
 ### Async Read Pipeline
 
 `AsyncShardedReader` in `reader/async_reader.py` mirrors the sync reader API using asyncio:
 
-1. Constructed via `@classmethod async def open(...)` (since `__init__` can't do async I/O).
-2. S3 manifest loading uses `AsyncS3ManifestStore` (native aiobotocore).
+1. Constructed via `@classmethod async def open(...)` (since `__init__` can't do async I/O). On cold start, if `load_manifest()` raises `ManifestParseError`, falls back to previous manifests via `list_manifests()` (up to `max_fallback_attempts`, default 3).
+2. S3 manifest loading uses `AsyncS3ManifestStore` (native aiobotocore). When a sync `ManifestStore` is passed, `_SyncManifestStoreAdapter` wraps it via `asyncio.to_thread()`.
 3. `async get(key)` / `async multi_get(keys)` route keys and read from async shard readers. `multi_get` fans out via `asyncio.TaskGroup` with optional `asyncio.Semaphore` for concurrency limiting (`max_concurrency`).
-4. `async refresh()` serialises via `asyncio.Lock`. Same swap-and-retire pattern as sync, with deferred cleanup via `loop.create_task()` when retired state's borrow count hits 0.
+4. `async refresh()` serialises via `asyncio.Lock`. Same swap-and-retire pattern as sync, with deferred cleanup via `loop.create_task()` when retired state's borrow count hits 0. A malformed manifest is silently skipped (returns `False`), keeping the previous good state.
 5. Sync metadata methods (`key_encoding`, `snapshot_info()`, `shard_details()`, `route_key()`) and borrow methods (`reader_for_key()`, `readers_for_keys()`) work identically to the sync reader.
 6. Supports `async with` context manager via `__aenter__`/`__aexit__`.
 
 ### CLI (`shardy`)
 
-Entry point: `cli/app.py:main`. Subcommands: `get KEY`, `multiget KEY [KEY ...]`, `info`, `shards`, `route KEY`, `exec --script FILE`, `schema [--type manifest|current-pointer]`. No subcommand → interactive REPL (`cmd.Cmd` with `shardy> ` prompt; REPL-only commands include `refresh`).
+Entry point: `cli/app.py:main`. Subcommands: `get KEY`, `multiget KEY [KEY ...]`, `info`, `shards`, `route KEY`, `exec --script FILE`, `history [--limit N]`, `rollback (--ref REF | --run-id RUN_ID | --offset N)`, `schema [--type manifest|current-pointer]`. No subcommand → interactive REPL (`cmd.Cmd` with `shardy> ` prompt; REPL-only commands include `refresh`, `history [LIMIT]`, and `use (--offset N | --ref REF | --latest)`).
+
+Global options `--ref REF` and `--offset N` (mutually exclusive) load a specific manifest by reference or position in history before executing any subcommand.
 
 Key coercion: CLI keys are strings; when manifest uses integer encoding (`u64be`/`u32be`), keys are auto-coerced to `int` via `cli/config.py:coerce_cli_key()`.
 
 ### Manifest & CURRENT Data Formats
 
-**Manifest** (JSON, published to `s3_prefix/manifests/run_id={run_id}/{manifest_name}`):
+**Manifest** (JSON, published to `s3_prefix/manifests/{timestamp}_run_id={run_id}/manifest`):
 ```json
 {"required": {/* RequiredBuildMeta: run_id, num_dbs, s3_prefix, sharding, key_encoding, ... */},
  "shards": [/* list of RequiredShardMeta: db_id, db_url, checkpoint_id, row_count, ... */],
  "custom": {/* user-defined fields from ManifestOptions.custom_manifest_fields */}}
 ```
+
+Manifest S3 keys are timestamp-prefixed (e.g., `2026-03-14T10:30:00.000000Z_run_id=abc123/manifest`) for chronological listing via S3 `CommonPrefixes`.
 
 **CURRENT pointer** (JSON, published to `s3_prefix/_CURRENT`):
 ```json
@@ -145,6 +149,8 @@ Key coercion: CLI keys are strings; when manifest uses integer encoding (`u64be`
 
 Two-phase publish: manifest is written first, then `_CURRENT` pointer is updated. Both use `storage.put_bytes()` with exponential-backoff retries (3 attempts, 1s→2s→4s) for transient S3 errors.
 
+**DB manifest stores** use a `shardyfusion_manifests` table for manifest payloads and an append-only `shardyfusion_pointer` table for current-pointer tracking (one INSERT per `publish()` or `set_current()` call). `load_current()` reads the newest pointer row; falls back to the newest manifest row if the pointer table is empty.
+
 ### Key Abstractions
 
 These are all Protocols, allowing user-provided implementations:
@@ -152,11 +158,13 @@ These are all Protocols, allowing user-provided implementations:
 | Protocol | Default Implementation | Purpose |
 |---|---|---|
 | `ManifestBuilder` | `JsonManifestBuilder` | Manifest serialization format |
-| `ManifestStore` | `S3ManifestStore` | Unified manifest read/write (publish + load) |
-| `AsyncManifestStore` | `AsyncS3ManifestStore` | Async read-only manifest loading |
+| `ManifestStore` | `S3ManifestStore` | Unified manifest read/write (publish + load + list + set_current) |
+| `AsyncManifestStore` | `AsyncS3ManifestStore` | Async read-only manifest loading (load + list) |
 | `AsyncShardReader` | `_SlateDbAsyncShardReader` | Async shard reader (get/close) |
 | `AsyncShardReaderFactory` | `AsyncSlateDbReaderFactory` | Async factory for opening shard readers |
 | `DbAdapterFactory` | `SlateDbFactory` | How to open shard databases |
+
+`ManifestRef` (frozen dataclass in `manifest.py`) is the backend-agnostic pointer to a published manifest, carrying `ref`, `run_id`, and `published_at`. `ManifestStore.load_current()` returns `ManifestRef | None` (not `CurrentPointer`); the S3 implementation parses the `_CURRENT` JSON into a `ManifestRef` internally.
 
 `ValueSpec` controls how DataFrame rows are serialized to bytes: `binary_col`, `json_cols`, or a callable encoder.
 
@@ -234,7 +242,7 @@ All errors inherit from `ShardyfusionError` with `retryable: bool`. Non-retryabl
 
 ## Public API Summary
 
-Core types exported from `shardyfusion.__init__` (always available, no optional extras required). See `__init__.py` for the full list. Reader types include `ShardedReader`, `ConcurrentShardedReader`, `ShardReaderHandle`, `ShardDetail`, `SnapshotInfo`, `SlateDbReaderFactory`, `ReaderHealth`. Async reader types include `AsyncShardedReader`, `AsyncShardReaderHandle`, `AsyncSlateDbReaderFactory`, `AsyncShardReader`, `AsyncShardReaderFactory`, `AsyncManifestStore`, `AsyncS3ManifestStore`. Rate limiting: `AcquireResult`, `RateLimiter`, `TokenBucket`. Retry: `RetryConfig`. Logging: `LogContext`, `JsonFormatter`, `configure_logging`. All are in `__all__`.
+Core types exported from `shardyfusion.__init__` (always available, no optional extras required). See `__init__.py` for the full list. Manifest types include `ManifestRef`, `ManifestStore`, `S3ManifestStore`, `InMemoryManifestStore`, `ManifestBuilder`, `JsonManifestBuilder`. Reader types include `ShardedReader`, `ConcurrentShardedReader`, `ShardReaderHandle`, `ShardDetail`, `SnapshotInfo`, `SlateDbReaderFactory`, `ReaderHealth`. Async reader types include `AsyncShardedReader`, `AsyncShardReaderHandle`, `AsyncSlateDbReaderFactory`, `AsyncShardReader`, `AsyncShardReaderFactory`, `AsyncManifestStore`, `AsyncS3ManifestStore`. Rate limiting: `AcquireResult`, `RateLimiter`, `TokenBucket`. Retry: `RetryConfig`. Logging: `LogContext`, `JsonFormatter`, `configure_logging`. All are in `__all__`.
 
 Writer functions are imported from subpackages (not re-exported at top level):
 - **Spark:** `from shardyfusion.writer.spark import write_sharded, write_single_db, DataFrameCacheContext, SparkConfOverrideContext`
@@ -267,8 +275,9 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **Python writer parallel mode uses `spawn`**: `multiprocessing.get_context("spawn")` is hardcoded. All objects passed to workers must be picklable. Min/max key tracking happens in the main process.
 - **Rate limiter is not thread-safe**: `TokenBucket` has no internal lock; a `ThreadSafeTokenBucket` subclass will be added when needed. Writers and readers depend on the `RateLimiter` Protocol, not the concrete class. Writers support both `max_writes_per_second` (ops) and `max_write_bytes_per_second` (bytes) via independent `TokenBucket` instances. Readers accept a `rate_limiter` parameter for reads/sec limiting.
 - **Reader reference counting**: `refresh()` serialises I/O via `_refresh_lock`, atomically swaps `_ReaderState` with a compare-and-swap guard, and defers closing old handles until `refcount` drops to zero. Pool-mode checkout has a configurable timeout (default 30s) — raises `SlateDbApiError` when exhausted. Metadata methods (`key_encoding`, `snapshot_info`, `shard_details`, `route_key`) use `_use_state()` and raise `ReaderStateError` on a closed reader.
-- **Async reader uses `open()` classmethod**: `AsyncShardedReader.__init__` does no I/O. Use `await AsyncShardedReader.open(...)` or `async with AsyncShardedReader(...)`. Requires `aiobotocore` (the `read-async` extra).
-- **Async manifest store**: `AsyncShardedReader` accepts `AsyncManifestStore` only (not sync `ManifestStore`). When `manifest_store=None`, uses `AsyncS3ManifestStore` (native aiobotocore). No sync-to-async adapter — if you want async, install `aiobotocore`.
+- **Async reader uses `open()` classmethod**: `AsyncShardedReader.__init__` does no I/O. Use `await AsyncShardedReader.open(...)` or `async with AsyncShardedReader(...)`. When a sync `ManifestStore` is passed, `_SyncManifestStoreAdapter` wraps it via `asyncio.to_thread()`.
+- **Async manifest store**: When `manifest_store=None`, uses `AsyncS3ManifestStore` (native aiobotocore, requires the `read-async` extra). When a sync `ManifestStore` is passed explicitly, it's duck-type detected and wrapped automatically.
+- **Reader cold-start fallback**: When `load_manifest()` raises `ManifestParseError` during initialization, readers walk backward through `list_manifests()` to find a valid manifest (up to `max_fallback_attempts`, default 3). Set to 0 to disable fallback. During `refresh()`, a malformed manifest is silently skipped and the reader keeps its current good state (returns `False`).
 - **Garage requires path-style addressing**: E2E tests set `addressing_style: "path"` in `S3ClientConfig` because Garage doesn't support virtual-hosted-style.
 - **Session-scoped test fixtures**: PySpark and S3 (moto/Garage) fixtures are session-scoped for performance. Tests share the same Spark session and S3 service.
 - **Writer scenario imports are deferred**: `tests/helpers/s3_test_scenarios.py` imports writer modules inside function bodies so reader-only test collection doesn't fail.

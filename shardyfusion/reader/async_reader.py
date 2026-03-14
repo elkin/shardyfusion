@@ -14,7 +14,7 @@ from shardyfusion.async_manifest_store import (
     AsyncManifestStore,
     AsyncS3ManifestStore,
 )
-from shardyfusion.errors import ReaderStateError, SlateDbApiError
+from shardyfusion.errors import ManifestParseError, ReaderStateError, SlateDbApiError
 from shardyfusion.logging import (
     FailureSeverity,
     get_logger,
@@ -160,6 +160,7 @@ class AsyncShardedReader:
         slate_env_file: str | None = None,
         s3_client_config: S3ClientConfig | None = None,
         max_concurrency: int | None = None,
+        max_fallback_attempts: int = 3,
         metrics_collector: MetricsCollector | None = None,
         rate_limiter: RateLimiter | None = None,
     ) -> None:
@@ -168,6 +169,7 @@ class AsyncShardedReader:
         self._metrics = metrics_collector
         self._max_concurrency = max_concurrency
         self._rate_limiter = rate_limiter
+        self._max_fallback_attempts = max_fallback_attempts
         self._refresh_lock = asyncio.Lock()
         self._closed = False
         self._init_time = time.monotonic()
@@ -204,6 +206,7 @@ class AsyncShardedReader:
         slate_env_file: str | None = None,
         s3_client_config: S3ClientConfig | None = None,
         max_concurrency: int | None = None,
+        max_fallback_attempts: int = 3,
         metrics_collector: MetricsCollector | None = None,
         rate_limiter: RateLimiter | None = None,
     ) -> AsyncShardedReader:
@@ -217,6 +220,7 @@ class AsyncShardedReader:
             slate_env_file=slate_env_file,
             s3_client_config=s3_client_config,
             max_concurrency=max_concurrency,
+            max_fallback_attempts=max_fallback_attempts,
             metrics_collector=metrics_collector,
             rate_limiter=rate_limiter,
         )
@@ -431,7 +435,7 @@ class AsyncShardedReader:
             )
             raise ReaderStateError("CURRENT pointer not found during refresh")
 
-        current_ref = current.manifest_ref
+        current_ref = current.ref
 
         if current_ref == state.manifest_ref:
             log_event(
@@ -442,7 +446,18 @@ class AsyncShardedReader:
             self._emit(MetricEvent.READER_REFRESHED, {"changed": False})
             return False
 
-        manifest = await self._manifest_store.load_manifest(current_ref)
+        try:
+            manifest = await self._manifest_store.load_manifest(current_ref)
+        except ManifestParseError:
+            log_failure(
+                "reader_refresh_malformed_manifest",
+                severity=FailureSeverity.ERROR,
+                logger=_logger,
+                manifest_ref=current_ref,
+            )
+            self._emit(MetricEvent.READER_REFRESHED, {"changed": False})
+            return False
+
         new_state = await self._build_state(current_ref, manifest)
         old_state = state
         self._state = new_state
@@ -496,8 +511,47 @@ class AsyncShardedReader:
                 s3_prefix=self.s3_prefix,
             )
             raise ReaderStateError("CURRENT pointer not found")
-        manifest = await self._manifest_store.load_manifest(current.manifest_ref)
-        return await self._build_state(current.manifest_ref, manifest)
+        try:
+            manifest = await self._manifest_store.load_manifest(current.ref)
+            return await self._build_state(current.ref, manifest)
+        except ManifestParseError:
+            if self._max_fallback_attempts == 0:
+                raise
+            return await self._fallback_to_previous(failed_ref=current.ref)
+
+    async def _fallback_to_previous(self, *, failed_ref: str) -> _AsyncReaderState:
+        """Walk backward through manifest history to find a valid manifest."""
+        log_failure(
+            "reader_cold_start_fallback",
+            severity=FailureSeverity.ERROR,
+            logger=_logger,
+            failed_ref=failed_ref,
+            max_attempts=self._max_fallback_attempts,
+        )
+        refs = await self._manifest_store.list_manifests(
+            limit=self._max_fallback_attempts + 1
+        )
+        for ref in refs:
+            if ref.ref == failed_ref:
+                continue
+            try:
+                manifest = await self._manifest_store.load_manifest(ref.ref)
+                log_event(
+                    "reader_fallback_succeeded",
+                    logger=_logger,
+                    fallback_ref=ref.ref,
+                    skipped_ref=failed_ref,
+                )
+                return await self._build_state(ref.ref, manifest)
+            except ManifestParseError:
+                log_failure(
+                    "reader_fallback_skip_malformed",
+                    severity=FailureSeverity.ERROR,
+                    logger=_logger,
+                    manifest_ref=ref.ref,
+                )
+                continue
+        raise ReaderStateError("No valid manifest found after fallback")
 
     async def _build_state(
         self, manifest_ref: str, manifest: ParsedManifest

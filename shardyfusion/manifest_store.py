@@ -9,6 +9,7 @@ backends can use a single atomic transaction.
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -24,15 +25,33 @@ from .manifest import (
     JsonManifestBuilder,
     ManifestArtifact,
     ManifestBuilder,
+    ManifestRef,
     ParsedManifest,
     RequiredBuildMeta,
     RequiredShardMeta,
 )
 from .metrics import MetricsCollector
-from .storage import create_s3_client, get_bytes, join_s3, put_bytes, try_get_bytes
+from .storage import (
+    create_s3_client,
+    get_bytes,
+    join_s3,
+    parse_s3_url,
+    put_bytes,
+    try_get_bytes,
+)
 from .type_defs import S3ClientConfig
 
 _logger = get_logger(__name__)
+
+# Shared timestamp format for manifest S3 key prefixes.
+MANIFEST_TIMESTAMP_FMT = "%Y-%m-%dT%H:%M:%S.%fZ"
+
+# Regex to parse timestamp-prefixed manifest directory names.
+# Example: "2026-03-14T10:30:00.000000Z_run_id=abc123/"
+MANIFEST_PREFIX_RE = re.compile(
+    r"^(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z)"
+    r"_run_id=(?P<run_id>[^/]+)/$"
+)
 
 
 class ManifestStore(Protocol):
@@ -46,22 +65,65 @@ class ManifestStore(Protocol):
         shards: list[RequiredShardMeta],
         custom: dict[str, Any],
     ) -> str:
-        """Persist manifest + CURRENT atomically. Return a manifest reference."""
+        """Persist manifest + update current pointer. Return a manifest reference."""
         ...
 
-    def load_current(self) -> CurrentPointer | None:
-        """Return the latest CURRENT pointer, or None if not published."""
+    def load_current(self) -> ManifestRef | None:
+        """Return the current manifest pointer, or None if not published."""
         ...
 
     def load_manifest(self, ref: str) -> ParsedManifest:
         """Load and parse a manifest by reference."""
         ...
 
+    def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
+        """Return up to *limit* manifests in reverse chronological order."""
+        ...
+
+    def set_current(self, ref: str) -> None:
+        """Update the current pointer to the given manifest reference."""
+        ...
+
+
+def _format_manifest_timestamp(dt: datetime) -> str:
+    """Format a UTC datetime for use in manifest S3 key prefixes."""
+    return dt.strftime(MANIFEST_TIMESTAMP_FMT)
+
+
+def parse_current_pointer_to_ref(payload: bytes) -> ManifestRef:
+    """Parse a raw _CURRENT JSON payload into a ManifestRef."""
+    try:
+        pointer = CurrentPointer.model_validate_json(payload)
+    except ValidationError as exc:
+        raise ManifestParseError(f"CURRENT pointer validation failed: {exc}") from exc
+    return ManifestRef(
+        ref=pointer.manifest_ref,
+        run_id=pointer.run_id,
+        published_at=pointer.updated_at,
+    )
+
+
+def parse_manifest_dir_entry(
+    dir_name: str, s3_prefix: str, manifest_name: str
+) -> ManifestRef | None:
+    """Parse a timestamp-prefixed directory name into a ManifestRef, or None."""
+    match = MANIFEST_PREFIX_RE.match(dir_name)
+    if match is None:
+        return None
+    timestamp_str = match.group("timestamp")
+    run_id = match.group("run_id")
+    published_at = datetime.strptime(timestamp_str, MANIFEST_TIMESTAMP_FMT).replace(
+        tzinfo=UTC
+    )
+    manifest_url = join_s3(s3_prefix, "manifests", dir_name.rstrip("/"), manifest_name)
+    return ManifestRef(ref=manifest_url, run_id=run_id, published_at=published_at)
+
 
 class S3ManifestStore:
     """Manifest store backed by S3 — merges publish and read in one class.
 
     Publish is two-phase: manifest file first, then ``_CURRENT`` pointer.
+    Manifest keys are timestamp-prefixed for chronological listing.
     """
 
     def __init__(
@@ -100,10 +162,11 @@ class S3ManifestStore:
             custom_fields=custom,
         )
 
+        timestamp = _format_manifest_timestamp(datetime.now(UTC))
         manifest_url = join_s3(
             self.s3_prefix,
             "manifests",
-            f"run_id={run_id}",
+            f"{timestamp}_run_id={run_id}",
             self.manifest_name,
         )
         put_bytes(
@@ -134,7 +197,7 @@ class S3ManifestStore:
 
         return manifest_url
 
-    def load_current(self) -> CurrentPointer | None:
+    def load_current(self) -> ManifestRef | None:
         current_url = f"{self.s3_prefix}/{self.current_name}"
         payload = try_get_bytes(
             current_url,
@@ -144,13 +207,7 @@ class S3ManifestStore:
         )
         if payload is None:
             return None
-
-        try:
-            return CurrentPointer.model_validate_json(payload)
-        except ValidationError as exc:
-            raise ManifestParseError(
-                f"CURRENT pointer validation failed: {exc}"
-            ) from exc
+        return parse_current_pointer_to_ref(payload)
 
     def load_manifest(self, ref: str) -> ParsedManifest:
         try:
@@ -171,14 +228,52 @@ class S3ManifestStore:
             raise
         return parse_json_manifest(payload)
 
+    def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
+        manifests_prefix = join_s3(self.s3_prefix, "manifests") + "/"
+        bucket, key_prefix = parse_s3_url(manifests_prefix)
+
+        refs: list[ManifestRef] = []
+        paginator = self._s3_client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix=key_prefix, Delimiter="/"):
+            for entry in page.get("CommonPrefixes", []):
+                dir_name = entry["Prefix"][len(key_prefix) :]
+                ref = parse_manifest_dir_entry(
+                    dir_name, self.s3_prefix, self.manifest_name
+                )
+                if ref is not None:
+                    refs.append(ref)
+
+        # S3 returns lexicographic ascending; reverse for newest-first
+        refs.sort(key=lambda r: r.published_at, reverse=True)
+        return refs[:limit]
+
+    def set_current(self, ref: str) -> None:
+        # Extract run_id from the ref path
+        # Expected format: .../manifests/{timestamp}_run_id={run_id}/manifest
+        run_id = _extract_run_id_from_ref(ref)
+        current_artifact = _build_current_artifact(
+            manifest_ref=ref,
+            manifest_content_type="application/json",
+            run_id=run_id,
+        )
+        current_url = join_s3(self.s3_prefix, self.current_name)
+        put_bytes(
+            current_url,
+            current_artifact.payload,
+            current_artifact.content_type,
+            current_artifact.headers,
+            s3_client=self._s3_client,
+            metrics_collector=self._metrics,
+        )
+
 
 class InMemoryManifestStore:
     """In-memory manifest store for tests — replaces InMemoryPublisher."""
 
     def __init__(self) -> None:
         self._manifests: dict[str, ParsedManifest] = {}
-        self._latest_ref: str | None = None
-        self._latest_run_id: str | None = None
+        self._history: list[ManifestRef] = []
+        self._current_ref: str | None = None
 
     def publish(
         self,
@@ -194,22 +289,32 @@ class InMemoryManifestStore:
             shards=shards,
             custom=custom,
         )
-        self._latest_ref = ref
-        self._latest_run_id = run_id
+        manifest_ref = ManifestRef(
+            ref=ref, run_id=run_id, published_at=datetime.now(UTC)
+        )
+        self._history.append(manifest_ref)
+        self._current_ref = ref
         return ref
 
-    def load_current(self) -> CurrentPointer | None:
-        if self._latest_ref is None or self._latest_run_id is None:
+    def load_current(self) -> ManifestRef | None:
+        if self._current_ref is None:
             return None
-        return CurrentPointer(
-            manifest_ref=self._latest_ref,
-            manifest_content_type="application/json",
-            run_id=self._latest_run_id,
-            updated_at=datetime.min.replace(tzinfo=UTC),
-        )
+        # If set_current was used, find that ref in history
+        for entry in reversed(self._history):
+            if entry.ref == self._current_ref:
+                return entry
+        return None
 
     def load_manifest(self, ref: str) -> ParsedManifest:
         return self._manifests[ref]
+
+    def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
+        return list(reversed(self._history))[:limit]
+
+    def set_current(self, ref: str) -> None:
+        if ref not in self._manifests:
+            raise KeyError(f"Manifest not found: {ref}")
+        self._current_ref = ref
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +357,16 @@ def _validate_manifest(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+_RUN_ID_FROM_REF_RE = re.compile(r"run_id=(?P<run_id>[^/]+)")
+
+
+def _extract_run_id_from_ref(ref: str) -> str:
+    """Extract run_id from a manifest ref path."""
+    match = _RUN_ID_FROM_REF_RE.search(ref)
+    if match is None:
+        raise ValueError(f"Cannot extract run_id from manifest ref: {ref}")
+    return match.group("run_id")
 
 
 def _build_current_artifact(

@@ -1,8 +1,8 @@
 """Database-backed ManifestStore implementations (DB-API 2).
 
-Provides PostgreSQL and Comdb2 subclasses that store manifests as JSON
-in a single table. The "current" manifest is implicit — the row with
-the latest ``created_at`` timestamp.
+Provides PostgreSQL and Comdb2 subclasses that store manifests in a
+``shardyfusion_manifests`` table and track the current pointer via an
+append-only ``shardyfusion_pointer`` table.
 
 No external dependencies are required beyond DB-API 2 drivers
 (user-provided ``psycopg2`` / comdb2 drivers).
@@ -16,8 +16,8 @@ from typing import Any
 from .errors import ConfigValidationError, ManifestParseError, ManifestStoreError
 from .logging import FailureSeverity, get_logger, log_failure
 from .manifest import (
-    CurrentPointer,
     JsonManifestBuilder,
+    ManifestRef,
     ParsedManifest,
     RequiredBuildMeta,
     RequiredShardMeta,
@@ -38,10 +38,12 @@ class _DbManifestStoreBase(ABC):
         connection_factory: Callable[[], Any],
         *,
         table_name: str = "shardyfusion_manifests",
+        pointer_table_name: str = "shardyfusion_pointer",
         ensure_table: bool = True,
     ) -> None:
         self._connection_factory = connection_factory
         self._table_name = table_name
+        self._pointer_table_name = pointer_table_name
         if ensure_table:
             self._ensure_table()
 
@@ -49,6 +51,12 @@ class _DbManifestStoreBase(ABC):
     @abstractmethod
     def _create_table_ddl(self) -> str:
         """Return dialect-specific CREATE TABLE IF NOT EXISTS DDL."""
+        ...
+
+    @property
+    @abstractmethod
+    def _create_pointer_table_ddl(self) -> str:
+        """Return dialect-specific CREATE TABLE DDL for the pointer table."""
         ...
 
     @property
@@ -63,12 +71,14 @@ class _DbManifestStoreBase(ABC):
             try:
                 cursor = conn.cursor()
                 cursor.execute(self._create_table_ddl)
+                cursor.execute(self._create_pointer_table_ddl)
                 conn.commit()
             finally:
                 conn.close()
         except Exception as exc:
             raise ConfigValidationError(
-                f"Failed to create manifest table '{self._table_name}': {exc}"
+                f"Failed to create manifest tables '{self._table_name}' / "
+                f"'{self._pointer_table_name}': {exc}"
             ) from exc
 
     def publish(
@@ -88,14 +98,17 @@ class _DbManifestStoreBase(ABC):
         payload_str = artifact.payload.decode("utf-8")
 
         p = self._param_marker
-        sql = self._upsert_sql(p)
+        upsert_sql = self._upsert_sql(p)
+        pointer_sql = (
+            f"INSERT INTO {self._pointer_table_name} (manifest_ref) VALUES ({p})"
+        )
 
         try:
             conn = self._connection_factory()
             try:
                 cursor = conn.cursor()
                 cursor.execute(
-                    sql,
+                    upsert_sql,
                     (
                         run_id,
                         "manifest",
@@ -103,6 +116,7 @@ class _DbManifestStoreBase(ABC):
                         artifact.content_type,
                     ),
                 )
+                cursor.execute(pointer_sql, (run_id,))
                 conn.commit()
             finally:
                 conn.close()
@@ -125,9 +139,16 @@ class _DbManifestStoreBase(ABC):
         """Return dialect-specific INSERT/UPSERT SQL."""
         ...
 
-    def load_current(self) -> CurrentPointer | None:
-        sql = (
-            f"SELECT run_id, content_type, created_at "
+    def load_current(self) -> ManifestRef | None:
+        # Try pointer table first
+        pointer_sql = (
+            f"SELECT manifest_ref, updated_at "
+            f"FROM {self._pointer_table_name} "
+            f"ORDER BY updated_at DESC LIMIT 1"
+        )
+        # Fallback to manifests table
+        fallback_sql = (
+            f"SELECT run_id, created_at "
             f"FROM {self._table_name} "
             f"ORDER BY created_at DESC LIMIT 1"
         )
@@ -136,7 +157,17 @@ class _DbManifestStoreBase(ABC):
             conn = self._connection_factory()
             try:
                 cursor = conn.cursor()
-                cursor.execute(sql)
+                cursor.execute(pointer_sql)
+                row = cursor.fetchone()
+                if row is not None:
+                    manifest_ref, updated_at = row
+                    return ManifestRef(
+                        ref=str(manifest_ref),
+                        run_id=str(manifest_ref),
+                        published_at=datetime.fromisoformat(str(updated_at)),
+                    )
+                # Pointer table empty — fall back to manifests table
+                cursor.execute(fallback_sql)
                 row = cursor.fetchone()
             finally:
                 conn.close()
@@ -152,12 +183,11 @@ class _DbManifestStoreBase(ABC):
         if row is None:
             return None
 
-        run_id, content_type, created_at = row
-        return CurrentPointer(
-            manifest_ref=str(run_id),
-            manifest_content_type=str(content_type),
+        run_id, created_at = row
+        return ManifestRef(
+            ref=str(run_id),
             run_id=str(run_id),
-            updated_at=datetime.fromisoformat(str(created_at)),
+            published_at=datetime.fromisoformat(str(created_at)),
         )
 
     def load_manifest(self, ref: str) -> ParsedManifest:
@@ -192,6 +222,64 @@ class _DbManifestStoreBase(ABC):
             payload_str.encode("utf-8") if isinstance(payload_str, str) else payload_str
         )
 
+    def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
+        p = self._param_marker
+        sql = (
+            f"SELECT run_id, created_at "
+            f"FROM {self._table_name} "
+            f"ORDER BY created_at DESC LIMIT {p}"
+        )
+
+        try:
+            conn = self._connection_factory()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(sql, (limit,))
+                rows = cursor.fetchall()
+            finally:
+                conn.close()
+        except Exception as exc:
+            log_failure(
+                "db_manifest_list_failed",
+                severity=FailureSeverity.ERROR,
+                logger=_logger,
+                error=exc,
+            )
+            raise ManifestStoreError(f"Failed to list manifests: {exc}") from exc
+
+        return [
+            ManifestRef(
+                ref=str(run_id),
+                run_id=str(run_id),
+                published_at=datetime.fromisoformat(str(created_at)),
+            )
+            for run_id, created_at in rows
+        ]
+
+    def set_current(self, ref: str) -> None:
+        p = self._param_marker
+        sql = f"INSERT INTO {self._pointer_table_name} (manifest_ref) VALUES ({p})"
+
+        try:
+            conn = self._connection_factory()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(sql, (ref,))
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as exc:
+            log_failure(
+                "db_manifest_set_current_failed",
+                severity=FailureSeverity.ERROR,
+                logger=_logger,
+                error=exc,
+                manifest_ref=ref,
+            )
+            raise ManifestStoreError(
+                f"Failed to set current manifest ref={ref}: {exc}"
+            ) from exc
+
 
 class PostgresManifestStore(_DbManifestStoreBase):
     """PostgreSQL manifest store using JSONB and TIMESTAMPTZ."""
@@ -209,6 +297,15 @@ class PostgresManifestStore(_DbManifestStoreBase):
             f"  payload      JSONB NOT NULL,"
             f"  content_type TEXT NOT NULL DEFAULT 'application/json',"
             f"  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+            f")"
+        )
+
+    @property
+    def _create_pointer_table_ddl(self) -> str:
+        return (
+            f"CREATE TABLE IF NOT EXISTS {self._pointer_table_name} ("
+            f"  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            f"  manifest_ref  TEXT NOT NULL"
             f")"
         )
 
@@ -241,6 +338,15 @@ class Comdb2ManifestStore(_DbManifestStoreBase):
             f"  payload      TEXT NOT NULL,"
             f"  content_type TEXT NOT NULL DEFAULT 'application/json',"
             f"  created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+            f")"
+        )
+
+    @property
+    def _create_pointer_table_ddl(self) -> str:
+        return (
+            f"CREATE TABLE IF NOT EXISTS {self._pointer_table_name} ("
+            f"  updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+            f"  manifest_ref  TEXT NOT NULL"
             f")"
         )
 

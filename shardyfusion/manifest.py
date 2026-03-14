@@ -11,6 +11,15 @@ from .sharding_types import BoundaryValue, KeyEncoding, ShardingStrategy
 from .type_defs import JsonObject, JsonValue
 
 
+@dataclass(slots=True, frozen=True)
+class ManifestRef:
+    """Backend-agnostic pointer to a published manifest."""
+
+    ref: str
+    run_id: str
+    published_at: datetime
+
+
 class ManifestShardingSpec(BaseModel):
     """Manifest-safe sharding specification (no Callable fields).
 

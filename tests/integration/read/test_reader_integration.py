@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
 import slatedb
 
 from shardyfusion.manifest import (
-    CurrentPointer,
+    ManifestRef,
     ManifestShardingSpec,
     ParsedManifest,
     RequiredBuildMeta,
@@ -41,15 +42,25 @@ class InMemoryManifestStore:
     ) -> str:
         raise NotImplementedError("publish not used in reader tests")
 
-    def load_current(self) -> CurrentPointer | None:
+    def load_current(self) -> ManifestRef | None:
         payload = self.pointers.get(self.current_ref)
         if payload is None:
             return None
         obj = json.loads(payload.decode("utf-8"))
-        return CurrentPointer.model_validate(obj)
+        return ManifestRef(
+            ref=obj["manifest_ref"],
+            run_id=obj["run_id"],
+            published_at=datetime.fromisoformat(obj["updated_at"]),
+        )
 
     def load_manifest(self, ref: str) -> ParsedManifest:
         return parse_json_manifest(self.manifests[ref])
+
+    def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
+        return []
+
+    def set_current(self, ref: str) -> None:
+        pass
 
 
 def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) -> None:

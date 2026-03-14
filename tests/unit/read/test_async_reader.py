@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -8,7 +9,7 @@ import pytest
 
 from shardyfusion.errors import ReaderStateError
 from shardyfusion.manifest import (
-    CurrentPointer,
+    ManifestRef,
     ManifestShardingSpec,
     ParsedManifest,
     RequiredBuildMeta,
@@ -63,16 +64,21 @@ class _MutableManifestStore:
     ) -> str:
         raise NotImplementedError("publish not used in reader tests")
 
-    def load_current(self) -> CurrentPointer | None:
-        return CurrentPointer(
-            manifest_ref=self.current_ref,
-            manifest_content_type="application/json",
+    def load_current(self) -> ManifestRef | None:
+        return ManifestRef(
+            ref=self.current_ref,
             run_id="run",
-            updated_at="2026-01-01T00:00:00+00:00",
+            published_at=datetime.now(UTC),
         )
 
     def load_manifest(self, ref: str) -> ParsedManifest:
         return self.manifests[ref]
+
+    def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
+        return []
+
+    def set_current(self, ref: str) -> None:
+        pass
 
 
 class _AsyncMutableManifestStore:
@@ -82,12 +88,11 @@ class _AsyncMutableManifestStore:
         self.manifests = manifests
         self.current_ref = initial_ref
 
-    async def load_current(self) -> CurrentPointer | None:
-        return CurrentPointer(
-            manifest_ref=self.current_ref,
-            manifest_content_type="application/json",
+    async def load_current(self) -> ManifestRef | None:
+        return ManifestRef(
+            ref=self.current_ref,
             run_id="run",
-            updated_at="2026-01-01T00:00:00+00:00",
+            published_at=datetime.now(UTC),
         )
 
     async def load_manifest(self, ref: str) -> ParsedManifest:
@@ -95,7 +100,7 @@ class _AsyncMutableManifestStore:
 
 
 class _NullAsyncManifestStore:
-    async def load_current(self) -> CurrentPointer | None:
+    async def load_current(self) -> ManifestRef | None:
         return None
 
     async def load_manifest(self, ref: str) -> ParsedManifest:

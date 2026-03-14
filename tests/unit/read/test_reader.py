@@ -5,6 +5,7 @@ import threading
 import time
 import types
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,7 @@ import pytest
 
 from shardyfusion.errors import ManifestParseError, ReaderStateError, SlateDbApiError
 from shardyfusion.manifest import (
-    CurrentPointer,
+    ManifestRef,
     ManifestShardingSpec,
     ParsedManifest,
     RequiredBuildMeta,
@@ -43,16 +44,21 @@ class _MutableManifestStore:
     ) -> str:
         raise NotImplementedError("publish not used in reader tests")
 
-    def load_current(self) -> CurrentPointer | None:
-        return CurrentPointer(
-            manifest_ref=self.current_ref,
-            manifest_content_type="application/json",
+    def load_current(self) -> ManifestRef | None:
+        return ManifestRef(
+            ref=self.current_ref,
             run_id="run",
-            updated_at="2026-01-01T00:00:00+00:00",
+            published_at=datetime.now(UTC),
         )
 
     def load_manifest(self, ref: str) -> ParsedManifest:
         return self.manifests[ref]
+
+    def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
+        return []
+
+    def set_current(self, ref: str) -> None:
+        pass
 
 
 @dataclass
@@ -181,11 +187,17 @@ class _NullManifestStore:
     ) -> str:
         raise NotImplementedError("publish not used in reader tests")
 
-    def load_current(self) -> CurrentPointer | None:
+    def load_current(self) -> ManifestRef | None:
         return None
 
     def load_manifest(self, ref: str) -> ParsedManifest:
         raise AssertionError("load_manifest should not be called")
+
+    def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
+        return []
+
+    def set_current(self, ref: str) -> None:
+        pass
 
 
 def test_load_initial_state_raises_reader_state_error_when_no_current() -> None:
@@ -1205,8 +1217,8 @@ def test_concurrent_reader_refresh_fails_reader_stays_on_old_manifest(
 
     manifest_store.load_manifest = failing_load  # type: ignore[assignment]
 
-    with pytest.raises(ManifestParseError, match="corrupt manifest"):
-        reader.refresh()
+    # Refresh should return False (no change) and log the error, not raise
+    assert reader.refresh() is False
 
     # Reader should still serve from old manifest
     assert reader.get(1) == b"val"

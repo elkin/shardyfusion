@@ -142,6 +142,57 @@ class ShardyRepl(cmd.Cmd):
 
         print(json.dumps(schema, indent=2))
 
+    def do_history(self, line: str) -> None:
+        """history [LIMIT] — List recent published manifests."""
+        from .output import build_history_result
+
+        parts = shlex.split(line)
+        limit = int(parts[0]) if parts else 10
+        try:
+            store = self._reader._manifest_store
+            refs = store.list_manifests(limit=limit)
+            result = build_history_result(refs)
+            emit(result, self._interactive_cfg)
+        except Exception as exc:
+            self._error("history", None, str(exc))
+
+    def do_use(self, line: str) -> None:
+        """use --offset N | --ref REF | --latest — Switch to a different manifest."""
+        parts = shlex.split(line)
+        if not parts:
+            self._error("use", None, "Usage: use --offset N | --ref REF | --latest")
+            return
+
+        try:
+            store = self._reader._manifest_store
+            if parts[0] == "--latest":
+                self._reader.refresh()
+                info = self._reader.snapshot_info()
+                print(f"Switched to latest manifest run_id={info.run_id}")
+            elif parts[0] == "--offset" and len(parts) == 2:
+                offset = int(parts[1])
+                refs = store.list_manifests(limit=offset + 1)
+                if offset >= len(refs):
+                    self._error("use", None, f"Offset {offset} out of range")
+                    return
+                store.set_current(refs[offset].ref)
+                self._reader.refresh()
+                info = self._reader.snapshot_info()
+                print(
+                    f"Switched to manifest run_id={info.run_id} ({info.created_at.isoformat()})"
+                )
+            elif parts[0] == "--ref" and len(parts) == 2:
+                store.set_current(parts[1])
+                self._reader.refresh()
+                info = self._reader.snapshot_info()
+                print(
+                    f"Switched to manifest run_id={info.run_id} ({info.created_at.isoformat()})"
+                )
+            else:
+                self._error("use", None, "Usage: use --offset N | --ref REF | --latest")
+        except Exception as exc:
+            self._error("use", None, str(exc))
+
     def do_quit(self, line: str) -> bool:
         """quit — Exit the REPL."""
         return True
