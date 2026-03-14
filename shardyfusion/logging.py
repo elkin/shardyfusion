@@ -1,11 +1,17 @@
 """Structured logging helpers."""
 
+import contextvars
+import json
 import logging
 import traceback
 from enum import Enum
 from typing import Any
 
 LOGGER = logging.getLogger("shardyfusion")
+
+_log_context: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
+    "shardyfusion_log_context",
+)
 
 _SEVERITY_TO_LOG_LEVEL: dict[str, int] = {
     "WARNING": logging.WARNING,
@@ -64,7 +70,8 @@ def log_event(
     _log = logger or LOGGER
     if not _log.isEnabledFor(level):
         return
-    _log.log(level, event, extra={"slatedb": fields})
+    merged = {**_log_context.get({}), **fields}
+    _log.log(level, event, extra={"slatedb": merged})
 
 
 def log_failure(
@@ -98,9 +105,93 @@ def log_failure(
     if not _log.isEnabledFor(level):
         return
 
-    merged: dict[str, Any] = {"severity": severity.value, **fields}
+    merged: dict[str, Any] = {
+        **_log_context.get({}),
+        "severity": severity.value,
+        **fields,
+    }
     if error is not None:
         merged["error"] = repr(error)
         if include_traceback:
             merged["traceback"] = traceback.format_exception(error)
     _log.log(level, event, extra={"slatedb": merged})
+
+
+class LogContext:
+    """Context manager that binds fields to all log calls within its scope.
+
+    Works correctly with both threading and asyncio — ``asyncio.create_task()``
+    inherits the parent's context automatically via contextvars.
+
+    Example::
+
+        with LogContext(run_id="abc", writer_type="spark"):
+            log_event("write_started", logger=_logger)
+            # -> extra includes run_id="abc", writer_type="spark"
+
+    Nesting is supported; inner contexts override outer ones for overlapping keys.
+    """
+
+    def __init__(self, **fields: Any) -> None:
+        self._fields = fields
+        self._token: contextvars.Token[dict[str, Any]] | None = None
+
+    def __enter__(self) -> "LogContext":
+        current = _log_context.get({})
+        self._token = _log_context.set({**current, **self._fields})
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        if self._token is not None:
+            _log_context.reset(self._token)
+
+
+class JsonFormatter(logging.Formatter):
+    """Formats log records as single-line JSON.
+
+    Flattens ``extra["slatedb"]`` fields into the top-level JSON object alongside
+    standard fields (``timestamp``, ``level``, ``logger``, ``event``).
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        entry: dict[str, Any] = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "logger": record.name,
+            "event": record.getMessage(),
+        }
+        slatedb_fields = getattr(record, "slatedb", None)
+        if isinstance(slatedb_fields, dict):
+            entry.update(slatedb_fields)
+        return json.dumps(entry, default=str)
+
+
+def configure_logging(
+    level: int = logging.INFO,
+    json_format: bool = False,
+    stream: Any = None,
+) -> None:
+    """Configure the ``shardyfusion.*`` logger hierarchy.
+
+    This is a convenience for users — libraries must not call this automatically.
+
+    Args:
+        level: Log level for the shardyfusion logger hierarchy.
+        json_format: If True, use JsonFormatter for JSON output.
+        stream: Output stream (default: sys.stderr).
+    """
+    import sys
+
+    logger = logging.getLogger("shardyfusion")
+    logger.setLevel(level)
+
+    handler = logging.StreamHandler(stream or sys.stderr)
+    handler.setLevel(level)
+    if json_format:
+        handler.setFormatter(JsonFormatter())
+    else:
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s %(message)s"))
+
+    # Remove existing handlers to avoid duplicate output
+    logger.handlers.clear()
+    logger.addHandler(handler)
