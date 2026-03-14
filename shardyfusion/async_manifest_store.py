@@ -12,7 +12,6 @@ from typing import Any, Protocol
 from .logging import FailureSeverity, get_logger, log_failure
 from .manifest import ManifestRef, ParsedManifest
 from .manifest_store import (
-    ManifestStore,
     parse_json_manifest,
 )
 from .metrics import MetricsCollector
@@ -144,31 +143,6 @@ class AsyncS3ManifestStore:
                 raise
             async with obj["Body"] as stream:
                 return await stream.read()
-
-
-class _SyncManifestStoreAdapter:
-    """Wraps a sync ``ManifestStore`` for use with ``AsyncShardedReader``.
-
-    S3 calls are offloaded to a thread via ``asyncio.to_thread()``.
-    """
-
-    def __init__(self, store: ManifestStore) -> None:
-        self._store = store
-
-    async def load_current(self) -> ManifestRef | None:
-        import asyncio
-
-        return await asyncio.to_thread(self._store.load_current)
-
-    async def load_manifest(self, ref: str) -> ParsedManifest:
-        import asyncio
-
-        return await asyncio.to_thread(self._store.load_manifest, ref)
-
-    async def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
-        import asyncio
-
-        return await asyncio.to_thread(self._store.list_manifests, limit=limit)
 
 
 def _resolve_s3_config_for_aiobotocore(

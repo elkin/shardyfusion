@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,7 @@ import pytest
 
 from shardyfusion._rate_limiter import AcquireResult
 from shardyfusion.manifest import (
-    CurrentPointer,
+    ManifestRef,
     ManifestShardingSpec,
     ParsedManifest,
     RequiredBuildMeta,
@@ -55,16 +56,21 @@ class _StaticManifestStore:
     def publish(self, **kwargs: object) -> str:
         raise NotImplementedError
 
-    def load_current(self) -> CurrentPointer:
-        return CurrentPointer(
-            manifest_ref="mem://manifest/v1",
-            manifest_content_type="application/json",
+    def load_current(self) -> ManifestRef:
+        return ManifestRef(
+            ref="mem://manifest/v1",
             run_id="run",
-            updated_at="2026-01-01T00:00:00+00:00",
+            published_at=datetime.now(UTC),
         )
 
     def load_manifest(self, ref: str) -> ParsedManifest:
         return self._manifest
+
+    def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
+        return []
+
+    def set_current(self, ref: str) -> None:
+        pass
 
 
 def _required_build() -> RequiredBuildMeta:
@@ -257,13 +263,15 @@ class _AsyncStaticManifestStore:
     def __init__(self, manifest: ParsedManifest) -> None:
         self._manifest = manifest
 
-    async def load_current(self) -> CurrentPointer:
-        return CurrentPointer(
-            manifest_ref="mem://manifest/v1",
-            manifest_content_type="application/json",
+    async def load_current(self) -> ManifestRef:
+        return ManifestRef(
+            ref="mem://manifest/v1",
             run_id="run",
-            updated_at="2026-01-01T00:00:00+00:00",
+            published_at=datetime.now(UTC),
         )
+
+    async def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
+        return []
 
     async def load_manifest(self, ref: str) -> ParsedManifest:
         return self._manifest

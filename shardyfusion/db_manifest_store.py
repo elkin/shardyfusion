@@ -61,6 +61,12 @@ class _DbManifestStoreBase(ABC):
 
     @property
     @abstractmethod
+    def _create_pointer_index_ddl(self) -> str:
+        """Return dialect-specific CREATE INDEX DDL for the pointer table."""
+        ...
+
+    @property
+    @abstractmethod
     def _param_marker(self) -> str:
         """Return the DB-API 2 parameter marker (``%s`` or ``?``)."""
         ...
@@ -72,6 +78,7 @@ class _DbManifestStoreBase(ABC):
                 cursor = conn.cursor()
                 cursor.execute(self._create_table_ddl)
                 cursor.execute(self._create_pointer_table_ddl)
+                cursor.execute(self._create_pointer_index_ddl)
                 conn.commit()
             finally:
                 conn.close()
@@ -99,9 +106,7 @@ class _DbManifestStoreBase(ABC):
 
         p = self._param_marker
         upsert_sql = self._upsert_sql(p)
-        pointer_sql = (
-            f"INSERT INTO {self._pointer_table_name} (manifest_ref) VALUES ({p})"
-        )
+        pointer_sql = self._pointer_insert_sql(p)
 
         try:
             conn = self._connection_factory()
@@ -256,9 +261,11 @@ class _DbManifestStoreBase(ABC):
             for run_id, created_at in rows
         ]
 
+    def _pointer_insert_sql(self, param_marker: str) -> str:
+        return f"INSERT INTO {self._pointer_table_name} (manifest_ref) VALUES ({param_marker})"
+
     def set_current(self, ref: str) -> None:
-        p = self._param_marker
-        sql = f"INSERT INTO {self._pointer_table_name} (manifest_ref) VALUES ({p})"
+        sql = self._pointer_insert_sql(self._param_marker)
 
         try:
             conn = self._connection_factory()
@@ -309,6 +316,13 @@ class PostgresManifestStore(_DbManifestStoreBase):
             f")"
         )
 
+    @property
+    def _create_pointer_index_ddl(self) -> str:
+        return (
+            f"CREATE INDEX IF NOT EXISTS idx_{self._pointer_table_name}_updated_at "
+            f"ON {self._pointer_table_name} (updated_at DESC)"
+        )
+
     def _upsert_sql(self, param_marker: str) -> str:
         p = param_marker
         return (
@@ -348,6 +362,13 @@ class Comdb2ManifestStore(_DbManifestStoreBase):
             f"  updated_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
             f"  manifest_ref  TEXT NOT NULL"
             f")"
+        )
+
+    @property
+    def _create_pointer_index_ddl(self) -> str:
+        return (
+            f"CREATE INDEX IF NOT EXISTS idx_{self._pointer_table_name}_updated_at "
+            f"ON {self._pointer_table_name} (updated_at DESC)"
         )
 
     def _upsert_sql(self, param_marker: str) -> str:

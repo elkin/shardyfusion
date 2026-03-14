@@ -158,6 +158,8 @@ class ShardyRepl(cmd.Cmd):
 
     def do_use(self, line: str) -> None:
         """use --offset N | --ref REF | --latest — Switch to a different manifest."""
+        from ..cli.app import _resolve_manifest_ref
+
         parts = shlex.split(line)
         if not parts:
             self._error("use", None, "Usage: use --offset N | --ref REF | --latest")
@@ -169,20 +171,12 @@ class ShardyRepl(cmd.Cmd):
                 self._reader.refresh()
                 info = self._reader.snapshot_info()
                 print(f"Switched to latest manifest run_id={info.run_id}")
-            elif parts[0] == "--offset" and len(parts) == 2:
-                offset = int(parts[1])
-                refs = store.list_manifests(limit=offset + 1)
-                if offset >= len(refs):
-                    self._error("use", None, f"Offset {offset} out of range")
-                    return
-                store.set_current(refs[offset].ref)
-                self._reader.refresh()
-                info = self._reader.snapshot_info()
-                print(
-                    f"Switched to manifest run_id={info.run_id} ({info.created_at.isoformat()})"
-                )
-            elif parts[0] == "--ref" and len(parts) == 2:
-                store.set_current(parts[1])
+            elif parts[0] in ("--offset", "--ref") and len(parts) == 2:
+                ref_arg = None if parts[0] == "--offset" else parts[1]
+                offset_arg = int(parts[1]) if parts[0] == "--offset" else None
+                target = _resolve_manifest_ref(store, ref=ref_arg, offset=offset_arg)
+                if target is not None:
+                    store.set_current(target)
                 self._reader.refresh()
                 info = self._reader.snapshot_info()
                 print(

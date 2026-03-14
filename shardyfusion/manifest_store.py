@@ -179,21 +179,7 @@ class S3ManifestStore:
             retry_config=self._retry_config,
         )
 
-        current_artifact = _build_current_artifact(
-            manifest_ref=manifest_url,
-            manifest_content_type=artifact.content_type,
-            run_id=run_id,
-        )
-        current_url = join_s3(self.s3_prefix, self.current_name)
-        put_bytes(
-            current_url,
-            current_artifact.payload,
-            current_artifact.content_type,
-            current_artifact.headers,
-            s3_client=self._s3_client,
-            metrics_collector=self._metrics,
-            retry_config=self._retry_config,
-        )
+        self._write_current(manifest_url, artifact.content_type, run_id)
 
         return manifest_url
 
@@ -248,12 +234,14 @@ class S3ManifestStore:
         return refs[:limit]
 
     def set_current(self, ref: str) -> None:
-        # Extract run_id from the ref path
-        # Expected format: .../manifests/{timestamp}_run_id={run_id}/manifest
         run_id = _extract_run_id_from_ref(ref)
+        self._write_current(ref, "application/json", run_id)
+
+    def _write_current(self, manifest_ref: str, content_type: str, run_id: str) -> None:
+        """Write the _CURRENT pointer to S3."""
         current_artifact = _build_current_artifact(
-            manifest_ref=ref,
-            manifest_content_type="application/json",
+            manifest_ref=manifest_ref,
+            manifest_content_type=content_type,
             run_id=run_id,
         )
         current_url = join_s3(self.s3_prefix, self.current_name)
@@ -264,6 +252,7 @@ class S3ManifestStore:
             current_artifact.headers,
             s3_client=self._s3_client,
             metrics_collector=self._metrics,
+            retry_config=self._retry_config,
         )
 
 

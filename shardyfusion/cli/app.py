@@ -504,16 +504,10 @@ def rollback_cmd(
         )
 
     try:
-        if target_ref is not None:
-            ref = target_ref
-        elif target_offset is not None:
-            refs = manifest_store.list_manifests(limit=target_offset + 1)
-            if target_offset >= len(refs):
-                raise click.ClickException(
-                    f"Offset {target_offset} out of range (only {len(refs)} manifests available)"
-                )
-            ref = refs[target_offset].ref
-        else:
+        ref = _resolve_manifest_ref(
+            manifest_store, ref=target_ref, offset=target_offset
+        )
+        if ref is None and target_run_id is not None:
             # --run-id: find the ref by scanning history
             refs = manifest_store.list_manifests(limit=100)
             matching = [r for r in refs if r.run_id == target_run_id]
@@ -523,6 +517,7 @@ def rollback_cmd(
                 )
             ref = matching[0].ref
 
+        assert ref is not None
         manifest_store.set_current(ref)
         click.echo(f"Rolled back _CURRENT to: {ref}")
     except click.ClickException:
