@@ -134,7 +134,6 @@ class ReaderHealth:
     manifest_age_seconds: float
     num_shards: int
     is_closed: bool
-    circuit_breaker_state: str | None
 
 
 @dataclass(slots=True)
@@ -461,7 +460,6 @@ class ShardedReader(_BaseShardedReader):
                 manifest_age_seconds=0.0,
                 num_shards=0,
                 is_closed=True,
-                circuit_breaker_state=None,
             )
         age = time.monotonic() - self._init_time
         status: Literal["healthy", "degraded", "unhealthy"] = "healthy"
@@ -473,7 +471,6 @@ class ShardedReader(_BaseShardedReader):
             manifest_age_seconds=round(age, 2),
             num_shards=len(self._state.readers),
             is_closed=False,
-            circuit_breaker_state=None,
         )
 
     def route_key(self, key: KeyInput) -> int:
@@ -773,7 +770,6 @@ class ConcurrentShardedReader(_BaseShardedReader):
                     manifest_age_seconds=0.0,
                     num_shards=0,
                     is_closed=True,
-                    circuit_breaker_state=None,
                 )
             state = self._state
         age = time.monotonic() - self._init_time
@@ -786,7 +782,6 @@ class ConcurrentShardedReader(_BaseShardedReader):
             manifest_age_seconds=round(age, 2),
             num_shards=len(state.handles),
             is_closed=False,
-            circuit_breaker_state=None,
         )
 
     def route_key(self, key: KeyInput) -> int:

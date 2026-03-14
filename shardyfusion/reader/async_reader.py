@@ -271,7 +271,6 @@ class AsyncShardedReader:
                 manifest_age_seconds=0.0,
                 num_shards=0,
                 is_closed=True,
-                circuit_breaker_state=None,
             )
         if self._state is None:
             return ReaderHealth(
@@ -280,7 +279,6 @@ class AsyncShardedReader:
                 manifest_age_seconds=0.0,
                 num_shards=0,
                 is_closed=False,
-                circuit_breaker_state=None,
             )
         age = time.monotonic() - self._init_time
         status: Literal["healthy", "degraded", "unhealthy"] = "healthy"
@@ -292,7 +290,6 @@ class AsyncShardedReader:
             manifest_age_seconds=round(age, 2),
             num_shards=len(self._state.readers),
             is_closed=False,
-            circuit_breaker_state=None,
         )
 
     def route_key(self, key: KeyInput) -> int:

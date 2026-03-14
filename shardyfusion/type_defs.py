@@ -67,36 +67,10 @@ class S3ClientConfig(TypedDict, total=False):
 
 
 # ---------------------------------------------------------------------------
-# Tracing Protocols (Layer 0 — no opentelemetry import)
+# Retry configuration
 # ---------------------------------------------------------------------------
 
 from dataclasses import dataclass  # noqa: E402
-from typing import Any  # noqa: E402
-
-
-class Span(Protocol):
-    """Minimal span interface satisfied by OTel's ``opentelemetry.trace.Span``."""
-
-    def set_attribute(self, key: str, value: Any) -> None: ...
-    def set_status(self, status: Any, description: str | None = None) -> None: ...
-    def record_exception(self, exception: BaseException) -> None: ...
-    def __enter__(self) -> "Span": ...
-    def __exit__(self, *args: object) -> None: ...
-
-
-class Tracer(Protocol):
-    """Minimal tracer interface satisfied by OTel's ``opentelemetry.trace.Tracer``.
-
-    Users who don't install the ``metrics-otel`` extra simply don't pass a
-    tracer — zero overhead, zero imports.
-    """
-
-    def start_as_current_span(self, name: str, **kwargs: Any) -> Span: ...
-
-
-# ---------------------------------------------------------------------------
-# Retry configuration
-# ---------------------------------------------------------------------------
 
 
 @dataclass(slots=True, frozen=True)
