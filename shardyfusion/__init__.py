@@ -1,5 +1,6 @@
 """Public API for shardyfusion."""
 
+from ._circuit_breaker import CircuitBreaker, CircuitBreakerConfig
 from ._rate_limiter import AcquireResult, RateLimiter, TokenBucket
 from .async_manifest_store import (
     AsyncManifestStore,
@@ -84,6 +85,8 @@ __all__ = [
     "AsyncShardReaderFactory",
     "AsyncShardReaderHandle",
     "AsyncSlateDbReaderFactory",
+    "CircuitBreaker",
+    "CircuitBreakerConfig",
     "ConfigValidationError",
     "FailureSeverity",
     "get_logger",
