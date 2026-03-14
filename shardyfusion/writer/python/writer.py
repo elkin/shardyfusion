@@ -54,6 +54,7 @@ def write_sharded(
     parallel: bool = False,
     max_queue_size: int = 100,
     max_writes_per_second: float | None = None,
+    max_write_bytes_per_second: float | None = None,
 ) -> BuildResult:
     """Write an iterable of records into N sharded databases.
 
@@ -68,7 +69,8 @@ def write_sharded(
             If False (default), all shard adapters are open simultaneously in
             a single process.
         max_queue_size: Maximum per-shard queue depth in parallel mode.
-        max_writes_per_second: Optional rate limit (token-bucket) for write throughput.
+        max_writes_per_second: Optional rate limit (token-bucket) for write ops/sec.
+        max_write_bytes_per_second: Optional rate limit (token-bucket) for write bytes/sec.
 
     Returns:
         BuildResult with manifest reference, shard metadata, and build statistics.
@@ -111,6 +113,7 @@ def write_sharded(
             value_fn=value_fn,
             max_queue_size=max_queue_size,
             max_writes_per_second=max_writes_per_second,
+            max_write_bytes_per_second=max_write_bytes_per_second,
         )
     else:
         attempts = _write_single_process(
@@ -121,6 +124,7 @@ def write_sharded(
             key_fn=key_fn,
             value_fn=value_fn,
             max_writes_per_second=max_writes_per_second,
+            max_write_bytes_per_second=max_write_bytes_per_second,
         )
 
     write_duration_ms = int((time.perf_counter() - started) * 1000)
@@ -200,6 +204,11 @@ def _validate_sharding(config: WriteConfig) -> None:
         )
 
 
+def _batch_bytes(batch: list[tuple[bytes, bytes]]) -> int:
+    """Compute total bytes in a batch of (key, value) pairs."""
+    return sum(len(k) + len(v) for k, v in batch)
+
+
 def _make_db_url(config: WriteConfig, run_id: str, db_id: int, attempt: int) -> str:
     db_rel_path = config.output.db_path_template.format(db_id=db_id)
     return join_s3(
@@ -229,6 +238,7 @@ def _write_single_process(
     key_fn: Callable[[T], KeyLike],
     value_fn: Callable[[T], bytes],
     max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
 ) -> list[ShardAttemptResult]:
     """Single-process mode: all adapters open simultaneously, single pass."""
 
@@ -238,6 +248,13 @@ def _write_single_process(
     if max_writes_per_second is not None:
         bucket = TokenBucket(
             max_writes_per_second, metrics_collector=config.metrics_collector
+        )
+    byte_bucket: RateLimiter | None = None
+    if max_write_bytes_per_second is not None:
+        byte_bucket = TokenBucket(
+            max_write_bytes_per_second,
+            metrics_collector=config.metrics_collector,
+            limiter_type="bytes",
         )
 
     # Open all shard adapters
@@ -279,11 +296,15 @@ def _write_single_process(
 
             if len(batches[db_id]) >= config.batch_size:
                 if bucket is None or bucket.try_acquire(len(batches[db_id])):
+                    if byte_bucket is not None:
+                        byte_bucket.acquire(_batch_bytes(batches[db_id]))
                     adapters[db_id].write_batch(batches[db_id])
                     batches[db_id].clear()
                 elif len(batches[db_id]) >= 2 * config.batch_size:
                     # Cap deferred growth to avoid OOM; block until tokens available
                     bucket.acquire(len(batches[db_id]))
+                    if byte_bucket is not None:
+                        byte_bucket.acquire(_batch_bytes(batches[db_id]))
                     adapters[db_id].write_batch(batches[db_id])
                     batches[db_id].clear()
 
@@ -292,6 +313,8 @@ def _write_single_process(
             if batches[db_id]:
                 if bucket is not None:
                     bucket.acquire(len(batches[db_id]))
+                if byte_bucket is not None:
+                    byte_bucket.acquire(_batch_bytes(batches[db_id]))
                 adapters[db_id].write_batch(batches[db_id])
                 batches[db_id].clear()
 
@@ -342,6 +365,7 @@ def _shard_worker(
     run_id: str,
     factory: DbAdapterFactory,
     max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
 ) -> None:
     """Worker process: consume chunks from queue, write to one shard."""
 
@@ -354,6 +378,13 @@ def _shard_worker(
     if max_writes_per_second is not None:
         bucket = TokenBucket(
             max_writes_per_second, metrics_collector=config.metrics_collector
+        )
+    byte_bucket: RateLimiter | None = None
+    if max_write_bytes_per_second is not None:
+        byte_bucket = TokenBucket(
+            max_write_bytes_per_second,
+            metrics_collector=config.metrics_collector,
+            limiter_type="bytes",
         )
 
     row_count = 0
@@ -372,14 +403,19 @@ def _shard_worker(
                 row_count += len(chunk)
 
                 while len(batch) >= config.batch_size:
+                    write_slice = batch[: config.batch_size]
                     if bucket is not None:
                         bucket.acquire(config.batch_size)
-                    adapter.write_batch(batch[: config.batch_size])
+                    if byte_bucket is not None:
+                        byte_bucket.acquire(_batch_bytes(write_slice))
+                    adapter.write_batch(write_slice)
                     batch = batch[config.batch_size :]
 
             if batch:
                 if bucket is not None:
                     bucket.acquire(len(batch))
+                if byte_bucket is not None:
+                    byte_bucket.acquire(_batch_bytes(batch))
                 adapter.write_batch(batch)
                 batch.clear()
 
@@ -426,6 +462,7 @@ def _write_parallel(
     value_fn: Callable[[T], bytes],
     max_queue_size: int,
     max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
 ) -> list[ShardAttemptResult]:
     """Multi-process mode: one worker per shard, main routes to queues."""
 
@@ -450,6 +487,7 @@ def _write_parallel(
                 run_id,
                 factory,
                 max_writes_per_second,
+                max_write_bytes_per_second,
             ),
         )
         p.start()

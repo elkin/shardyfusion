@@ -60,6 +60,7 @@ class PartitionWriteConfig:
     batch_size: int
     adapter_factory: DbAdapterFactory | None
     max_writes_per_second: float | None
+    max_write_bytes_per_second: float | None = None
     metrics_collector: MetricsCollector | None = None  # must be picklable
     started: float = 0.0
 
@@ -82,6 +83,7 @@ def write_sharded(
     cache_input: bool = False,
     storage_level: StorageLevel | None = None,
     max_writes_per_second: float | None = None,
+    max_write_bytes_per_second: float | None = None,
     verify_routing: bool = True,
 ) -> BuildResult:
     """Write a DataFrame into N independent sharded databases and publish manifest metadata.
@@ -98,7 +100,8 @@ def write_sharded(
             duration of the write (restored after completion).
         cache_input: If True, cache the input DataFrame before processing.
         storage_level: Spark storage level for caching (default: MEMORY_AND_DISK).
-        max_writes_per_second: Optional rate limit (token-bucket) for write throughput.
+        max_writes_per_second: Optional rate limit (token-bucket) for write ops/sec.
+        max_write_bytes_per_second: Optional rate limit (token-bucket) for write bytes/sec.
         verify_routing: If True (default), spot-check that Spark-assigned shard IDs
             match Python routing on a sample of written rows.
 
@@ -129,6 +132,7 @@ def write_sharded(
                 value_spec=value_spec,
                 sort_within_partitions=sort_within_partitions,
                 max_writes_per_second=max_writes_per_second,
+                max_write_bytes_per_second=max_write_bytes_per_second,
                 verify_routing=verify_routing,
             )
 
@@ -143,6 +147,7 @@ def _write_sharded_impl(
     value_spec: ValueSpec,
     sort_within_partitions: bool,
     max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
     verify_routing: bool,
 ) -> BuildResult:
     """Implementation assuming Spark conf already prepared."""
@@ -189,6 +194,7 @@ def _write_sharded_impl(
         key_col=key_col,
         value_spec=value_spec,
         max_writes_per_second=max_writes_per_second,
+        max_write_bytes_per_second=max_write_bytes_per_second,
         started=started,
     )
     write_outcome = _run_partition_writes(
@@ -354,6 +360,7 @@ def _build_partition_write_runtime(
     key_col: str,
     value_spec: ValueSpec,
     max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
     started: float = 0.0,
 ) -> PartitionWriteConfig:
     """Construct immutable worker-side runtime config for partition shard writers."""
@@ -371,6 +378,7 @@ def _build_partition_write_runtime(
         batch_size=config.batch_size,
         adapter_factory=config.adapter_factory,
         max_writes_per_second=max_writes_per_second,
+        max_write_bytes_per_second=max_write_bytes_per_second,
         metrics_collector=config.metrics_collector,
         started=started,
     )
@@ -432,6 +440,13 @@ def write_one_shard_partition(
         bucket = TokenBucket(
             runtime.max_writes_per_second, metrics_collector=runtime.metrics_collector
         )
+    byte_bucket: RateLimiter | None = None
+    if runtime.max_write_bytes_per_second is not None:
+        byte_bucket = TokenBucket(
+            runtime.max_write_bytes_per_second,
+            metrics_collector=runtime.metrics_collector,
+            limiter_type="bytes",
+        )
 
     mc = runtime.metrics_collector
 
@@ -474,6 +489,8 @@ def write_one_shard_partition(
                 if len(batch) >= runtime.batch_size:
                     if bucket is not None:
                         bucket.acquire(len(batch))
+                    if byte_bucket is not None:
+                        byte_bucket.acquire(sum(len(k) + len(v) for k, v in batch))
                     adapter.write_batch(batch)
                     if mc is not None:
                         mc.emit(
@@ -490,6 +507,8 @@ def write_one_shard_partition(
             if batch:
                 if bucket is not None:
                     bucket.acquire(len(batch))
+                if byte_bucket is not None:
+                    byte_bucket.acquire(sum(len(k) + len(v) for k, v in batch))
                 adapter.write_batch(batch)
                 if mc is not None:
                     mc.emit(

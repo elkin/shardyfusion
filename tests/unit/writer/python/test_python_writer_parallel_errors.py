@@ -104,6 +104,7 @@ def test_worker_crash_raises_error() -> None:
             value_fn=lambda r: r["val"],
             max_queue_size=10,
             max_writes_per_second=None,
+            max_write_bytes_per_second=None,
         )
 
 
@@ -121,6 +122,7 @@ def test_parallel_succeeds_with_good_factory() -> None:
         value_fn=lambda r: r["val"],
         max_queue_size=10,
         max_writes_per_second=None,
+        max_write_bytes_per_second=None,
     )
 
     assert len(results) == 2

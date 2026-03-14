@@ -32,24 +32,39 @@ class AcquireResult:
 
 
 class RateLimiter(Protocol):
-    """Minimal interface consumed by all writer paths."""
+    """Minimal interface consumed by all writer and reader paths.
+
+    ``try_acquire()`` is guaranteed to return immediately with no blocking
+    or I/O — it performs only arithmetic (replenish + compare + deduct).
+    Safe to call from async code without wrapping in a thread.
+
+    ``acquire()`` blocks (via ``time.sleep``) until tokens are available.
+    Use only in synchronous code paths.
+    """
 
     def acquire(self, tokens: int = 1) -> None: ...
     def try_acquire(self, tokens: int = 1) -> AcquireResult: ...
 
 
 class TokenBucket:
-    """Token bucket for rate limiting write_batch calls."""
+    """Token bucket for rate limiting write_batch calls.
+
+    Works for both ops/sec and bytes/sec limiting — the ``rate`` parameter
+    simply defines tokens per second, and callers pass the appropriate
+    token count (1 for ops, ``len(payload)`` for bytes).
+    """
 
     def __init__(
         self,
         rate: float,
         metrics_collector: MetricsCollector | None = None,
+        limiter_type: str = "ops",
     ) -> None:
-        self._rate = rate  # tokens (batches) per second
+        self._rate = rate  # tokens per second
         self._tokens = rate  # start full
         self._last = time.monotonic()
         self._metrics = metrics_collector
+        self._limiter_type = limiter_type
 
     def _replenish(self) -> None:
         """Add tokens accrued since the last call."""
@@ -72,18 +87,25 @@ class TokenBucket:
                 logger=_logger,
                 wait_seconds=wait,
                 tokens_requested=tokens,
+                limiter_type=self._limiter_type,
             )
             if self._metrics is not None:
                 self._metrics.emit(
                     MetricEvent.RATE_LIMITER_THROTTLED,
                     {
                         "wait_seconds": wait,
+                        "limiter_type": self._limiter_type,
                     },
                 )
             time.sleep(wait)
 
     def try_acquire(self, tokens: int = 1) -> AcquireResult:
-        """Non-blocking acquire: return immediately whether tokens were available."""
+        """Non-blocking acquire: return immediately whether tokens were available.
+
+        Performs only arithmetic (replenish + compare + deduct).  Never
+        blocks, never sleeps, never does I/O.  Safe to call directly from
+        async code without ``to_thread()``.
+        """
 
         self._replenish()
         if self._tokens >= tokens:
@@ -97,15 +119,43 @@ class TokenBucket:
             logger=_logger,
             deficit_seconds=deficit,
             tokens_requested=tokens,
+            limiter_type=self._limiter_type,
         )
         if self._metrics is not None:
             self._metrics.emit(
                 MetricEvent.RATE_LIMITER_DENIED,
                 {
                     "deficit_seconds": deficit,
+                    "limiter_type": self._limiter_type,
                 },
             )
         return AcquireResult(acquired=False, deficit=deficit)
+
+    async def acquire_async(self, tokens: int = 1) -> None:
+        """Async version of ``acquire()``: uses ``asyncio.sleep`` instead of ``time.sleep``."""
+        import asyncio
+
+        while True:
+            result = self.try_acquire(tokens)
+            if result:
+                return
+            log_event(
+                "rate_limiter_throttled",
+                level=logging.DEBUG,
+                logger=_logger,
+                wait_seconds=result.deficit,
+                tokens_requested=tokens,
+                limiter_type=self._limiter_type,
+            )
+            if self._metrics is not None:
+                self._metrics.emit(
+                    MetricEvent.RATE_LIMITER_THROTTLED,
+                    {
+                        "wait_seconds": result.deficit,
+                        "limiter_type": self._limiter_type,
+                    },
+                )
+            await asyncio.sleep(result.deficit)
 
 
 # Future: ThreadSafeTokenBucket(TokenBucket) can override acquire() with a lock when needed.

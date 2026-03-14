@@ -67,7 +67,8 @@ class _PartitionWriteRuntime:
     batch_size: int
     adapter_factory: DbAdapterFactory | None
     max_writes_per_second: float | None
-    sort_within_partitions: bool
+    max_write_bytes_per_second: float | None = None
+    sort_within_partitions: bool = False
     metrics_collector: MetricsCollector | None = None  # must be picklable
     started: float = 0.0
 
@@ -106,6 +107,7 @@ def write_sharded(
     value_spec: ValueSpec,
     sort_within_partitions: bool = False,
     max_writes_per_second: float | None = None,
+    max_write_bytes_per_second: float | None = None,
     verify_routing: bool = True,
 ) -> BuildResult:
     """Write a Dask DataFrame into N independent sharded databases and publish manifest.
@@ -118,7 +120,8 @@ def write_sharded(
         value_spec: Specifies how DataFrame rows are serialized to bytes
             (binary_col, json_cols, or a callable encoder).
         sort_within_partitions: If True, sort rows by key within each partition.
-        max_writes_per_second: Optional rate limit (token-bucket) for write throughput.
+        max_writes_per_second: Optional rate limit (token-bucket) for write ops/sec.
+        max_write_bytes_per_second: Optional rate limit (token-bucket) for write bytes/sec.
         verify_routing: If True (default), spot-check that Dask-assigned shard IDs
             match Python routing on a sample of written rows.
 
@@ -196,6 +199,7 @@ def write_sharded(
         key_col=key_col,
         value_spec=value_spec,
         max_writes_per_second=max_writes_per_second,
+        max_write_bytes_per_second=max_write_bytes_per_second,
         sort_within_partitions=sort_within_partitions,
         started=started,
     )
@@ -362,6 +366,7 @@ def _build_partition_write_runtime(
     key_col: str,
     value_spec: ValueSpec,
     max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
     sort_within_partitions: bool,
     started: float,
 ) -> _PartitionWriteRuntime:
@@ -380,6 +385,7 @@ def _build_partition_write_runtime(
         batch_size=config.batch_size,
         adapter_factory=config.adapter_factory,
         max_writes_per_second=max_writes_per_second,
+        max_write_bytes_per_second=max_write_bytes_per_second,
         sort_within_partitions=sort_within_partitions,
         metrics_collector=config.metrics_collector,
         started=started,
@@ -471,6 +477,13 @@ def _write_one_shard(
     bucket: RateLimiter | None = None
     if runtime.max_writes_per_second is not None:
         bucket = TokenBucket(runtime.max_writes_per_second, metrics_collector=mc)
+    byte_bucket: RateLimiter | None = None
+    if runtime.max_write_bytes_per_second is not None:
+        byte_bucket = TokenBucket(
+            runtime.max_write_bytes_per_second,
+            metrics_collector=mc,
+            limiter_type="bytes",
+        )
 
     partition_started = time.perf_counter()
     row_count = 0
@@ -497,6 +510,8 @@ def _write_one_shard(
                 if len(batch) >= runtime.batch_size:
                     if bucket is not None:
                         bucket.acquire(len(batch))
+                    if byte_bucket is not None:
+                        byte_bucket.acquire(sum(len(k) + len(v) for k, v in batch))
                     adapter.write_batch(batch)
                     if mc is not None:
                         mc.emit(
@@ -513,6 +528,8 @@ def _write_one_shard(
             if batch:
                 if bucket is not None:
                     bucket.acquire(len(batch))
+                if byte_bucket is not None:
+                    byte_bucket.acquire(sum(len(k) + len(v) for k, v in batch))
                 adapter.write_batch(batch)
                 if mc is not None:
                     mc.emit(

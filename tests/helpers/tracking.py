@@ -68,6 +68,7 @@ class RecordingTokenBucket:
 
     def __init__(self, rate: float, **kwargs: object) -> None:
         self.rate = rate
+        self.limiter_type: str = str(kwargs.get("limiter_type", "ops"))
         self.acquire_calls: list[int] = []
         self.try_acquire_calls: list[int] = []
         RecordingTokenBucket.instances.append(self)
@@ -78,3 +79,6 @@ class RecordingTokenBucket:
     def try_acquire(self, tokens: int = 1) -> AcquireResult:
         self.try_acquire_calls.append(tokens)
         return AcquireResult(acquired=True, deficit=0.0)
+
+    async def acquire_async(self, tokens: int = 1) -> None:
+        self.acquire_calls.append(tokens)
