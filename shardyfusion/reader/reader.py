@@ -12,7 +12,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from queue import Empty, Queue
-from typing import Any, Literal, Self
+from typing import TYPE_CHECKING, Any, Literal, Self
+
+if TYPE_CHECKING:
+    from shardyfusion._circuit_breaker import CircuitBreaker
 
 from shardyfusion._rate_limiter import RateLimiter
 from shardyfusion.errors import (
@@ -301,7 +304,10 @@ class _BaseShardedReader:
         max_workers: int | None = None,
         metrics_collector: MetricsCollector | None = None,
         rate_limiter: RateLimiter | None = None,
+        circuit_breaker: CircuitBreaker | None = None,
     ) -> None:
+        from shardyfusion._circuit_breaker import CircuitBreaker as _CB
+
         self.s3_prefix = s3_prefix
         self.local_root = local_root
         self.max_workers = max_workers
@@ -311,6 +317,7 @@ class _BaseShardedReader:
             raise ValueError("max_workers must be a positive integer (>= 1)")
         self._metrics = metrics_collector
         self._rate_limiter = rate_limiter
+        self._circuit_breaker: _CB | None = circuit_breaker
 
         if reader_factory is not None:
             self._reader_factory: ShardReaderFactory = reader_factory
@@ -324,6 +331,7 @@ class _BaseShardedReader:
                 s3_prefix,
                 current_name=current_name,
                 metrics_collector=metrics_collector,
+                circuit_breaker=circuit_breaker,
             )
 
         self._closed = False
@@ -404,6 +412,7 @@ class ShardedReader(_BaseShardedReader):
         max_workers: int | None = None,
         metrics_collector: MetricsCollector | None = None,
         rate_limiter: RateLimiter | None = None,
+        circuit_breaker: CircuitBreaker | None = None,
     ) -> None:
         super().__init__(
             s3_prefix=s3_prefix,
@@ -415,6 +424,7 @@ class ShardedReader(_BaseShardedReader):
             max_workers=max_workers,
             metrics_collector=metrics_collector,
             rate_limiter=rate_limiter,
+            circuit_breaker=circuit_breaker,
         )
         self._state = self._load_initial_state()
 
@@ -450,6 +460,11 @@ class ShardedReader(_BaseShardedReader):
 
     def health(self, *, staleness_threshold_s: float | None = None) -> ReaderHealth:
         """Return a diagnostic snapshot of reader state."""
+        cb_state = (
+            self._circuit_breaker.state.value
+            if self._circuit_breaker is not None
+            else None
+        )
         if self._closed:
             return ReaderHealth(
                 status="unhealthy",
@@ -457,11 +472,15 @@ class ShardedReader(_BaseShardedReader):
                 manifest_age_seconds=0.0,
                 num_shards=0,
                 is_closed=True,
-                circuit_breaker_state=None,
+                circuit_breaker_state=cb_state,
             )
         age = time.monotonic() - self._init_time
         status: Literal["healthy", "degraded", "unhealthy"] = "healthy"
-        if staleness_threshold_s is not None and age > staleness_threshold_s:
+        if cb_state == "open":
+            status = "unhealthy"
+        elif cb_state == "half_open":
+            status = "degraded"
+        elif staleness_threshold_s is not None and age > staleness_threshold_s:
             status = "degraded"
         return ReaderHealth(
             status=status,
@@ -469,7 +488,7 @@ class ShardedReader(_BaseShardedReader):
             manifest_age_seconds=round(age, 2),
             num_shards=len(self._state.readers),
             is_closed=False,
-            circuit_breaker_state=None,
+            circuit_breaker_state=cb_state,
         )
 
     def route_key(self, key: KeyInput) -> int:
@@ -696,6 +715,7 @@ class ConcurrentShardedReader(_BaseShardedReader):
         max_workers: int | None = None,
         metrics_collector: MetricsCollector | None = None,
         rate_limiter: RateLimiter | None = None,
+        circuit_breaker: CircuitBreaker | None = None,
     ) -> None:
         if thread_safety not in {"lock", "pool"}:
             raise ValueError("thread_safety must be 'lock' or 'pool'")
@@ -715,6 +735,7 @@ class ConcurrentShardedReader(_BaseShardedReader):
             max_workers=max_workers,
             metrics_collector=metrics_collector,
             rate_limiter=rate_limiter,
+            circuit_breaker=circuit_breaker,
         )
 
         self.thread_safety = thread_safety
@@ -761,6 +782,11 @@ class ConcurrentShardedReader(_BaseShardedReader):
 
     def health(self, *, staleness_threshold_s: float | None = None) -> ReaderHealth:
         """Return a diagnostic snapshot of reader state."""
+        cb_state = (
+            self._circuit_breaker.state.value
+            if self._circuit_breaker is not None
+            else None
+        )
         with self._state_lock:
             if self._closed:
                 return ReaderHealth(
@@ -769,12 +795,16 @@ class ConcurrentShardedReader(_BaseShardedReader):
                     manifest_age_seconds=0.0,
                     num_shards=0,
                     is_closed=True,
-                    circuit_breaker_state=None,
+                    circuit_breaker_state=cb_state,
                 )
             state = self._state
         age = time.monotonic() - self._init_time
         status: Literal["healthy", "degraded", "unhealthy"] = "healthy"
-        if staleness_threshold_s is not None and age > staleness_threshold_s:
+        if cb_state == "open":
+            status = "unhealthy"
+        elif cb_state == "half_open":
+            status = "degraded"
+        elif staleness_threshold_s is not None and age > staleness_threshold_s:
             status = "degraded"
         return ReaderHealth(
             status=status,
@@ -782,7 +812,7 @@ class ConcurrentShardedReader(_BaseShardedReader):
             manifest_age_seconds=round(age, 2),
             num_shards=len(state.handles),
             is_closed=False,
-            circuit_breaker_state=None,
+            circuit_breaker_state=cb_state,
         )
 
     def route_key(self, key: KeyInput) -> int:

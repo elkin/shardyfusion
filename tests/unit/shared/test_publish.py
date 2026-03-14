@@ -23,6 +23,7 @@ def test_s3_manifest_store_builds_expected_urls(monkeypatch) -> None:
         *,
         s3_client=None,
         metrics_collector=None,
+        **kwargs,
     ):
         calls.append(
             {

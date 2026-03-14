@@ -102,7 +102,7 @@ def test_parse_json_manifest_rejects_missing_required_field() -> None:
 
 
 def test_load_current_rejects_corrupt_json(monkeypatch) -> None:
-    def fake_try_get_bytes(url, *, s3_client=None, metrics_collector=None):
+    def fake_try_get_bytes(url, *, s3_client=None, metrics_collector=None, **kwargs):
         return b"not-json{{{"
 
     monkeypatch.setattr("shardyfusion.manifest_store.try_get_bytes", fake_try_get_bytes)
@@ -112,7 +112,7 @@ def test_load_current_rejects_corrupt_json(monkeypatch) -> None:
 
 
 def test_load_current_rejects_missing_manifest_ref(monkeypatch) -> None:
-    def fake_try_get_bytes(url, *, s3_client=None, metrics_collector=None):
+    def fake_try_get_bytes(url, *, s3_client=None, metrics_collector=None, **kwargs):
         return json.dumps(
             {
                 "manifest_content_type": "application/json",
