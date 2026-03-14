@@ -5,6 +5,7 @@ from .async_reader import (
 )
 from .reader import (
     ConcurrentShardedReader,
+    ReaderHealth,
     ShardDetail,
     ShardedReader,
     ShardReaderHandle,
@@ -17,6 +18,7 @@ __all__ = [
     "AsyncShardReaderHandle",
     "AsyncSlateDbReaderFactory",
     "ConcurrentShardedReader",
+    "ReaderHealth",
     "ShardReaderHandle",
     "ShardDetail",
     "ShardedReader",

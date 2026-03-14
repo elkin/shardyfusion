@@ -2,8 +2,7 @@
 
 ``AsyncManifestStore`` is the read-only async counterpart of
 ``ManifestStore``.  ``AsyncS3ManifestStore`` uses *aiobotocore* for
-native async S3 I/O; ``_SyncManifestStoreAdapter`` wraps a sync store
-via ``asyncio.to_thread()``.
+native async S3 I/O.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ from pydantic import ValidationError
 from .errors import ManifestParseError
 from .logging import FailureSeverity, get_logger, log_failure
 from .manifest import CurrentPointer, ParsedManifest
-from .manifest_store import ManifestStore, parse_json_manifest
+from .manifest_store import parse_json_manifest
 from .metrics import MetricsCollector
 from .type_defs import S3ClientConfig
 
@@ -125,26 +124,6 @@ class AsyncS3ManifestStore:
                 raise
             async with obj["Body"] as stream:
                 return await stream.read()
-
-
-class _SyncManifestStoreAdapter:
-    """Wraps a sync ``ManifestStore`` for use with ``AsyncShardedReader``.
-
-    S3 calls are offloaded to a thread via ``asyncio.to_thread()``.
-    """
-
-    def __init__(self, store: ManifestStore) -> None:
-        self._store = store
-
-    async def load_current(self) -> CurrentPointer | None:
-        import asyncio
-
-        return await asyncio.to_thread(self._store.load_current)
-
-    async def load_manifest(self, ref: str) -> ParsedManifest:
-        import asyncio
-
-        return await asyncio.to_thread(self._store.load_manifest, ref)
 
 
 def _resolve_s3_config_for_aiobotocore(

@@ -6,7 +6,6 @@ from typing import Any
 
 import pytest
 
-from shardyfusion.async_manifest_store import _SyncManifestStoreAdapter
 from shardyfusion.errors import ReaderStateError
 from shardyfusion.manifest import (
     CurrentPointer,
@@ -202,26 +201,6 @@ async def test_open_and_get(tmp_path) -> None:
     )
     assert await reader.get(1) == b"val"
     assert await reader.get(999) is None
-    await reader.close()
-
-
-@pytest.mark.asyncio
-async def test_open_with_sync_manifest_store(tmp_path) -> None:
-    """Sync ManifestStore should be auto-wrapped in _SyncManifestStoreAdapter."""
-    manifests = {"mem://manifest/one": _manifest("mem://db/one")}
-    sync_store = _MutableManifestStore(manifests, "mem://manifest/one")
-    stores: dict[str, dict[bytes, bytes]] = {
-        "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
-    }
-
-    reader = await AsyncShardedReader.open(
-        s3_prefix="s3://bucket/prefix",
-        local_root=str(tmp_path),
-        manifest_store=sync_store,
-        reader_factory=_async_fake_reader_factory(stores),
-    )
-    assert isinstance(reader._manifest_store, _SyncManifestStoreAdapter)
-    assert await reader.get(1) == b"val"
     await reader.close()
 
 

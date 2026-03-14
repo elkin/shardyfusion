@@ -56,7 +56,7 @@ The library is split into six independent paths that share config, manifest mode
 `reader/reader.py` → `routing.py` → `manifest_store.py`, `db_manifest_store.py`
 
 **Reader path (async)** (no Spark/Java needed; optional `aiobotocore` for native async S3):
-`reader/async_reader.py` → `routing.py` → `async_manifest_store.py` (`AsyncS3ManifestStore` / `_SyncManifestStoreAdapter`)
+`reader/async_reader.py` → `routing.py` → `async_manifest_store.py` (`AsyncS3ManifestStore`)
 
 **CLI path** (requires click + pyyaml):
 `cli/app.py` → `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
@@ -64,12 +64,13 @@ The library is split into six independent paths that share config, manifest mode
 ### Module Dependency Graph
 
 ```
-Layer 0 — Core types & errors: errors.py, type_defs.py, sharding_types.py, ordering.py, logging.py, metrics.py
-Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py
-Layer 2 — Storage, routing, manifest: storage.py, manifest.py, routing.py, manifest_store.py, async_manifest_store.py, db_manifest_store.py
+Layer 0 — Core types & errors: errors.py, type_defs.py (incl. Tracer/Span/RetryConfig), sharding_types.py, ordering.py, logging.py (incl. LogContext/JsonFormatter), metrics/ (package: _events.py, _protocol.py, _payloads.py)
+Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py, _circuit_breaker.py
+Layer 2 — Storage, routing, manifest: storage.py (w/ RetryConfig + CircuitBreaker), manifest.py, routing.py, manifest_store.py, async_manifest_store.py, db_manifest_store.py
 Layer 3 — Writer core: _writer_core.py (shared by all writers)
-Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/reader.py, reader/async_reader.py, cli/app.py
+Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/reader.py (w/ ReaderHealth), reader/async_reader.py, cli/app.py
 Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
+Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus extra), metrics/otel.py + metrics/tracing.py (metrics-otel extra)
 ```
 
 ### Write Pipeline
@@ -115,7 +116,7 @@ Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
 `AsyncShardedReader` in `reader/async_reader.py` mirrors the sync reader API using asyncio:
 
 1. Constructed via `@classmethod async def open(...)` (since `__init__` can't do async I/O).
-2. S3 manifest loading uses `AsyncS3ManifestStore` (native aiobotocore, auto-detected) or `_SyncManifestStoreAdapter` (wraps sync `ManifestStore` via `asyncio.to_thread()`).
+2. S3 manifest loading uses `AsyncS3ManifestStore` (native aiobotocore).
 3. `async get(key)` / `async multi_get(keys)` route keys and read from async shard readers. `multi_get` fans out via `asyncio.TaskGroup` with optional `asyncio.Semaphore` for concurrency limiting (`max_concurrency`).
 4. `async refresh()` serialises via `asyncio.Lock`. Same swap-and-retire pattern as sync, with deferred cleanup via `loop.create_task()` when retired state's borrow count hits 0.
 5. Sync metadata methods (`key_encoding`, `snapshot_info()`, `shard_details()`, `route_key()`) and borrow methods (`reader_for_key()`, `readers_for_keys()`) work identically to the sync reader.
@@ -233,10 +234,10 @@ Writer functions are imported from subpackages (not re-exported at top level):
 
 - **SlateDB import is deferred**: `slatedb_adapter.py` imports the `slatedb` module inside `__init__`, not at module load. Tests monkeypatch `sys.modules["slatedb"]` to provide fakes.
 - **Python writer parallel mode uses `spawn`**: `multiprocessing.get_context("spawn")` is hardcoded. All objects passed to workers must be picklable. Min/max key tracking happens in the main process.
-- **Rate limiter is not thread-safe**: `TokenBucket` has no internal lock; a `ThreadSafeTokenBucket` subclass will be added when needed. Writers depend on the `RateLimiter` Protocol, not the concrete class.
+- **Rate limiter is not thread-safe**: `TokenBucket` has no internal lock; a `ThreadSafeTokenBucket` subclass will be added when needed. Writers and readers depend on the `RateLimiter` Protocol, not the concrete class. Writers support both `max_writes_per_second` (ops) and `max_write_bytes_per_second` (bytes) via independent `TokenBucket` instances. Readers accept a `rate_limiter` parameter for reads/sec limiting.
 - **Reader reference counting**: `refresh()` serialises I/O via `_refresh_lock`, atomically swaps `_ReaderState` with a compare-and-swap guard, and defers closing old handles until `refcount` drops to zero. Pool-mode checkout has a configurable timeout (default 30s) — raises `SlateDbApiError` when exhausted. Metadata methods (`key_encoding`, `snapshot_info`, `shard_details`, `route_key`) use `_use_state()` and raise `ReaderStateError` on a closed reader.
-- **Async reader uses `open()` classmethod**: `AsyncShardedReader.__init__` does no I/O. Use `await AsyncShardedReader.open(...)` or `async with AsyncShardedReader(...)`. The `_SyncManifestStoreAdapter` wraps sync `ManifestStore` via `asyncio.to_thread()` when aiobotocore is not installed.
-- **Async manifest store auto-detection**: When `manifest_store=None`, the async reader probes for `aiobotocore` at runtime. If available, uses `AsyncS3ManifestStore` (native async S3). Otherwise, falls back to `_SyncManifestStoreAdapter` wrapping a sync `S3ManifestStore`. When a sync `ManifestStore` is passed explicitly, it's duck-type detected via `inspect.iscoroutinefunction()` and wrapped automatically.
+- **Async reader uses `open()` classmethod**: `AsyncShardedReader.__init__` does no I/O. Use `await AsyncShardedReader.open(...)` or `async with AsyncShardedReader(...)`. Requires `aiobotocore` (the `read-async` extra).
+- **Async manifest store**: `AsyncShardedReader` accepts `AsyncManifestStore` only (not sync `ManifestStore`). When `manifest_store=None`, uses `AsyncS3ManifestStore` (native aiobotocore). No sync-to-async adapter — if you want async, install `aiobotocore`.
 - **Garage requires path-style addressing**: E2E tests set `addressing_style: "path"` in `S3ClientConfig` because Garage doesn't support virtual-hosted-style.
 - **Session-scoped test fixtures**: PySpark and S3 (moto/Garage) fixtures are session-scoped for performance. Tests share the same Spark session and S3 service.
 - **Writer scenario imports are deferred**: `tests/helpers/s3_test_scenarios.py` imports writer modules inside function bodies so reader-only test collection doesn't fail.

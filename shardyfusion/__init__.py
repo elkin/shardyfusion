@@ -1,5 +1,6 @@
 """Public API for shardyfusion."""
 
+from ._rate_limiter import AcquireResult, RateLimiter, TokenBucket
 from .async_manifest_store import (
     AsyncManifestStore,
     AsyncS3ManifestStore,
@@ -48,6 +49,7 @@ from .reader import (
     AsyncShardReaderHandle,
     AsyncSlateDbReaderFactory,
     ConcurrentShardedReader,
+    ReaderHealth,
     ShardDetail,
     ShardedReader,
     ShardReaderHandle,
@@ -65,12 +67,16 @@ from .slatedb_adapter import (
 from .type_defs import (
     AsyncShardReader,
     AsyncShardReaderFactory,
+    RetryConfig,
     S3ClientConfig,
     ShardReader,
     ShardReaderFactory,
+    Span,
+    Tracer,
 )
 
 __all__ = [
+    "AcquireResult",
     "AsyncManifestStore",
     "AsyncS3ManifestStore",
     "AsyncShardedReader",
@@ -88,6 +94,8 @@ __all__ = [
     "MetricsCollector",
     "PublishCurrentError",
     "PublishManifestError",
+    "RateLimiter",
+    "ReaderHealth",
     "ReaderStateError",
     "S3ClientConfig",
     "S3TransientError",
@@ -96,6 +104,9 @@ __all__ = [
     "ShardReader",
     "ShardyfusionError",
     "SlateDbApiError",
+    "Span",
+    "Tracer",
+    "RetryConfig",
     "BuildResult",
     "BuildStats",
     "BuildDurations",
@@ -123,6 +134,7 @@ __all__ = [
     "SlateDbFactory",
     "SnapshotInfo",
     "SnapshotRouter",
+    "TokenBucket",
     "ShardingSpec",
     "ShardingStrategy",
     "WriteConfig",
