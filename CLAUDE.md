@@ -253,7 +253,8 @@ Writer functions are imported from subpackages (not re-exported at top level):
 ## Testing Notes
 
 - **`tests/unit/`** — fast, no Spark; use pytest-xdist (`-n 2`). Areas: `shared/`, `read/`, `writer/` (+ `writer/spark/`, `writer/python/`, `writer/dask/`, `writer/ray/`), `metrics/`, `cli/`
-- **`tests/unit/metrics/`** — `PrometheusCollector` and `OtelCollector` tests. Run via dedicated tox envs (`prometheus-unit`, `otel-unit`) that install the `metrics-prometheus`/`metrics-otel` extras. OTel tests also need `opentelemetry-sdk` (provided as tox dep). These are **not** in `tests/unit/shared/` to avoid collection in envs without the extras.
+- **`tests/unit/metrics/`** — `PrometheusCollector` and `OtelCollector` tests. Run via dedicated tox envs (`prometheus-unit`, `otel-unit`) that install the `metrics-prometheus`/`metrics-otel` extras. OTel tests also need `opentelemetry-sdk` (provided via `test` extra). Per-file `pytest.importorskip()` guards allow graceful skipping when running `uv run pytest` without all extras.
+- **Optional-dep test isolation** — Writer test directories (`tests/unit/writer/{dask,spark,ray}/`, `tests/integration/writer/{dask,ray}/`, `tests/e2e/writer/ray/`) use `conftest.py`-level `pytest.importorskip()` to skip entire suites when the framework extra is not installed. This allows `uv run pytest tests/` to work without all optional extras.
 - **`tests/integration/`** — S3 via `moto`; Spark writer tests require Spark + Java
 - **`tests/e2e/`** — Garage S3 via compose; `just d-e2e`
 - **`tests/helpers/`** — `s3_test_scenarios.py` (shared scenarios for moto/Garage), `tracking.py` (test doubles: `TrackingAdapter`, `TrackingFactory`, `RecordingTokenBucket`, `InMemoryPublisher`)
