@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
-from shardyfusion._writer_core import ShardAttemptResult, select_winners
-from shardyfusion.manifest import WriterInfo
+from unittest.mock import MagicMock, patch
+
+from shardyfusion._writer_core import ShardAttemptResult, cleanup_losers, select_winners
+from shardyfusion.manifest import RequiredShardMeta, WriterInfo
 
 
 def _attempt(db_id: int, attempt: int = 0) -> ShardAttemptResult:
     return ShardAttemptResult(
+        db_id=db_id,
+        db_url=f"s3://b/p/db={db_id:05d}/attempt={attempt:02d}",
+        attempt=attempt,
+        row_count=10,
+        min_key=1,
+        max_key=10,
+        checkpoint_id=None,
+        writer_info=WriterInfo(task_attempt_id=attempt),
+    )
+
+
+def _winner(db_id: int, attempt: int = 0) -> RequiredShardMeta:
+    return RequiredShardMeta(
         db_id=db_id,
         db_url=f"s3://b/p/db={db_id:05d}/attempt={attempt:02d}",
         attempt=attempt,
@@ -61,3 +76,116 @@ class TestSelectWinnersIterable:
         attempts = [_attempt(i) for i in range(5)]
         _, num_attempts, _ = select_winners(attempts, num_dbs=5)
         assert num_attempts == 5
+
+
+class TestCleanupLosers:
+    """cleanup_losers deletes non-winning attempt paths (best-effort)."""
+
+    @patch("shardyfusion.storage.delete_prefix")
+    @patch("shardyfusion.storage.create_s3_client")
+    def test_losers_deleted_winners_preserved(
+        self, mock_create_client: MagicMock, mock_delete: MagicMock
+    ) -> None:
+        """Only loser URLs are deleted; winner URLs are skipped."""
+        mock_delete.return_value = 5
+        mock_client = MagicMock()
+        mock_create_client.return_value = mock_client
+
+        winners = [_winner(0, attempt=0), _winner(1, attempt=0)]
+        all_urls = [
+            "s3://b/p/db=00000/attempt=00",  # winner
+            "s3://b/p/db=00000/attempt=01",  # loser
+            "s3://b/p/db=00001/attempt=00",  # winner
+            "s3://b/p/db=00001/attempt=01",  # loser
+        ]
+
+        deleted = cleanup_losers(all_urls, winners)
+        assert deleted == 10  # 5 objects x 2 losers
+
+        # Only loser URLs should be passed to delete_prefix
+        deleted_urls = [call.args[0] for call in mock_delete.call_args_list]
+        assert "s3://b/p/db=00000/attempt=01" in deleted_urls
+        assert "s3://b/p/db=00001/attempt=01" in deleted_urls
+        assert "s3://b/p/db=00000/attempt=00" not in deleted_urls
+        assert "s3://b/p/db=00001/attempt=00" not in deleted_urls
+
+    @patch("shardyfusion.storage.delete_prefix")
+    @patch("shardyfusion.storage.create_s3_client")
+    def test_returns_total_deleted_count(
+        self, mock_create_client: MagicMock, mock_delete: MagicMock
+    ) -> None:
+        """Returns the total number of S3 objects deleted."""
+        mock_delete.side_effect = [3, 7]
+        mock_create_client.return_value = MagicMock()
+
+        winners = [_winner(0)]
+        all_urls = [
+            "s3://b/p/db=00000/attempt=00",  # winner
+            "s3://b/p/db=00000/attempt=01",  # loser (3 objects)
+            "s3://b/p/db=00000/attempt=02",  # loser (7 objects)
+        ]
+
+        deleted = cleanup_losers(all_urls, winners)
+        assert deleted == 10
+
+    @patch("shardyfusion.storage.delete_prefix")
+    @patch("shardyfusion.storage.create_s3_client")
+    def test_no_losers(
+        self, mock_create_client: MagicMock, mock_delete: MagicMock
+    ) -> None:
+        """When all URLs are winners, nothing is deleted."""
+        mock_create_client.return_value = MagicMock()
+
+        winners = [_winner(0), _winner(1)]
+        all_urls = [
+            "s3://b/p/db=00000/attempt=00",
+            "s3://b/p/db=00001/attempt=00",
+        ]
+
+        deleted = cleanup_losers(all_urls, winners)
+        assert deleted == 0
+        mock_delete.assert_not_called()
+
+    @patch("shardyfusion.storage.delete_prefix")
+    @patch("shardyfusion.storage.create_s3_client")
+    def test_best_effort_s3_errors_not_raised(
+        self, mock_create_client: MagicMock, mock_delete: MagicMock
+    ) -> None:
+        """S3 errors in delete_prefix are handled internally (returns 0 for that URL)."""
+        # delete_prefix catches exceptions internally and returns partial count
+        mock_delete.return_value = 0
+        mock_create_client.return_value = MagicMock()
+
+        winners = [_winner(0)]
+        all_urls = [
+            "s3://b/p/db=00000/attempt=00",  # winner
+            "s3://b/p/db=00000/attempt=01",  # loser - delete returns 0
+        ]
+
+        # Should not raise even when delete_prefix returns 0
+        deleted = cleanup_losers(all_urls, winners)
+        assert deleted == 0
+
+    @patch("shardyfusion.storage.delete_prefix")
+    @patch("shardyfusion.storage.create_s3_client")
+    def test_metrics_collector_passed_through(
+        self, mock_create_client: MagicMock, mock_delete: MagicMock
+    ) -> None:
+        """metrics_collector is forwarded to delete_prefix."""
+        mock_delete.return_value = 1
+        mock_client = MagicMock()
+        mock_create_client.return_value = mock_client
+        mc = MagicMock()
+
+        winners = [_winner(0)]
+        all_urls = [
+            "s3://b/p/db=00000/attempt=00",
+            "s3://b/p/db=00000/attempt=01",
+        ]
+
+        cleanup_losers(all_urls, winners, metrics_collector=mc)
+        mock_delete.assert_called_once_with(
+            "s3://b/p/db=00000/attempt=01",
+            s3_client=mock_client,
+            metrics_collector=mc,
+        )

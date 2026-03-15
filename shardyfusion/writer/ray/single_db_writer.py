@@ -13,6 +13,7 @@ from shardyfusion._rate_limiter import RateLimiter, TokenBucket
 from shardyfusion._writer_core import (
     ShardAttemptResult,
     assemble_build_result,
+    cleanup_losers,
     publish_to_store,
     select_winners,
     update_min_max,
@@ -131,7 +132,7 @@ def _write_single_db_impl(
 
     # Publish
     attempts = [attempt_result]
-    winners, num_attempts, _attempt_urls = select_winners(attempts, num_dbs=1)
+    winners, num_attempts, all_attempt_urls = select_winners(attempts, num_dbs=1)
 
     resolved_sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
 
@@ -145,6 +146,10 @@ def _write_single_db_impl(
         started=started,
     )
     manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
+
+    cleanup_losers(
+        all_attempt_urls, winners, metrics_collector=config.metrics_collector
+    )
 
     return assemble_build_result(
         run_id=run_id,

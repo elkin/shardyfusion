@@ -54,6 +54,7 @@ class ShardAttemptResult:
 class PartitionWriteOutcome:
     num_attempts: int
     winners: list[RequiredShardMeta]
+    all_attempt_urls: list[str]
     write_duration_ms: int
 
 

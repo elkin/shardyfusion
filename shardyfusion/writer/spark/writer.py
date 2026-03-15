@@ -14,6 +14,7 @@ from shardyfusion._writer_core import (
     PartitionWriteOutcome,
     ShardAttemptResult,
     assemble_build_result,
+    cleanup_losers,
     publish_to_store,
     select_winners,
     update_min_max,
@@ -235,6 +236,12 @@ def _write_sharded_impl(
         )
         manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
 
+        cleanup_losers(
+            write_outcome.all_attempt_urls,
+            write_outcome.winners,
+            metrics_collector=mc,
+        )
+
         result = assemble_build_result(
             run_id=run_id,
             winners=write_outcome.winners,
@@ -398,13 +405,14 @@ def _run_partition_writes(
     results_rdd = partitioned_rdd.mapPartitionsWithIndex(
         lambda db_id, items: write_one_shard_partition(db_id, items, runtime)
     )
-    winners, num_attempts, _attempt_urls = select_winners(
+    winners, num_attempts, all_attempt_urls = select_winners(
         results_rdd.toLocalIterator(), num_dbs=num_dbs
     )
     write_duration_ms = int((time.perf_counter() - write_started) * 1000)
     return PartitionWriteOutcome(
         num_attempts=num_attempts,
         winners=winners,
+        all_attempt_urls=all_attempt_urls,
         write_duration_ms=write_duration_ms,
     )
 
