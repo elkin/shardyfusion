@@ -308,10 +308,14 @@ def delete_prefix(
     *,
     s3_client: Any = None,
     metrics_collector: MetricsCollector | None = None,
+    retry_config: RetryConfig | None = None,
 ) -> int:
     """Delete all objects under an S3 prefix. Returns the number of objects deleted.
 
-    Best-effort: logs errors but does not raise on transient failures.
+    When *retry_config* is ``None`` (the default), failures are logged but
+    not raised (best-effort).  When a *retry_config* is provided, each
+    list+delete page is wrapped in ``_retry_s3_operation()`` and transient
+    errors are retried; non-transient errors propagate.
     """
     client = s3_client or create_s3_client()
     bucket, key_prefix = parse_s3_url(prefix_url)
@@ -321,6 +325,7 @@ def delete_prefix(
 
     try:
         while True:
+            # Step 1: List one page of objects (retriable independently)
             list_kwargs: dict[str, Any] = {
                 "Bucket": bucket,
                 "Prefix": key_prefix,
@@ -329,22 +334,46 @@ def delete_prefix(
             if continuation_token is not None:
                 list_kwargs["ContinuationToken"] = continuation_token
 
-            response = client.list_objects_v2(**list_kwargs)
+            if retry_config is not None:
+                response = _retry_s3_operation(
+                    lambda kw=list_kwargs: client.list_objects_v2(**kw),
+                    operation_name="delete_prefix_list",
+                    url=prefix_url,
+                    metrics_collector=metrics_collector,
+                    retry_config=retry_config,
+                )
+            else:
+                response = client.list_objects_v2(**list_kwargs)
+
             contents = response.get("Contents", [])
             if not contents:
                 break
 
+            # Step 2: Delete the listed objects (retriable independently)
             objects = [{"Key": obj["Key"]} for obj in contents]
-            client.delete_objects(
-                Bucket=bucket,
-                Delete={"Objects": objects, "Quiet": True},
-            )
+            delete_payload: dict[str, Any] = {
+                "Bucket": bucket,
+                "Delete": {"Objects": objects, "Quiet": True},
+            }
+            if retry_config is not None:
+                _retry_s3_operation(
+                    lambda kw=delete_payload: client.delete_objects(**kw),
+                    operation_name="delete_prefix_delete",
+                    url=prefix_url,
+                    metrics_collector=metrics_collector,
+                    retry_config=retry_config,
+                )
+            else:
+                client.delete_objects(**delete_payload)
+
             deleted += len(objects)
 
             if not response.get("IsTruncated"):
                 break
             continuation_token = response.get("NextContinuationToken")
     except Exception as exc:
+        if retry_config is not None:
+            raise
         log_failure(
             "s3_delete_prefix_failed",
             severity=FailureSeverity.ERROR,
@@ -355,6 +384,56 @@ def delete_prefix(
         )
 
     return deleted
+
+
+def list_prefixes(
+    prefix_url: str,
+    *,
+    s3_client: Any = None,
+    retry_config: RetryConfig | None = None,
+) -> list[str]:
+    """List immediate child prefixes under an S3 prefix (CommonPrefixes).
+
+    Returns full S3 URLs for each child prefix, sorted lexicographically.
+    Uses manual pagination with per-page retry for resilience against
+    transient S3 errors mid-pagination.
+    """
+    client = s3_client or create_s3_client()
+    bucket, key_prefix = parse_s3_url(prefix_url)
+    if not key_prefix.endswith("/"):
+        key_prefix += "/"
+
+    prefixes: list[str] = []
+    continuation_token: str | None = None
+
+    while True:
+        list_kwargs: dict[str, Any] = {
+            "Bucket": bucket,
+            "Prefix": key_prefix,
+            "Delimiter": "/",
+        }
+        if continuation_token is not None:
+            list_kwargs["ContinuationToken"] = continuation_token
+
+        if retry_config is not None:
+            response = _retry_s3_operation(
+                lambda kw=list_kwargs: client.list_objects_v2(**kw),
+                operation_name="list_prefixes",
+                url=prefix_url,
+                retry_config=retry_config,
+            )
+        else:
+            response = client.list_objects_v2(**list_kwargs)
+
+        for cp in response.get("CommonPrefixes", []):
+            prefixes.append(f"s3://{bucket}/{cp['Prefix']}")
+
+        if not response.get("IsTruncated"):
+            break
+        continuation_token = response.get("NextContinuationToken")
+
+    prefixes.sort()
+    return prefixes
 
 
 def put_bytes(

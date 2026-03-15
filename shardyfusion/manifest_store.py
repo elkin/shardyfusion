@@ -36,7 +36,7 @@ from .storage import (
     create_s3_client,
     get_bytes,
     join_s3,
-    parse_s3_url,
+    list_prefixes,
     put_bytes,
     try_get_bytes,
 )
@@ -219,20 +219,22 @@ class S3ManifestStore:
 
     def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
         manifests_prefix = join_s3(self.s3_prefix, "manifests") + "/"
-        bucket, key_prefix = parse_s3_url(manifests_prefix)
+        prefix_urls = list_prefixes(
+            manifests_prefix,
+            s3_client=self._s3_client,
+            retry_config=self._retry_config,
+        )
 
         refs: list[ManifestRef] = []
-        paginator = self._s3_client.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=bucket, Prefix=key_prefix, Delimiter="/"):
-            for entry in page.get("CommonPrefixes", []):
-                dir_name = entry["Prefix"][len(key_prefix) :]
-                ref = parse_manifest_dir_entry(
-                    dir_name, self.s3_prefix, self.manifest_name
-                )
-                if ref is not None:
-                    refs.append(ref)
+        for url in prefix_urls:
+            # Extract relative dir_name from the full URL
+            # e.g. "s3://bucket/prefix/manifests/2026-...Z_run_id=abc/" → "2026-...Z_run_id=abc/"
+            dir_name = url[len(manifests_prefix) :]
+            ref = parse_manifest_dir_entry(dir_name, self.s3_prefix, self.manifest_name)
+            if ref is not None:
+                refs.append(ref)
 
-        # S3 returns lexicographic ascending; reverse for newest-first
+        # list_prefixes returns lexicographic ascending; reverse for newest-first
         refs.sort(key=lambda r: r.published_at, reverse=True)
         return refs[:limit]
 

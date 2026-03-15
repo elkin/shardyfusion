@@ -1,11 +1,13 @@
-"""Tests for S3 retry metrics in shardyfusion.storage."""
+"""Tests for S3 retry metrics and utilities in shardyfusion.storage."""
 
 from __future__ import annotations
+
+from unittest.mock import MagicMock
 
 import pytest
 
 from shardyfusion.metrics import MetricEvent
-from shardyfusion.storage import _retry_s3_operation
+from shardyfusion.storage import _retry_s3_operation, list_prefixes
 from shardyfusion.testing import ListMetricsCollector
 
 
@@ -104,3 +106,81 @@ class TestRetryS3OperationMetrics:
 
         assert result == "ok"
         assert len(mc.events) == 0
+
+
+# ---------------------------------------------------------------------------
+# list_prefixes
+# ---------------------------------------------------------------------------
+
+
+def _make_listing_client(pages: list[list[str]]) -> MagicMock:
+    """Build a mock S3 client whose ``list_objects_v2`` returns paginated CommonPrefixes.
+
+    Each inner list contains S3 key prefixes (e.g. ``["prefix/run_id=a/"]``).
+    The mock returns them as consecutive pages with proper ``IsTruncated``
+    and ``NextContinuationToken`` fields.
+    """
+    mock_client = MagicMock()
+    responses = []
+    for i, page_prefixes in enumerate(pages):
+        is_last = i == len(pages) - 1
+        response: dict[str, object] = {
+            "CommonPrefixes": [{"Prefix": p} for p in page_prefixes],
+            "IsTruncated": not is_last,
+        }
+        if not is_last:
+            response["NextContinuationToken"] = f"token-{i + 1}"
+        responses.append(response)
+    mock_client.list_objects_v2.side_effect = responses
+    return mock_client
+
+
+class TestListPrefixes:
+    def test_single_page(self) -> None:
+        """Single page of results returns full S3 URLs, sorted."""
+        client = _make_listing_client(
+            [["prefix/shards/run_id=bbb/", "prefix/shards/run_id=aaa/"]]
+        )
+        result = list_prefixes("s3://bucket/prefix/shards/", s3_client=client)
+        assert result == [
+            "s3://bucket/prefix/shards/run_id=aaa/",
+            "s3://bucket/prefix/shards/run_id=bbb/",
+        ]
+
+    def test_multi_page(self) -> None:
+        """Multiple pages are consumed — all results returned."""
+        client = _make_listing_client(
+            [
+                ["prefix/shards/run_id=aaa/"],
+                ["prefix/shards/run_id=bbb/"],
+                ["prefix/shards/run_id=ccc/"],
+            ]
+        )
+        result = list_prefixes("s3://bucket/prefix/shards/", s3_client=client)
+        assert len(result) == 3
+        assert result == [
+            "s3://bucket/prefix/shards/run_id=aaa/",
+            "s3://bucket/prefix/shards/run_id=bbb/",
+            "s3://bucket/prefix/shards/run_id=ccc/",
+        ]
+
+    def test_empty_prefix(self) -> None:
+        """No children returns empty list."""
+        client = _make_listing_client([[]])
+        result = list_prefixes("s3://bucket/prefix/shards/", s3_client=client)
+        assert result == []
+
+    def test_urls_are_full_s3(self) -> None:
+        """Returned URLs start with s3://bucket/."""
+        client = _make_listing_client([["some/path/"]])
+        result = list_prefixes("s3://mybucket/some/", s3_client=client)
+        assert all(url.startswith("s3://mybucket/") for url in result)
+
+    def test_trailing_slash_added(self) -> None:
+        """Prefix without trailing slash still works."""
+        client = _make_listing_client([["prefix/shards/run_id=a/"]])
+        result = list_prefixes("s3://bucket/prefix/shards", s3_client=client)
+        assert len(result) == 1
+        # Verify the Prefix kwarg had a trailing slash appended
+        call_kwargs = client.list_objects_v2.call_args.kwargs
+        assert call_kwargs["Prefix"].endswith("/")
