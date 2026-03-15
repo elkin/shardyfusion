@@ -66,8 +66,8 @@ The library is split into six independent paths that share config, manifest mode
 ```
 Layer 0 — Core types & errors: errors.py, type_defs.py (incl. RetryConfig), sharding_types.py, ordering.py, logging.py (incl. LogContext/JsonFormatter), metrics/ (package: _events.py, _protocol.py)
 Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py
-Layer 2 — Storage, routing, manifest: storage.py (w/ RetryConfig), manifest.py, routing.py, manifest_store.py, async_manifest_store.py, db_manifest_store.py
-Layer 3 — Writer core: _writer_core.py (shared by all writers)
+Layer 2 — Storage, routing, manifest: storage.py (w/ RetryConfig, list_prefixes), manifest.py, routing.py, manifest_store.py (delegates to list_prefixes), async_manifest_store.py, db_manifest_store.py
+Layer 3 — Writer core: _writer_core.py (shared by all writers; cleanup: CleanupAction, cleanup_stale_attempts, cleanup_old_runs)
 Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/reader.py (w/ ReaderHealth), reader/async_reader.py, cli/app.py
 Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
 Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus extra), metrics/otel.py (metrics-otel extra)
@@ -124,7 +124,7 @@ Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus ext
 
 ### CLI (`shardy`)
 
-Entry point: `cli/app.py:main`. Subcommands: `get KEY`, `multiget KEY [KEY ...]`, `info`, `shards`, `route KEY`, `exec --script FILE`, `history [--limit N]`, `rollback (--ref REF | --run-id RUN_ID | --offset N)`, `schema [--type manifest|current-pointer]`. No subcommand → interactive REPL (`cmd.Cmd` with `shardy> ` prompt; REPL-only commands include `refresh`, `history [LIMIT]`, and `use (--offset N | --ref REF | --latest)`).
+Entry point: `cli/app.py:main`. Subcommands: `get KEY`, `multiget KEY [KEY ...]`, `info`, `shards`, `route KEY`, `exec --script FILE`, `history [--limit N]`, `rollback (--ref REF | --run-id RUN_ID | --offset N)`, `cleanup [--dry-run] [--include-old-runs] [--older-than DURATION] [--keep-last N] [--max-retries N]`, `schema [--type manifest|current-pointer]`. No subcommand → interactive REPL (`cmd.Cmd` with `shardy> ` prompt; REPL-only commands include `refresh`, `history [LIMIT]`, and `use (--offset N | --ref REF | --latest)`).
 
 Global options `--ref REF` and `--offset N` (mutually exclusive) load a specific manifest by reference or position in history before executing any subcommand.
 
@@ -260,6 +260,7 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **`tests/helpers/`** — `s3_test_scenarios.py` (shared scenarios for moto/Garage), `tracking.py` (test doubles: `TrackingAdapter`, `TrackingFactory`, `RecordingTokenBucket`, `InMemoryPublisher`)
 - Markers: `@pytest.mark.spark`, `@pytest.mark.dask`, `@pytest.mark.ray`, `@pytest.mark.e2e`
 - **Contract tests**: hypothesis property tests in `test_routing_contract.py`, framework cross-checks in `writer/spark/`, `writer/dask/`, and `writer/ray/`
+- **Cleanup tests**: `tests/unit/cli/test_cleanup.py` tests the `cleanup` CLI command; `tests/unit/writer/test_cleanup_core.py` tests core cleanup functions (`cleanup_stale_attempts`, `cleanup_old_runs`)
 - For behavior changes: add/adjust unit tests first, then integration tests where routing/publishing or framework behavior is affected
 
 ## Coding Conventions
