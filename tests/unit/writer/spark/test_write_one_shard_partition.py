@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -92,6 +93,7 @@ def _make_runtime(
         value_spec=ValueSpec.binary_col("val"),
         batch_size=batch_size,
         adapter_factory=_make_factory(adapter),
+        credential_provider=None,
         max_writes_per_second=None,
     )
 
@@ -226,20 +228,7 @@ def test_rate_limited_partition_write(tmp_path) -> None:
     adapter = _FakeAdapter()
     runtime = _make_runtime(tmp_path, adapter=adapter, batch_size=2)
     # Enable rate limiting (high rate so no real delay)
-    runtime = PartitionWriteConfig(
-        run_id=runtime.run_id,
-        s3_prefix=runtime.s3_prefix,
-        tmp_prefix=runtime.tmp_prefix,
-        db_path_template=runtime.db_path_template,
-        local_root=runtime.local_root,
-        key_col=runtime.key_col,
-        key_encoding=runtime.key_encoding,
-        key_encoder=runtime.key_encoder,
-        value_spec=runtime.value_spec,
-        batch_size=runtime.batch_size,
-        adapter_factory=runtime.adapter_factory,
-        max_writes_per_second=1000.0,
-    )
+    runtime = replace(runtime, max_writes_per_second=1000.0)
     result = _run(0, _rows(1, 2, 3, 4, 5), runtime)
 
     assert result.row_count == 5
@@ -283,6 +272,7 @@ def _make_rate_limited_runtime(
         value_spec=ValueSpec.binary_col("val"),
         batch_size=batch_size,
         adapter_factory=_make_factory(adapter),
+        credential_provider=None,
         max_writes_per_second=max_writes_per_second,
     )
 
