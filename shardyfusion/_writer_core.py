@@ -168,7 +168,7 @@ def publish_to_store(
         key_col=key_col,
         sharding=manifest_safe_sharding(resolved_sharding),
         db_path_template=config.output.db_path_template,
-        tmp_prefix=config.output.tmp_prefix,
+        shard_prefix=config.output.shard_prefix,
         key_encoding=config.key_encoding,
     )
 

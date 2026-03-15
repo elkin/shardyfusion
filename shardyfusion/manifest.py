@@ -49,7 +49,7 @@ class RequiredBuildMeta(BaseModel):
     key_col: str
     sharding: ManifestShardingSpec
     db_path_template: str
-    tmp_prefix: str
+    shard_prefix: str
     format_version: int = 1
     key_encoding: KeyEncoding = KeyEncoding.U64BE
 

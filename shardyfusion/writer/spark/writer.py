@@ -52,7 +52,7 @@ _logger = get_logger(__name__)
 class PartitionWriteConfig:
     run_id: str
     s3_prefix: str
-    tmp_prefix: str
+    shard_prefix: str
     db_path_template: str
     local_root: str
     key_col: str
@@ -376,7 +376,7 @@ def _build_partition_write_runtime(
     return PartitionWriteConfig(
         run_id=run_id,
         s3_prefix=config.s3_prefix,
-        tmp_prefix=config.output.tmp_prefix,
+        shard_prefix=config.output.shard_prefix,
         db_path_template=config.output.db_path_template,
         local_root=config.output.local_root,
         key_col=key_col,
@@ -432,7 +432,7 @@ def write_one_shard_partition(
     db_rel_path = runtime.db_path_template.format(db_id=db_id)
     db_url = join_s3(
         runtime.s3_prefix,
-        runtime.tmp_prefix,
+        runtime.shard_prefix,
         f"run_id={runtime.run_id}",
         db_rel_path,
         f"attempt={attempt:02d}",

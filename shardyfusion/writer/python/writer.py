@@ -249,7 +249,7 @@ def _make_db_url(config: WriteConfig, run_id: str, db_id: int, attempt: int) -> 
     db_rel_path = config.output.db_path_template.format(db_id=db_id)
     return join_s3(
         config.s3_prefix,
-        config.output.tmp_prefix,
+        config.output.shard_prefix,
         f"run_id={run_id}",
         db_rel_path,
         f"attempt={attempt:02d}",

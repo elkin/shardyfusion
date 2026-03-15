@@ -30,7 +30,7 @@ class OutputOptions:
 
     run_id: str | None = None
     db_path_template: str = "db={db_id:05d}"
-    tmp_prefix: str = "_tmp"
+    shard_prefix: str = "shards"
     local_root: str = field(
         default_factory=lambda: str(Path(tempfile.gettempdir()) / "shardyfusion")
     )
@@ -109,7 +109,7 @@ class WriteConfig:
             raise ConfigValidationError("batch_size must be > 0")
 
         _validate_s3_prefix(self.s3_prefix)
-        _validate_segment(self.output.tmp_prefix, field_name="output.tmp_prefix")
+        _validate_segment(self.output.shard_prefix, field_name="output.shard_prefix")
 
         try:
             self.output.db_path_template.format(db_id=0)
