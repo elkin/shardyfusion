@@ -20,7 +20,7 @@ from shardyfusion._writer_core import (
 from shardyfusion.config import WriteConfig
 from shardyfusion.errors import ConfigValidationError, ShardyfusionError
 from shardyfusion.logging import FailureSeverity, log_failure
-from shardyfusion.manifest import BuildResult
+from shardyfusion.manifest import BuildResult, WriterInfo
 from shardyfusion.serde import ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
 from shardyfusion.slatedb_adapter import (
@@ -28,7 +28,7 @@ from shardyfusion.slatedb_adapter import (
     SlateDbFactory,
 )
 from shardyfusion.storage import join_s3
-from shardyfusion.type_defs import JsonObject, KeyLike
+from shardyfusion.type_defs import KeyLike
 
 
 class RayCacheContext:
@@ -251,13 +251,6 @@ def _stream_to_single_db(
             f"Single-db write failed for db_id={db_id}, attempt={attempt}: {exc}"
         ) from exc
 
-    writer_info: JsonObject = {
-        "stage_id": None,
-        "task_attempt_id": None,
-        "attempt": attempt,
-        "duration_ms": int((time.perf_counter() - write_started) * 1000),
-    }
-
     return ShardAttemptResult(
         db_id=db_id,
         db_url=db_url,
@@ -266,5 +259,8 @@ def _stream_to_single_db(
         min_key=min_key,
         max_key=max_key,
         checkpoint_id=checkpoint_id,
-        writer_info=writer_info,
+        writer_info=WriterInfo(
+            attempt=attempt,
+            duration_ms=int((time.perf_counter() - write_started) * 1000),
+        ),
     )

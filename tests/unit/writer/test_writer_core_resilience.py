@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from shardyfusion._writer_core import ShardAttemptResult, select_winners
+from shardyfusion.manifest import WriterInfo
 
 
 def _attempt(db_id: int, attempt: int = 0) -> ShardAttemptResult:
@@ -14,7 +15,7 @@ def _attempt(db_id: int, attempt: int = 0) -> ShardAttemptResult:
         min_key=1,
         max_key=10,
         checkpoint_id=None,
-        writer_info={"task_attempt_id": attempt},
+        writer_info=WriterInfo(task_attempt_id=attempt),
     )
 
 

@@ -26,7 +26,7 @@ from shardyfusion.logging import (
     log_event,
     log_failure,
 )
-from shardyfusion.manifest import BuildResult
+from shardyfusion.manifest import BuildResult, WriterInfo
 from shardyfusion.metrics import MetricEvent, MetricsCollector
 from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import DB_ID_COL, KeyEncoding
@@ -35,7 +35,7 @@ from shardyfusion.slatedb_adapter import (
     default_adapter_factory,
 )
 from shardyfusion.storage import join_s3
-from shardyfusion.type_defs import JsonObject, KeyLike
+from shardyfusion.type_defs import KeyLike
 from shardyfusion.writer.spark.util import (
     DataFrameCacheContext,
     SparkConfOverrideContext,
@@ -563,12 +563,12 @@ def write_one_shard_partition(
             },
         )
 
-    writer_info: JsonObject = {
-        "stage_id": stage_id,
-        "task_attempt_id": task_attempt_id,
-        "attempt": attempt,
-        "duration_ms": duration_ms,
-    }
+    writer_info = WriterInfo(
+        stage_id=stage_id,
+        task_attempt_id=task_attempt_id,
+        attempt=attempt,
+        duration_ms=duration_ms,
+    )
 
     yield ShardAttemptResult(
         db_id=db_id,

@@ -176,7 +176,7 @@ def test_writer_info_contains_attempt(tmp_path) -> None:
     runtime = _make_runtime(tmp_path)
     result = _run(0, _rows(1), runtime)
     # No TaskContext → attempt defaults to 0
-    assert result.writer_info["attempt"] == 0
+    assert result.writer_info.attempt == 0
     assert result.attempt == 0
 
 
@@ -186,8 +186,8 @@ def test_no_task_context_uses_attempt_zero(tmp_path) -> None:
         mock_tc.get.return_value = None
         (result,) = write_one_shard_partition(0, _rows(1), runtime)
     assert result.attempt == 0
-    assert result.writer_info["stage_id"] is None
-    assert result.writer_info["task_attempt_id"] is None
+    assert result.writer_info.stage_id is None
+    assert result.writer_info.task_attempt_id is None
 
 
 def test_task_context_fields_propagated(tmp_path) -> None:
@@ -202,8 +202,8 @@ def test_task_context_fields_propagated(tmp_path) -> None:
         (result,) = write_one_shard_partition(0, _rows(1), runtime)
 
     assert result.attempt == 2
-    assert result.writer_info["stage_id"] == 5
-    assert result.writer_info["task_attempt_id"] == 99
+    assert result.writer_info.stage_id == 5
+    assert result.writer_info.task_attempt_id == 99
     assert "/attempt=02" in result.db_url
 
 

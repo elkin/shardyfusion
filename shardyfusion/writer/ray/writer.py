@@ -33,7 +33,7 @@ from shardyfusion.logging import (
     log_event,
     log_failure,
 )
-from shardyfusion.manifest import BuildResult
+from shardyfusion.manifest import BuildResult, WriterInfo
 from shardyfusion.metrics import MetricEvent, MetricsCollector
 from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import (
@@ -47,7 +47,7 @@ from shardyfusion.slatedb_adapter import (
     SlateDbFactory,
 )
 from shardyfusion.storage import join_s3
-from shardyfusion.type_defs import JsonObject, KeyLike
+from shardyfusion.type_defs import KeyLike
 
 from .sharding import add_db_id_column, compute_range_boundaries
 
@@ -607,12 +607,7 @@ def _write_one_shard(
             },
         )
 
-    writer_info: JsonObject = {
-        "stage_id": None,
-        "task_attempt_id": None,
-        "attempt": attempt,
-        "duration_ms": duration_ms,
-    }
+    writer_info = WriterInfo(attempt=attempt, duration_ms=duration_ms)
 
     return ShardAttemptResult(
         db_id=db_id,
@@ -697,12 +692,7 @@ def _fill_empty_shards(
                     min_key=None,
                     max_key=None,
                     checkpoint_id=None,
-                    writer_info={
-                        "stage_id": None,
-                        "task_attempt_id": None,
-                        "attempt": 0,
-                        "duration_ms": 0,
-                    },
+                    writer_info=WriterInfo(),
                 )
             )
 

@@ -28,13 +28,13 @@ from shardyfusion.logging import (
     log_event,
     log_failure,
 )
-from shardyfusion.manifest import BuildResult
+from shardyfusion.manifest import BuildResult, WriterInfo
 from shardyfusion.metrics import MetricEvent
 from shardyfusion.serde import make_key_encoder
 from shardyfusion.sharding_types import ShardingStrategy
 from shardyfusion.slatedb_adapter import DbAdapterFactory, SlateDbFactory
 from shardyfusion.storage import join_s3
-from shardyfusion.type_defs import JsonObject, KeyLike
+from shardyfusion.type_defs import KeyLike
 
 _logger = get_logger(__name__)
 
@@ -315,6 +315,14 @@ def _write_single_process(
         total_batched_items = 0
         total_batched_bytes = 0
 
+        def _flush_shard(sid: int) -> None:
+            nonlocal total_batched_items, total_batched_bytes
+            adapters[sid].write_batch(batches[sid])
+            total_batched_items -= len(batches[sid])
+            total_batched_bytes -= batch_byte_sizes[sid]
+            batches[sid].clear()
+            batch_byte_sizes[sid] = 0
+
         for record in records:
             key = key_fn(record)
             db_id = route_key(
@@ -340,21 +348,13 @@ def _write_single_process(
                 if bucket is None or bucket.try_acquire(len(batches[db_id])):
                     if byte_bucket is not None:
                         byte_bucket.acquire(batch_byte_sizes[db_id])
-                    adapters[db_id].write_batch(batches[db_id])
-                    total_batched_items -= len(batches[db_id])
-                    total_batched_bytes -= batch_byte_sizes[db_id]
-                    batches[db_id].clear()
-                    batch_byte_sizes[db_id] = 0
+                    _flush_shard(db_id)
                 elif len(batches[db_id]) >= 2 * config.batch_size:
                     # Cap deferred growth to avoid OOM; block until tokens available
                     bucket.acquire(len(batches[db_id]))
                     if byte_bucket is not None:
                         byte_bucket.acquire(batch_byte_sizes[db_id])
-                    adapters[db_id].write_batch(batches[db_id])
-                    total_batched_items -= len(batches[db_id])
-                    total_batched_bytes -= batch_byte_sizes[db_id]
-                    batches[db_id].clear()
-                    batch_byte_sizes[db_id] = 0
+                    _flush_shard(db_id)
 
             # Global memory ceiling: flush the largest shard batch
             while (
@@ -371,11 +371,7 @@ def _write_single_process(
                     bucket.acquire(len(batches[flush_id]))
                 if byte_bucket is not None:
                     byte_bucket.acquire(batch_byte_sizes[flush_id])
-                adapters[flush_id].write_batch(batches[flush_id])
-                total_batched_items -= len(batches[flush_id])
-                total_batched_bytes -= batch_byte_sizes[flush_id]
-                batches[flush_id].clear()
-                batch_byte_sizes[flush_id] = 0
+                _flush_shard(flush_id)
 
         # Flush remaining
         for db_id in range(num_dbs):
@@ -384,9 +380,7 @@ def _write_single_process(
                     bucket.acquire(len(batches[db_id]))
                 if byte_bucket is not None:
                     byte_bucket.acquire(batch_byte_sizes[db_id])
-                adapters[db_id].write_batch(batches[db_id])
-                batches[db_id].clear()
-                batch_byte_sizes[db_id] = 0
+                _flush_shard(db_id)
 
         # Finalize
         checkpoint_ids: list[str | None] = []
@@ -396,12 +390,6 @@ def _write_single_process(
 
     results: list[ShardAttemptResult] = []
     for db_id in range(num_dbs):
-        writer_info: JsonObject = {
-            "stage_id": None,
-            "task_attempt_id": None,
-            "attempt": attempt,
-            "duration_ms": 0,
-        }
         results.append(
             ShardAttemptResult(
                 db_id=db_id,
@@ -413,7 +401,7 @@ def _write_single_process(
                 checkpoint_id=checkpoint_ids[db_id]
                 if db_id < len(checkpoint_ids)
                 else None,
-                writer_info=writer_info,
+                writer_info=WriterInfo(attempt=attempt),
             )
         )
 
@@ -495,13 +483,6 @@ def _shard_worker(
         )
         raise ShardyfusionError(f"Shard write failed for db_id={db_id}: {exc}") from exc
 
-    writer_info: JsonObject = {
-        "stage_id": None,
-        "task_attempt_id": None,
-        "attempt": attempt,
-        "duration_ms": 0,
-    }
-
     result_queue.put(
         ShardAttemptResult(
             db_id=db_id,
@@ -511,7 +492,7 @@ def _shard_worker(
             min_key=min_key,
             max_key=max_key,
             checkpoint_id=checkpoint_id,
-            writer_info=writer_info,
+            writer_info=WriterInfo(attempt=attempt),
         )
     )
 

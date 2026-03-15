@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from shardyfusion._writer_core import ShardAttemptResult, select_winners
+from shardyfusion.manifest import WriterInfo
 
 
 def test_winner_selection_is_deterministic() -> None:
@@ -13,7 +14,7 @@ def test_winner_selection_is_deterministic() -> None:
             min_key=1,
             max_key=10,
             checkpoint_id=None,
-            writer_info={"task_attempt_id": 2},
+            writer_info=WriterInfo(task_attempt_id=2),
         ),
         ShardAttemptResult(
             db_id=0,
@@ -23,7 +24,7 @@ def test_winner_selection_is_deterministic() -> None:
             min_key=1,
             max_key=10,
             checkpoint_id=None,
-            writer_info={"task_attempt_id": 5},
+            writer_info=WriterInfo(task_attempt_id=5),
         ),
         ShardAttemptResult(
             db_id=1,
@@ -33,7 +34,7 @@ def test_winner_selection_is_deterministic() -> None:
             min_key=11,
             max_key=17,
             checkpoint_id=None,
-            writer_info={"task_attempt_id": 1},
+            writer_info=WriterInfo(task_attempt_id=1),
         ),
     ]
 

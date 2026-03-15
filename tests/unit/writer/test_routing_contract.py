@@ -23,6 +23,7 @@ from shardyfusion.manifest import (
     ManifestShardingSpec,
     RequiredBuildMeta,
     RequiredShardMeta,
+    WriterInfo,
 )
 from shardyfusion.routing import (
     SnapshotRouter,
@@ -60,7 +61,7 @@ def _make_shards(num_dbs: int) -> list[RequiredShardMeta]:
             min_key=None,
             max_key=None,
             checkpoint_id=None,
-            writer_info={},
+            writer_info=WriterInfo(),
         )
         for i in range(num_dbs)
     ]
