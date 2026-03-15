@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import pytest
-import ray
+
+ray = pytest.importorskip("ray", reason="requires writer-ray extra")
 
 
 @pytest.fixture(scope="session", autouse=True)

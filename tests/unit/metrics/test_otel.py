@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import pytest
+
+pytest.importorskip(
+    "opentelemetry.sdk", reason="requires metrics-otel extra and opentelemetry-sdk"
+)
+
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 

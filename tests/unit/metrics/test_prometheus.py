@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import pytest
+
+pytest.importorskip("prometheus_client", reason="requires metrics-prometheus extra")
+
 from prometheus_client import CollectorRegistry
 
 from shardyfusion.metrics import MetricEvent
