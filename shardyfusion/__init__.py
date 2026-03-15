@@ -10,6 +10,12 @@ from .config import (
     OutputOptions,
     WriteConfig,
 )
+from .credentials import (
+    CredentialProvider,
+    EnvCredentialProvider,
+    S3Credentials,
+    StaticCredentialProvider,
+)
 from .errors import (
     ConfigValidationError,
     ManifestBuildError,
@@ -77,7 +83,7 @@ from .type_defs import (
     AsyncShardReader,
     AsyncShardReaderFactory,
     RetryConfig,
-    S3ClientConfig,
+    S3ConnectionOptions,
     ShardReader,
     ShardReaderFactory,
 )
@@ -96,9 +102,11 @@ __all__ = [
     "BuildStats",
     "ConcurrentShardedReader",
     "ConfigValidationError",
+    "CredentialProvider",
     "CurrentPointer",
     "DbAdapter",
     "DbAdapterFactory",
+    "EnvCredentialProvider",
     "FailureSeverity",
     "InMemoryManifestStore",
     "JsonFormatter",
@@ -125,7 +133,8 @@ __all__ = [
     "RequiredBuildMeta",
     "RequiredShardMeta",
     "RetryConfig",
-    "S3ClientConfig",
+    "S3ConnectionOptions",
+    "S3Credentials",
     "S3ManifestStore",
     "S3TransientError",
     "ShardAssignmentError",
@@ -144,6 +153,7 @@ __all__ = [
     "SlateDbReaderFactory",
     "SnapshotInfo",
     "SnapshotRouter",
+    "StaticCredentialProvider",
     "TokenBucket",
     "ValueSpec",
     "WriteConfig",

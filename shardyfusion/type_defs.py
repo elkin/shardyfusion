@@ -49,14 +49,15 @@ class AsyncShardReaderFactory(Protocol):
     ) -> AsyncShardReader: ...
 
 
-class S3ClientConfig(TypedDict, total=False):
-    """Supported explicit overrides for boto3 S3 client construction."""
+class S3ConnectionOptions(TypedDict, total=False):
+    """Transport/connection overrides for boto3 S3 client construction.
+
+    Identity fields (access key, secret, session token) are handled
+    separately by :class:`~shardyfusion.credentials.CredentialProvider`.
+    """
 
     endpoint_url: str
     region_name: str
-    access_key_id: str
-    secret_access_key: str
-    session_token: str
     # botocore / S3-connection options
     addressing_style: str  # "virtual" | "path" | "auto"
     signature_version: str  # "s3v4" | "s3"
