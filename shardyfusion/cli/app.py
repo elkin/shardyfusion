@@ -11,7 +11,7 @@ from .config import (
     OutputConfig,
     ReaderConfig,
     build_connection_factory,
-    build_s3_client_config,
+    build_s3_config,
     coerce_cli_key,
     coerce_s3_option,
     load_credentials_profile,
@@ -48,7 +48,8 @@ def _build_manifest_store(
         return S3ManifestStore(
             params["s3_prefix"],
             current_name=params["current_name"],
-            s3_client_config=params["s3_client_config"],
+            credential_provider=params["credential_provider"],
+            s3_connection_options=params["s3_connection_options"],
         )
 
     # DB backends (postgres / comdb2)
@@ -122,6 +123,8 @@ def _build_reader(ctx: click.Context) -> Any:
             manifest_store=manifest_store,
             current_name=params.get("current_name", "_CURRENT"),
             slate_env_file=reader_cfg.slate_env_file,
+            credential_provider=params["credential_provider"],
+            s3_connection_options=params["s3_connection_options"],
             thread_safety=reader_cfg.thread_safety,
             pool_checkout_timeout=reader_cfg.pool_checkout_timeout,
             max_workers=reader_cfg.max_workers,
@@ -254,8 +257,8 @@ def cli(
         credentials_path=credentials_path,
     )
 
-    # Build S3 client config (credentials + connection options + per-invocation overrides)
-    s3_client_config = build_s3_client_config(profile, s3_overrides)
+    # Build credential provider + connection options from profile + overrides
+    credential_provider, s3_connection_options = build_s3_config(profile, s3_overrides)
 
     # Resolve S3 prefix and CURRENT name based on backend
     if store_cfg.backend == "s3":
@@ -283,7 +286,8 @@ def cli(
         "reader_cfg": reader_cfg,
         "store_cfg": store_cfg,
         "output_cfg": output_cfg,
-        "s3_client_config": s3_client_config,
+        "credential_provider": credential_provider,
+        "s3_connection_options": s3_connection_options,
         "manifest_ref": manifest_ref,
         "manifest_offset": manifest_offset,
     }

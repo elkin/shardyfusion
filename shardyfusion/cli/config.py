@@ -11,7 +11,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from ..type_defs import S3ClientConfig
+from ..credentials import StaticCredentialProvider
+from ..type_defs import S3ConnectionOptions
 
 # ---------------------------------------------------------------------------
 # Config models
@@ -314,40 +315,43 @@ def build_connection_factory(
 
 
 # ---------------------------------------------------------------------------
-# S3ClientConfig factory
+# S3 config factory
 # ---------------------------------------------------------------------------
 
 
-def build_s3_client_config(
+def build_s3_config(
     profile: CredentialsProfile | None,
     s3_option_overrides: dict[str, bool | int | str] | None = None,
-) -> S3ClientConfig:
-    """Assemble S3ClientConfig from credentials profile + per-invocation overrides."""
-    cfg: S3ClientConfig = {}
+) -> tuple[StaticCredentialProvider | None, S3ConnectionOptions]:
+    """Split credentials profile into credential provider + connection options."""
+    cred_provider: StaticCredentialProvider | None = None
+    opts: S3ConnectionOptions = {}
 
     if profile is not None:
+        # Identity → StaticCredentialProvider
+        if profile.access_key_id or profile.secret_access_key or profile.session_token:
+            cred_provider = StaticCredentialProvider(
+                access_key_id=profile.access_key_id,
+                secret_access_key=profile.secret_access_key,
+                session_token=profile.session_token,
+            )
+        # Transport → S3ConnectionOptions
         if profile.endpoint_url:
-            cfg["endpoint_url"] = profile.endpoint_url
+            opts["endpoint_url"] = profile.endpoint_url
         if profile.region:
-            cfg["region_name"] = profile.region
-        if profile.access_key_id:
-            cfg["access_key_id"] = profile.access_key_id
-        if profile.secret_access_key:
-            cfg["secret_access_key"] = profile.secret_access_key
-        if profile.session_token:
-            cfg["session_token"] = profile.session_token
+            opts["region_name"] = profile.region
         if profile.addressing_style:
-            cfg["addressing_style"] = profile.addressing_style
+            opts["addressing_style"] = profile.addressing_style
         if profile.signature_version:
-            cfg["signature_version"] = profile.signature_version
-        cfg["verify_ssl"] = profile.verify_ssl
-        cfg["connect_timeout"] = profile.connect_timeout
-        cfg["read_timeout"] = profile.read_timeout
-        cfg["max_attempts"] = profile.max_attempts
+            opts["signature_version"] = profile.signature_version
+        opts["verify_ssl"] = profile.verify_ssl
+        opts["connect_timeout"] = profile.connect_timeout
+        opts["read_timeout"] = profile.read_timeout
+        opts["max_attempts"] = profile.max_attempts
 
-    # Apply per-invocation overrides from --s3-option
+    # Apply per-invocation overrides from --s3-option (transport only)
     if s3_option_overrides:
         for key, val in s3_option_overrides.items():
-            cfg[key] = val  # type: ignore[literal-required]
+            opts[key] = val  # type: ignore[literal-required]
 
-    return cfg
+    return cred_provider, opts
