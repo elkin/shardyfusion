@@ -1,5 +1,6 @@
 """Pure-Python iterator-based sharded writer (no Spark dependency)."""
 
+import contextlib
 import multiprocessing
 import time
 from collections.abc import Callable, Iterable
@@ -55,6 +56,8 @@ def write_sharded(
     max_queue_size: int = 100,
     max_writes_per_second: float | None = None,
     max_write_bytes_per_second: float | None = None,
+    max_total_batched_items: int | None = None,
+    max_total_batched_bytes: int | None = None,
 ) -> BuildResult:
     """Write an iterable of records into N sharded databases.
 
@@ -71,6 +74,12 @@ def write_sharded(
         max_queue_size: Maximum per-shard queue depth in parallel mode.
         max_writes_per_second: Optional rate limit (token-bucket) for write ops/sec.
         max_write_bytes_per_second: Optional rate limit (token-bucket) for write bytes/sec.
+        max_total_batched_items: Global cap on total buffered items across all shard
+            batches (single-process mode only). When exceeded, the shard with the
+            largest batch is flushed. Prevents OOM with many shards.
+        max_total_batched_bytes: Global cap on total buffered bytes across all shard
+            batches (single-process mode only). When exceeded, the shard with the
+            largest byte footprint is flushed.
 
     Returns:
         BuildResult with manifest reference, shard metadata, and build statistics.
@@ -127,6 +136,8 @@ def write_sharded(
                 value_fn=value_fn,
                 max_writes_per_second=max_writes_per_second,
                 max_write_bytes_per_second=max_write_bytes_per_second,
+                max_total_batched_items=max_total_batched_items,
+                max_total_batched_bytes=max_total_batched_bytes,
             )
 
         write_duration_ms = int((time.perf_counter() - started) * 1000)
@@ -148,7 +159,9 @@ def write_sharded(
                 },
             )
 
-        winners = select_winners(attempts, num_dbs=config.num_dbs)
+        winners, num_attempts, _attempt_urls = select_winners(
+            attempts, num_dbs=config.num_dbs
+        )
 
         manifest_started = time.perf_counter()
         manifest_ref = publish_to_store(
@@ -165,7 +178,7 @@ def write_sharded(
             run_id=run_id,
             winners=winners,
             manifest_ref=manifest_ref,
-            attempts=attempts,
+            num_attempts=num_attempts,
             shard_duration_ms=0,
             write_duration_ms=write_duration_ms,
             manifest_duration_ms=manifest_duration_ms,
@@ -209,6 +222,24 @@ def _batch_bytes(batch: list[tuple[bytes, bytes]]) -> int:
     return sum(len(k) + len(v) for k, v in batch)
 
 
+def _largest_batch_id(
+    batches: list[list[tuple[bytes, bytes]]],
+    batch_byte_sizes: list[int],
+) -> int:
+    """Return the db_id with the largest batch (by byte size, then item count)."""
+    best = 0
+    best_bytes = batch_byte_sizes[0]
+    best_items = len(batches[0])
+    for i in range(1, len(batches)):
+        i_bytes = batch_byte_sizes[i]
+        i_items = len(batches[i])
+        if (i_bytes, i_items) > (best_bytes, best_items):
+            best = i
+            best_bytes = i_bytes
+            best_items = i_items
+    return best
+
+
 def _make_db_url(config: WriteConfig, run_id: str, db_id: int, attempt: int) -> str:
     db_rel_path = config.output.db_path_template.format(db_id=db_id)
     return join_s3(
@@ -239,6 +270,8 @@ def _write_single_process(
     value_fn: Callable[[T], bytes],
     max_writes_per_second: float | None,
     max_write_bytes_per_second: float | None,
+    max_total_batched_items: int | None,
+    max_total_batched_bytes: int | None,
 ) -> list[ShardAttemptResult]:
     """Single-process mode: all adapters open simultaneously, single pass."""
 
@@ -257,25 +290,30 @@ def _write_single_process(
             limiter_type="bytes",
         )
 
-    # Open all shard adapters
+    # Open all shard adapters via ExitStack for automatic LIFO cleanup.
     adapters = []
     db_urls: list[str] = []
-    try:
+    with contextlib.ExitStack() as stack:
         for db_id in range(num_dbs):
             db_url = _make_db_url(config, run_id, db_id, attempt)
             local_dir = _make_local_dir(config, run_id, db_id, attempt)
             local_dir.mkdir(parents=True, exist_ok=True)
             adapter = factory(db_url=db_url, local_dir=local_dir)
-            adapter.__enter__()
+            stack.enter_context(adapter)
             adapters.append(adapter)
             db_urls.append(db_url)
 
         # Per-shard tracking
         batches: list[list[tuple[bytes, bytes]]] = [[] for _ in range(num_dbs)]
+        batch_byte_sizes: list[int] = [0] * num_dbs
         row_counts = [0] * num_dbs
         min_keys: list[KeyLike | None] = [None] * num_dbs
         max_keys: list[KeyLike | None] = [None] * num_dbs
         key_encoder = make_key_encoder(config.key_encoding)
+
+        # Global batch tracking
+        total_batched_items = 0
+        total_batched_bytes = 0
 
         for record in records:
             key = key_fn(record)
@@ -288,7 +326,11 @@ def _write_single_process(
             key_bytes = key_encoder(key)
             value_bytes = value_fn(record)
 
+            pair_bytes = len(key_bytes) + len(value_bytes)
             batches[db_id].append((key_bytes, value_bytes))
+            batch_byte_sizes[db_id] += pair_bytes
+            total_batched_items += 1
+            total_batched_bytes += pair_bytes
             row_counts[db_id] += 1
             min_keys[db_id], max_keys[db_id] = update_min_max(
                 min_keys[db_id], max_keys[db_id], key
@@ -297,16 +339,43 @@ def _write_single_process(
             if len(batches[db_id]) >= config.batch_size:
                 if bucket is None or bucket.try_acquire(len(batches[db_id])):
                     if byte_bucket is not None:
-                        byte_bucket.acquire(_batch_bytes(batches[db_id]))
+                        byte_bucket.acquire(batch_byte_sizes[db_id])
                     adapters[db_id].write_batch(batches[db_id])
+                    total_batched_items -= len(batches[db_id])
+                    total_batched_bytes -= batch_byte_sizes[db_id]
                     batches[db_id].clear()
+                    batch_byte_sizes[db_id] = 0
                 elif len(batches[db_id]) >= 2 * config.batch_size:
                     # Cap deferred growth to avoid OOM; block until tokens available
                     bucket.acquire(len(batches[db_id]))
                     if byte_bucket is not None:
-                        byte_bucket.acquire(_batch_bytes(batches[db_id]))
+                        byte_bucket.acquire(batch_byte_sizes[db_id])
                     adapters[db_id].write_batch(batches[db_id])
+                    total_batched_items -= len(batches[db_id])
+                    total_batched_bytes -= batch_byte_sizes[db_id]
                     batches[db_id].clear()
+                    batch_byte_sizes[db_id] = 0
+
+            # Global memory ceiling: flush the largest shard batch
+            while (
+                max_total_batched_items is not None
+                and total_batched_items > max_total_batched_items
+            ) or (
+                max_total_batched_bytes is not None
+                and total_batched_bytes > max_total_batched_bytes
+            ):
+                flush_id = _largest_batch_id(batches, batch_byte_sizes)
+                if not batches[flush_id]:
+                    break
+                if bucket is not None:
+                    bucket.acquire(len(batches[flush_id]))
+                if byte_bucket is not None:
+                    byte_bucket.acquire(batch_byte_sizes[flush_id])
+                adapters[flush_id].write_batch(batches[flush_id])
+                total_batched_items -= len(batches[flush_id])
+                total_batched_bytes -= batch_byte_sizes[flush_id]
+                batches[flush_id].clear()
+                batch_byte_sizes[flush_id] = 0
 
         # Flush remaining
         for db_id in range(num_dbs):
@@ -314,22 +383,16 @@ def _write_single_process(
                 if bucket is not None:
                     bucket.acquire(len(batches[db_id]))
                 if byte_bucket is not None:
-                    byte_bucket.acquire(_batch_bytes(batches[db_id]))
+                    byte_bucket.acquire(batch_byte_sizes[db_id])
                 adapters[db_id].write_batch(batches[db_id])
                 batches[db_id].clear()
+                batch_byte_sizes[db_id] = 0
 
         # Finalize
         checkpoint_ids: list[str | None] = []
         for db_id in range(num_dbs):
             adapters[db_id].flush()
             checkpoint_ids.append(adapters[db_id].checkpoint())
-
-    finally:
-        for adapter in adapters:
-            try:
-                adapter.__exit__(None, None, None)
-            except Exception:
-                pass
 
     results: list[ShardAttemptResult] = []
     for db_id in range(num_dbs):
@@ -545,15 +608,24 @@ def _write_parallel(
             f"Worker process(es) exited with errors: {[(db_id, code) for db_id, code in failed]}"
         )
 
-    # Collect results
+    # Collect results with a global deadline instead of per-result timeout
     try:
         results: list[ShardAttemptResult] = []
+        deadline = time.monotonic() + _RESULT_COLLECT_TIMEOUT_S * num_dbs
         for _ in range(num_dbs):
-            result = result_queue.get(timeout=_RESULT_COLLECT_TIMEOUT_S)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ShardyfusionError(
+                    f"Timed out collecting results: got {len(results)}/{num_dbs}"
+                )
+            result = result_queue.get(timeout=max(remaining, 0.1))
             # Patch in min/max from main process tracking
             result.min_key = min_keys[result.db_id]
             result.max_key = max_keys[result.db_id]
             results.append(result)
+    except ShardyfusionError:
+        _join_and_terminate_workers(workers)
+        raise
     except Exception:
         _join_and_terminate_workers(workers)
         raise
