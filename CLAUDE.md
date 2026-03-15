@@ -78,7 +78,7 @@ Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus ext
 **Spark writer** (`write_sharded`):
 1. Entry point in `writer/spark/writer.py`. Optionally applies Spark conf overrides via `SparkConfOverrideContext`.
 2. `writer/spark/sharding.py` adds `_slatedb_db_id` column via Spark SQL expressions (hash, range, or custom), then converts the DataFrame to a pair RDD partitioned so partition index = db_id.
-3. Each partition writes one shard to S3 at a temporary path (`_tmp/run_id=.../db=XXXXX/attempt=YY/`).
+3. Each partition writes one shard to S3 at a shard path (`shards/run_id=.../db=XXXXX/attempt=YY/`).
 4. The driver streams results via `toLocalIterator()` and selects deterministic winners (lowest attempt → task_attempt_id → URL).
 5. A manifest artifact is built and published, then the `_CURRENT` pointer is updated.
 

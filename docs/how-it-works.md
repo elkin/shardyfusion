@@ -146,9 +146,9 @@ Assume:
 
 Write artifacts:
 
-- Shard attempt data (temporary attempt-isolated paths):
-  - `s3://bucket/prefix/_tmp/run_id=9f.../db=00000/attempt=00/...`
-  - `s3://bucket/prefix/_tmp/run_id=9f.../db=00001/attempt=00/...`
+- Shard attempt data (attempt-isolated paths):
+  - `s3://bucket/prefix/shards/run_id=9f.../db=00000/attempt=00/...`
+  - `s3://bucket/prefix/shards/run_id=9f.../db=00001/attempt=00/...`
   - ...
 - Manifest object (timestamp-prefixed for chronological listing):
   - `s3://bucket/prefix/manifests/2026-03-14T10:30:00.000000Z_run_id=9f.../manifest`
@@ -183,7 +183,7 @@ Grouped options:
 - `output: OutputOptions`
   - `run_id`
   - `db_path_template`
-  - `tmp_prefix`
+  - `shard_prefix`
   - `local_root`
 - `manifest: ManifestOptions`
   - `manifest_builder`
@@ -268,7 +268,7 @@ Primary classes: `ShardedReader`, `ConcurrentShardedReader`, `AsyncShardedReader
 flowchart TD
     A["Input data<br/>(DataFrame / Dataset / Iterable)"] --> B[add_db_id_column<br/>route_key per row]
     B --> C["Partition by db_id<br/>(RDD / shuffle / repartition)"]
-    C --> D["Write each shard<br/>_tmp/run_id/db/attempt"]
+    C --> D["Write each shard<br/>shards/run_id/db/attempt"]
     D --> E[Collect attempt results]
     E --> F[Deterministic winner per db_id]
     F --> G[Build manifest artifact]
@@ -290,7 +290,7 @@ flowchart TD
     E --> F
     F --> G["prepare_partitioned_rdd<br/>partitionBy num_dbs"]
     G --> H[mapPartitionsWithIndex]
-    H --> I["Write shard attempt<br/>_tmp/run_id/db/attempt"]
+    H --> I["Write shard attempt<br/>shards/run_id/db/attempt"]
     I --> J[Collect attempt results]
     J --> K[Deterministic winner per db_id]
     K --> L[Build manifest artifact]

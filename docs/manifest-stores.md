@@ -130,7 +130,7 @@ store = S3ManifestStore(
     "key_col": "id",
     "sharding": {"strategy": "HASH"},
     "db_path_template": "db={db_id:05d}",
-    "tmp_prefix": "_tmp",
+    "shard_prefix": "shards",
     "format_version": 1,
     "key_encoding": "u64be"
   },
