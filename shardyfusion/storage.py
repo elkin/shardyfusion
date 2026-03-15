@@ -67,6 +67,19 @@ def _is_transient_s3_error(exc: BaseException) -> bool:
     return False
 
 
+def _resolve_retry_params(
+    retry_config: RetryConfig | None,
+) -> tuple[int, float, float]:
+    """Extract (max_retries, initial_backoff, backoff_multiplier) from config or defaults."""
+    if retry_config is not None:
+        return (
+            retry_config.max_retries,
+            retry_config.initial_backoff_s,
+            retry_config.backoff_multiplier,
+        )
+    return _DEFAULT_MAX_RETRIES, _DEFAULT_INITIAL_BACKOFF_S, _DEFAULT_BACKOFF_MULTIPLIER
+
+
 def _retry_s3_operation(
     operation: Callable[[], Any],
     *,
@@ -81,18 +94,8 @@ def _retry_s3_operation(
     exception after exhausting all retries.
     """
 
-    max_retries = (
-        retry_config.max_retries if retry_config is not None else _DEFAULT_MAX_RETRIES
-    )
-    initial_backoff = (
-        retry_config.initial_backoff_s
-        if retry_config is not None
-        else _DEFAULT_INITIAL_BACKOFF_S
-    )
-    backoff_multiplier = (
-        retry_config.backoff_multiplier
-        if retry_config is not None
-        else _DEFAULT_BACKOFF_MULTIPLIER
+    max_retries, initial_backoff, backoff_multiplier = _resolve_retry_params(
+        retry_config
     )
 
     last_exc: BaseException | None = None

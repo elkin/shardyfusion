@@ -169,25 +169,10 @@ async def _async_retry_s3_operation(
     """Async equivalent of ``_retry_s3_operation`` with ``asyncio.sleep``."""
     import asyncio
 
-    from .storage import (
-        _DEFAULT_BACKOFF_MULTIPLIER,
-        _DEFAULT_INITIAL_BACKOFF_S,
-        _DEFAULT_MAX_RETRIES,
-        _is_transient_s3_error,
-    )
+    from .storage import _is_transient_s3_error, _resolve_retry_params
 
-    max_retries = (
-        retry_config.max_retries if retry_config is not None else _DEFAULT_MAX_RETRIES
-    )
-    initial_backoff = (
-        retry_config.initial_backoff_s
-        if retry_config is not None
-        else _DEFAULT_INITIAL_BACKOFF_S
-    )
-    backoff_multiplier = (
-        retry_config.backoff_multiplier
-        if retry_config is not None
-        else _DEFAULT_BACKOFF_MULTIPLIER
+    max_retries, initial_backoff, backoff_multiplier = _resolve_retry_params(
+        retry_config
     )
 
     last_exc: BaseException | None = None
