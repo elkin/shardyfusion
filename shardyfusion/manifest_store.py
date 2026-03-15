@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 from pydantic import ValidationError
 
+from .credentials import CredentialProvider
 from .errors import ManifestParseError
 from .logging import FailureSeverity, get_logger, log_failure
 from .manifest import (
@@ -39,7 +40,7 @@ from .storage import (
     put_bytes,
     try_get_bytes,
 )
-from .type_defs import S3ClientConfig
+from .type_defs import S3ConnectionOptions
 
 _logger = get_logger(__name__)
 
@@ -133,7 +134,8 @@ class S3ManifestStore:
         manifest_name: str = "manifest",
         current_name: str = "_CURRENT",
         manifest_builder: ManifestBuilder | None = None,
-        s3_client_config: S3ClientConfig | None = None,
+        credential_provider: CredentialProvider | None = None,
+        s3_connection_options: S3ConnectionOptions | None = None,
         metrics_collector: MetricsCollector | None = None,
         retry_config: RetryConfig | None = None,
     ) -> None:
@@ -143,7 +145,8 @@ class S3ManifestStore:
         self.manifest_name = manifest_name
         self.current_name = current_name
         self._builder = manifest_builder
-        self._s3_client = create_s3_client(s3_client_config)
+        credentials = credential_provider.resolve() if credential_provider else None
+        self._s3_client = create_s3_client(credentials, s3_connection_options)
         self._metrics = metrics_collector
         self._retry_config: _RC | None = retry_config
 

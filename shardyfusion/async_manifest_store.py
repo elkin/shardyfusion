@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from .credentials import CredentialProvider, S3Credentials
 from .logging import FailureSeverity, get_logger, log_failure
 from .manifest import ManifestRef, ParsedManifest
 from .manifest_store import (
@@ -16,7 +17,7 @@ from .manifest_store import (
 )
 from .metrics import MetricsCollector
 from .storage import join_s3, parse_s3_url
-from .type_defs import RetryConfig, S3ClientConfig
+from .type_defs import RetryConfig, S3ConnectionOptions
 
 _logger = get_logger(__name__)
 
@@ -45,7 +46,8 @@ class AsyncS3ManifestStore:
         *,
         manifest_name: str = "manifest",
         current_name: str = "_CURRENT",
-        s3_client_config: S3ClientConfig | None = None,
+        credential_provider: CredentialProvider | None = None,
+        s3_connection_options: S3ConnectionOptions | None = None,
         metrics_collector: MetricsCollector | None = None,
         retry_config: RetryConfig | None = None,
     ) -> None:
@@ -55,7 +57,10 @@ class AsyncS3ManifestStore:
         self.manifest_name = manifest_name
         self.current_name = current_name
         self._session = aiobotocore.session.get_session()
-        self._resolved = _resolve_s3_config_for_aiobotocore(s3_client_config)
+        credentials = credential_provider.resolve() if credential_provider else None
+        self._resolved = _resolve_s3_config_for_aiobotocore(
+            credentials, s3_connection_options
+        )
         self._metrics = metrics_collector
         self._retry_config = retry_config
 
@@ -150,12 +155,13 @@ class AsyncS3ManifestStore:
 
 
 def _resolve_s3_config_for_aiobotocore(
-    s3_client_config: S3ClientConfig | None = None,
+    credentials: S3Credentials | None = None,
+    connection_options: S3ConnectionOptions | None = None,
 ) -> dict[str, Any]:
     """Resolve S3 config for aiobotocore's ``create_client()``."""
     from .storage import _resolve_s3_config
 
-    return dict(_resolve_s3_config(s3_client_config))
+    return dict(_resolve_s3_config(credentials, connection_options))
 
 
 async def _async_retry_s3_operation(

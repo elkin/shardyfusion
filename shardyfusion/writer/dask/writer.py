@@ -19,6 +19,7 @@ from shardyfusion._writer_core import (
     update_min_max,
 )
 from shardyfusion.config import WriteConfig
+from shardyfusion.credentials import CredentialProvider
 from shardyfusion.errors import (
     ConfigValidationError,
     ShardAssignmentError,
@@ -66,6 +67,7 @@ class _PartitionWriteRuntime:
     value_spec: ValueSpec
     batch_size: int
     adapter_factory: DbAdapterFactory | None
+    credential_provider: CredentialProvider | None
     max_writes_per_second: float | None
     max_write_bytes_per_second: float | None = None
     sort_within_partitions: bool = False
@@ -385,6 +387,7 @@ def _build_partition_write_runtime(
         value_spec=value_spec,
         batch_size=config.batch_size,
         adapter_factory=config.adapter_factory,
+        credential_provider=config.credential_provider,
         max_writes_per_second=max_writes_per_second,
         max_write_bytes_per_second=max_write_bytes_per_second,
         sort_within_partitions=sort_within_partitions,
@@ -474,7 +477,9 @@ def _write_one_shard(
             },
         )
 
-    factory: DbAdapterFactory = runtime.adapter_factory or SlateDbFactory()
+    factory: DbAdapterFactory = runtime.adapter_factory or SlateDbFactory(
+        credential_provider=runtime.credential_provider
+    )
 
     bucket: RateLimiter | None = None
     if runtime.max_writes_per_second is not None:

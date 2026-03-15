@@ -19,6 +19,7 @@ from shardyfusion._writer_core import (
     update_min_max,
 )
 from shardyfusion.config import WriteConfig
+from shardyfusion.credentials import CredentialProvider
 from shardyfusion.errors import ShardAssignmentError, ShardyfusionError
 from shardyfusion.logging import (
     FailureSeverity,
@@ -32,7 +33,7 @@ from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import DB_ID_COL, KeyEncoding
 from shardyfusion.slatedb_adapter import (
     DbAdapterFactory,
-    default_adapter_factory,
+    SlateDbFactory,
 )
 from shardyfusion.storage import join_s3
 from shardyfusion.type_defs import KeyLike
@@ -59,6 +60,7 @@ class PartitionWriteConfig:
     value_spec: ValueSpec
     batch_size: int
     adapter_factory: DbAdapterFactory | None
+    credential_provider: CredentialProvider | None
     max_writes_per_second: float | None
     max_write_bytes_per_second: float | None = None
     metrics_collector: MetricsCollector | None = None  # must be picklable
@@ -376,6 +378,7 @@ def _build_partition_write_runtime(
         value_spec=value_spec,
         batch_size=config.batch_size,
         adapter_factory=config.adapter_factory,
+        credential_provider=config.credential_provider,
         max_writes_per_second=max_writes_per_second,
         max_write_bytes_per_second=max_write_bytes_per_second,
         metrics_collector=config.metrics_collector,
@@ -434,7 +437,9 @@ def write_one_shard_partition(
     )
     local_dir.mkdir(parents=True, exist_ok=True)
 
-    factory = runtime.adapter_factory or default_adapter_factory
+    factory = runtime.adapter_factory or SlateDbFactory(
+        credential_provider=runtime.credential_provider
+    )
 
     bucket: RateLimiter | None = None
     if runtime.max_writes_per_second is not None:

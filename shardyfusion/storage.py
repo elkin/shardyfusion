@@ -8,10 +8,11 @@ from collections.abc import Callable, Mapping
 from typing import Any, TypedDict
 from urllib.parse import urlparse
 
+from .credentials import S3Credentials
 from .errors import PublishManifestError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
 from .metrics import MetricEvent, MetricsCollector
-from .type_defs import RetryConfig, S3ClientConfig
+from .type_defs import RetryConfig, S3ConnectionOptions
 
 _logger = get_logger(__name__)
 
@@ -194,57 +195,63 @@ class _ResolvedS3Config(TypedDict, total=False):
 
 
 def _resolve_s3_config(
-    s3_client_config: S3ClientConfig | None = None,
+    credentials: S3Credentials | None = None,
+    connection_options: S3ConnectionOptions | None = None,
 ) -> _ResolvedS3Config:
-    """Resolve S3 client kwargs from explicit config and environment variables.
+    """Resolve S3 client kwargs from explicit credentials/options and env vars.
+
+    When *credentials* is provided, its fields are used as-is (no env-var
+    fallback for identity — the provider is the single source of truth).
+    When *credentials* is ``None``, identity falls back to env vars.
+    Transport always falls back to env vars for endpoint/region.
 
     Returns a dict suitable for passing to ``boto3.client("s3", ...)`` or
     ``aiobotocore.get_session().create_client("s3", ...)``.
     """
     from botocore.config import Config as BotocoreConfig
 
-    config = s3_client_config or {}
-    endpoint_url = config.get("endpoint_url") or os.getenv("SLATEDB_S3_ENDPOINT_URL")
+    opts = connection_options or {}
+
+    # Identity: if a provider resolved credentials, use them as-is.
+    # Only fall back to env vars when no credentials were given at all.
+    if credentials is not None:
+        access_key_id = credentials.access_key_id
+        secret_access_key = credentials.secret_access_key
+        session_token = credentials.session_token
+    else:
+        access_key_id = os.getenv("S3_ACCESS_KEY_ID") or os.getenv("AWS_ACCESS_KEY_ID")
+        secret_access_key = os.getenv("S3_SECRET_ACCESS_KEY") or os.getenv(
+            "AWS_SECRET_ACCESS_KEY"
+        )
+        session_token = os.getenv("S3_SESSION_TOKEN") or os.getenv("AWS_SESSION_TOKEN")
+
+    # Transport: explicit options → env-var fallback
+    endpoint_url = opts.get("endpoint_url") or os.getenv("SLATEDB_S3_ENDPOINT_URL")
     region_name = (
-        config.get("region_name") or os.getenv("S3_REGION") or os.getenv("AWS_REGION")
-    )
-    access_key_id = (
-        config.get("access_key_id")
-        or os.getenv("S3_ACCESS_KEY_ID")
-        or os.getenv("AWS_ACCESS_KEY_ID")
-    )
-    secret_access_key = (
-        config.get("secret_access_key")
-        or os.getenv("S3_SECRET_ACCESS_KEY")
-        or os.getenv("AWS_SECRET_ACCESS_KEY")
-    )
-    session_token = (
-        config.get("session_token")
-        or os.getenv("S3_SESSION_TOKEN")
-        or os.getenv("AWS_SESSION_TOKEN")
+        opts.get("region_name") or os.getenv("S3_REGION") or os.getenv("AWS_REGION")
     )
 
     # Assemble botocore Config from optional connection options
     boto_config_kwargs: dict[str, object] = {}
     s3_options: dict[str, object] = {}
 
-    addressing_style = config.get("addressing_style")
+    addressing_style = opts.get("addressing_style")
     if addressing_style:
         s3_options["addressing_style"] = addressing_style
 
-    signature_version = config.get("signature_version")
+    signature_version = opts.get("signature_version")
     if signature_version:
         boto_config_kwargs["signature_version"] = signature_version
 
-    connect_timeout = config.get("connect_timeout")
+    connect_timeout = opts.get("connect_timeout")
     if connect_timeout is not None:
         boto_config_kwargs["connect_timeout"] = connect_timeout
 
-    read_timeout = config.get("read_timeout")
+    read_timeout = opts.get("read_timeout")
     if read_timeout is not None:
         boto_config_kwargs["read_timeout"] = read_timeout
 
-    max_attempts = config.get("max_attempts")
+    max_attempts = opts.get("max_attempts")
     if max_attempts is not None:
         boto_config_kwargs["retries"] = {
             "max_attempts": max_attempts,
@@ -272,15 +279,18 @@ def _resolve_s3_config(
     if botocore_config is not None:
         result["config"] = botocore_config
 
-    verify = config.get("verify_ssl")
+    verify = opts.get("verify_ssl")
     if verify is not None and verify is not True:
         result["verify"] = verify
 
     return result
 
 
-def create_s3_client(s3_client_config: S3ClientConfig | None = None):
-    """Create boto3 S3 client with optional explicit/ENV overrides."""
+def create_s3_client(
+    credentials: S3Credentials | None = None,
+    connection_options: S3ConnectionOptions | None = None,
+):
+    """Create boto3 S3 client with optional explicit credentials and connection options."""
 
     try:
         import boto3
@@ -289,7 +299,7 @@ def create_s3_client(s3_client_config: S3ClientConfig | None = None):
             "boto3 is required for default S3 publishing"
         ) from exc
 
-    resolved = _resolve_s3_config(s3_client_config)
+    resolved = _resolve_s3_config(credentials, connection_options)
     return boto3.client("s3", **resolved)
 
 

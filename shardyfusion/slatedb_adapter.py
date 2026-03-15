@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Self
 
+from .credentials import CredentialProvider, resolve_env_file
 from .errors import SlateDbApiError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
 from .type_defs import JsonObject
@@ -67,14 +68,16 @@ class SlateDbFactory:
 
     env_file: str | None = None
     settings: JsonObject | None = None
+    credential_provider: CredentialProvider | None = None
 
     def __call__(self, *, db_url: str, local_dir: Path) -> "DefaultSlateDbAdapter":
-        return DefaultSlateDbAdapter(
-            local_dir=local_dir,
-            db_url=db_url,
-            env_file=self.env_file,
-            settings=self.settings,
-        )
+        with resolve_env_file(self.env_file, self.credential_provider) as env_path:
+            return DefaultSlateDbAdapter(
+                local_dir=local_dir,
+                db_url=db_url,
+                env_file=env_path,
+                settings=self.settings,
+            )
 
 
 class DefaultSlateDbAdapter:
@@ -189,13 +192,3 @@ class DefaultSlateDbAdapter:
             logger=_logger,
             db_url=getattr(self, "_db_url", "<unknown>"),
         )
-
-
-def default_adapter_factory(
-    *,
-    db_url: str,
-    local_dir: Path,
-) -> DbAdapter:
-    """Factory for default adapter instances (uses SlateDbFactory with no config)."""
-
-    return SlateDbFactory()(db_url=db_url, local_dir=local_dir)

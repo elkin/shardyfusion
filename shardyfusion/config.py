@@ -8,12 +8,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from .credentials import CredentialProvider
 from .errors import ConfigValidationError
 from .manifest import ManifestBuilder
 from .metrics import MetricsCollector
 from .sharding_types import KeyEncoding, ShardingSpec
 from .slatedb_adapter import DbAdapterFactory
-from .type_defs import JsonObject, S3ClientConfig
+from .type_defs import JsonObject, S3ConnectionOptions
 
 if TYPE_CHECKING:
     from .manifest_store import ManifestStore
@@ -42,8 +43,8 @@ class ManifestOptions:
     manifest_builder: ManifestBuilder | None = None
     store: ManifestStore | None = None
     custom_manifest_fields: JsonObject = field(default_factory=dict)
-    # Optional default-store transport overrides (boto3/Ceph RGW support).
-    s3_client_config: S3ClientConfig | None = None
+    credential_provider: CredentialProvider | None = None
+    s3_connection_options: S3ConnectionOptions | None = None
 
 
 @dataclass(slots=True)
@@ -84,6 +85,9 @@ class WriteConfig:
     manifest: ManifestOptions = field(default_factory=ManifestOptions)
 
     metrics_collector: MetricsCollector | None = None
+
+    credential_provider: CredentialProvider | None = None
+    s3_connection_options: S3ConnectionOptions | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.sharding, ShardingSpec):

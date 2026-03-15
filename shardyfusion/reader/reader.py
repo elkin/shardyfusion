@@ -15,6 +15,10 @@ from queue import Empty, Queue
 from typing import Any, Literal, Self
 
 from shardyfusion._rate_limiter import RateLimiter
+from shardyfusion.credentials import (
+    CredentialProvider,
+    resolve_env_file,
+)
 from shardyfusion.errors import (
     ManifestParseError,
     PoolExhaustedError,
@@ -35,6 +39,7 @@ from shardyfusion.routing import SnapshotRouter
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 from shardyfusion.type_defs import (
     KeyInput,
+    S3ConnectionOptions,
     ShardReader,
     ShardReaderFactory,
 )
@@ -143,6 +148,7 @@ class SlateDbReaderFactory:
     """Picklable reader factory that captures SlateDB-specific config."""
 
     env_file: str | None = None
+    credential_provider: CredentialProvider | None = None
 
     def __call__(
         self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
@@ -154,12 +160,13 @@ class SlateDbReaderFactory:
                 "slatedb package is required for reading shards"
             ) from exc
 
-        return SlateDBReader(
-            str(local_dir),
-            url=db_url,
-            env_file=self.env_file,
-            checkpoint_id=checkpoint_id,
-        )
+        with resolve_env_file(self.env_file, self.credential_provider) as env_path:
+            return SlateDBReader(
+                str(local_dir),
+                url=db_url,
+                env_file=env_path,
+                checkpoint_id=checkpoint_id,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +319,8 @@ class _BaseShardedReader:
         current_name: str = "_CURRENT",
         reader_factory: ShardReaderFactory | None = None,
         slate_env_file: str | None = None,
+        credential_provider: CredentialProvider | None = None,
+        s3_connection_options: S3ConnectionOptions | None = None,
         max_workers: int | None = None,
         max_fallback_attempts: int = 3,
         metrics_collector: MetricsCollector | None = None,
@@ -331,7 +340,10 @@ class _BaseShardedReader:
         if reader_factory is not None:
             self._reader_factory: ShardReaderFactory = reader_factory
         else:
-            self._reader_factory = SlateDbReaderFactory(env_file=slate_env_file)
+            self._reader_factory = SlateDbReaderFactory(
+                env_file=slate_env_file,
+                credential_provider=credential_provider,
+            )
 
         if manifest_store is not None:
             self._manifest_store = manifest_store
@@ -339,6 +351,8 @@ class _BaseShardedReader:
             self._manifest_store = S3ManifestStore(
                 s3_prefix,
                 current_name=current_name,
+                credential_provider=credential_provider,
+                s3_connection_options=s3_connection_options,
                 metrics_collector=metrics_collector,
             )
 
@@ -417,6 +431,8 @@ class ShardedReader(_BaseShardedReader):
         current_name: str = "_CURRENT",
         reader_factory: ShardReaderFactory | None = None,
         slate_env_file: str | None = None,
+        credential_provider: CredentialProvider | None = None,
+        s3_connection_options: S3ConnectionOptions | None = None,
         max_workers: int | None = None,
         max_fallback_attempts: int = 3,
         metrics_collector: MetricsCollector | None = None,
@@ -429,6 +445,8 @@ class ShardedReader(_BaseShardedReader):
             current_name=current_name,
             reader_factory=reader_factory,
             slate_env_file=slate_env_file,
+            credential_provider=credential_provider,
+            s3_connection_options=s3_connection_options,
             max_workers=max_workers,
             max_fallback_attempts=max_fallback_attempts,
             metrics_collector=metrics_collector,
@@ -757,6 +775,8 @@ class ConcurrentShardedReader(_BaseShardedReader):
         current_name: str = "_CURRENT",
         reader_factory: ShardReaderFactory | None = None,
         slate_env_file: str | None = None,
+        credential_provider: CredentialProvider | None = None,
+        s3_connection_options: S3ConnectionOptions | None = None,
         thread_safety: Literal["lock", "pool"] = "lock",
         pool_checkout_timeout: float = 30.0,
         max_workers: int | None = None,
@@ -779,6 +799,8 @@ class ConcurrentShardedReader(_BaseShardedReader):
             current_name=current_name,
             reader_factory=reader_factory,
             slate_env_file=slate_env_file,
+            credential_provider=credential_provider,
+            s3_connection_options=s3_connection_options,
             max_workers=max_workers,
             max_fallback_attempts=max_fallback_attempts,
             metrics_collector=metrics_collector,

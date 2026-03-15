@@ -112,7 +112,9 @@ def write_sharded(
         if mc is not None:
             mc.emit(MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
 
-        factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory()
+        factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory(
+            credential_provider=config.credential_provider
+        )
 
         if parallel:
             attempts = _write_parallel(

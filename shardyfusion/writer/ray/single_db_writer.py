@@ -189,7 +189,9 @@ def _stream_to_single_db(
     )
     os.makedirs(local_dir, exist_ok=True)
 
-    factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory()
+    factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory(
+        credential_provider=config.credential_provider
+    )
 
     bucket: RateLimiter | None = None
     if max_writes_per_second is not None:

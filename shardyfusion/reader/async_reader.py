@@ -14,6 +14,10 @@ from shardyfusion.async_manifest_store import (
     AsyncManifestStore,
     AsyncS3ManifestStore,
 )
+from shardyfusion.credentials import (
+    CredentialProvider,
+    resolve_env_file,
+)
 from shardyfusion.errors import ManifestParseError, ReaderStateError, SlateDbApiError
 from shardyfusion.logging import (
     FailureSeverity,
@@ -35,7 +39,7 @@ from shardyfusion.type_defs import (
     AsyncShardReader,
     AsyncShardReaderFactory,
     KeyInput,
-    S3ClientConfig,
+    S3ConnectionOptions,
 )
 
 _logger = get_logger(__name__)
@@ -117,6 +121,7 @@ class AsyncSlateDbReaderFactory:
     """Default async factory using ``SlateDBReader.open_async()``."""
 
     env_file: str | None = None
+    credential_provider: CredentialProvider | None = None
 
     async def __call__(
         self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
@@ -128,12 +133,12 @@ class AsyncSlateDbReaderFactory:
                 "slatedb package is required for reading shards"
             ) from exc
 
-        kwargs: dict[str, Any] = {"url": db_url, "checkpoint_id": checkpoint_id}
-        if self.env_file is not None:
-            kwargs["env_file"] = self.env_file
-
-        inner = await SlateDBReader.open_async(str(local_dir), **kwargs)
-        return _SlateDbAsyncShardReader(inner)
+        with resolve_env_file(self.env_file, self.credential_provider) as env_path:
+            kwargs: dict[str, Any] = {"url": db_url, "checkpoint_id": checkpoint_id}
+            if env_path is not None:
+                kwargs["env_file"] = env_path
+            inner = await SlateDBReader.open_async(str(local_dir), **kwargs)
+            return _SlateDbAsyncShardReader(inner)
 
 
 class AsyncShardReaderHandle:
@@ -206,7 +211,8 @@ class AsyncShardedReader:
         current_name: str = "_CURRENT",
         reader_factory: AsyncShardReaderFactory | None = None,
         slate_env_file: str | None = None,
-        s3_client_config: S3ClientConfig | None = None,
+        credential_provider: CredentialProvider | None = None,
+        s3_connection_options: S3ConnectionOptions | None = None,
         max_concurrency: int | None = None,
         max_fallback_attempts: int = 3,
         metrics_collector: MetricsCollector | None = None,
@@ -232,7 +238,8 @@ class AsyncShardedReader:
             self._manifest_store = AsyncS3ManifestStore(
                 s3_prefix,
                 current_name=current_name,
-                s3_client_config=s3_client_config,
+                credential_provider=credential_provider,
+                s3_connection_options=s3_connection_options,
                 metrics_collector=metrics_collector,
             )
 
@@ -240,7 +247,10 @@ class AsyncShardedReader:
         if reader_factory is not None:
             self._reader_factory = reader_factory
         else:
-            self._reader_factory = AsyncSlateDbReaderFactory(env_file=slate_env_file)
+            self._reader_factory = AsyncSlateDbReaderFactory(
+                env_file=slate_env_file,
+                credential_provider=credential_provider,
+            )
 
     @classmethod
     async def open(
@@ -252,7 +262,8 @@ class AsyncShardedReader:
         current_name: str = "_CURRENT",
         reader_factory: AsyncShardReaderFactory | None = None,
         slate_env_file: str | None = None,
-        s3_client_config: S3ClientConfig | None = None,
+        credential_provider: CredentialProvider | None = None,
+        s3_connection_options: S3ConnectionOptions | None = None,
         max_concurrency: int | None = None,
         max_fallback_attempts: int = 3,
         metrics_collector: MetricsCollector | None = None,
@@ -266,7 +277,8 @@ class AsyncShardedReader:
             current_name=current_name,
             reader_factory=reader_factory,
             slate_env_file=slate_env_file,
-            s3_client_config=s3_client_config,
+            credential_provider=credential_provider,
+            s3_connection_options=s3_connection_options,
             max_concurrency=max_concurrency,
             max_fallback_attempts=max_fallback_attempts,
             metrics_collector=metrics_collector,
