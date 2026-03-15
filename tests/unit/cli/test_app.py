@@ -269,7 +269,8 @@ class TestBuildManifestStore:
         params: dict[str, Any] = {
             "s3_prefix": "s3://bucket/prefix",
             "current_name": "_CURRENT",
-            "s3_client_config": {},
+            "credential_provider": None,
+            "s3_connection_options": {},
         }
         with patch(
             "shardyfusion.manifest_store.S3ManifestStore", autospec=True
@@ -279,7 +280,8 @@ class TestBuildManifestStore:
             mock_cls.assert_called_once_with(
                 "s3://bucket/prefix",
                 current_name="_CURRENT",
-                s3_client_config={},
+                credential_provider=None,
+                s3_connection_options={},
             )
             assert store is mock_cls.return_value
 
@@ -290,7 +292,8 @@ class TestBuildManifestStore:
         params: dict[str, Any] = {
             "s3_prefix": "s3://bucket/prefix",
             "current_name": "_CURRENT",
-            "s3_client_config": {},
+            "credential_provider": None,
+            "s3_connection_options": {},
         }
         with patch(
             "shardyfusion.db_manifest_store.PostgresManifestStore", autospec=True
@@ -305,7 +308,8 @@ class TestBuildManifestStore:
         params: dict[str, Any] = {
             "s3_prefix": "s3://bucket/prefix",
             "current_name": "_CURRENT",
-            "s3_client_config": {},
+            "credential_provider": None,
+            "s3_connection_options": {},
         }
         with patch(
             "shardyfusion.db_manifest_store.Comdb2ManifestStore", autospec=True

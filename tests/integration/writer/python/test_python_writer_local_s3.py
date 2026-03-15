@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 
 from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
 from shardyfusion.testing import file_backed_adapter_factory
+from shardyfusion.type_defs import S3ConnectionOptions
 from shardyfusion.writer.python import write_sharded
 
 
@@ -31,12 +33,14 @@ def test_python_writer_publishes_manifest_and_current_to_local_s3(
             local_root=str(tmp_path / "local"),
         ),
         manifest=ManifestOptions(
-            s3_client_config={
-                "endpoint_url": endpoint_url,
-                "region_name": local_s3_service["region_name"],
-                "access_key_id": local_s3_service["access_key_id"],
-                "secret_access_key": local_s3_service["secret_access_key"],
-            }
+            credential_provider=StaticCredentialProvider(
+                access_key_id=local_s3_service["access_key_id"],
+                secret_access_key=local_s3_service["secret_access_key"],
+            ),
+            s3_connection_options=S3ConnectionOptions(
+                endpoint_url=endpoint_url,
+                region_name=local_s3_service["region_name"],
+            ),
         ),
     )
 

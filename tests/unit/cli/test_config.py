@@ -11,7 +11,7 @@ from shardyfusion.cli.config import (
     ManifestStoreConfig,
     ReaderConfig,
     build_connection_factory,
-    build_s3_client_config,
+    build_s3_config,
     coerce_cli_key,
     coerce_s3_option,
     load_reader_config,
@@ -132,18 +132,20 @@ class TestCoerceCliKey:
 
 
 # ---------------------------------------------------------------------------
-# build_s3_client_config
+# build_s3_config
 # ---------------------------------------------------------------------------
 
 
-class TestBuildS3ClientConfig:
+class TestBuildS3Config:
     def test_no_profile(self) -> None:
-        cfg = build_s3_client_config(None)
-        assert cfg == {}
+        cred_provider, conn_opts = build_s3_config(None)
+        assert cred_provider is None
+        assert conn_opts == {}
 
     def test_overrides_applied(self) -> None:
-        cfg = build_s3_client_config(None, {"connect_timeout": 99})
-        assert cfg["connect_timeout"] == 99
+        cred_provider, conn_opts = build_s3_config(None, {"connect_timeout": 99})
+        assert cred_provider is None
+        assert conn_opts["connect_timeout"] == 99
 
 
 # ---------------------------------------------------------------------------

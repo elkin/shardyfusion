@@ -12,7 +12,7 @@ from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 def test_s3_manifest_store_builds_expected_urls(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 
-    def fake_create_s3_client(_cfg=None):
+    def fake_create_s3_client(_creds=None, _opts=None):
         return object()
 
     def fake_put_bytes(

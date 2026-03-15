@@ -18,12 +18,13 @@ from uuid import uuid4
 import boto3
 import pytest
 
+from shardyfusion.credentials import StaticCredentialProvider
+from shardyfusion.type_defs import S3ConnectionOptions
+
 if TYPE_CHECKING:
     from pyspark.sql import SparkSession
 
     from tests.conftest import LocalS3Service
-
-from shardyfusion.type_defs import S3ClientConfig
 
 
 def _admin_request(
@@ -133,15 +134,25 @@ def garage_s3_service() -> Generator[LocalS3Service, None, None]:
     }
 
 
-def s3_client_config_from_service(service: LocalS3Service) -> S3ClientConfig:
-    """Build an S3ClientConfig with path-style addressing from a service dict."""
-    return {
-        "endpoint_url": service["endpoint_url"],
-        "region_name": service["region_name"],
-        "access_key_id": service["access_key_id"],
-        "secret_access_key": service["secret_access_key"],
-        "addressing_style": "path",
-    }
+def credential_provider_from_service(
+    service: LocalS3Service,
+) -> StaticCredentialProvider:
+    """Build a StaticCredentialProvider from a service dict."""
+    return StaticCredentialProvider(
+        access_key_id=service["access_key_id"],
+        secret_access_key=service["secret_access_key"],
+    )
+
+
+def s3_connection_options_from_service(
+    service: LocalS3Service,
+) -> S3ConnectionOptions:
+    """Build S3ConnectionOptions with path-style addressing from a service dict."""
+    return S3ConnectionOptions(
+        endpoint_url=service["endpoint_url"],
+        region_name=service["region_name"],
+        addressing_style="path",
+    )
 
 
 @pytest.fixture(scope="session")

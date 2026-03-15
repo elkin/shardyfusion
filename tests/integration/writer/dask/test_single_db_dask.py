@@ -14,8 +14,10 @@ from shardyfusion.config import (
     OutputOptions,
     WriteConfig,
 )
+from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.serde import ValueSpec
 from shardyfusion.testing import file_backed_adapter_factory
+from shardyfusion.type_defs import S3ConnectionOptions
 from shardyfusion.writer.dask.single_db_writer import (
     write_single_db,
 )
@@ -44,12 +46,14 @@ def test_single_db_dask_publishes_manifest_and_current(
             local_root=str(tmp_path / "local"),
         ),
         manifest=ManifestOptions(
-            s3_client_config={
-                "endpoint_url": endpoint_url,
-                "region_name": local_s3_service["region_name"],
-                "access_key_id": local_s3_service["access_key_id"],
-                "secret_access_key": local_s3_service["secret_access_key"],
-            }
+            credential_provider=StaticCredentialProvider(
+                access_key_id=local_s3_service["access_key_id"],
+                secret_access_key=local_s3_service["secret_access_key"],
+            ),
+            s3_connection_options=S3ConnectionOptions(
+                endpoint_url=endpoint_url,
+                region_name=local_s3_service["region_name"],
+            ),
         ),
     )
 

@@ -2,8 +2,9 @@
 
 Each function contains the full test logic (setup, write, assert) but is
 S3-backend agnostic. The caller passes the ``LocalS3Service`` dict produced
-by the fixture for their backend, plus an optional ``s3_client_config`` for
-backends that need explicit connection options (e.g. path-style addressing).
+by the fixture for their backend, plus optional ``credential_provider`` and
+``s3_connection_options`` for backends that need explicit connection/identity
+options (e.g. path-style addressing).
 
 Writer-specific imports (pyspark, writer module) are deferred to function
 bodies so that the reader scenario can be collected without pyspark installed.
@@ -17,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import slatedb
 
+from shardyfusion.credentials import CredentialProvider, StaticCredentialProvider
 from shardyfusion.manifest import (
     CurrentPointer,
     ManifestShardingSpec,
@@ -26,10 +28,36 @@ from shardyfusion.manifest import (
 from shardyfusion.manifest_store import S3ManifestStore
 from shardyfusion.reader import ConcurrentShardedReader
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
-from shardyfusion.type_defs import S3ClientConfig
+from shardyfusion.type_defs import S3ConnectionOptions
 
 if TYPE_CHECKING:
     from ..conftest import LocalS3Service
+
+
+def _default_credential_provider(
+    s3_service: LocalS3Service,
+    credential_provider: CredentialProvider | None,
+) -> CredentialProvider:
+    """Return the given provider or build a StaticCredentialProvider from the service dict."""
+    if credential_provider is not None:
+        return credential_provider
+    return StaticCredentialProvider(
+        access_key_id=s3_service["access_key_id"],
+        secret_access_key=s3_service["secret_access_key"],
+    )
+
+
+def _default_connection_options(
+    s3_service: LocalS3Service,
+    s3_connection_options: S3ConnectionOptions | None,
+) -> S3ConnectionOptions:
+    """Return the given options or build defaults from the service dict."""
+    if s3_connection_options is not None:
+        return s3_connection_options
+    return S3ConnectionOptions(
+        endpoint_url=s3_service["endpoint_url"],
+        region_name=s3_service["region_name"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -41,7 +69,8 @@ def run_reader_loads_manifest_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
-    s3_client_config: S3ClientConfig | None = None,
+    credential_provider: CredentialProvider | None = None,
+    s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
     """Reader loads CURRENT + manifest from S3 and performs get/multi_get."""
 
@@ -144,15 +173,16 @@ def run_reader_loads_manifest_scenario(
         ContentType="application/json",
     )
 
-    # Build reader kwargs — inject manifest_store for path-style addressing
+    # Build reader kwargs — inject manifest_store for custom connection/identity
     reader_kwargs: dict[str, Any] = {
         "s3_prefix": s3_prefix,
         "local_root": str(local_root),
     }
-    if s3_client_config is not None:
+    if credential_provider is not None or s3_connection_options is not None:
         reader_kwargs["manifest_store"] = S3ManifestStore(
             s3_prefix,
-            s3_client_config=s3_client_config,
+            credential_provider=credential_provider,
+            s3_connection_options=s3_connection_options,
         )
 
     with ConcurrentShardedReader(**reader_kwargs) as reader:
@@ -175,7 +205,8 @@ def run_writer_publishes_manifest_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
-    s3_client_config: S3ClientConfig | None = None,
+    credential_provider: CredentialProvider | None = None,
+    s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
     """Writer publishes manifest + CURRENT to S3, then reads shards back."""
 
@@ -193,17 +224,12 @@ def run_writer_publishes_manifest_scenario(
     df = spark.createDataFrame(rows, ["id", "payload"])
 
     bucket = s3_service["bucket"]
-    endpoint_url = s3_service["endpoint_url"]
     s3_prefix = f"s3://{bucket}/writer-only"
     local_root = str(tmp_path / "writer-local")
     object_store_root = str(tmp_path / "object-store")
 
-    manifest_s3_config: S3ClientConfig = s3_client_config or {
-        "endpoint_url": endpoint_url,
-        "region_name": s3_service["region_name"],
-        "access_key_id": s3_service["access_key_id"],
-        "secret_access_key": s3_service["secret_access_key"],
-    }
+    cred_provider = _default_credential_provider(s3_service, credential_provider)
+    conn_options = _default_connection_options(s3_service, s3_connection_options)
 
     config = WriteConfig(
         num_dbs=4,
@@ -213,7 +239,10 @@ def run_writer_publishes_manifest_scenario(
             boundaries=[6, 12, 18],
         ),
         adapter_factory=real_file_adapter_factory(object_store_root),
-        manifest=ManifestOptions(s3_client_config=manifest_s3_config),
+        manifest=ManifestOptions(
+            credential_provider=cred_provider,
+            s3_connection_options=conn_options,
+        ),
         output=OutputOptions(
             run_id="writer-local-s3",
             local_root=local_root,
@@ -270,7 +299,8 @@ def run_writer_reader_refresh_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
-    s3_client_config: S3ClientConfig | None = None,
+    credential_provider: CredentialProvider | None = None,
+    s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
     """Writer publishes v1, reader opens, writer publishes v2, reader refreshes."""
 
@@ -285,17 +315,12 @@ def run_writer_reader_refresh_scenario(
     from shardyfusion.writer.spark import write_sharded
 
     bucket = s3_service["bucket"]
-    endpoint_url = s3_service["endpoint_url"]
     s3_prefix = f"s3://{bucket}/writer-reader-refresh"
     local_root = str(tmp_path / "writer-local")
     object_store_root = str(tmp_path / "object-store")
 
-    manifest_s3_config: S3ClientConfig = s3_client_config or {
-        "endpoint_url": endpoint_url,
-        "region_name": s3_service["region_name"],
-        "access_key_id": s3_service["access_key_id"],
-        "secret_access_key": s3_service["secret_access_key"],
-    }
+    cred_provider = _default_credential_provider(s3_service, credential_provider)
+    conn_options = _default_connection_options(s3_service, s3_connection_options)
 
     def build_config(run_id: str) -> WriteConfig:
         return WriteConfig(
@@ -310,7 +335,10 @@ def run_writer_reader_refresh_scenario(
                 boundaries=[8, 16, 24],
             ),
             adapter_factory=real_file_adapter_factory(object_store_root),
-            manifest=ManifestOptions(s3_client_config=manifest_s3_config),
+            manifest=ManifestOptions(
+                credential_provider=cred_provider,
+                s3_connection_options=conn_options,
+            ),
         )
 
     df_v1 = spark.createDataFrame(
@@ -333,16 +361,17 @@ def run_writer_reader_refresh_scenario(
             checkpoint_id=checkpoint_id,
         )
 
-    # Build reader kwargs — inject manifest_store for path-style addressing
+    # Build reader kwargs — inject manifest_store for custom connection/identity
     reader_kwargs: dict[str, Any] = {
         "s3_prefix": s3_prefix,
         "local_root": str(tmp_path / "reader-cache"),
         "reader_factory": open_real_reader,
     }
-    if s3_client_config is not None:
+    if credential_provider is not None or s3_connection_options is not None:
         reader_kwargs["manifest_store"] = S3ManifestStore(
             s3_prefix,
-            s3_client_config=s3_client_config,
+            credential_provider=credential_provider,
+            s3_connection_options=s3_connection_options,
         )
 
     with ConcurrentShardedReader(**reader_kwargs) as reader:
@@ -379,7 +408,8 @@ def run_python_writer_publishes_manifest_scenario(
     tmp_path: Path,
     *,
     parallel: bool = False,
-    s3_client_config: S3ClientConfig | None = None,
+    credential_provider: CredentialProvider | None = None,
+    s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
     """Python writer publishes manifest + CURRENT to S3, then reads shards back."""
 
@@ -396,17 +426,12 @@ def run_python_writer_publishes_manifest_scenario(
     records = list(range(24))
 
     bucket = s3_service["bucket"]
-    endpoint_url = s3_service["endpoint_url"]
     s3_prefix = f"s3://{bucket}/python-writer-{mode_label}"
     local_root = str(tmp_path / f"python-writer-local-{mode_label}")
     object_store_root = str(tmp_path / f"python-object-store-{mode_label}")
 
-    manifest_s3_config: S3ClientConfig = s3_client_config or {
-        "endpoint_url": endpoint_url,
-        "region_name": s3_service["region_name"],
-        "access_key_id": s3_service["access_key_id"],
-        "secret_access_key": s3_service["secret_access_key"],
-    }
+    cred_provider = _default_credential_provider(s3_service, credential_provider)
+    conn_options = _default_connection_options(s3_service, s3_connection_options)
 
     config = WriteConfig(
         num_dbs=4,
@@ -416,7 +441,10 @@ def run_python_writer_publishes_manifest_scenario(
             boundaries=[6, 12, 18],
         ),
         adapter_factory=real_file_adapter_factory(object_store_root),
-        manifest=ManifestOptions(s3_client_config=manifest_s3_config),
+        manifest=ManifestOptions(
+            credential_provider=cred_provider,
+            s3_connection_options=conn_options,
+        ),
         output=OutputOptions(
             run_id=f"python-writer-{mode_label}",
             local_root=local_root,
@@ -479,7 +507,8 @@ def run_dask_writer_publishes_manifest_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
-    s3_client_config: S3ClientConfig | None = None,
+    credential_provider: CredentialProvider | None = None,
+    s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
     """Dask writer publishes manifest + CURRENT to S3, then reads shards back."""
 
@@ -498,17 +527,12 @@ def run_dask_writer_publishes_manifest_scenario(
     from shardyfusion.writer.dask import write_sharded
 
     bucket = s3_service["bucket"]
-    endpoint_url = s3_service["endpoint_url"]
     s3_prefix = f"s3://{bucket}/dask-writer"
     local_root = str(tmp_path / "dask-writer-local")
     object_store_root = str(tmp_path / "dask-object-store")
 
-    manifest_s3_config: S3ClientConfig = s3_client_config or {
-        "endpoint_url": endpoint_url,
-        "region_name": s3_service["region_name"],
-        "access_key_id": s3_service["access_key_id"],
-        "secret_access_key": s3_service["secret_access_key"],
-    }
+    cred_provider = _default_credential_provider(s3_service, credential_provider)
+    conn_options = _default_connection_options(s3_service, s3_connection_options)
 
     config = WriteConfig(
         num_dbs=4,
@@ -518,7 +542,10 @@ def run_dask_writer_publishes_manifest_scenario(
             boundaries=[6, 12, 18],
         ),
         adapter_factory=real_file_adapter_factory(object_store_root),
-        manifest=ManifestOptions(s3_client_config=manifest_s3_config),
+        manifest=ManifestOptions(
+            credential_provider=cred_provider,
+            s3_connection_options=conn_options,
+        ),
         output=OutputOptions(
             run_id="dask-writer-e2e",
             local_root=local_root,
@@ -583,7 +610,8 @@ def run_python_writer_reader_refresh_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
-    s3_client_config: S3ClientConfig | None = None,
+    credential_provider: CredentialProvider | None = None,
+    s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
     """Python writer publishes v1, reader opens, Python writer publishes v2, reader refreshes."""
 
@@ -597,17 +625,12 @@ def run_python_writer_reader_refresh_scenario(
     from shardyfusion.writer.python import write_sharded
 
     bucket = s3_service["bucket"]
-    endpoint_url = s3_service["endpoint_url"]
     s3_prefix = f"s3://{bucket}/python-writer-reader-refresh"
     local_root = str(tmp_path / "python-writer-local")
     object_store_root = str(tmp_path / "python-object-store")
 
-    manifest_s3_config: S3ClientConfig = s3_client_config or {
-        "endpoint_url": endpoint_url,
-        "region_name": s3_service["region_name"],
-        "access_key_id": s3_service["access_key_id"],
-        "secret_access_key": s3_service["secret_access_key"],
-    }
+    cred_provider = _default_credential_provider(s3_service, credential_provider)
+    conn_options = _default_connection_options(s3_service, s3_connection_options)
 
     def build_config(run_id: str) -> WriteConfig:
         return WriteConfig(
@@ -619,7 +642,10 @@ def run_python_writer_reader_refresh_scenario(
                 boundaries=[8, 16, 24],
             ),
             adapter_factory=real_file_adapter_factory(object_store_root),
-            manifest=ManifestOptions(s3_client_config=manifest_s3_config),
+            manifest=ManifestOptions(
+                credential_provider=cred_provider,
+                s3_connection_options=conn_options,
+            ),
         )
 
     result_v1 = write_sharded(
@@ -643,10 +669,11 @@ def run_python_writer_reader_refresh_scenario(
         "local_root": str(tmp_path / "reader-cache"),
         "reader_factory": open_real_reader,
     }
-    if s3_client_config is not None:
+    if credential_provider is not None or s3_connection_options is not None:
         reader_kwargs["manifest_store"] = S3ManifestStore(
             s3_prefix,
-            s3_client_config=s3_client_config,
+            credential_provider=credential_provider,
+            s3_connection_options=s3_connection_options,
         )
 
     with ConcurrentShardedReader(**reader_kwargs) as reader:
@@ -679,7 +706,8 @@ def run_dask_writer_reader_refresh_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
-    s3_client_config: S3ClientConfig | None = None,
+    credential_provider: CredentialProvider | None = None,
+    s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
     """Dask writer publishes v1, reader opens, Dask writer publishes v2, reader refreshes."""
 
@@ -698,17 +726,12 @@ def run_dask_writer_reader_refresh_scenario(
     from shardyfusion.writer.dask import write_sharded
 
     bucket = s3_service["bucket"]
-    endpoint_url = s3_service["endpoint_url"]
     s3_prefix = f"s3://{bucket}/dask-writer-reader-refresh"
     local_root = str(tmp_path / "dask-writer-local")
     object_store_root = str(tmp_path / "dask-object-store")
 
-    manifest_s3_config: S3ClientConfig = s3_client_config or {
-        "endpoint_url": endpoint_url,
-        "region_name": s3_service["region_name"],
-        "access_key_id": s3_service["access_key_id"],
-        "secret_access_key": s3_service["secret_access_key"],
-    }
+    cred_provider = _default_credential_provider(s3_service, credential_provider)
+    conn_options = _default_connection_options(s3_service, s3_connection_options)
 
     def build_config(run_id: str) -> WriteConfig:
         return WriteConfig(
@@ -720,7 +743,10 @@ def run_dask_writer_reader_refresh_scenario(
                 boundaries=[8, 16, 24],
             ),
             adapter_factory=real_file_adapter_factory(object_store_root),
-            manifest=ManifestOptions(s3_client_config=manifest_s3_config),
+            manifest=ManifestOptions(
+                credential_provider=cred_provider,
+                s3_connection_options=conn_options,
+            ),
         )
 
     value_spec = ValueSpec.callable_encoder(lambda row: str(row["val"]).encode())
@@ -753,10 +779,11 @@ def run_dask_writer_reader_refresh_scenario(
         "local_root": str(tmp_path / "reader-cache"),
         "reader_factory": open_real_reader,
     }
-    if s3_client_config is not None:
+    if credential_provider is not None or s3_connection_options is not None:
         reader_kwargs["manifest_store"] = S3ManifestStore(
             s3_prefix,
-            s3_client_config=s3_client_config,
+            credential_provider=credential_provider,
+            s3_connection_options=s3_connection_options,
         )
 
     with ConcurrentShardedReader(**reader_kwargs) as reader:
@@ -789,7 +816,8 @@ def run_ray_writer_publishes_manifest_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
-    s3_client_config: S3ClientConfig | None = None,
+    credential_provider: CredentialProvider | None = None,
+    s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
     """Ray writer publishes manifest + CURRENT to S3, then reads shards back."""
 
@@ -806,17 +834,12 @@ def run_ray_writer_publishes_manifest_scenario(
     from shardyfusion.writer.ray import write_sharded
 
     bucket = s3_service["bucket"]
-    endpoint_url = s3_service["endpoint_url"]
     s3_prefix = f"s3://{bucket}/ray-writer"
     local_root = str(tmp_path / "ray-writer-local")
     object_store_root = str(tmp_path / "ray-object-store")
 
-    manifest_s3_config: S3ClientConfig = s3_client_config or {
-        "endpoint_url": endpoint_url,
-        "region_name": s3_service["region_name"],
-        "access_key_id": s3_service["access_key_id"],
-        "secret_access_key": s3_service["secret_access_key"],
-    }
+    cred_provider = _default_credential_provider(s3_service, credential_provider)
+    conn_options = _default_connection_options(s3_service, s3_connection_options)
 
     config = WriteConfig(
         num_dbs=4,
@@ -826,7 +849,10 @@ def run_ray_writer_publishes_manifest_scenario(
             boundaries=[6, 12, 18],
         ),
         adapter_factory=real_file_adapter_factory(object_store_root),
-        manifest=ManifestOptions(s3_client_config=manifest_s3_config),
+        manifest=ManifestOptions(
+            credential_provider=cred_provider,
+            s3_connection_options=conn_options,
+        ),
         output=OutputOptions(
             run_id="ray-writer-e2e",
             local_root=local_root,
@@ -892,7 +918,8 @@ def run_ray_writer_reader_refresh_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
-    s3_client_config: S3ClientConfig | None = None,
+    credential_provider: CredentialProvider | None = None,
+    s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
     """Ray writer publishes v1, reader opens, Ray writer publishes v2, reader refreshes."""
 
@@ -909,17 +936,12 @@ def run_ray_writer_reader_refresh_scenario(
     from shardyfusion.writer.ray import write_sharded
 
     bucket = s3_service["bucket"]
-    endpoint_url = s3_service["endpoint_url"]
     s3_prefix = f"s3://{bucket}/ray-writer-reader-refresh"
     local_root = str(tmp_path / "ray-writer-local")
     object_store_root = str(tmp_path / "ray-object-store")
 
-    manifest_s3_config: S3ClientConfig = s3_client_config or {
-        "endpoint_url": endpoint_url,
-        "region_name": s3_service["region_name"],
-        "access_key_id": s3_service["access_key_id"],
-        "secret_access_key": s3_service["secret_access_key"],
-    }
+    cred_provider = _default_credential_provider(s3_service, credential_provider)
+    conn_options = _default_connection_options(s3_service, s3_connection_options)
 
     def build_config(run_id: str) -> WriteConfig:
         return WriteConfig(
@@ -931,7 +953,10 @@ def run_ray_writer_reader_refresh_scenario(
                 boundaries=[8, 16, 24],
             ),
             adapter_factory=real_file_adapter_factory(object_store_root),
-            manifest=ManifestOptions(s3_client_config=manifest_s3_config),
+            manifest=ManifestOptions(
+                credential_provider=cred_provider,
+                s3_connection_options=conn_options,
+            ),
         )
 
     value_spec = ValueSpec.callable_encoder(lambda row: str(row["val"]).encode())
@@ -963,10 +988,11 @@ def run_ray_writer_reader_refresh_scenario(
         "local_root": str(tmp_path / "reader-cache"),
         "reader_factory": open_real_reader,
     }
-    if s3_client_config is not None:
+    if credential_provider is not None or s3_connection_options is not None:
         reader_kwargs["manifest_store"] = S3ManifestStore(
             s3_prefix,
-            s3_client_config=s3_client_config,
+            credential_provider=credential_provider,
+            s3_connection_options=s3_connection_options,
         )
 
     with ConcurrentShardedReader(**reader_kwargs) as reader:
