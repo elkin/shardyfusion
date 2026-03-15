@@ -79,7 +79,7 @@ Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus ext
 1. Entry point in `writer/spark/writer.py`. Optionally applies Spark conf overrides via `SparkConfOverrideContext`.
 2. `writer/spark/sharding.py` adds `_slatedb_db_id` column via Spark SQL expressions (hash, range, or custom), then converts the DataFrame to a pair RDD partitioned so partition index = db_id.
 3. Each partition writes one shard to S3 at a temporary path (`_tmp/run_id=.../db=XXXXX/attempt=YY/`).
-4. The driver collects results and selects deterministic winners (lowest attempt → task_attempt_id → URL).
+4. The driver streams results via `toLocalIterator()` and selects deterministic winners (lowest attempt → task_attempt_id → URL).
 5. A manifest artifact is built and published, then the `_CURRENT` pointer is updated.
 
 **Dask writer** (`write_sharded`):
@@ -98,8 +98,8 @@ Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus ext
 
 **Python writer** (`write_sharded`):
 1. Entry point in `writer/python/writer.py`. Accepts `Iterable[T]` with `key_fn`/`value_fn` callables.
-2. Supports single-process (all adapters open simultaneously) or multi-process (`parallel=True`, one worker per shard via `multiprocessing.spawn`).
-3. Optional rate limiting via `max_writes_per_second` (token-bucket in `_rate_limiter.py`).
+2. Supports single-process (all adapters open simultaneously via `contextlib.ExitStack`) or multi-process (`parallel=True`, one worker per shard via `multiprocessing.spawn`).
+3. Optional rate limiting via `max_writes_per_second` and `max_write_bytes_per_second` (token-bucket in `_rate_limiter.py`). Single-process mode supports global memory ceilings via `max_total_batched_items` and `max_total_batched_bytes` to prevent OOM when buffering across many shards.
 4. Uses the same `_writer_core.py` functions for routing, winner selection, manifest building, and publishing.
 
 ### Read Pipeline
@@ -118,7 +118,7 @@ Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus ext
 1. Constructed via `@classmethod async def open(...)` (since `__init__` can't do async I/O). On cold start, if `load_manifest()` raises `ManifestParseError`, falls back to previous manifests via `list_manifests()` (up to `max_fallback_attempts`, default 3).
 2. S3 manifest loading uses `AsyncS3ManifestStore` (native aiobotocore).
 3. `async get(key)` / `async multi_get(keys)` route keys and read from async shard readers. `multi_get` fans out via `asyncio.TaskGroup` with optional `asyncio.Semaphore` for concurrency limiting (`max_concurrency`).
-4. `async refresh()` serialises via `asyncio.Lock`. Same swap-and-retire pattern as sync, with deferred cleanup via `loop.create_task()` when retired state's borrow count hits 0. A malformed manifest is silently skipped (returns `False`), keeping the previous good state.
+4. `async refresh()` serialises via `asyncio.Lock`. Swaps state and defers cleanup of retired readers via `state.aclose()` (scheduled as a task via `loop.create_task()`) when their borrow count hits 0. `_AsyncReaderState` supports the async context manager protocol. A malformed manifest is silently skipped (returns `False`), keeping the previous good state.
 5. Sync metadata methods (`key_encoding`, `snapshot_info()`, `shard_details()`, `route_key()`) and borrow methods (`reader_for_key()`, `readers_for_keys()`) work identically to the sync reader.
 6. Supports `async with` context manager via `__aenter__`/`__aexit__`.
 
@@ -182,9 +182,9 @@ The `metrics/` package (`_events.py`, `_protocol.py`, `_payloads.py`) is always 
 Token-bucket rate limiter in `_rate_limiter.py`. `RateLimiter` Protocol + `TokenBucket` implementation.
 - **ops/sec**: `max_writes_per_second` on `WriteConfig` — limits write_batch calls.
 - **bytes/sec**: `max_write_bytes_per_second` on `WriteConfig` — limits payload bytes. Each uses an independent `TokenBucket` instance.
-- **Reader-side**: readers accept `rate_limiter` parameter for reads/sec limiting. `AsyncShardedReader` uses `acquire_async()` (asyncio-safe).
+- **Reader-side**: readers accept `rate_limiter` parameter for reads/sec limiting. `AsyncShardedReader` calls `acquire_async()` directly on the limiter.
 - **`try_acquire()`**: non-blocking, pure arithmetic — safe for async code without `to_thread()`.
-- **`acquire_async()`**: async version using `asyncio.sleep` — safe for event loops.
+- **`acquire_async()`**: part of the `RateLimiter` Protocol. Uses `asyncio.sleep` — safe for event loops.
 
 ### Logging
 
@@ -238,7 +238,7 @@ The invariant: `pmod(xxhash64(payload, seed=42), num_dbs)` where:
 
 ### Error Hierarchy
 
-All errors inherit from `ShardyfusionError` with `retryable: bool`. Non-retryable: config/programmer errors (`ConfigValidationError`, `ShardAssignmentError`, `ManifestParseError`, `ReaderStateError`, `SlateDbApiError`, etc.). Retryable: transient infra (`PublishManifestError`, `PublishCurrentError`, `S3TransientError`). See `errors.py` for full catalog.
+All errors inherit from `ShardyfusionError` with `retryable: bool`. Non-retryable: config/programmer errors (`ConfigValidationError`, `ShardAssignmentError`, `ManifestParseError`, `ReaderStateError`, `SlateDbApiError`, etc.). Retryable: transient infra (`PublishManifestError`, `PublishCurrentError`, `PoolExhaustedError`, `S3TransientError`, `ManifestStoreError`). See `errors.py` for full catalog.
 
 ## Public API Summary
 
@@ -274,7 +274,8 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **SlateDB import is deferred**: `slatedb_adapter.py` imports the `slatedb` module inside `__init__`, not at module load. Tests monkeypatch `sys.modules["slatedb"]` to provide fakes.
 - **Python writer parallel mode uses `spawn`**: `multiprocessing.get_context("spawn")` is hardcoded. All objects passed to workers must be picklable. Min/max key tracking happens in the main process.
 - **Rate limiter is not thread-safe**: `TokenBucket` has no internal lock; a `ThreadSafeTokenBucket` subclass will be added when needed. Writers and readers depend on the `RateLimiter` Protocol, not the concrete class. Writers support both `max_writes_per_second` (ops) and `max_write_bytes_per_second` (bytes) via independent `TokenBucket` instances. Readers accept a `rate_limiter` parameter for reads/sec limiting.
-- **Reader reference counting**: `refresh()` serialises I/O via `_refresh_lock`, atomically swaps `_ReaderState` with a compare-and-swap guard, and defers closing old handles until `refcount` drops to zero. Pool-mode checkout has a configurable timeout (default 30s) — raises `SlateDbApiError` when exhausted. Metadata methods (`key_encoding`, `snapshot_info`, `shard_details`, `route_key`) use `_use_state()` and raise `ReaderStateError` on a closed reader.
+- **Reader reference counting**: `refresh()` serialises I/O via `_refresh_lock`, atomically swaps `_ReaderState` with a compare-and-swap guard, and defers closing old handles until `refcount` drops to zero. Pool-mode checkout has a configurable timeout (default 30s) — raises `PoolExhaustedError` (retryable) when exhausted. Metadata methods (`key_encoding`, `snapshot_info`, `shard_details`, `route_key`) use `_use_state()` and raise `ReaderStateError` on a closed reader.
+- **Borrow handle safety nets**: `ShardReaderHandle` and `AsyncShardReaderHandle` implement `__del__()` that logs a warning and releases the borrow if the handle was not explicitly closed. Prefer explicit `close()` or `with`/`async with` context managers.
 - **Async reader uses `open()` classmethod**: `AsyncShardedReader.__init__` does no I/O. Use `await AsyncShardedReader.open(...)` or `async with AsyncShardedReader(...)`. Requires `aiobotocore` (the `read-async` extra).
 - **Async manifest store**: `AsyncShardedReader` accepts `AsyncManifestStore` only (not sync `ManifestStore`). When `manifest_store=None`, uses `AsyncS3ManifestStore` (native aiobotocore).
 - **Reader cold-start fallback**: When `load_manifest()` raises `ManifestParseError` during initialization, readers walk backward through `list_manifests()` to find a valid manifest (up to `max_fallback_attempts`, default 3). Set to 0 to disable fallback. During `refresh()`, a malformed manifest is silently skipped and the reader keeps its current good state (returns `False`).
@@ -283,9 +284,9 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **Writer scenario imports are deferred**: `tests/helpers/s3_test_scenarios.py` imports writer modules inside function bodies so reader-only test collection doesn't fail.
 - **Dask writer rejects `CUSTOM_EXPR` sharding**: Unlike the Spark writer, the Dask writer raises `ConfigValidationError` for custom expression sharding. Only `HASH` and `RANGE` are supported.
 - **Ray writer rejects `CUSTOM_EXPR` sharding**: Same as Dask — only `HASH` and `RANGE` are supported.
-- **Ray writer temporarily sets `DataContext.shuffle_strategy`**: During repartition, the Ray writer sets `DataContext.shuffle_strategy = "HASH_SHUFFLE"` and restores the previous value in a `try/finally` block.
+- **Ray writer temporarily sets `DataContext.shuffle_strategy`**: During repartition, the Ray writer sets `DataContext.shuffle_strategy = "HASH_SHUFFLE"` and restores the previous value in a `try/finally` block, protected by `_SHUFFLE_STRATEGY_LOCK` (`threading.Lock`) to guard against concurrent `write_sharded()` calls in the same driver.
 - **Ray tests need `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0`**: Ray ≥ 2.47 auto-detects `uv run` in the process tree and overrides worker Python to create fresh venvs. The env var is set in `tox.ini` for raywriter envs. For direct pytest, either set the var or use `uv run --extra writer-ray pytest ...`.
-- **`acquire_async()` uses `asyncio.sleep`**: Safe for event loops — never calls `time.sleep`. The sync `acquire()` uses `time.sleep` and must not be called from async code.
+- **`acquire_async()` is part of the `RateLimiter` Protocol**: Uses `asyncio.sleep` — safe for event loops. The sync `acquire()` uses `time.sleep` and must not be called from async code.
 - **`try_acquire()` is pure arithmetic**: Guaranteed non-blocking (replenish + compare + deduct). Safe to call from async code directly without `to_thread()`.
 - **`RetryConfig` is S3-specific**: Lives on `S3ManifestStore` (and `AsyncS3ManifestStore`), not on reader/writer constructors. Controls exponential backoff for transient S3 errors.
 
