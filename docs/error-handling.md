@@ -18,6 +18,8 @@ graph TD
     SE --> MPE[ManifestParseError<br/>retryable=False]
     SE --> RSE[ReaderStateError<br/>retryable=False]
     SE --> STE[S3TransientError<br/>retryable=True]
+    SE --> PEE[PoolExhaustedError<br/>retryable=True]
+    SE --> MSTE[ManifestStoreError<br/>retryable=True]
 ```
 
 ## Classification
@@ -27,13 +29,15 @@ graph TD
 | `ConfigValidationError` | No | Invalid `WriteConfig` parameters (bad `s3_prefix`, `num_dbs <= 0`, unsupported sharding strategy) |
 | `ShardAssignmentError` | No | Routing verification detects mismatch between framework-assigned and Python-computed shard IDs |
 | `ShardCoverageError` | No | After shard writes, results don't cover all expected `range(num_dbs)` |
-| `SlateDbApiError` | No | SlateDB package missing, reader close failures |
+| `SlateDbApiError` | No | SlateDB package missing, reader close failures, API-level errors |
 | `ManifestBuildError` | No | `ManifestBuilder.build()` raises during manifest creation |
 | `PublishManifestError` | Yes | Manifest upload to S3 fails (transient) |
 | `PublishCurrentError` | Yes | CURRENT pointer upload fails after manifest is already published |
 | `ManifestParseError` | No | Malformed manifest JSON, missing required fields, structural violations |
 | `ReaderStateError` | No | Operations on a closed reader, missing CURRENT pointer |
 | `S3TransientError` | Yes | Throttling, HTTP 500/503, timeout during S3 operations |
+| `PoolExhaustedError` | Yes | All readers in the pool are checked out and checkout timed out |
+| `ManifestStoreError` | Yes | Transient manifest store failure (DB connection, query timeout) |
 
 ## Retryable vs Non-Retryable
 
@@ -65,10 +69,12 @@ except PublishCurrentError as exc:
     manifest_ref = exc.manifest_ref
     if manifest_ref:
         log.warning(f"CURRENT update failed, manifest at: {manifest_ref}")
-        # Option 1: Retry CURRENT update via the publisher
+        # Option 1: Retry CURRENT update via the store
         # Option 2: Log manifest_ref for manual recovery
         # Option 3: Re-run the entire pipeline (idempotent with same run_id)
 ```
+
+> **Note:** As of the latest version, `publish_to_store()` automatically retries `PublishCurrentError` up to 3 times with exponential backoff (1s → 2s → 4s) before raising. Manual retry is only needed if the automatic retries are also exhausted.
 
 ## S3 Retry Behavior
 

@@ -215,7 +215,7 @@ store = PostgresManifestStore(
 
 ### Pool Checkout Timeout
 
-**Symptom:** `SlateDbApiError` from `ConcurrentShardedReader` in pool mode.
+**Symptom:** `PoolExhaustedError` from `ConcurrentShardedReader` in pool mode.
 
 **Cause:** All reader copies for a shard are checked out and none returned within `pool_checkout_timeout`.
 

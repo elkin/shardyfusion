@@ -90,7 +90,7 @@ reader = ConcurrentShardedReader(
 
 Best for: high concurrency or when individual reads have non-trivial latency. Trades memory for throughput.
 
-When all `max_workers` reader copies for a shard are checked out, the next thread blocks for up to `pool_checkout_timeout` seconds (default 30). If the timeout expires, `SlateDbApiError` is raised. Tune this value based on your expected read latency and concurrency level.
+When all `max_workers` reader copies for a shard are checked out, the next thread blocks for up to `pool_checkout_timeout` seconds (default 30). If the timeout expires, `PoolExhaustedError` is raised. Tune this value based on your expected read latency and concurrency level.
 
 **Guidance on `max_workers`:** In lock mode, `max_workers` controls the `ThreadPoolExecutor` used by `multi_get` to read from multiple shards in parallel. In pool mode, it also controls how many reader copies are created per shard. Start with 4 and tune based on observed contention.
 
