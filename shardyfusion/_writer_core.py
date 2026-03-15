@@ -4,7 +4,7 @@ import logging
 import time
 from bisect import bisect_right
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -24,13 +24,14 @@ from .manifest import (
     ManifestShardingSpec,
     RequiredBuildMeta,
     RequiredShardMeta,
+    WriterInfo,
 )
 from .manifest_store import S3ManifestStore
 from .metrics import MetricEvent, MetricsCollector
 from .ordering import compare_ordered
 from .routing import xxhash64_db_id  # SHARDING INVARIANT: direct import, not reimpl.
 from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
-from .type_defs import JsonObject, KeyLike
+from .type_defs import KeyLike
 
 _logger = get_logger(__name__)
 
@@ -46,7 +47,7 @@ class ShardAttemptResult:
     min_key: int | str | None
     max_key: int | str | None
     checkpoint_id: str | None
-    writer_info: JsonObject
+    writer_info: WriterInfo
 
 
 @dataclass(slots=True)
@@ -142,14 +143,9 @@ def select_winners(
 
 
 def _winner_sort_key(item: ShardAttemptResult) -> tuple[int, int, str]:
-    task_attempt_id = item.writer_info.get("task_attempt_id")
-    if task_attempt_id is None:
-        normalized_task_attempt_id = 2**63 - 1
-    elif isinstance(task_attempt_id, (int, float, str)):
-        normalized_task_attempt_id = int(task_attempt_id)
-    else:
-        normalized_task_attempt_id = 2**63 - 1
-    return (item.attempt, normalized_task_attempt_id, item.db_url)
+    tid = item.writer_info.task_attempt_id
+    normalized = tid if tid is not None else 2**63 - 1
+    return (item.attempt, normalized, item.db_url)
 
 
 def publish_to_store(
@@ -194,7 +190,7 @@ def publish_to_store(
     except PublishCurrentError as exc:
         # Manifest is already on S3 — retry the pointer-set (idempotent).
         manifest_ref_from_exc = exc.manifest_ref
-        if manifest_ref_from_exc is not None and hasattr(store, "set_current"):
+        if manifest_ref_from_exc is not None:
             for retry in range(_PUBLISH_CURRENT_MAX_RETRIES):
                 log_failure(
                     "publish_current_retry",
@@ -283,7 +279,7 @@ def assemble_build_result(
 
 
 def cleanup_losers(
-    all_attempt_urls: Iterable[str],
+    all_attempt_urls: Sequence[str],
     winners: list[RequiredShardMeta],
     *,
     s3_client: Any | None = None,
@@ -296,16 +292,19 @@ def cleanup_losers(
     Returns:
         Total number of S3 objects deleted across all losing attempts.
     """
-    from .storage import delete_prefix
+    from .storage import create_s3_client, delete_prefix
 
     winner_urls = {w.db_url for w in winners}
     total_deleted = 0
+    num_losers = 0
+    client = s3_client or create_s3_client()
 
     for url in all_attempt_urls:
         if url not in winner_urls:
+            num_losers += 1
             deleted = delete_prefix(
                 url,
-                s3_client=s3_client,
+                s3_client=client,
                 metrics_collector=metrics_collector,
             )
             total_deleted += deleted
@@ -323,7 +322,7 @@ def cleanup_losers(
             "losers_cleanup_completed",
             logger=_logger,
             total_objects_deleted=total_deleted,
-            num_losers=len(set(all_attempt_urls) - winner_urls),
+            num_losers=num_losers,
         )
 
     return total_deleted

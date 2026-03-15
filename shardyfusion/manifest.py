@@ -54,6 +54,16 @@ class RequiredBuildMeta(BaseModel):
     key_encoding: KeyEncoding = KeyEncoding.U64BE
 
 
+@dataclass(slots=True, frozen=True)
+class WriterInfo:
+    """Per-attempt metadata from the writer framework."""
+
+    stage_id: int | None = None
+    task_attempt_id: int | None = None
+    attempt: int = 0
+    duration_ms: int = 0
+
+
 class RequiredShardMeta(BaseModel):
     """Winner shard metadata emitted by writer partitions."""
 
@@ -64,7 +74,7 @@ class RequiredShardMeta(BaseModel):
     min_key: int | str | None = None
     max_key: int | str | None = None
     checkpoint_id: str | None = None
-    writer_info: dict[str, Any] = Field(default_factory=dict)
+    writer_info: WriterInfo = Field(default_factory=WriterInfo)
 
 
 class ParsedManifest(BaseModel):

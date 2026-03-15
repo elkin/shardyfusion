@@ -44,6 +44,7 @@ from .manifest import (
     ManifestShardingSpec,
     RequiredBuildMeta,
     RequiredShardMeta,
+    WriterInfo,
 )
 from .manifest_store import (
     InMemoryManifestStore,
@@ -146,6 +147,7 @@ __all__ = [
     "TokenBucket",
     "ValueSpec",
     "WriteConfig",
+    "WriterInfo",
     "configure_logging",
     "get_logger",
     "parse_json_manifest",
