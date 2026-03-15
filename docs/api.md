@@ -16,6 +16,10 @@
 
 ::: shardyfusion.type_defs
 
+## Credentials
+
+::: shardyfusion.credentials
+
 ## Sharding Types
 
 ::: shardyfusion.sharding_types

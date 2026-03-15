@@ -159,7 +159,7 @@ Notes:
 
 - Manifest S3 keys are timestamp-prefixed (e.g., `2026-03-14T10:30:00.000000Z_run_id=abc123/manifest`) so that `list_manifests()` can use S3 `CommonPrefixes` for chronological ordering.
 - Manifest stores winner shard URLs (`db_url`) and required routing/build metadata.
-- Non-winning attempt paths are not automatically cleaned by the library.
+- Non-winning attempt paths are automatically cleaned up after publish via `cleanup_losers()` (best-effort).
 
 ## Configuration
 
@@ -186,17 +186,13 @@ Grouped options:
   - `tmp_prefix`
   - `local_root`
 - `manifest: ManifestOptions`
-  - `manifest_name`
-  - `current_name`
   - `manifest_builder`
-  - `publisher`
+  - `store`
   - `custom_manifest_fields`
-  - `s3_client_config`
-    - `endpoint_url`
-    - `region_name`
-    - `access_key_id`
-    - `secret_access_key`
-    - `session_token`
+  - `credential_provider`
+  - `s3_connection_options`
+- `credential_provider` (top-level, inherited by manifest store if not set per-store)
+- `s3_connection_options` (top-level, inherited by manifest store if not set per-store)
 
 Extra runtime controls on `write_sharded` (vary by backend):
 

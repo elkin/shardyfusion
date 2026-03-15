@@ -143,19 +143,23 @@ result = write_sharded(records, config, key_fn=lambda r: r["id"], value_fn=lambd
 ### Configuration
 
 ```python
-from shardyfusion.type_defs import S3ClientConfig
+from shardyfusion.credentials import StaticCredentialProvider
+from shardyfusion.type_defs import S3ConnectionOptions
 
-s3_config: S3ClientConfig = {
+credential_provider = StaticCredentialProvider(
+    access_key_id="GOOG...",
+    secret_access_key="...",
+)
+connection_options: S3ConnectionOptions = {
     "endpoint_url": "https://storage.googleapis.com",
-    "access_key_id": "GOOG...",
-    "secret_access_key": "...",
     "addressing_style": "path",
 }
 
 config = WriteConfig(
     num_dbs=4,
     s3_prefix="s3://my-gcs-bucket/shardyfusion-test",
-    manifest=ManifestOptions(s3_client_config=s3_config),
+    credential_provider=credential_provider,
+    s3_connection_options=connection_options,
 )
 ```
 
