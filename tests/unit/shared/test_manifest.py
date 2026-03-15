@@ -24,7 +24,7 @@ def test_json_manifest_builder_includes_required_shards_and_custom() -> None:
         key_col="id",
         sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
         db_path_template="db={db_id:05d}",
-        tmp_prefix="_tmp",
+        shard_prefix="shards",
     )
     shards = [
         RequiredShardMeta(
@@ -60,7 +60,7 @@ _REQUIRED_BUILD_DATA = {
     "key_col": "id",
     "sharding": {"strategy": "hash"},
     "db_path_template": "db={db_id:05d}",
-    "tmp_prefix": "_tmp",
+    "shard_prefix": "shards",
 }
 
 _SHARD_DATA = [

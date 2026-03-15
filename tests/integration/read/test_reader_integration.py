@@ -111,7 +111,7 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
             strategy=ShardingStrategy.RANGE, boundaries=[10, 20]
         ),
         db_path_template="db={db_id:05d}",
-        tmp_prefix="_tmp",
+        shard_prefix="shards",
     )
     shards = [
         RequiredShardMeta(

@@ -22,12 +22,12 @@ def _build_valid_manifest(num_dbs: int = 2) -> dict:
             "key_encoding": "u64be",
             "sharding": {"strategy": "hash"},
             "db_path_template": "db={db_id:05d}",
-            "tmp_prefix": "_tmp",
+            "shard_prefix": "shards",
         },
         "shards": [
             {
                 "db_id": i,
-                "db_url": f"s3://bucket/prefix/_tmp/db={i:05d}",
+                "db_url": f"s3://bucket/prefix/shards/db={i:05d}",
                 "attempt": 0,
                 "row_count": 100,
                 "writer_info": {},

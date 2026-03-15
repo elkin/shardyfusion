@@ -24,7 +24,7 @@ def _build_required(
         key_encoding=KeyEncoding.U64BE,
         sharding=ManifestShardingSpec(strategy=strategy, boundaries=boundaries),
         db_path_template="db={db_id:05d}",
-        tmp_prefix="_tmp",
+        shard_prefix="shards",
     )
 
 
@@ -247,7 +247,7 @@ def _build_required_u32be(
         key_encoding=KeyEncoding.U32BE,
         sharding=ManifestShardingSpec(strategy=strategy, boundaries=boundaries),
         db_path_template="db={db_id:05d}",
-        tmp_prefix="_tmp",
+        shard_prefix="shards",
     )
 
 

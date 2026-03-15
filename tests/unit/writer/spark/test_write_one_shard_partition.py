@@ -84,7 +84,7 @@ def _make_runtime(
     return PartitionWriteConfig(
         run_id="run-test",
         s3_prefix="s3://bucket/prefix",
-        tmp_prefix="_tmp",
+        shard_prefix="shards",
         db_path_template="db={db_id:05d}",
         local_root=str(tmp_path),
         key_col="key",
@@ -138,9 +138,9 @@ def test_correct_db_id_and_url(tmp_path) -> None:
     runtime = _make_runtime(tmp_path)
     result = _run(7, _rows(10), runtime)
     assert result.db_id == 7
-    # URL must embed the tmp prefix, run_id, db template, and attempt
+    # URL must embed the shard prefix, run_id, db template, and attempt
     assert result.db_url.startswith(
-        "s3://bucket/prefix/_tmp/run_id=run-test/db=00007/attempt="
+        "s3://bucket/prefix/shards/run_id=run-test/db=00007/attempt="
     )
 
 
@@ -263,7 +263,7 @@ def _make_rate_limited_runtime(
     return PartitionWriteConfig(
         run_id="run-test",
         s3_prefix="s3://bucket/prefix",
-        tmp_prefix="_tmp",
+        shard_prefix="shards",
         db_path_template="db={db_id:05d}",
         local_root=str(tmp_path),
         key_col="key",

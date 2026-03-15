@@ -83,7 +83,7 @@ def _required_build() -> RequiredBuildMeta:
         key_encoding=KeyEncoding.U64BE,
         sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
         db_path_template="db={db_id:05d}",
-        tmp_prefix="_tmp",
+        shard_prefix="shards",
     )
 
 

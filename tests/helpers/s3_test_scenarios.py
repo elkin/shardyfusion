@@ -114,7 +114,7 @@ def run_reader_loads_manifest_scenario(
         key_encoding=KeyEncoding.U64BE,
         sharding=ManifestShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=[10]),
         db_path_template="db={db_id:05d}",
-        tmp_prefix="_tmp",
+        shard_prefix="shards",
     )
     shards = [
         RequiredShardMeta(

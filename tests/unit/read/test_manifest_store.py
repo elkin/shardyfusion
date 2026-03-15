@@ -22,7 +22,7 @@ def test_parse_json_manifest_round_trip() -> None:
             "key_encoding": "u64be",
             "sharding": {"strategy": "hash"},
             "db_path_template": "db={db_id:05d}",
-            "tmp_prefix": "_tmp",
+            "shard_prefix": "shards",
             "format_version": 1,
         },
         "shards": [
@@ -68,7 +68,7 @@ def test_parse_json_manifest_rejects_bad_shard_coverage() -> None:
             "key_encoding": "u64be",
             "sharding": {"strategy": "hash"},
             "db_path_template": "db={db_id:05d}",
-            "tmp_prefix": "_tmp",
+            "shard_prefix": "shards",
             "format_version": 1,
         },
         "shards": [

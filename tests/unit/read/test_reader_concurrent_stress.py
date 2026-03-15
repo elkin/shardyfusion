@@ -88,14 +88,14 @@ def _build(num_dbs: int = 2) -> RequiredBuildMeta:
         key_encoding=KeyEncoding.U64BE,
         sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
         db_path_template="db={db_id:05d}",
-        tmp_prefix="_tmp",
+        shard_prefix="shards",
     )
 
 
 def _shard(db_id: int) -> RequiredShardMeta:
     return RequiredShardMeta(
         db_id=db_id,
-        db_url=f"s3://bucket/prefix/_tmp/db={db_id:05d}",
+        db_url=f"s3://bucket/prefix/shards/db={db_id:05d}",
         attempt=0,
         row_count=100,
         writer_info={},

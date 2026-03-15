@@ -82,7 +82,7 @@ def _build_router(
         key_encoding=encoding,
         sharding=ManifestShardingSpec(strategy=strategy, boundaries=boundaries),
         db_path_template="db={db_id:05d}",
-        tmp_prefix="_tmp",
+        shard_prefix="shards",
     )
     return SnapshotRouter(required, _make_shards(num_dbs))
 

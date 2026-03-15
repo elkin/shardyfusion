@@ -96,7 +96,7 @@ def _required_build() -> RequiredBuildMeta:
         key_encoding=KeyEncoding.U64BE,
         sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
         db_path_template="db={db_id:05d}",
-        tmp_prefix="_tmp",
+        shard_prefix="shards",
     )
 
 
@@ -275,7 +275,7 @@ def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
         key_encoding=KeyEncoding.U64BE,
         sharding=ManifestShardingSpec(strategy=ShardingStrategy.RANGE),
         db_path_template="db={db_id:05d}",
-        tmp_prefix="_tmp",
+        shard_prefix="shards",
     )
     return ParsedManifest(
         required_build=required,
