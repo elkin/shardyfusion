@@ -81,8 +81,8 @@ class TestSelectWinnersIterable:
 class TestCleanupLosers:
     """cleanup_losers deletes non-winning attempt paths (best-effort)."""
 
-    @patch("shardyfusion.storage.delete_prefix")
-    @patch("shardyfusion.storage.create_s3_client")
+    @patch("shardyfusion._writer_core.delete_prefix")
+    @patch("shardyfusion._writer_core.create_s3_client")
     def test_losers_deleted_winners_preserved(
         self, mock_create_client: MagicMock, mock_delete: MagicMock
     ) -> None:
@@ -109,8 +109,8 @@ class TestCleanupLosers:
         assert "s3://b/p/db=00000/attempt=00" not in deleted_urls
         assert "s3://b/p/db=00001/attempt=00" not in deleted_urls
 
-    @patch("shardyfusion.storage.delete_prefix")
-    @patch("shardyfusion.storage.create_s3_client")
+    @patch("shardyfusion._writer_core.delete_prefix")
+    @patch("shardyfusion._writer_core.create_s3_client")
     def test_returns_total_deleted_count(
         self, mock_create_client: MagicMock, mock_delete: MagicMock
     ) -> None:
@@ -128,8 +128,8 @@ class TestCleanupLosers:
         deleted = cleanup_losers(all_urls, winners)
         assert deleted == 10
 
-    @patch("shardyfusion.storage.delete_prefix")
-    @patch("shardyfusion.storage.create_s3_client")
+    @patch("shardyfusion._writer_core.delete_prefix")
+    @patch("shardyfusion._writer_core.create_s3_client")
     def test_no_losers(
         self, mock_create_client: MagicMock, mock_delete: MagicMock
     ) -> None:
@@ -146,8 +146,8 @@ class TestCleanupLosers:
         assert deleted == 0
         mock_delete.assert_not_called()
 
-    @patch("shardyfusion.storage.delete_prefix")
-    @patch("shardyfusion.storage.create_s3_client")
+    @patch("shardyfusion._writer_core.delete_prefix")
+    @patch("shardyfusion._writer_core.create_s3_client")
     def test_best_effort_s3_errors_not_raised(
         self, mock_create_client: MagicMock, mock_delete: MagicMock
     ) -> None:
@@ -166,8 +166,8 @@ class TestCleanupLosers:
         deleted = cleanup_losers(all_urls, winners)
         assert deleted == 0
 
-    @patch("shardyfusion.storage.delete_prefix")
-    @patch("shardyfusion.storage.create_s3_client")
+    @patch("shardyfusion._writer_core.delete_prefix")
+    @patch("shardyfusion._writer_core.create_s3_client")
     def test_metrics_collector_passed_through(
         self, mock_create_client: MagicMock, mock_delete: MagicMock
     ) -> None:

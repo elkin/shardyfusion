@@ -1,6 +1,7 @@
 """Click CLI application for shardy."""
 
 import sys
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import click
@@ -528,6 +529,163 @@ def rollback_cmd(
         raise
     except Exception as exc:
         result = build_error_result("rollback", None, str(exc))
+        emit(result, output_cfg, file=sys.stderr)
+        sys.exit(1)
+
+
+def _parse_duration(value: str) -> timedelta:
+    """Parse a duration string like ``7d`` or ``24h`` into a timedelta."""
+
+    value = value.strip()
+    if not value:
+        raise click.BadParameter("Duration must not be empty")
+    suffix = value[-1].lower()
+    try:
+        amount = int(value[:-1])
+    except ValueError as exc:
+        raise click.BadParameter(
+            f"Invalid duration: {value!r} (expected e.g. 7d, 24h)"
+        ) from exc
+    if suffix == "d":
+        return timedelta(days=amount)
+    if suffix == "h":
+        return timedelta(hours=amount)
+    raise click.BadParameter(
+        f"Unknown duration unit {suffix!r} in {value!r} (use 'd' or 'h')"
+    )
+
+
+@cli.command("cleanup")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Show what would be deleted without deleting.",
+)
+@click.option(
+    "--include-old-runs",
+    is_flag=True,
+    default=False,
+    help="Also remove data from runs not referenced by any manifest.",
+)
+@click.option(
+    "--older-than",
+    default=None,
+    metavar="DURATION",
+    help="Delete shard data for runs older than DURATION (e.g. 7d, 24h).",
+)
+@click.option(
+    "--keep-last",
+    default=None,
+    type=int,
+    metavar="N",
+    help="Keep shard data for only the N most recent runs.",
+)
+@click.option(
+    "--max-retries",
+    default=3,
+    type=int,
+    help="Retry count for transient S3 errors (default 3).",
+)
+@click.pass_context
+def cleanup_cmd(
+    ctx: click.Context,
+    dry_run: bool,
+    include_old_runs: bool,
+    older_than: str | None,
+    keep_last: int | None,
+    max_retries: int,
+) -> None:
+    """Delete stale attempt directories and optionally old run data from S3."""
+    from .._writer_core import cleanup_old_runs, cleanup_stale_attempts
+    from ..storage import create_s3_client
+    from ..type_defs import RetryConfig
+    from .output import build_cleanup_result
+
+    output_cfg = _get_output_cfg(ctx)
+    params = ctx.obj[_CTX_INIT_PARAMS]
+    store_cfg: ManifestStoreConfig = params["store_cfg"]
+    manifest_store = _build_manifest_store(store_cfg, params)
+
+    try:
+        # Resolve target manifest
+        target_ref = _resolve_manifest_ref(
+            manifest_store,
+            ref=params.get("manifest_ref"),
+            offset=params.get("manifest_offset"),
+        )
+        if target_ref is not None:
+            manifest_store.set_current(target_ref)
+
+        current_ref = manifest_store.load_current()
+        if current_ref is None:
+            raise click.ClickException("No current manifest found")
+        manifest = manifest_store.load_manifest(current_ref.ref)
+
+        cred_provider = params.get("credential_provider")
+        credentials = cred_provider.resolve() if cred_provider else None
+        client = create_s3_client(
+            credentials=credentials,
+            connection_options=params.get("s3_connection_options"),
+        )
+        retry_config = RetryConfig(max_retries=max_retries)
+
+        # 1. Always clean stale attempts for the current manifest's run
+        all_actions = cleanup_stale_attempts(
+            manifest, s3_client=client, dry_run=dry_run, retry_config=retry_config
+        )
+
+        # 2. Optionally clean old runs
+        wants_old_runs = (
+            include_old_runs or older_than is not None or keep_last is not None
+        )
+        if wants_old_runs:
+            refs = manifest_store.list_manifests(limit=10_000)
+            current_run_id = manifest.required_build.run_id
+
+            # Compute protected set: each active flag contributes a set, then intersect
+            criteria_sets: list[set[str]] = []
+
+            if include_old_runs:
+                criteria_sets.append({r.run_id for r in refs})
+
+            if older_than is not None:
+                delta = _parse_duration(older_than)
+                cutoff = datetime.now(UTC) - delta
+                criteria_sets.append(
+                    {r.run_id for r in refs if r.published_at >= cutoff}
+                )
+
+            if keep_last is not None:
+                if keep_last < 1:
+                    raise click.BadParameter("--keep-last must be >= 1")
+                criteria_sets.append({r.run_id for r in refs[:keep_last]})
+
+            protected: set[str] = criteria_sets[0] if criteria_sets else set()
+            for s in criteria_sets[1:]:
+                protected = protected & s
+
+            # Current manifest's run is always protected
+            protected.add(current_run_id)
+
+            old_run_actions = cleanup_old_runs(
+                manifest.required_build.s3_prefix,
+                manifest.required_build.shard_prefix,
+                protected_run_ids=protected,
+                s3_client=client,
+                dry_run=dry_run,
+                retry_config=retry_config,
+            )
+            all_actions.extend(old_run_actions)
+
+        result = build_cleanup_result(
+            all_actions, dry_run=dry_run, run_id=manifest.required_build.run_id
+        )
+        emit(result, output_cfg)
+    except click.ClickException:
+        raise
+    except Exception as exc:
+        result = build_error_result("cleanup", None, str(exc))
         emit(result, output_cfg, file=sys.stderr)
         sys.exit(1)
 

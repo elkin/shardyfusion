@@ -7,7 +7,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from .config import WriteConfig
 from .errors import (
@@ -31,7 +31,8 @@ from .metrics import MetricEvent, MetricsCollector
 from .ordering import compare_ordered
 from .routing import xxhash64_db_id  # SHARDING INVARIANT: direct import, not reimpl.
 from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
-from .type_defs import KeyLike
+from .storage import create_s3_client, delete_prefix, join_s3, list_prefixes
+from .type_defs import KeyLike, RetryConfig
 
 _logger = get_logger(__name__)
 
@@ -296,7 +297,6 @@ def cleanup_losers(
     Returns:
         Total number of S3 objects deleted across all losing attempts.
     """
-    from .storage import create_s3_client, delete_prefix
 
     winner_urls = {w.db_url for w in winners}
     total_deleted = 0
@@ -330,6 +330,128 @@ def cleanup_losers(
         )
 
     return total_deleted
+
+
+CleanupKind = Literal["stale_attempt", "old_run"]
+
+
+@dataclass(slots=True)
+class CleanupAction:
+    """One cleanup operation performed (or planned in dry-run) by the cleanup command."""
+
+    kind: CleanupKind
+    prefix_url: str
+    db_id: int | None  # None for old_run
+    run_id: str
+    objects_deleted: int  # 0 in dry-run mode
+
+
+def cleanup_stale_attempts(
+    manifest: Any,
+    *,
+    s3_client: Any = None,
+    dry_run: bool = False,
+    retry_config: RetryConfig | None = None,
+) -> list[CleanupAction]:
+    """Find and delete non-winning attempt directories for the current manifest's run.
+
+    For each shard in the manifest, lists all ``attempt=XX/`` directories
+    under the shard's ``db=NNNNN/`` prefix and removes any that don't match
+    the winning ``db_url``.
+
+    Returns a list of :class:`CleanupAction` describing what was (or would be) deleted.
+    """
+
+    actions: list[CleanupAction] = []
+    build = manifest.required_build
+    winner_urls = {shard.db_url.rstrip("/") for shard in manifest.shards}
+
+    for shard in manifest.shards:
+        # Build the scan prefix: s3_prefix/shard_prefix/run_id=XXX/db=NNNNN/
+        db_segment = build.db_path_template.format(db_id=shard.db_id)
+        scan_prefix = join_s3(
+            build.s3_prefix, build.shard_prefix, f"run_id={build.run_id}", db_segment
+        )
+        if not scan_prefix.endswith("/"):
+            scan_prefix += "/"
+
+        attempt_dirs = list_prefixes(
+            scan_prefix, s3_client=s3_client, retry_config=retry_config
+        )
+        for attempt_url in attempt_dirs:
+            if attempt_url.rstrip("/") not in winner_urls:
+                deleted = 0
+                if not dry_run:
+                    deleted = delete_prefix(
+                        attempt_url,
+                        s3_client=s3_client,
+                        retry_config=retry_config,
+                    )
+                actions.append(
+                    CleanupAction(
+                        kind="stale_attempt",
+                        prefix_url=attempt_url,
+                        db_id=shard.db_id,
+                        run_id=build.run_id,
+                        objects_deleted=deleted,
+                    )
+                )
+
+    return actions
+
+
+def cleanup_old_runs(
+    s3_prefix: str,
+    shard_prefix: str,
+    *,
+    protected_run_ids: set[str],
+    s3_client: Any = None,
+    dry_run: bool = False,
+    retry_config: RetryConfig | None = None,
+) -> list[CleanupAction]:
+    """Delete shard data for runs not in *protected_run_ids*.
+
+    Lists all ``run_id=XXX/`` directories under ``s3_prefix/shard_prefix/``
+    and removes any whose run_id is not in the protected set.
+
+    Returns a list of :class:`CleanupAction` describing what was (or would be) deleted.
+    """
+
+    actions: list[CleanupAction] = []
+    runs_prefix = join_s3(s3_prefix, shard_prefix)
+    if not runs_prefix.endswith("/"):
+        runs_prefix += "/"
+
+    run_dirs = list_prefixes(
+        runs_prefix, s3_client=s3_client, retry_config=retry_config
+    )
+
+    for run_dir in run_dirs:
+        # Extract run_id from directory name like "s3://bucket/prefix/shards/run_id=abc123/"
+        segment = run_dir.rstrip("/").rsplit("/", 1)[-1]
+        if not segment.startswith("run_id="):
+            continue
+        run_id = segment[len("run_id=") :]
+
+        if run_id not in protected_run_ids:
+            deleted = 0
+            if not dry_run:
+                deleted = delete_prefix(
+                    run_dir,
+                    s3_client=s3_client,
+                    retry_config=retry_config,
+                )
+            actions.append(
+                CleanupAction(
+                    kind="old_run",
+                    prefix_url=run_dir,
+                    db_id=None,
+                    run_id=run_id,
+                    objects_deleted=deleted,
+                )
+            )
+
+    return actions
 
 
 def _utc_now() -> datetime:

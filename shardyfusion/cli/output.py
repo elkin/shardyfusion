@@ -4,9 +4,12 @@ import base64
 import dataclasses
 import json
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .config import OutputConfig
+
+if TYPE_CHECKING:
+    from .._writer_core import CleanupAction
 
 # ---------------------------------------------------------------------------
 # Value encoding
@@ -113,6 +116,51 @@ def build_history_result(refs: list[Any]) -> dict[str, Any]:
     return {"op": "history", "manifests": entries}
 
 
+def build_cleanup_result(
+    actions: list[CleanupAction],
+    *,
+    dry_run: bool,
+    run_id: str,
+) -> dict[str, Any]:
+    """Build a dict representing cleanup results."""
+    stale = []
+    old_runs = []
+    total_objects = 0
+    total_prefixes = 0
+
+    for action in actions:
+        total_objects += action.objects_deleted
+        total_prefixes += 1
+        if action.kind == "stale_attempt":
+            stale.append(
+                {
+                    "db_id": action.db_id,
+                    "prefix_url": action.prefix_url,
+                    "objects_deleted": action.objects_deleted,
+                }
+            )
+        elif action.kind == "old_run":
+            old_runs.append(
+                {
+                    "run_id": action.run_id,
+                    "prefix_url": action.prefix_url,
+                    "objects_deleted": action.objects_deleted,
+                }
+            )
+
+    result: dict[str, Any] = {
+        "op": "cleanup",
+        "dry_run": dry_run,
+        "run_id": run_id,
+        "stale_attempts": stale,
+        "total_objects_deleted": total_objects,
+        "total_prefixes_removed": total_prefixes,
+    }
+    if old_runs:
+        result["old_runs"] = old_runs
+    return result
+
+
 def build_error_result(op: str, key_hint: str | None, error: str) -> dict[str, Any]:
     result: dict[str, Any] = {"op": op, "error": error}
     if key_hint is not None:
@@ -170,6 +218,24 @@ def format_result(result: dict[str, Any], fmt: str) -> str:
             return "\n".join(lines) if lines else "(no manifests)"
         if op == "route":
             return f"{result.get('key', '')} -> shard {result.get('db_id', '?')}"
+        if op == "cleanup":
+            dry = "[DRY RUN] " if result.get("dry_run") else ""
+            lines = [f"{dry}Cleanup for run_id={result.get('run_id', '?')}"]
+            for s in result.get("stale_attempts", []):
+                lines.append(
+                    f"  stale attempt  db_id={s['db_id']}  "
+                    f"objects={s['objects_deleted']}  {s['prefix_url']}"
+                )
+            for r in result.get("old_runs", []):
+                lines.append(
+                    f"  old run  run_id={r['run_id']}  "
+                    f"objects={r['objects_deleted']}  {r['prefix_url']}"
+                )
+            lines.append(
+                f"Total: {result.get('total_prefixes_removed', 0)} prefixes, "
+                f"{result.get('total_objects_deleted', 0)} objects"
+            )
+            return "\n".join(lines)
         if "error" in result:
             return f"error: {result['error']}"
         return json.dumps(result, ensure_ascii=False)
@@ -215,6 +281,9 @@ def format_result(result: dict[str, Any], fmt: str) -> str:
                     f"{m['offset']:>3}  {m['published_at']:>26}  {m['run_id']}"
                 )
             return "\n".join(lines)
+        if op == "cleanup":
+            # Reuse text format for table mode — cleanup data is hierarchical, not tabular
+            return format_result(result, "text")
         # Fall back to JSON for other ops in table mode
         return json.dumps(result, ensure_ascii=False, indent=2)
 

@@ -250,3 +250,124 @@ class TestBuildRouteResult:
 
         result = build_route_result("42", 3)
         assert result == {"op": "route", "key": "42", "db_id": 3}
+
+
+# ---------------------------------------------------------------------------
+# build_cleanup_result
+# ---------------------------------------------------------------------------
+
+
+class TestBuildCleanupResult:
+    def test_stale_only(self) -> None:
+        from shardyfusion._writer_core import CleanupAction
+        from shardyfusion.cli.output import build_cleanup_result
+
+        actions = [
+            CleanupAction(
+                kind="stale_attempt",
+                prefix_url="s3://b/p/attempt=01/",
+                db_id=0,
+                run_id="run-1",
+                objects_deleted=5,
+            ),
+        ]
+        result = build_cleanup_result(actions, dry_run=False, run_id="run-1")
+        assert result["op"] == "cleanup"
+        assert result["dry_run"] is False
+        assert result["run_id"] == "run-1"
+        assert len(result["stale_attempts"]) == 1
+        assert result["stale_attempts"][0]["db_id"] == 0
+        assert result["stale_attempts"][0]["objects_deleted"] == 5
+        assert result["total_objects_deleted"] == 5
+        assert result["total_prefixes_removed"] == 1
+        assert "old_runs" not in result
+
+    def test_old_runs_included(self) -> None:
+        from shardyfusion._writer_core import CleanupAction
+        from shardyfusion.cli.output import build_cleanup_result
+
+        actions = [
+            CleanupAction(
+                kind="old_run",
+                prefix_url="s3://b/p/run_id=old/",
+                db_id=None,
+                run_id="old",
+                objects_deleted=10,
+            ),
+        ]
+        result = build_cleanup_result(actions, dry_run=True, run_id="run-1")
+        assert result["dry_run"] is True
+        assert "old_runs" in result
+        assert result["old_runs"][0]["run_id"] == "old"
+
+    def test_empty_actions(self) -> None:
+        from shardyfusion.cli.output import build_cleanup_result
+
+        result = build_cleanup_result([], dry_run=False, run_id="run-1")
+        assert result["total_objects_deleted"] == 0
+        assert result["total_prefixes_removed"] == 0
+        assert result["stale_attempts"] == []
+
+
+class TestFormatCleanup:
+    def test_text_format_stale(self) -> None:
+        result = {
+            "op": "cleanup",
+            "dry_run": False,
+            "run_id": "run-1",
+            "stale_attempts": [
+                {"db_id": 0, "prefix_url": "s3://b/p/attempt=01/", "objects_deleted": 5}
+            ],
+            "total_objects_deleted": 5,
+            "total_prefixes_removed": 1,
+        }
+        out = format_result(result, "text")
+        assert "Cleanup for run_id=run-1" in out
+        assert "stale attempt" in out
+        assert "db_id=0" in out
+        assert "Total: 1 prefixes, 5 objects" in out
+
+    def test_text_format_dry_run(self) -> None:
+        result = {
+            "op": "cleanup",
+            "dry_run": True,
+            "run_id": "run-1",
+            "stale_attempts": [],
+            "total_objects_deleted": 0,
+            "total_prefixes_removed": 0,
+        }
+        out = format_result(result, "text")
+        assert "[DRY RUN]" in out
+
+    def test_text_format_old_runs(self) -> None:
+        result = {
+            "op": "cleanup",
+            "dry_run": False,
+            "run_id": "run-1",
+            "stale_attempts": [],
+            "old_runs": [
+                {
+                    "run_id": "old-run",
+                    "prefix_url": "s3://b/p/run_id=old-run/",
+                    "objects_deleted": 20,
+                }
+            ],
+            "total_objects_deleted": 20,
+            "total_prefixes_removed": 1,
+        }
+        out = format_result(result, "text")
+        assert "old run" in out
+        assert "run_id=old-run" in out
+
+    def test_table_format_delegates_to_text(self) -> None:
+        result = {
+            "op": "cleanup",
+            "dry_run": False,
+            "run_id": "run-1",
+            "stale_attempts": [],
+            "total_objects_deleted": 0,
+            "total_prefixes_removed": 0,
+        }
+        text_out = format_result(result, "text")
+        table_out = format_result(result, "table")
+        assert text_out == table_out
