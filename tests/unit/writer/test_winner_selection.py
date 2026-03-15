@@ -37,7 +37,9 @@ def test_winner_selection_is_deterministic() -> None:
         ),
     ]
 
-    winners = select_winners(attempts, num_dbs=2)
+    winners, num_attempts, all_urls = select_winners(attempts, num_dbs=2)
     assert [w.db_id for w in winners] == [0, 1]
     assert winners[0].attempt == 0
     assert winners[0].db_url.endswith("attempt=00")
+    assert num_attempts == 3
+    assert len(all_urls) == 3

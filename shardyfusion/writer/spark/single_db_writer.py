@@ -138,7 +138,7 @@ def _write_single_db_impl(
 
     # Phase 4: Publish
     attempts = [attempt_result]
-    winners = select_winners(attempts, num_dbs=1)
+    winners, num_attempts, _attempt_urls = select_winners(attempts, num_dbs=1)
 
     resolved_sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
 
@@ -157,7 +157,7 @@ def _write_single_db_impl(
         run_id=run_id,
         winners=winners,
         manifest_ref=manifest_ref,
-        attempts=attempts,
+        num_attempts=num_attempts,
         shard_duration_ms=shard_duration_ms,
         write_duration_ms=write_duration_ms,
         manifest_duration_ms=manifest_duration_ms,

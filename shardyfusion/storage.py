@@ -290,6 +290,60 @@ def create_s3_client(s3_client_config: S3ClientConfig | None = None):
     return boto3.client("s3", **resolved)
 
 
+def delete_prefix(
+    prefix_url: str,
+    *,
+    s3_client: Any = None,
+    metrics_collector: MetricsCollector | None = None,
+) -> int:
+    """Delete all objects under an S3 prefix. Returns the number of objects deleted.
+
+    Best-effort: logs errors but does not raise on transient failures.
+    """
+    client = s3_client or create_s3_client()
+    bucket, key_prefix = parse_s3_url(prefix_url)
+
+    deleted = 0
+    continuation_token: str | None = None
+
+    try:
+        while True:
+            list_kwargs: dict[str, Any] = {
+                "Bucket": bucket,
+                "Prefix": key_prefix,
+                "MaxKeys": 1000,
+            }
+            if continuation_token is not None:
+                list_kwargs["ContinuationToken"] = continuation_token
+
+            response = client.list_objects_v2(**list_kwargs)
+            contents = response.get("Contents", [])
+            if not contents:
+                break
+
+            objects = [{"Key": obj["Key"]} for obj in contents]
+            client.delete_objects(
+                Bucket=bucket,
+                Delete={"Objects": objects, "Quiet": True},
+            )
+            deleted += len(objects)
+
+            if not response.get("IsTruncated"):
+                break
+            continuation_token = response.get("NextContinuationToken")
+    except Exception as exc:
+        log_failure(
+            "s3_delete_prefix_failed",
+            severity=FailureSeverity.ERROR,
+            logger=_logger,
+            error=exc,
+            prefix_url=prefix_url,
+            deleted_so_far=deleted,
+        )
+
+    return deleted
+
+
 def put_bytes(
     url: str,
     payload: bytes,

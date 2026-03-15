@@ -237,7 +237,7 @@ def _write_sharded_impl(
             run_id=run_id,
             winners=write_outcome.winners,
             manifest_ref=manifest_ref,
-            attempts=write_outcome.attempts,
+            num_attempts=write_outcome.num_attempts,
             shard_duration_ms=prepared_rows.shard_duration_ms,
             write_duration_ms=write_outcome.write_duration_ms,
             manifest_duration_ms=manifest_duration_ms,
@@ -392,13 +392,15 @@ def _run_partition_writes(
     """Execute partition writers and deterministically select winning shard attempts."""
 
     write_started = time.perf_counter()
-    attempts: list[ShardAttemptResult] = partitioned_rdd.mapPartitionsWithIndex(
+    results_rdd = partitioned_rdd.mapPartitionsWithIndex(
         lambda db_id, items: write_one_shard_partition(db_id, items, runtime)
-    ).collect()
+    )
+    winners, num_attempts, _attempt_urls = select_winners(
+        results_rdd.toLocalIterator(), num_dbs=num_dbs
+    )
     write_duration_ms = int((time.perf_counter() - write_started) * 1000)
-    winners = select_winners(attempts, num_dbs=num_dbs)
     return PartitionWriteOutcome(
-        attempts=attempts,
+        num_attempts=num_attempts,
         winners=winners,
         write_duration_ms=write_duration_ms,
     )

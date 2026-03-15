@@ -237,7 +237,9 @@ def write_sharded(
             )
 
         # --- Phase 3: Publish ---
-        winners = select_winners(attempts, num_dbs=config.num_dbs)
+        winners, num_attempts, _attempt_urls = select_winners(
+            attempts, num_dbs=config.num_dbs
+        )
 
         manifest_started = time.perf_counter()
         manifest_ref = publish_to_store(
@@ -254,7 +256,7 @@ def write_sharded(
             run_id=run_id,
             winners=winners,
             manifest_ref=manifest_ref,
-            attempts=attempts,
+            num_attempts=num_attempts,
             shard_duration_ms=shard_duration_ms,
             write_duration_ms=write_duration_ms,
             manifest_duration_ms=manifest_duration_ms,

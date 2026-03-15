@@ -4,12 +4,15 @@ import logging
 import time
 from bisect import bisect_right
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from .config import WriteConfig
 from .errors import (
     ConfigValidationError,
+    PublishCurrentError,
     PublishManifestError,
     ShardCoverageError,
 )
@@ -23,13 +26,15 @@ from .manifest import (
     RequiredShardMeta,
 )
 from .manifest_store import S3ManifestStore
-from .metrics import MetricEvent
+from .metrics import MetricEvent, MetricsCollector
 from .ordering import compare_ordered
 from .routing import xxhash64_db_id  # SHARDING INVARIANT: direct import, not reimpl.
 from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
 from .type_defs import JsonObject, KeyLike
 
 _logger = get_logger(__name__)
+
+_PUBLISH_CURRENT_MAX_RETRIES = 3
 
 
 @dataclass(slots=True)
@@ -46,7 +51,7 @@ class ShardAttemptResult:
 
 @dataclass(slots=True)
 class PartitionWriteOutcome:
-    attempts: list[ShardAttemptResult]
+    num_attempts: int
     winners: list[RequiredShardMeta]
     write_duration_ms: int
 
@@ -74,13 +79,22 @@ def route_key(
 
 
 def select_winners(
-    attempts: list[ShardAttemptResult],
+    attempts: Iterable[ShardAttemptResult],
     *,
     num_dbs: int,
-) -> list[RequiredShardMeta]:
+) -> tuple[list[RequiredShardMeta], int, list[str]]:
+    """Select winning attempt for each shard from an iterable of attempt results.
+
+    Returns:
+        Tuple of (winners list, total attempt count, all attempt URLs).
+    """
     grouped: dict[int, list[ShardAttemptResult]] = defaultdict(list)
+    num_attempts = 0
+    all_attempt_urls: list[str] = []
     for item in attempts:
         grouped[item.db_id].append(item)
+        num_attempts += 1
+        all_attempt_urls.append(item.db_url)
 
     expected_ids = set(range(num_dbs))
     got_ids = set(grouped.keys())
@@ -124,7 +138,7 @@ def select_winners(
             )
         )
 
-    return winners
+    return winners, num_attempts, all_attempt_urls
 
 
 def _winner_sort_key(item: ShardAttemptResult) -> tuple[int, int, str]:
@@ -177,6 +191,34 @@ def publish_to_store(
             shards=winners,
             custom=config.manifest.custom_manifest_fields,
         )
+    except PublishCurrentError as exc:
+        # Manifest is already on S3 — retry the pointer-set (idempotent).
+        manifest_ref_from_exc = exc.manifest_ref
+        if manifest_ref_from_exc is not None and hasattr(store, "set_current"):
+            for retry in range(_PUBLISH_CURRENT_MAX_RETRIES):
+                log_failure(
+                    "publish_current_retry",
+                    severity=FailureSeverity.TRANSIENT,
+                    logger=_logger,
+                    error=exc,
+                    run_id=run_id,
+                    manifest_ref=manifest_ref_from_exc,
+                    retry=retry + 1,
+                )
+                try:
+                    store.set_current(manifest_ref_from_exc)
+                    manifest_ref = manifest_ref_from_exc
+                    break
+                except Exception:
+                    if retry == _PUBLISH_CURRENT_MAX_RETRIES - 1:
+                        raise PublishManifestError(
+                            "Failed to set CURRENT pointer after retries"
+                        ) from exc
+                    time.sleep(1.0 * (2**retry))
+            else:
+                raise  # pragma: no cover
+        else:
+            raise
     except Exception as exc:  # pragma: no cover - runtime store failures
         log_failure(
             "manifest_publish_failed",
@@ -211,7 +253,7 @@ def assemble_build_result(
     run_id: str,
     winners: list[RequiredShardMeta],
     manifest_ref: str,
-    attempts: list[ShardAttemptResult],
+    num_attempts: int,
     shard_duration_ms: int,
     write_duration_ms: int,
     manifest_duration_ms: int,
@@ -227,7 +269,7 @@ def assemble_build_result(
             manifest_ms=manifest_duration_ms,
             total_ms=total_duration_ms,
         ),
-        num_attempt_results=len(attempts),
+        num_attempt_results=num_attempts,
         num_winners=len(winners),
         rows_written=sum(winner.row_count for winner in winners),
     )
@@ -238,6 +280,53 @@ def assemble_build_result(
         manifest_ref=manifest_ref,
         stats=stats,
     )
+
+
+def cleanup_losers(
+    all_attempt_urls: Iterable[str],
+    winners: list[RequiredShardMeta],
+    *,
+    s3_client: Any | None = None,
+    metrics_collector: MetricsCollector | None = None,
+) -> int:
+    """Delete temp databases for non-winning attempts.
+
+    Best-effort: logs errors but does not raise.
+
+    Returns:
+        Total number of S3 objects deleted across all losing attempts.
+    """
+    from .storage import delete_prefix
+
+    winner_urls = {w.db_url for w in winners}
+    total_deleted = 0
+
+    for url in all_attempt_urls:
+        if url not in winner_urls:
+            deleted = delete_prefix(
+                url,
+                s3_client=s3_client,
+                metrics_collector=metrics_collector,
+            )
+            total_deleted += deleted
+            if deleted > 0:
+                log_event(
+                    "loser_attempt_cleaned",
+                    level=logging.DEBUG,
+                    logger=_logger,
+                    db_url=url,
+                    objects_deleted=deleted,
+                )
+
+    if total_deleted > 0:
+        log_event(
+            "losers_cleanup_completed",
+            logger=_logger,
+            total_objects_deleted=total_deleted,
+            num_losers=len(set(all_attempt_urls) - winner_urls),
+        )
+
+    return total_deleted
 
 
 def _utc_now() -> datetime:
