@@ -1,6 +1,7 @@
 """Ray Data-based sharded writer (no Spark/Java dependency)."""
 
 import os
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,6 +61,11 @@ try:
     _HASH_SHUFFLE_STRATEGY = _ShuffleStrategyEnum.HASH_SHUFFLE
 except ImportError:
     _HASH_SHUFFLE_STRATEGY = None  # type: ignore[assignment]
+
+# Guards the process-global DataContext.shuffle_strategy swap against
+# concurrent write_sharded() calls in the same Ray driver.
+
+_SHUFFLE_STRATEGY_LOCK = threading.Lock()
 
 
 @dataclass(slots=True)
@@ -208,15 +214,18 @@ def write_sharded(
         # HASH_SHUFFLE is the default strategy in Ray Data, so we just need
         # shuffle=True + keys=[DB_ID_COL] for key-based co-location.
         # Save/restore the strategy in case the caller changed it.
-        ctx = DataContext.get_current()
-        prev_strategy = ctx.shuffle_strategy
-        try:
-            ctx.shuffle_strategy = _HASH_SHUFFLE_STRATEGY  # type: ignore[assignment]
-            ds_shuffled = ds_with_id.repartition(
-                config.num_dbs, shuffle=True, keys=[DB_ID_COL]
-            )
-        finally:
-            ctx.shuffle_strategy = prev_strategy
+        # Lock protects against concurrent write_sharded() calls racing
+        # on the process-global DataContext.shuffle_strategy.
+        with _SHUFFLE_STRATEGY_LOCK:
+            ctx = DataContext.get_current()
+            prev_strategy = ctx.shuffle_strategy
+            try:
+                ctx.shuffle_strategy = _HASH_SHUFFLE_STRATEGY  # type: ignore[assignment]
+                ds_shuffled = ds_with_id.repartition(
+                    config.num_dbs, shuffle=True, keys=[DB_ID_COL]
+                )
+            finally:
+                ctx.shuffle_strategy = prev_strategy
 
         ds_results = ds_shuffled.map_batches(
             _write_partition,  # type: ignore[arg-type]  # Ray stubs don't account for fn_kwargs
@@ -249,7 +258,9 @@ def write_sharded(
             )
 
         # --- Phase 3: Publish ---
-        winners = select_winners(attempts, num_dbs=config.num_dbs)
+        winners, num_attempts, _attempt_urls = select_winners(
+            attempts, num_dbs=config.num_dbs
+        )
 
         manifest_started = time.perf_counter()
         manifest_ref = publish_to_store(
@@ -266,7 +277,7 @@ def write_sharded(
             run_id=run_id,
             winners=winners,
             manifest_ref=manifest_ref,
-            attempts=attempts,
+            num_attempts=num_attempts,
             shard_duration_ms=shard_duration_ms,
             write_duration_ms=write_duration_ms,
             manifest_duration_ms=manifest_duration_ms,
