@@ -16,7 +16,7 @@ from .manifest_store import (
 )
 from .metrics import MetricsCollector
 from .storage import join_s3, parse_s3_url
-from .type_defs import S3ClientConfig
+from .type_defs import RetryConfig, S3ClientConfig
 
 _logger = get_logger(__name__)
 
@@ -47,6 +47,7 @@ class AsyncS3ManifestStore:
         current_name: str = "_CURRENT",
         s3_client_config: S3ClientConfig | None = None,
         metrics_collector: MetricsCollector | None = None,
+        retry_config: RetryConfig | None = None,
     ) -> None:
         import aiobotocore.session  # type: ignore[import-not-found]
 
@@ -56,6 +57,7 @@ class AsyncS3ManifestStore:
         self._session = aiobotocore.session.get_session()
         self._resolved = _resolve_s3_config_for_aiobotocore(s3_client_config)
         self._metrics = metrics_collector
+        self._retry_config = retry_config
 
     async def load_current(self) -> ManifestRef | None:
         from .manifest_store import parse_current_pointer_to_ref
@@ -110,6 +112,7 @@ class AsyncS3ManifestStore:
             operation_name="get_object",
             url_for_log=url,
             metrics_collector=self._metrics,
+            retry_config=self._retry_config,
         )
 
     async def _try_get_bytes(self, url: str) -> bytes | None:
@@ -119,6 +122,7 @@ class AsyncS3ManifestStore:
             operation_name="try_get_object",
             url_for_log=url,
             metrics_collector=self._metrics,
+            retry_config=self._retry_config,
         )
 
     async def _do_get_bytes(self, url: str) -> bytes:
@@ -160,6 +164,7 @@ async def _async_retry_s3_operation(
     operation_name: str,
     url_for_log: str,
     metrics_collector: MetricsCollector | None = None,
+    retry_config: RetryConfig | None = None,
 ) -> Any:
     """Async equivalent of ``_retry_s3_operation`` with ``asyncio.sleep``."""
     import asyncio
@@ -171,10 +176,24 @@ async def _async_retry_s3_operation(
         _is_transient_s3_error,
     )
 
-    last_exc: BaseException | None = None
-    delay = _DEFAULT_INITIAL_BACKOFF_S
+    max_retries = (
+        retry_config.max_retries if retry_config is not None else _DEFAULT_MAX_RETRIES
+    )
+    initial_backoff = (
+        retry_config.initial_backoff_s
+        if retry_config is not None
+        else _DEFAULT_INITIAL_BACKOFF_S
+    )
+    backoff_multiplier = (
+        retry_config.backoff_multiplier
+        if retry_config is not None
+        else _DEFAULT_BACKOFF_MULTIPLIER
+    )
 
-    for attempt in range(_DEFAULT_MAX_RETRIES + 1):
+    last_exc: BaseException | None = None
+    delay = initial_backoff
+
+    for attempt in range(max_retries + 1):
         try:
             result = await operation(*args)
             if attempt > 0:
@@ -190,7 +209,7 @@ async def _async_retry_s3_operation(
             return result
         except Exception as exc:
             last_exc = exc
-            if not _is_transient_s3_error(exc) or attempt == _DEFAULT_MAX_RETRIES:
+            if not _is_transient_s3_error(exc) or attempt == max_retries:
                 if attempt > 0:
                     log_failure(
                         "s3_operation_failed_after_retries",
@@ -218,7 +237,7 @@ async def _async_retry_s3_operation(
                 operation=operation_name,
                 url=url_for_log,
                 attempt=attempt + 1,
-                max_retries=_DEFAULT_MAX_RETRIES,
+                max_retries=max_retries,
                 retry_delay_s=delay,
             )
             if metrics_collector is not None:
@@ -228,11 +247,11 @@ async def _async_retry_s3_operation(
                     MetricEvent.S3_RETRY,
                     {
                         "attempt": attempt + 1,
-                        "max_retries": _DEFAULT_MAX_RETRIES,
+                        "max_retries": max_retries,
                         "delay_s": delay,
                     },
                 )
             await asyncio.sleep(delay)
-            delay *= _DEFAULT_BACKOFF_MULTIPLIER
+            delay *= backoff_multiplier
 
     raise last_exc  # type: ignore[misc]

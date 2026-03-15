@@ -11,7 +11,11 @@ from typing import Any
 
 import pytest
 
-from shardyfusion.errors import ManifestParseError, ReaderStateError, SlateDbApiError
+from shardyfusion.errors import (
+    ManifestParseError,
+    ReaderStateError,
+    SlateDbApiError,
+)
 from shardyfusion.manifest import (
     ManifestRef,
     ManifestShardingSpec,
@@ -1099,7 +1103,7 @@ def test_concurrent_metadata_methods_raise_when_closed(tmp_path) -> None:
 
 
 def test_pool_checkout_timeout_raises(tmp_path) -> None:
-    """Pool checkout raises SlateDbApiError after timeout."""
+    """Pool checkout raises PoolExhaustedError after timeout."""
     in_get = threading.Event()
 
     class _SlowReader:
@@ -1136,7 +1140,9 @@ def test_pool_checkout_timeout_raises(tmp_path) -> None:
         in_get.wait(timeout=5)
 
         # The single pool reader is held; this checkout should time out.
-        with pytest.raises(SlateDbApiError, match="timed out"):
+        from shardyfusion.errors import PoolExhaustedError
+
+        with pytest.raises(PoolExhaustedError, match="timed out"):
             reader.get(1)
 
         t.join(timeout=5)

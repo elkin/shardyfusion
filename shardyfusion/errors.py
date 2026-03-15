@@ -122,6 +122,16 @@ class ReaderStateError(ShardyfusionError):
     retryable = False
 
 
+class PoolExhaustedError(ShardyfusionError):
+    """All readers in the pool are checked out and checkout timed out.
+
+    Typically transient — a brief spike in concurrent reads or a slow
+    shard query can exhaust the pool temporarily.
+    """
+
+    retryable = True
+
+
 class ManifestStoreError(ShardyfusionError):
     """Transient manifest store failure (DB connection, query timeout, etc.).
 

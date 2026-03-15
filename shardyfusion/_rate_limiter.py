@@ -40,10 +40,15 @@ class RateLimiter(Protocol):
 
     ``acquire()`` blocks (via ``time.sleep``) until tokens are available.
     Use only in synchronous code paths.
+
+    ``acquire_async()`` is the async counterpart of ``acquire()`` — it
+    uses ``asyncio.sleep`` instead of ``time.sleep``.  Use in async code
+    paths (e.g. ``AsyncShardedReader``).
     """
 
     def acquire(self, tokens: int = 1) -> None: ...
     def try_acquire(self, tokens: int = 1) -> AcquireResult: ...
+    async def acquire_async(self, tokens: int = 1) -> None: ...
 
 
 class TokenBucket:

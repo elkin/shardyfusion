@@ -59,13 +59,52 @@ class _SlateDbAsyncShardReader:
         await self._inner.close_async()
 
 
-@dataclass(slots=True)
 class _AsyncReaderState:
-    manifest_ref: str
-    router: SnapshotRouter
-    readers: dict[int, AsyncShardReader]
-    borrow_count: int = 0
-    retired: bool = False
+    """Internal state for AsyncShardedReader with async cleanup support."""
+
+    __slots__ = ("manifest_ref", "router", "readers", "borrow_count", "retired")
+
+    def __init__(
+        self,
+        manifest_ref: str,
+        router: SnapshotRouter,
+        readers: dict[int, AsyncShardReader],
+        borrow_count: int = 0,
+        retired: bool = False,
+    ) -> None:
+        self.manifest_ref = manifest_ref
+        self.router = router
+        self.readers = readers
+        self.borrow_count = borrow_count
+        self.retired = retired
+
+    async def aclose(self) -> None:
+        """Close all shard readers, logging per-reader errors."""
+        errors: list[tuple[int, BaseException]] = []
+        for db_id, reader in self.readers.items():
+            try:
+                await reader.close()
+            except Exception as exc:
+                errors.append((db_id, exc))
+                log_failure(
+                    "reader_handle_close_failed",
+                    severity=FailureSeverity.ERROR,
+                    logger=_logger,
+                    error=exc,
+                    db_id=db_id,
+                    manifest_ref=self.manifest_ref,
+                )
+        if errors:
+            raise SlateDbApiError(
+                f"Failed to close {len(errors)} shard reader(s): "
+                f"db_ids={[db_id for db_id, _ in errors]}"
+            ) from errors[0][1]
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        await self.aclose()
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +168,15 @@ class AsyncShardReaderHandle:
         self._released = True
         if self._release_fn is not None:
             self._release_fn()
+
+    def __del__(self) -> None:
+        if not self._released:
+            log_failure(
+                "async_shard_reader_handle_not_closed",
+                severity=FailureSeverity.ERROR,
+                logger=_logger,
+            )
+            self.close()
 
     async def __aenter__(self) -> Self:
         return self
@@ -342,7 +390,7 @@ class AsyncShardedReader:
         state = self._require_state()
 
         if self._rate_limiter is not None:
-            await _async_acquire(self._rate_limiter, 1)
+            await self._rate_limiter.acquire_async(1)
 
         mc = self._metrics
         t0 = time.perf_counter() if mc is not None else 0.0
@@ -365,7 +413,7 @@ class AsyncShardedReader:
         state = self._require_state()
 
         if self._rate_limiter is not None:
-            await _async_acquire(self._rate_limiter, len(keys))
+            await self._rate_limiter.acquire_async(len(keys))
 
         mc = self._metrics
         t0 = time.perf_counter() if mc is not None else 0.0
@@ -463,7 +511,7 @@ class AsyncShardedReader:
         self._state = new_state
         old_state.retired = True
         if old_state.borrow_count == 0:
-            await _close_async_state(old_state)
+            await old_state.aclose()
 
         log_event(
             "reader_refreshed",
@@ -483,7 +531,7 @@ class AsyncShardedReader:
             num_readers = len(state.readers)
             state.retired = True
             if state.borrow_count == 0:
-                await _close_async_state(state)
+                await state.aclose()
 
             log_event(
                 "reader_closed",
@@ -583,58 +631,22 @@ class AsyncShardedReader:
         if state.retired and state.borrow_count == 0:
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(_close_async_state(state))
             except RuntimeError:
-                pass
+                # No running event loop — cannot schedule cleanup.
+                # This can happen when a handle is released from a
+                # non-async context (e.g. __del__ or a sync callback).
+                return
+            try:
+                loop.create_task(state.aclose())
+            except RuntimeError as exc:
+                log_failure(
+                    "async_reader_deferred_cleanup_failed",
+                    severity=FailureSeverity.ERROR,
+                    logger=_logger,
+                    error=exc,
+                    manifest_ref=state.manifest_ref,
+                )
 
     def _emit(self, event: MetricEvent, payload: dict[str, Any]) -> None:
         if self._metrics is not None:
             self._metrics.emit(event, payload)
-
-
-# ---------------------------------------------------------------------------
-# Module-level helpers
-# ---------------------------------------------------------------------------
-
-
-async def _async_acquire(limiter: RateLimiter, tokens: int) -> None:
-    """Acquire tokens from a rate limiter, using async sleep if available.
-
-    If the limiter has an ``acquire_async`` method (like ``TokenBucket``),
-    use it directly.  Otherwise, fall back to a ``try_acquire`` + ``asyncio.sleep``
-    loop — still non-blocking for the event loop.
-    """
-    acquire_async = getattr(limiter, "acquire_async", None)
-    if acquire_async is not None:
-        await acquire_async(tokens)
-        return
-
-    # Fallback: try_acquire is guaranteed non-blocking (pure arithmetic).
-    while True:
-        result = limiter.try_acquire(tokens)
-        if result:
-            return
-        await asyncio.sleep(result.deficit)
-
-
-async def _close_async_state(state: _AsyncReaderState) -> None:
-    """Close all shard readers in an async state, logging errors."""
-    errors: list[tuple[int, BaseException]] = []
-    for db_id, reader in state.readers.items():
-        try:
-            await reader.close()
-        except Exception as exc:
-            errors.append((db_id, exc))
-            log_failure(
-                "reader_handle_close_failed",
-                severity=FailureSeverity.ERROR,
-                logger=_logger,
-                error=exc,
-                db_id=db_id,
-                manifest_ref=state.manifest_ref,
-            )
-    if errors:
-        raise SlateDbApiError(
-            f"Failed to close {len(errors)} shard reader(s): "
-            f"db_ids={[db_id for db_id, _ in errors]}"
-        ) from errors[0][1]

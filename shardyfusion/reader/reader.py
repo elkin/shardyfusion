@@ -17,6 +17,7 @@ from typing import Any, Literal, Self
 from shardyfusion._rate_limiter import RateLimiter
 from shardyfusion.errors import (
     ManifestParseError,
+    PoolExhaustedError,
     ReaderStateError,
     ShardyfusionError,
     SlateDbApiError,
@@ -215,7 +216,7 @@ class _ReaderPool:
         try:
             idx = self._indexes.get(timeout=self._checkout_timeout)
         except Empty:
-            raise SlateDbApiError(
+            raise PoolExhaustedError(
                 f"Shard reader pool checkout timed out after {self._checkout_timeout}s"
             ) from None
         try:
@@ -277,6 +278,15 @@ class ShardReaderHandle:
         self._released = True
         if self._release_fn is not None:
             self._release_fn()
+
+    def __del__(self) -> None:
+        if not self._released:
+            log_failure(
+                "shard_reader_handle_not_closed",
+                severity=FailureSeverity.ERROR,
+                logger=_logger,
+            )
+            self.close()
 
     def __enter__(self) -> Self:
         return self
@@ -1131,7 +1141,17 @@ class ConcurrentShardedReader(_BaseShardedReader):
                     )
                 else:
                     pool_size = self.max_workers or 4
-                    readers = [self._open_one_reader(shard) for _ in range(pool_size)]
+                    readers: list[ShardReader] = []
+                    try:
+                        for _ in range(pool_size):
+                            readers.append(self._open_one_reader(shard))
+                    except Exception:
+                        for r in readers:
+                            try:
+                                r.close()
+                            except Exception:
+                                pass
+                        raise
                     handles[shard.db_id] = _ShardHandle(
                         mode="pool",
                         pool=_ReaderPool(
