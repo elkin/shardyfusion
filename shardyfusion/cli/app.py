@@ -98,6 +98,69 @@ def _resolve_manifest_ref(
     return None
 
 
+def _resolve_manifest_ref_obj(
+    store: Any,
+    *,
+    ref: str | None,
+    offset: int | None,
+) -> Any | None:
+    """Like _resolve_manifest_ref but returns the full ManifestRef when available.
+
+    Used by _PinnedManifestStore to avoid a redundant list_manifests call.
+    """
+    if ref is not None and offset is not None:
+        raise click.UsageError("--ref and --offset are mutually exclusive")
+    if offset is not None:
+        if offset < 0:
+            raise click.UsageError("--offset must be >= 0")
+        refs = store.list_manifests(limit=offset + 1)
+        if offset >= len(refs):
+            raise click.ClickException(
+                f"Offset {offset} out of range (only {len(refs)} manifests available)"
+            )
+        return refs[offset]  # full ManifestRef, not just .ref
+    if ref is not None:
+        # Only have a string ref — need to look up the full ManifestRef
+        for r in store.list_manifests(limit=100):
+            if r.ref == ref:
+                return r
+        # Fallback: construct minimal ManifestRef
+        from datetime import UTC, datetime
+
+        from ..manifest import ManifestRef
+
+        return ManifestRef(ref=ref, run_id="unknown", published_at=datetime.now(UTC))
+    return None
+
+
+class _PinnedManifestStore:
+    """Wrapper that pins load_current() to a specific ref without mutating the backing store.
+
+    The pinned ManifestRef is resolved once at construction time and cached.
+    set_current() is a deliberate passthrough — rollback is the one CLI command
+    that should mutate _CURRENT, and it operates on the real store directly.
+    """
+
+    def __init__(self, inner: Any, pinned_manifest_ref: Any) -> None:
+        self._inner = inner
+        self._cached_ref = pinned_manifest_ref
+
+    def load_current(self) -> Any:
+        return self._cached_ref
+
+    def load_manifest(self, ref: str) -> Any:
+        return self._inner.load_manifest(ref)
+
+    def list_manifests(self, *, limit: int = 10) -> Any:
+        return self._inner.list_manifests(limit=limit)
+
+    def set_current(self, ref: str) -> None:
+        self._inner.set_current(ref)
+
+    def publish(self, **kwargs: Any) -> str:
+        return self._inner.publish(**kwargs)
+
+
 def _build_reader(ctx: click.Context) -> Any:
     """Construct a ConcurrentShardedReader from the parameters stored in ctx.obj."""
     params = ctx.obj[_CTX_INIT_PARAMS]
@@ -108,14 +171,15 @@ def _build_reader(ctx: click.Context) -> Any:
 
     manifest_store = _build_manifest_store(store_cfg, params)
 
-    # If --ref or --offset was given, point the store at that manifest first
-    target_ref = _resolve_manifest_ref(
+    # If --ref or --offset was given, pin the store to that manifest
+    # without mutating _CURRENT (only rollback should do that).
+    pinned_ref = _resolve_manifest_ref_obj(
         manifest_store,
         ref=params.get("manifest_ref"),
         offset=params.get("manifest_offset"),
     )
-    if target_ref is not None:
-        manifest_store.set_current(target_ref)
+    if pinned_ref is not None:
+        manifest_store = _PinnedManifestStore(manifest_store, pinned_ref)
 
     try:
         return ConcurrentShardedReader(
@@ -608,19 +672,19 @@ def cleanup_cmd(
     manifest_store = _build_manifest_store(store_cfg, params)
 
     try:
-        # Resolve target manifest
+        # Resolve target manifest without mutating _CURRENT
         target_ref = _resolve_manifest_ref(
             manifest_store,
             ref=params.get("manifest_ref"),
             offset=params.get("manifest_offset"),
         )
         if target_ref is not None:
-            manifest_store.set_current(target_ref)
-
-        current_ref = manifest_store.load_current()
-        if current_ref is None:
-            raise click.ClickException("No current manifest found")
-        manifest = manifest_store.load_manifest(current_ref.ref)
+            manifest = manifest_store.load_manifest(target_ref)
+        else:
+            current_ref = manifest_store.load_current()
+            if current_ref is None:
+                raise click.ClickException("No current manifest found")
+            manifest = manifest_store.load_manifest(current_ref.ref)
 
         cred_provider = params.get("credential_provider")
         credentials = cred_provider.resolve() if cred_provider else None

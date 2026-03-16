@@ -471,3 +471,123 @@ class TestSchemaSubcommand:
         runner = click.testing.CliRunner()
         result = runner.invoke(cli, ["schema", "--type", "bogus"])
         assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# --ref / --offset must never call set_current()
+# ---------------------------------------------------------------------------
+
+
+class TestManifestTargetingDoesNotMutate:
+    """Verify that --ref and --offset never mutate _CURRENT via set_current()."""
+
+    def _make_manifest_store_mock(self) -> MagicMock:
+        """Build a MagicMock manifest store with realistic return values."""
+        from shardyfusion.manifest import ManifestRef
+
+        store = MagicMock()
+        ref = ManifestRef(
+            ref="manifests/2026-01-01T00:00:00.000000Z_run_id=abc/manifest",
+            run_id="abc",
+            published_at=_FAKE_CREATED_AT,
+        )
+        store.load_current.return_value = ref
+        store.list_manifests.return_value = [ref]
+        manifest_mock = MagicMock()
+        manifest_mock.required_build.run_id = "abc"
+        store.load_manifest.return_value = manifest_mock
+        return store
+
+    def test_get_with_ref_does_not_call_set_current(self) -> None:
+        reader = _FakeReader(store={42: b"hello"})
+        manifest_store = self._make_manifest_store_mock()
+
+        with (
+            patch(
+                "shardyfusion.cli.app._build_manifest_store",
+                return_value=manifest_store,
+            ),
+            patch("shardyfusion.cli.app._build_reader", return_value=reader),
+        ):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(
+                cli,
+                ["--ref", "some-ref", "get", "42"],
+                env={"SHARDY_CURRENT": "s3://bucket/prefix/_CURRENT"},
+            )
+
+        assert result.exit_code == 0
+        manifest_store.set_current.assert_not_called()
+
+    def test_get_with_offset_does_not_call_set_current(self) -> None:
+        reader = _FakeReader(store={42: b"hello"})
+        manifest_store = self._make_manifest_store_mock()
+
+        with (
+            patch(
+                "shardyfusion.cli.app._build_manifest_store",
+                return_value=manifest_store,
+            ),
+            patch("shardyfusion.cli.app._build_reader", return_value=reader),
+        ):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(
+                cli,
+                ["--offset", "0", "get", "42"],
+                env={"SHARDY_CURRENT": "s3://bucket/prefix/_CURRENT"},
+            )
+
+        assert result.exit_code == 0
+        manifest_store.set_current.assert_not_called()
+
+    def test_cleanup_with_ref_does_not_call_set_current(self) -> None:
+        manifest_store = self._make_manifest_store_mock()
+
+        with (
+            patch(
+                "shardyfusion.cli.app._build_manifest_store",
+                return_value=manifest_store,
+            ),
+            patch(
+                "shardyfusion.cli.app._build_reader",
+                return_value=_FakeReader(),
+            ),
+            patch(
+                "shardyfusion._writer_core.cleanup_stale_attempts",
+                return_value=[],
+            ),
+            patch(
+                "shardyfusion.storage.create_s3_client",
+                return_value=MagicMock(),
+            ),
+        ):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(
+                cli,
+                ["--ref", "some-ref", "cleanup", "--dry-run"],
+                env={"SHARDY_CURRENT": "s3://bucket/prefix/_CURRENT"},
+            )
+
+        assert result.exit_code == 0
+        manifest_store.set_current.assert_not_called()
+
+    def test_info_with_offset_does_not_call_set_current(self) -> None:
+        reader = _FakeReader()
+        manifest_store = self._make_manifest_store_mock()
+
+        with (
+            patch(
+                "shardyfusion.cli.app._build_manifest_store",
+                return_value=manifest_store,
+            ),
+            patch("shardyfusion.cli.app._build_reader", return_value=reader),
+        ):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(
+                cli,
+                ["--offset", "0", "info"],
+                env={"SHARDY_CURRENT": "s3://bucket/prefix/_CURRENT"},
+            )
+
+        assert result.exit_code == 0
+        manifest_store.set_current.assert_not_called()

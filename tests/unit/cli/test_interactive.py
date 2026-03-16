@@ -26,6 +26,7 @@ class _FakeReader:
     ) -> None:
         self._store = store or {}
         self._key_encoding = key_encoding
+        self._manifest_store: Any = None
 
     @property
     def key_encoding(self) -> str:

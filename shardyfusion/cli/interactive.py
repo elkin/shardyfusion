@@ -72,8 +72,14 @@ class ShardyRepl(cmd.Cmd):
             self._error("multiget", None, str(exc))
 
     def do_refresh(self, line: str) -> None:
-        """refresh — Reload CURRENT and manifest."""
+        """refresh — Reload CURRENT and manifest, clearing any session pin."""
+        from ..cli.app import _PinnedManifestStore
+
         try:
+            # Clear any session pin so refresh loads the true latest
+            store = self._reader._manifest_store
+            if isinstance(store, _PinnedManifestStore):
+                self._reader._manifest_store = store._inner
             changed = self._reader.refresh()
             result = build_refresh_result(changed)
             emit(result, self._interactive_cfg)
@@ -157,8 +163,14 @@ class ShardyRepl(cmd.Cmd):
             self._error("history", None, str(exc))
 
     def do_use(self, line: str) -> None:
-        """use --offset N | --ref REF | --latest — Switch to a different manifest."""
-        from ..cli.app import _resolve_manifest_ref
+        """use --offset N | --ref REF | --latest — Switch to a different manifest.
+
+        Session-local: does not mutate _CURRENT. Only `rollback` does that.
+        """
+        from ..cli.app import (
+            _PinnedManifestStore,
+            _resolve_manifest_ref_obj,
+        )
 
         parts = shlex.split(line)
         if not parts:
@@ -167,16 +179,28 @@ class ShardyRepl(cmd.Cmd):
 
         try:
             store = self._reader._manifest_store
+            # Unwrap any existing pin to access the real store
+            real_store = (
+                store._inner if isinstance(store, _PinnedManifestStore) else store
+            )
+
             if parts[0] == "--latest":
+                # Clear any session pin and refresh from the real store
+                self._reader._manifest_store = real_store
                 self._reader.refresh()
                 info = self._reader.snapshot_info()
                 print(f"Switched to latest manifest run_id={info.run_id}")
             elif parts[0] in ("--offset", "--ref") and len(parts) == 2:
                 ref_arg = None if parts[0] == "--offset" else parts[1]
                 offset_arg = int(parts[1]) if parts[0] == "--offset" else None
-                target = _resolve_manifest_ref(store, ref=ref_arg, offset=offset_arg)
-                if target is not None:
-                    store.set_current(target)
+                pinned = _resolve_manifest_ref_obj(
+                    real_store, ref=ref_arg, offset=offset_arg
+                )
+                if pinned is not None:
+                    # Pin the reader's store session-locally without mutating _CURRENT
+                    self._reader._manifest_store = _PinnedManifestStore(
+                        real_store, pinned
+                    )
                 self._reader.refresh()
                 info = self._reader.snapshot_info()
                 print(
