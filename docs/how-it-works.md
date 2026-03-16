@@ -31,7 +31,6 @@ Entrypoint: `shardyfusion.writer.spark.write_sharded`
 3. `add_db_id_column` computes shard assignment using `ShardingSpec`:
    - `hash`: `pmod(xxhash64(cast(key_col as long)), num_dbs)`
    - `range`: explicit boundaries or boundaries from `approxQuantile`
-   - `custom_expr`: Spark SQL expression or column builder
 4. `prepare_partitioned_rdd` enforces `num_dbs` writer partitions:
    - data is converted to pair RDD `(db_id, row)`
    - `partitionBy(num_dbs, ...)`
@@ -46,9 +45,9 @@ Entrypoint: `shardyfusion.writer.spark.write_sharded`
 Entrypoint: `shardyfusion.writer.dask.write_sharded`
 
 1. `add_db_id_column` computes shard assignment via Python `route_key()` per partition.
-   Range boundaries are computed via Dask quantiles. `CUSTOM_EXPR` is rejected.
+   Range boundaries are computed via Dask quantiles.
 2. Dask DataFrame is shuffled by `_slatedb_db_id`, then `map_partitions` writes each shard.
-3. Empty shards get zero-row placeholder results.
+3. Empty shards are materialized as real empty DBs via `materialize_empty_shards()`.
 4. Optional rate limiting and routing verification.
 5. Same `_writer_core.py` functions for winner selection, manifest building, and publishing.
 
@@ -58,12 +57,12 @@ Entrypoint: `shardyfusion.writer.ray.write_sharded`
 
 1. `add_db_id_column` computes shard assignment via `map_batches` with Arrow batch format
    (`batch_format="pyarrow"`, `zero_copy_batch=True`) to avoid Arrow→pandas→Arrow overhead.
-   Range boundaries are computed via sampling. `CUSTOM_EXPR` is rejected.
+   Range boundaries are computed via sampling.
 2. Dataset is repartitioned by `_slatedb_db_id` using hash shuffle
    (`repartition(num_dbs, shuffle=True, keys=[DB_ID_COL])`).
    `DataContext.shuffle_strategy` is saved/restored in a `try/finally` block.
 3. `map_batches` with `batch_format="pandas"` writes each shard.
-   Empty shards get zero-row placeholder results.
+   Empty shards are materialized as real empty DBs via `materialize_empty_shards()`.
 4. Optional rate limiting and routing verification.
 5. Same `_writer_core.py` functions for winner selection, manifest building, and publishing.
 
@@ -179,7 +178,7 @@ Direct fields:
 Grouped options:
 
 - `sharding: ShardingSpec`
-  - `strategy`, `boundaries`, `approx_quantile_rel_error`, `custom_expr`, `custom_column_builder`
+  - `strategy`, `boundaries`, `approx_quantile_rel_error`
 - `output: OutputOptions`
   - `run_id`
   - `db_path_template`
@@ -212,7 +211,6 @@ Extra runtime controls on `write_sharded` (vary by backend):
 |----------|-------|------|-----|--------|
 | `HASH` | Yes | Yes | Yes | Yes |
 | `RANGE` | Yes | Yes | Yes | Yes |
-| `CUSTOM_EXPR` | Yes | No | No | No |
 
 ## Reader Side
 
@@ -246,12 +244,9 @@ Primary classes: `ShardedReader`, `ConcurrentShardedReader`, `AsyncShardedReader
   - Dask/Ray/Python writers: `route_key()` from `_writer_core.py` (same xxhash64 algorithm)
   - reader: Python `xxhash` implementation aligned with Spark semantics for this contract
 - `range`:
-  - route by shard min/max intervals when present
+  - prefers explicit shard boundaries over min/max intervals when both are available
+  - route by shard min/max intervals when present; empty shards (`None`/`None` bounds) are excluded from interval routing
   - fallback to manifest boundaries using right-biased boundary handling
-- `custom_expr`:
-  - Spark expression is not evaluated at read time
-  - requires manifest routing hints (boundaries or shard ranges)
-  - only supported by Spark writer
 
 ### Refresh and concurrency model
 

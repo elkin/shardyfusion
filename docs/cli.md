@@ -83,8 +83,8 @@ uv run shardy route 42
 | `--config PATH` | Path to `reader.toml` (overrides `SHARDY_CONFIG` env) |
 | `--credentials PATH` | Path to `credentials.toml` (overrides `SHARDY_CREDENTIALS` env) |
 | `--s3-option KEY=VALUE` | Override S3 connection option (repeatable) |
-| `--ref REF` | Load a specific manifest by reference (mutually exclusive with `--offset`) |
-| `--offset N` | Load a manifest at position N in history — 0 is latest, 1 is previous, etc. (mutually exclusive with `--ref`) |
+| `--ref REF` | Load a specific manifest by reference (non-mutating; mutually exclusive with `--offset`) |
+| `--offset N` | Load a manifest at position N in history — 0 is latest, 1 is previous, etc. (non-mutating; mutually exclusive with `--ref`) |
 | `--output-format FORMAT` | Output format: `json`, `jsonl` (default), `table`, `text` |
 | `--version` | Show version and exit |
 
@@ -243,7 +243,7 @@ shardy> use --ref s3://...   # switch to a specific manifest ref
 shardy> use --latest         # switch back to the latest manifest
 ```
 
-After `use`, all subsequent lookups operate against the selected manifest until `use --latest` or `refresh` is called.
+After `use`, all subsequent lookups operate against the selected manifest until `use --latest` or `refresh` is called. `use` is session-local and non-mutating — it does not update the `_CURRENT` pointer. Calling `refresh` clears any session pin and reloads from `_CURRENT`.
 
 ## Manifest History
 
@@ -302,7 +302,7 @@ uv run shardy --offset 1 get 42
 uv run shardy --ref s3://bucket/prefix/manifests/.../manifest info
 ```
 
-These options are mutually exclusive. The reader loads the targeted manifest instead of following the `_CURRENT` pointer.
+These options are mutually exclusive and **non-mutating** — the reader loads the targeted manifest for this invocation only, without updating the `_CURRENT` pointer. In contrast, `rollback` mutates `_CURRENT` to point at a different manifest, affecting all readers.
 
 ## Batch Scripts
 

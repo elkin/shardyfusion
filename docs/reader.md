@@ -416,6 +416,10 @@ async with await AsyncShardedReader.open(
     value = await reader.get(123)
 ```
 
+### Borrow Safety During Reads
+
+`get()` and `multi_get()` hold borrow count increments on the underlying reader state for the duration of each read. This prevents `refresh()` or `close()` from closing shard readers while a read is in progress. The borrow is automatically released when the read completes (or raises).
+
 ### Concurrency Control
 
 `multi_get` fans out reads across shards using `asyncio.TaskGroup`. To limit the number of concurrent shard reads, pass `max_concurrency`:

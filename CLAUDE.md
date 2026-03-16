@@ -67,7 +67,7 @@ The library is split into six independent paths that share config, manifest mode
 Layer 0 — Core types & errors: errors.py, type_defs.py (incl. RetryConfig), sharding_types.py, ordering.py, logging.py (incl. LogContext/JsonFormatter), metrics/ (package: _events.py, _protocol.py)
 Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py
 Layer 2 — Storage, routing, manifest: storage.py (w/ RetryConfig, list_prefixes), manifest.py, routing.py, manifest_store.py (delegates to list_prefixes), async_manifest_store.py, db_manifest_store.py
-Layer 3 — Writer core: _writer_core.py (shared by all writers; cleanup: CleanupAction, cleanup_stale_attempts, cleanup_old_runs)
+Layer 3 — Writer core: _writer_core.py (shared by all writers; materialize_empty_shards, cleanup: CleanupAction, cleanup_stale_attempts, cleanup_old_runs)
 Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/reader.py (w/ ReaderHealth), reader/async_reader.py, cli/app.py
 Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
 Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus extra), metrics/otel.py (metrics-otel extra)
@@ -80,19 +80,19 @@ Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus ext
 2. `writer/spark/sharding.py` adds `_slatedb_db_id` column via Spark SQL expressions (hash, range, or custom), then converts the DataFrame to a pair RDD partitioned so partition index = db_id.
 3. Each partition writes one shard to S3 at a shard path (`shards/run_id=.../db=XXXXX/attempt=YY/`).
 4. The driver streams results via `toLocalIterator()` and selects deterministic winners (lowest attempt → task_attempt_id → URL).
-5. A manifest artifact is built and published, then the `_CURRENT` pointer is updated.
+5. A manifest artifact is built and published, and the `_CURRENT` pointer is updated.
 
 **Dask writer** (`write_sharded`):
 1. Entry point in `writer/dask/writer.py`. Accepts `dd.DataFrame` with `key_col`/`value_spec`.
-2. `writer/dask/sharding.py` adds `_slatedb_db_id` column via Python routing function applied per partition (not Spark SQL). Range boundaries computed via Dask quantiles. `CUSTOM_EXPR` strategy is explicitly rejected.
-3. Shuffles by `_slatedb_db_id`, then `map_partitions` writes each shard. Empty shards get zero-row placeholder results.
+2. `writer/dask/sharding.py` adds `_slatedb_db_id` column via Python routing function applied per partition (not Spark SQL). Range boundaries computed via Dask quantiles.
+3. Shuffles by `_slatedb_db_id`, then `map_partitions` writes each shard. Empty shards are materialized as real empty DBs via `materialize_empty_shards()` in `_writer_core.py`.
 4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `verify_routing_agreement()`.
 5. Uses the same `_writer_core.py` functions for winner selection, manifest building, and publishing.
 
 **Ray writer** (`write_sharded`):
 1. Entry point in `writer/ray/writer.py`. Accepts `ray.data.Dataset` with `key_col`/`value_spec`.
-2. `writer/ray/sharding.py` adds `_slatedb_db_id` column via Arrow batch format (`map_batches` with `batch_format="pyarrow"`, `zero_copy_batch=True`). Range boundaries computed via sampling. `CUSTOM_EXPR` strategy is explicitly rejected.
-3. Repartitions by `_slatedb_db_id` using hash shuffle (`DataContext.shuffle_strategy = "HASH_SHUFFLE"`; saved/restored). Then `map_batches` writes each shard with `batch_format="pandas"`.
+2. `writer/ray/sharding.py` adds `_slatedb_db_id` column via Arrow batch format (`map_batches` with `batch_format="pyarrow"`, `zero_copy_batch=True`). Range boundaries computed via sampling.
+3. Repartitions by `_slatedb_db_id` using hash shuffle (`DataContext.shuffle_strategy = "HASH_SHUFFLE"`; saved/restored). Then `map_batches` writes each shard with `batch_format="pandas"`. Empty shards are materialized as real empty DBs via `materialize_empty_shards()` in `_writer_core.py`.
 4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `_verify_routing_agreement()`.
 5. Uses the same `_writer_core.py` functions for winner selection, manifest building, and publishing.
 
@@ -117,7 +117,7 @@ Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus ext
 
 1. Constructed via `@classmethod async def open(...)` (since `__init__` can't do async I/O). On cold start, if `load_manifest()` raises `ManifestParseError`, falls back to previous manifests via `list_manifests()` (up to `max_fallback_attempts`, default 3).
 2. S3 manifest loading uses `AsyncS3ManifestStore` (native aiobotocore).
-3. `async get(key)` / `async multi_get(keys)` route keys and read from async shard readers. `multi_get` fans out via `asyncio.TaskGroup` with optional `asyncio.Semaphore` for concurrency limiting (`max_concurrency`).
+3. `async get(key)` / `async multi_get(keys)` route keys and read from async shard readers. Both hold borrow count increments during reads, preventing `refresh()`/`close()` from closing shard readers while reads are in-flight. The borrow is acquired after the rate limiter to avoid blocking state cleanup during throttling. `multi_get` fans out via `asyncio.TaskGroup` with optional `asyncio.Semaphore` for concurrency limiting (`max_concurrency`).
 4. `async refresh()` serialises via `asyncio.Lock`. Swaps state and defers cleanup of retired readers via `state.aclose()` (scheduled as a task via `loop.create_task()`) when their borrow count hits 0. `_AsyncReaderState` supports the async context manager protocol. A malformed manifest is silently skipped (returns `False`), keeping the previous good state.
 5. Sync metadata methods (`key_encoding`, `snapshot_info()`, `shard_details()`, `route_key()`) and borrow methods (`reader_for_key()`, `readers_for_keys()`) work identically to the sync reader.
 6. Supports `async with` context manager via `__aenter__`/`__aexit__`.
@@ -126,7 +126,7 @@ Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus ext
 
 Entry point: `cli/app.py:main`. Subcommands: `get KEY`, `multiget KEY [KEY ...]`, `info`, `shards`, `route KEY`, `exec --script FILE`, `history [--limit N]`, `rollback (--ref REF | --run-id RUN_ID | --offset N)`, `cleanup [--dry-run] [--include-old-runs] [--older-than DURATION] [--keep-last N] [--max-retries N]`, `schema [--type manifest|current-pointer]`. No subcommand → interactive REPL (`cmd.Cmd` with `shardy> ` prompt; REPL-only commands include `refresh`, `history [LIMIT]`, and `use (--offset N | --ref REF | --latest)`).
 
-Global options `--ref REF` and `--offset N` (mutually exclusive) load a specific manifest by reference or position in history before executing any subcommand.
+Global options `--ref REF` and `--offset N` (mutually exclusive) load a specific manifest by reference or position in history before executing any subcommand. These are non-mutating (read-only manifest selection; they do not update `_CURRENT`). REPL commands `use` and `refresh` are also session-local and non-mutating. `rollback` is the only CLI command that mutates `_CURRENT`.
 
 Key coercion: CLI keys are strings; when manifest uses integer encoding (`u64be`/`u32be`), keys are auto-coerced to `int` via `cli/config.py:coerce_cli_key()`.
 
@@ -215,9 +215,8 @@ Both encodings produce identical hash routing results for keys in `[0, 2^32-1]` 
 
 - **Hash** (default): `pmod(xxhash64(cast(key as long)), num_dbs)` — requires integer key column
 - **Range**: Explicit boundaries or computed via `approxQuantile` — supports int/float/string keys
-- **Custom**: User-provided Spark SQL expression or column builder callable (Spark writer only; not supported in Dask, Ray, or Python writers)
 
-The `SnapshotRouter` in `routing.py` mirrors the writer's sharding logic exactly for consistent key routing at read time.
+The `SnapshotRouter` in `routing.py` mirrors the writer's sharding logic exactly for consistent key routing at read time. Range routing prefers explicit manifest boundaries over shard min/max intervals; empty shards (`None`, `None` bounds) are excluded from interval-based routing.
 
 ## Critical Invariants
 
@@ -284,8 +283,6 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **Garage requires path-style addressing**: E2E tests set `addressing_style: "path"` in `S3ClientConfig` because Garage doesn't support virtual-hosted-style.
 - **Session-scoped test fixtures**: PySpark and S3 (moto/Garage) fixtures are session-scoped for performance. Tests share the same Spark session and S3 service.
 - **Writer scenario imports are deferred**: `tests/helpers/s3_test_scenarios.py` imports writer modules inside function bodies so reader-only test collection doesn't fail.
-- **Dask writer rejects `CUSTOM_EXPR` sharding**: Unlike the Spark writer, the Dask writer raises `ConfigValidationError` for custom expression sharding. Only `HASH` and `RANGE` are supported.
-- **Ray writer rejects `CUSTOM_EXPR` sharding**: Same as Dask — only `HASH` and `RANGE` are supported.
 - **Ray writer temporarily sets `DataContext.shuffle_strategy`**: During repartition, the Ray writer sets `DataContext.shuffle_strategy = "HASH_SHUFFLE"` and restores the previous value in a `try/finally` block, protected by `_SHUFFLE_STRATEGY_LOCK` (`threading.Lock`) to guard against concurrent `write_sharded()` calls in the same driver.
 - **Ray tests need `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0`**: Ray ≥ 2.47 auto-detects `uv run` in the process tree and overrides worker Python to create fresh venvs. The env var is set in `tox.ini` for raywriter envs. For direct pytest, either set the var or use `uv run --extra writer-ray pytest ...`.
 - **`acquire_async()` is part of the `RateLimiter` Protocol**: Uses `asyncio.sleep` — safe for event loops. The sync `acquire()` uses `time.sleep` and must not be called from async code.
