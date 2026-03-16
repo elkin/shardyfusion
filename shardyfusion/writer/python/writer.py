@@ -5,7 +5,7 @@ import multiprocessing
 import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 from uuid import uuid4
 
 from shardyfusion._rate_limiter import RateLimiter, TokenBucket
@@ -291,19 +291,10 @@ def _write_single_process(
             limiter_type="bytes",
         )
 
-    # Open all shard adapters via ExitStack for automatic LIFO cleanup.
-    adapters = []
-    db_urls: list[str] = []
+    # Open shard adapters lazily on first write to avoid S3 I/O for empty shards.
+    adapters: list[Any] = [None] * num_dbs
+    db_urls: list[str | None] = [None] * num_dbs
     with contextlib.ExitStack() as stack:
-        for db_id in range(num_dbs):
-            db_url = _make_db_url(config, run_id, db_id, attempt)
-            local_dir = _make_local_dir(config, run_id, db_id, attempt)
-            local_dir.mkdir(parents=True, exist_ok=True)
-            adapter = factory(db_url=db_url, local_dir=local_dir)
-            stack.enter_context(adapter)
-            adapters.append(adapter)
-            db_urls.append(db_url)
-
         # Per-shard tracking
         batches: list[list[tuple[bytes, bytes]]] = [[] for _ in range(num_dbs)]
         batch_byte_sizes: list[int] = [0] * num_dbs
@@ -316,8 +307,20 @@ def _write_single_process(
         total_batched_items = 0
         total_batched_bytes = 0
 
+        def _ensure_adapter(sid: int) -> None:
+            if adapters[sid] is not None:
+                return
+            db_url = _make_db_url(config, run_id, sid, attempt)
+            local_dir = _make_local_dir(config, run_id, sid, attempt)
+            local_dir.mkdir(parents=True, exist_ok=True)
+            adapter = factory(db_url=db_url, local_dir=local_dir)
+            stack.enter_context(adapter)
+            adapters[sid] = adapter
+            db_urls[sid] = db_url
+
         def _flush_shard(sid: int) -> None:
             nonlocal total_batched_items, total_batched_bytes
+            _ensure_adapter(sid)
             adapters[sid].write_batch(batches[sid])
             total_batched_items -= len(batches[sid])
             total_batched_bytes -= batch_byte_sizes[sid]
@@ -383,11 +386,12 @@ def _write_single_process(
                     byte_bucket.acquire(batch_byte_sizes[db_id])
                 _flush_shard(db_id)
 
-        # Finalize
-        checkpoint_ids: list[str | None] = []
+        # Finalize only opened adapters
+        checkpoint_ids: list[str | None] = [None] * num_dbs
         for db_id in range(num_dbs):
-            adapters[db_id].flush()
-            checkpoint_ids.append(adapters[db_id].checkpoint())
+            if adapters[db_id] is not None:
+                adapters[db_id].flush()
+                checkpoint_ids[db_id] = adapters[db_id].checkpoint()
 
     results: list[ShardAttemptResult] = []
     for db_id in range(num_dbs):
@@ -399,9 +403,7 @@ def _write_single_process(
                 row_count=row_counts[db_id],
                 min_key=min_keys[db_id],
                 max_key=max_keys[db_id],
-                checkpoint_id=checkpoint_ids[db_id]
-                if db_id < len(checkpoint_ids)
-                else None,
+                checkpoint_id=checkpoint_ids[db_id],
                 writer_info=WriterInfo(attempt=attempt),
             )
         )
@@ -543,6 +545,7 @@ def _write_parallel(
     # Track min/max in main process for parallel mode
     min_keys: list[KeyLike | None] = [None] * num_dbs
     max_keys: list[KeyLike | None] = [None] * num_dbs
+    row_counts = [0] * num_dbs
     key_encoder = make_key_encoder(config.key_encoding)
 
     try:
@@ -560,12 +563,13 @@ def _write_parallel(
             min_keys[db_id], max_keys[db_id] = update_min_max(
                 min_keys[db_id], max_keys[db_id], key
             )
+            row_counts[db_id] += 1
 
             if len(chunk_bufs[db_id]) >= chunk_size:
                 queues[db_id].put(chunk_bufs[db_id])
                 chunk_bufs[db_id] = []
 
-        # Flush remaining chunks
+        # Flush remaining chunks and send sentinels
         for db_id in range(num_dbs):
             if chunk_bufs[db_id]:
                 queues[db_id].put(chunk_bufs[db_id])
@@ -604,6 +608,9 @@ def _write_parallel(
             # Patch in min/max from main process tracking
             result.min_key = min_keys[result.db_id]
             result.max_key = max_keys[result.db_id]
+            # Workers that got zero records still produce results; mark them empty.
+            if row_counts[result.db_id] == 0:
+                result.db_url = None
             results.append(result)
     except ShardyfusionError:
         _join_and_terminate_workers(workers)

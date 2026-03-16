@@ -166,8 +166,9 @@ def test_empty_input() -> None:
         value_fn=lambda r: b"v",
     )
 
-    assert len(result.winners) == 4
-    assert all(w.row_count == 0 for w in result.winners)
+    # No records → no non-empty shards in winners
+    assert len(result.winners) == 0
+    assert result.stats.rows_written == 0
 
 
 def test_batch_flushing() -> None:
@@ -478,8 +479,9 @@ def test_parallel_empty_input(tmp_path: Path) -> None:
         parallel=True,
     )
 
-    assert len(result.winners) == 4
-    assert all(w.row_count == 0 for w in result.winners)
+    # No records → no non-empty shards in winners
+    assert len(result.winners) == 0
+    assert result.stats.rows_written == 0
 
 
 def test_parallel_min_max_key_tracking(tmp_path: Path) -> None:
@@ -611,12 +613,10 @@ def test_parallel_uneven_distribution(tmp_path: Path) -> None:
         parallel=True,
     )
 
-    assert len(result.winners) == 8
+    # Only non-empty shards appear in winners (empty shards omitted from manifest)
+    assert len(result.winners) < 8
     assert sum(w.row_count for w in result.winners) == 5
-
-    # Some shards should be empty
-    empty_shards = [w for w in result.winners if w.row_count == 0]
-    assert len(empty_shards) >= 1
+    assert all(w.db_url is not None for w in result.winners)
 
     # Verify all 5 records are recoverable
     all_kv: dict[bytes, bytes] = {}

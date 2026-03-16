@@ -47,7 +47,7 @@ Entrypoint: `shardyfusion.writer.dask.write_sharded`
 1. `add_db_id_column` computes shard assignment via Python `route_key()` per partition.
    Range boundaries are computed via Dask quantiles.
 2. Dask DataFrame is shuffled by `_slatedb_db_id`, then `map_partitions` writes each shard.
-3. Empty shards are materialized as real empty DBs via `materialize_empty_shards()`.
+3. Empty shards (partitions with no rows) are omitted from the manifest — no S3 I/O is performed.
 4. Optional rate limiting and routing verification.
 5. Same `_writer_core.py` functions for winner selection, manifest building, and publishing.
 
@@ -62,7 +62,7 @@ Entrypoint: `shardyfusion.writer.ray.write_sharded`
    (`repartition(num_dbs, shuffle=True, keys=[DB_ID_COL])`).
    `DataContext.shuffle_strategy` is saved/restored in a `try/finally` block.
 3. `map_batches` with `batch_format="pandas"` writes each shard.
-   Empty shards are materialized as real empty DBs via `materialize_empty_shards()`.
+   Empty shards (partitions with no rows) are omitted from the manifest — no S3 I/O is performed.
 4. Optional rate limiting and routing verification.
 5. Same `_writer_core.py` functions for winner selection, manifest building, and publishing.
 

@@ -67,7 +67,7 @@ The library is split into six independent paths that share config, manifest mode
 Layer 0 — Core types & errors: errors.py, type_defs.py (incl. RetryConfig), sharding_types.py, ordering.py, logging.py (incl. LogContext/JsonFormatter), metrics/ (package: _events.py, _protocol.py)
 Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py
 Layer 2 — Storage, routing, manifest: storage.py (w/ RetryConfig, list_prefixes), manifest.py, routing.py, manifest_store.py (delegates to list_prefixes), async_manifest_store.py, db_manifest_store.py
-Layer 3 — Writer core: _writer_core.py (shared by all writers; materialize_empty_shards, cleanup: CleanupAction, cleanup_stale_attempts, cleanup_old_runs)
+Layer 3 — Writer core: _writer_core.py (shared by all writers; empty_shard_result, cleanup: CleanupAction, cleanup_stale_attempts, cleanup_old_runs)
 Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/reader.py (w/ ReaderHealth), reader/async_reader.py, cli/app.py
 Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
 Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus extra), metrics/otel.py (metrics-otel extra)
@@ -85,14 +85,14 @@ Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus ext
 **Dask writer** (`write_sharded`):
 1. Entry point in `writer/dask/writer.py`. Accepts `dd.DataFrame` with `key_col`/`value_spec`.
 2. `writer/dask/sharding.py` adds `_slatedb_db_id` column via Python routing function applied per partition (not Spark SQL). Range boundaries computed via Dask quantiles.
-3. Shuffles by `_slatedb_db_id`, then `map_partitions` writes each shard. Empty shards are materialized as real empty DBs via `materialize_empty_shards()` in `_writer_core.py`.
+3. Shuffles by `_slatedb_db_id`, then `map_partitions` writes each shard. Empty shards (no rows in partition) are omitted from the manifest; `select_winners()` filters them out.
 4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `verify_routing_agreement()`.
 5. Uses the same `_writer_core.py` functions for winner selection, manifest building, and publishing.
 
 **Ray writer** (`write_sharded`):
 1. Entry point in `writer/ray/writer.py`. Accepts `ray.data.Dataset` with `key_col`/`value_spec`.
 2. `writer/ray/sharding.py` adds `_slatedb_db_id` column via Arrow batch format (`map_batches` with `batch_format="pyarrow"`, `zero_copy_batch=True`). Range boundaries computed via sampling.
-3. Repartitions by `_slatedb_db_id` using hash shuffle (`DataContext.shuffle_strategy = "HASH_SHUFFLE"`; saved/restored). Then `map_batches` writes each shard with `batch_format="pandas"`. Empty shards are materialized as real empty DBs via `materialize_empty_shards()` in `_writer_core.py`.
+3. Repartitions by `_slatedb_db_id` using hash shuffle (`DataContext.shuffle_strategy = "HASH_SHUFFLE"`; saved/restored). Then `map_batches` writes each shard with `batch_format="pandas"`. Empty shards (no rows in partition) are omitted from the manifest; `select_winners()` filters them out.
 4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `_verify_routing_agreement()`.
 5. Uses the same `_writer_core.py` functions for winner selection, manifest building, and publishing.
 
@@ -105,8 +105,8 @@ Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus ext
 ### Read Pipeline
 
 1. `ShardedReader` / `ConcurrentShardedReader` in `reader/reader.py` loads the `_CURRENT` pointer from S3 and dereferences the manifest. On cold start, if `load_manifest()` raises `ManifestParseError`, the reader falls back to previous manifests via `list_manifests()` (up to `max_fallback_attempts`, default 3).
-2. Builds a `SnapshotRouter` from the manifest sharding metadata (mirrors write-time sharding logic).
-3. `get(key)` / `multi_get(keys)` routes keys to shard IDs, then reads from the appropriate shard.
+2. Builds a `SnapshotRouter` from the manifest sharding metadata (mirrors write-time sharding logic). For empty shards (absent from manifest, padded by router with `db_url=None`), a `_NullShardReader` is used instead of opening a real DB.
+3. `get(key)` / `multi_get(keys)` routes keys to shard IDs, then reads from the appropriate shard. Keys routed to empty shards return `None` immediately via the null reader.
 4. `shard_for_key(key)` / `shards_for_keys(keys)` return `RequiredShardMeta` for routing inspection without DB access. `reader_for_key(key)` / `readers_for_keys(keys)` return borrowed `ShardReaderHandle` handles for direct shard access.
 5. `ShardedReader` swaps state directly on refresh. `ConcurrentShardedReader` serialises refresh I/O via `_refresh_lock` and atomically swaps readers using reference counting with a compare-and-swap guard for safe cleanup. Borrowed `ShardReaderHandle` handles hold refcount increments, preventing cleanup of old state while borrows are outstanding. On `refresh()`, a malformed manifest is silently skipped (returns `False`), keeping the previous good state.
 6. `ConcurrentShardedReader` provides thread safety via `threading.Lock` (default) or `ThreadPoolExecutor` pool mode (`thread_safety` config). Pool mode supports configurable checkout timeout (`pool_checkout_timeout`, default 30s).
@@ -216,7 +216,7 @@ Both encodings produce identical hash routing results for keys in `[0, 2^32-1]` 
 - **Hash** (default): `pmod(xxhash64(cast(key as long)), num_dbs)` — requires integer key column
 - **Range**: Explicit boundaries or computed via `approxQuantile` — supports int/float/string keys
 
-The `SnapshotRouter` in `routing.py` mirrors the writer's sharding logic exactly for consistent key routing at read time. Range routing prefers explicit manifest boundaries over shard min/max intervals; empty shards (`None`, `None` bounds) are excluded from interval-based routing.
+The `SnapshotRouter` in `routing.py` mirrors the writer's sharding logic exactly for consistent key routing at read time. Manifests are sparse: only shards with data appear in the `shards` list. `SnapshotRouter.__init__` pads missing db_ids with synthetic `RequiredShardMeta(db_url=None, row_count=0)` entries so `router.shards[db_id]` always works. Range routing prefers explicit manifest boundaries over shard min/max intervals; empty shards (`None`, `None` bounds) are excluded from interval-based routing.
 
 ## Critical Invariants
 

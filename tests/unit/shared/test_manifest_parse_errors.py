@@ -68,21 +68,39 @@ def test_missing_required_fields() -> None:
         parse_json_manifest(payload)
 
 
-def test_shard_count_mismatch() -> None:
-    data = _build_valid_manifest(num_dbs=8)
-    # Only include 5 shards instead of 8
-    data["shards"] = data["shards"][:5]
+def test_shard_count_exceeds_num_dbs() -> None:
+    data = _build_valid_manifest(num_dbs=2)
+    # Add extra shards beyond num_dbs
+    data["shards"].append(
+        {
+            "db_id": 2,
+            "db_url": "s3://x",
+            "attempt": 0,
+            "row_count": 1,
+            "writer_info": {},
+        }
+    )
     payload = json.dumps(data).encode()
-    with pytest.raises(ManifestParseError, match="shard count mismatch"):
+    with pytest.raises(ManifestParseError, match="exceeds num_dbs"):
         parse_json_manifest(payload)
 
 
-def test_non_contiguous_shard_ids() -> None:
+def test_sparse_shards_accepted() -> None:
+    """Manifests with fewer shards than num_dbs are valid (empty shards omitted)."""
+    data = _build_valid_manifest(num_dbs=8)
+    # Only include 5 shards — the other 3 are implicitly empty
+    data["shards"] = data["shards"][:5]
+    payload = json.dumps(data).encode()
+    result = parse_json_manifest(payload)
+    assert len(result.shards) == 5
+
+
+def test_out_of_range_shard_ids() -> None:
     data = _build_valid_manifest(num_dbs=3)
-    # Make shard IDs non-contiguous: [0, 1, 5] instead of [0, 1, 2]
+    # Make shard ID out of range: db_id=5 with num_dbs=3
     data["shards"][2]["db_id"] = 5
     payload = json.dumps(data).encode()
-    with pytest.raises(ManifestParseError, match="coverage mismatch"):
+    with pytest.raises(ManifestParseError, match="out of range"):
         parse_json_manifest(payload)
 
 
@@ -91,7 +109,7 @@ def test_duplicate_shard_ids() -> None:
     # Both shards have db_id=0
     data["shards"][1]["db_id"] = 0
     payload = json.dumps(data).encode()
-    with pytest.raises(ManifestParseError, match="coverage mismatch"):
+    with pytest.raises(ManifestParseError, match="duplicate"):
         parse_json_manifest(payload)
 
 

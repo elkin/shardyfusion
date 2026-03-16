@@ -62,7 +62,7 @@ def test_parse_json_manifest_rejects_bad_shard_coverage() -> None:
         "required": {
             "run_id": "run-1",
             "created_at": "2026-01-01T00:00:00+00:00",
-            "num_dbs": 2,
+            "num_dbs": 1,
             "s3_prefix": "s3://bucket/prefix",
             "key_col": "id",
             "key_encoding": "u64be",
@@ -81,12 +81,22 @@ def test_parse_json_manifest_rejects_bad_shard_coverage() -> None:
                 "max_key": 1,
                 "checkpoint_id": None,
                 "writer_info": {},
-            }
+            },
+            {
+                "db_id": 1,
+                "db_url": "s3://bucket/prefix/db=00001",
+                "attempt": 0,
+                "row_count": 1,
+                "min_key": 2,
+                "max_key": 2,
+                "checkpoint_id": None,
+                "writer_info": {},
+            },
         ],
         "custom": {},
     }
 
-    with pytest.raises(ManifestParseError, match="shard count mismatch"):
+    with pytest.raises(ManifestParseError, match="exceeds num_dbs"):
         parse_json_manifest(json.dumps(payload).encode("utf-8"))
 
 

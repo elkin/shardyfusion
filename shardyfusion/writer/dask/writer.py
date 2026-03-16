@@ -14,7 +14,6 @@ from shardyfusion._writer_core import (
     ShardAttemptResult,
     assemble_build_result,
     cleanup_losers,
-    materialize_empty_shards,
     publish_to_store,
     route_key,
     select_winners,
@@ -218,7 +217,6 @@ def write_sharded(
         results_pdf = ddf_results.compute()
 
         attempts = _results_pdf_to_attempts(results_pdf)
-        attempts = materialize_empty_shards(attempts, config=config, run_id=run_id)
         write_duration_ms = int((time.perf_counter() - write_started) * 1000)
 
         rows_written = sum(a.row_count for a in attempts)

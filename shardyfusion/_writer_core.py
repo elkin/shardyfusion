@@ -42,13 +42,29 @@ _PUBLISH_CURRENT_MAX_RETRIES = 3
 @dataclass(slots=True)
 class ShardAttemptResult:
     db_id: int
-    db_url: str
+    db_url: str | None
     attempt: int
     row_count: int
     min_key: int | str | None
     max_key: int | str | None
     checkpoint_id: str | None
     writer_info: WriterInfo
+
+
+def empty_shard_result(
+    db_id: int, attempt: int = 0, writer_info: WriterInfo | None = None
+) -> ShardAttemptResult:
+    """Construct a metadata-only ShardAttemptResult for an empty (unwritten) shard."""
+    return ShardAttemptResult(
+        db_id=db_id,
+        db_url=None,
+        attempt=attempt,
+        row_count=0,
+        min_key=None,
+        max_key=None,
+        checkpoint_id=None,
+        writer_info=writer_info or WriterInfo(),
+    )
 
 
 @dataclass(slots=True)
@@ -97,29 +113,31 @@ def select_winners(
     for item in attempts:
         grouped[item.db_id].append(item)
         num_attempts += 1
-        all_attempt_urls.append(item.db_url)
+        if item.db_url is not None:
+            all_attempt_urls.append(item.db_url)
 
+    # Validate: no extra db_ids beyond expected range.
+    # Missing db_ids are fine — they are empty shards omitted from the manifest.
     expected_ids = set(range(num_dbs))
     got_ids = set(grouped.keys())
-    if got_ids != expected_ids:
-        missing = sorted(expected_ids - got_ids)
-        extra = sorted(got_ids - expected_ids)
+    extra = sorted(got_ids - expected_ids)
+    if extra:
         log_failure(
             "shard_coverage_mismatch",
             severity=FailureSeverity.CRITICAL,
             logger=_logger,
-            missing_shards=missing,
             extra_shards=extra,
             expected_count=num_dbs,
             got_count=len(got_ids),
         )
-        raise ShardCoverageError(
-            f"Shard coverage mismatch; missing={missing}, extra={extra}"
-        )
+        raise ShardCoverageError(f"Shard coverage mismatch; extra={extra}")
 
     winners: list[RequiredShardMeta] = []
-    for db_id in range(num_dbs):
+    for db_id in sorted(got_ids):
         winner = sorted(grouped[db_id], key=_winner_sort_key)[0]
+        # Skip empty shards (db_url=None) — they are not written to the manifest.
+        if winner.db_url is None:
+            continue
         log_event(
             "winner_selected",
             level=logging.DEBUG,
@@ -147,81 +165,7 @@ def select_winners(
 def _winner_sort_key(item: ShardAttemptResult) -> tuple[int, int, str]:
     tid = item.writer_info.task_attempt_id
     normalized = tid if tid is not None else 2**63 - 1
-    return (item.attempt, normalized, item.db_url)
-
-
-def materialize_empty_shards(
-    attempts: list[ShardAttemptResult],
-    *,
-    config: WriteConfig,
-    run_id: str,
-) -> list[ShardAttemptResult]:
-    """Materialize real empty shard DBs for any db_ids not covered by partition writes.
-
-    Creates an actual SlateDB database on S3 (open, flush, checkpoint, close)
-    so the manifest points to a real, openable shard with a valid checkpoint_id.
-    Shared by the Dask and Ray writers.
-    """
-    from pathlib import Path
-
-    from .slatedb_adapter import DbAdapterFactory, SlateDbFactory
-
-    seen_db_ids = {a.db_id for a in attempts}
-    missing_db_ids = [
-        db_id for db_id in range(config.num_dbs) if db_id not in seen_db_ids
-    ]
-    if not missing_db_ids:
-        return attempts
-
-    factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory(
-        credential_provider=config.credential_provider
-    )
-
-    for db_id in missing_db_ids:
-        db_rel_path = config.output.db_path_template.format(db_id=db_id)
-        db_url = join_s3(
-            config.s3_prefix,
-            config.output.shard_prefix,
-            f"run_id={run_id}",
-            db_rel_path,
-            "attempt=00",
-        )
-        local_dir = (
-            Path(config.output.local_root)
-            / f"run_id={run_id}"
-            / f"db={db_id:05d}"
-            / "attempt=00"
-        )
-        local_dir.mkdir(parents=True, exist_ok=True)
-
-        checkpoint_id: str | None = None
-        with factory(db_url=db_url, local_dir=local_dir) as adapter:
-            adapter.flush()
-            checkpoint_id = adapter.checkpoint()
-
-        log_event(
-            "empty_shard_materialized",
-            logger=_logger,
-            run_id=run_id,
-            db_id=db_id,
-            db_url=db_url,
-            checkpoint_id=checkpoint_id,
-        )
-
-        attempts.append(
-            ShardAttemptResult(
-                db_id=db_id,
-                db_url=db_url,
-                attempt=0,
-                row_count=0,
-                min_key=None,
-                max_key=None,
-                checkpoint_id=checkpoint_id,
-                writer_info=WriterInfo(),
-            )
-        )
-
-    return attempts
+    return (item.attempt, normalized, item.db_url or "")
 
 
 def publish_to_store(
@@ -372,7 +316,7 @@ def cleanup_losers(
         Total number of S3 objects deleted across all losing attempts.
     """
 
-    winner_urls = {w.db_url for w in winners}
+    winner_urls = {w.db_url for w in winners if w.db_url is not None}
     total_deleted = 0
     num_losers = 0
     client = s3_client or create_s3_client()
@@ -438,9 +382,15 @@ def cleanup_stale_attempts(
 
     actions: list[CleanupAction] = []
     build = manifest.required_build
-    winner_urls = {shard.db_url.rstrip("/") for shard in manifest.shards}
+    winner_urls = {
+        shard.db_url.rstrip("/")
+        for shard in manifest.shards
+        if shard.db_url is not None
+    }
 
     for shard in manifest.shards:
+        if shard.db_url is None:
+            continue
         # Build the scan prefix: s3_prefix/shard_prefix/run_id=XXX/db=NNNNN/
         db_segment = build.db_path_template.format(db_id=shard.db_id)
         scan_prefix = join_s3(

@@ -3,6 +3,7 @@
 import time
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from itertools import chain
 from pathlib import Path
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ from shardyfusion._writer_core import (
     ShardAttemptResult,
     assemble_build_result,
     cleanup_losers,
+    empty_shard_result,
     publish_to_store,
     select_winners,
     update_min_max,
@@ -428,6 +430,26 @@ def write_one_shard_partition(
     attempt = int(ctx.attemptNumber()) if ctx else 0
     stage_id = int(ctx.stageId()) if ctx else None
     task_attempt_id = int(ctx.taskAttemptId()) if ctx else None
+
+    # Peek at first row — if partition is empty, emit metadata-only result
+    # without opening a SlateDB adapter (avoids S3 I/O for empty shards).
+    it = iter(rows_iter)
+    try:
+        first = next(it)
+    except StopIteration:
+        yield empty_shard_result(
+            db_id,
+            attempt=attempt,
+            writer_info=WriterInfo(
+                stage_id=stage_id,
+                task_attempt_id=task_attempt_id,
+                attempt=attempt,
+                duration_ms=0,
+            ),
+        )
+        return
+
+    rows_iter = chain([first], it)
 
     db_rel_path = runtime.db_path_template.format(db_id=db_id)
     db_url = join_s3(

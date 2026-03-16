@@ -46,6 +46,21 @@ _logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Null async shard reader for empty shards (db_url=None)
+# ---------------------------------------------------------------------------
+
+
+class _NullAsyncShardReader:
+    """No-op async reader for empty shards — always returns ``None``."""
+
+    async def get(self, key: bytes) -> bytes | None:
+        return None
+
+    async def close(self) -> None:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -627,14 +642,17 @@ class AsyncShardedReader:
         router = SnapshotRouter(manifest.required_build, manifest.shards)
         readers: dict[int, AsyncShardReader] = {}
         try:
-            for shard in manifest.shards:
-                local_path = Path(self.local_root) / f"shard={shard.db_id:05d}"
-                local_path.mkdir(parents=True, exist_ok=True)
-                readers[shard.db_id] = await self._reader_factory(
-                    db_url=shard.db_url,
-                    local_dir=local_path,
-                    checkpoint_id=shard.checkpoint_id,
-                )
+            for shard in router.shards:
+                if shard.db_url is None:
+                    readers[shard.db_id] = _NullAsyncShardReader()
+                else:
+                    local_path = Path(self.local_root) / f"shard={shard.db_id:05d}"
+                    local_path.mkdir(parents=True, exist_ok=True)
+                    readers[shard.db_id] = await self._reader_factory(
+                        db_url=shard.db_url,
+                        local_dir=local_path,
+                        checkpoint_id=shard.checkpoint_id,
+                    )
         except Exception:
             for reader in readers.values():
                 try:

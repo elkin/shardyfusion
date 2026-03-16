@@ -48,6 +48,21 @@ _logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Null shard reader for empty shards (db_url=None)
+# ---------------------------------------------------------------------------
+
+
+class _NullShardReader:
+    """No-op reader for empty shards — always returns ``None``."""
+
+    def get(self, key: bytes) -> bytes | None:
+        return None
+
+    def close(self) -> None:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Lock ordering validator
 # ---------------------------------------------------------------------------
 
@@ -129,7 +144,7 @@ class ShardDetail:
     row_count: int
     min_key: int | float | str | None
     max_key: int | float | str | None
-    db_url: str
+    db_url: str | None
 
 
 @dataclass(slots=True, frozen=True)
@@ -744,8 +759,11 @@ class ShardedReader(_BaseShardedReader):
         router = SnapshotRouter(manifest.required_build, manifest.shards)
         readers: dict[int, ShardReader] = {}
         try:
-            for shard in manifest.shards:
-                readers[shard.db_id] = self._open_one_reader(shard)
+            for shard in router.shards:
+                if shard.db_url is None:
+                    readers[shard.db_id] = _NullShardReader()
+                else:
+                    readers[shard.db_id] = self._open_one_reader(shard)
         except Exception:
             for reader in readers.values():
                 try:
@@ -1153,8 +1171,24 @@ class ConcurrentShardedReader(_BaseShardedReader):
         handles: dict[int, _ShardHandle] = {}
 
         try:
-            for shard in manifest.shards:
-                if self.thread_safety == "lock":
+            for shard in router.shards:
+                if shard.db_url is None:
+                    null_reader: ShardReader = _NullShardReader()
+                    if self.thread_safety == "lock":
+                        handles[shard.db_id] = _ShardHandle(
+                            mode="lock",
+                            reader=null_reader,
+                            lock=threading.Lock(),
+                        )
+                    else:
+                        handles[shard.db_id] = _ShardHandle(
+                            mode="pool",
+                            pool=_ReaderPool(
+                                [null_reader],
+                                checkout_timeout=self._pool_checkout_timeout,
+                            ),
+                        )
+                elif self.thread_safety == "lock":
                     reader = self._open_one_reader(shard)
                     handles[shard.db_id] = _ShardHandle(
                         mode="lock",

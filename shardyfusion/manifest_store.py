@@ -332,16 +332,21 @@ def _validate_manifest(
     required_build: RequiredBuildMeta, shards: list[RequiredShardMeta]
 ) -> None:
     num_dbs = required_build.num_dbs
-    if len(shards) != num_dbs:
+    if len(shards) > num_dbs:
         raise ManifestParseError(
-            f"Manifest shard count mismatch: expected {num_dbs}, got {len(shards)}"
+            f"Manifest shard count exceeds num_dbs: {len(shards)} > {num_dbs}"
         )
 
-    ids = sorted(shard.db_id for shard in shards)
-    expected = list(range(num_dbs))
-    if ids != expected:
+    ids = [shard.db_id for shard in shards]
+    if len(ids) != len(set(ids)):
         raise ManifestParseError(
-            f"Manifest shard coverage mismatch; expected {expected}, got {ids}"
+            f"Manifest contains duplicate shard db_ids: {sorted(ids)}"
+        )
+
+    out_of_range = [i for i in ids if i < 0 or i >= num_dbs]
+    if out_of_range:
+        raise ManifestParseError(
+            f"Manifest shard db_ids out of range [0, {num_dbs}): {out_of_range}"
         )
 
     if not required_build.sharding or not required_build.sharding.strategy:

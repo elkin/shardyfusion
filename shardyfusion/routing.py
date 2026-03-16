@@ -36,7 +36,16 @@ class SnapshotRouter:
         self, required_build: RequiredBuildMeta, shards: list[RequiredShardMeta]
     ) -> None:
         self.required_build = required_build
-        self.shards = sorted(shards, key=lambda shard: shard.db_id)
+        # Build a complete shard list covering all db_ids in [0, num_dbs).
+        # Missing db_ids (empty shards omitted from the manifest) get synthetic
+        # metadata-only entries with db_url=None and row_count=0.
+        shard_by_id = {s.db_id: s for s in shards}
+        self.shards = [
+            shard_by_id.get(
+                db_id, RequiredShardMeta(db_id=db_id, attempt=0, row_count=0)
+            )
+            for db_id in range(required_build.num_dbs)
+        ]
         self.strategy = required_build.sharding.strategy
         self.num_dbs = required_build.num_dbs
         self.key_encoding = required_build.key_encoding

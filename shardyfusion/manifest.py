@@ -66,7 +66,7 @@ class RequiredShardMeta(BaseModel):
     """Winner shard metadata emitted by writer partitions."""
 
     db_id: int = Field(ge=0)
-    db_url: str
+    db_url: str | None = None
     attempt: int = Field(ge=0)
     row_count: int = Field(ge=0)
     min_key: int | str | None = None

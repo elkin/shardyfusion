@@ -877,3 +877,105 @@ async def test_close_waits_for_inflight_get(tmp_path) -> None:
     # Let the deferred cleanup task run
     await asyncio.sleep(0.01)
     assert all(r.closed for r in state.readers.values())
+
+
+# ---------------------------------------------------------------------------
+# Null shard reader tests (db_url=None)
+# ---------------------------------------------------------------------------
+
+
+def _manifest_with_empty_shard() -> ParsedManifest:
+    """Manifest with shard 0 = real data, shard 1 = empty (omitted from manifest).
+
+    The SnapshotRouter synthesizes a metadata-only entry for shard 1.
+    """
+    build = RequiredBuildMeta(
+        run_id="run",
+        created_at="2026-01-01T00:00:00+00:00",
+        num_dbs=2,
+        s3_prefix="s3://bucket/prefix",
+        key_col="id",
+        key_encoding=KeyEncoding.U64BE,
+        sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
+        db_path_template="db={db_id:05d}",
+        shard_prefix="shards",
+    )
+    return ParsedManifest(
+        required_build=build,
+        shards=[
+            RequiredShardMeta(
+                db_id=0,
+                db_url="mem://db/shard0",
+                attempt=0,
+                row_count=5,
+                min_key=0,
+                max_key=4,
+                checkpoint_id="ckpt-0",
+            ),
+        ],
+        custom={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_reader_null_shard_get(tmp_path: Path) -> None:
+    """Keys routed to an empty shard return None via null async reader."""
+    manifest = _manifest_with_empty_shard()
+    stores = {"mem://db/shard0": {(0).to_bytes(8, "big"): b"val0"}}
+    store = _AsyncMutableManifestStore(
+        {"mem://manifest/v1": manifest}, "mem://manifest/v1"
+    )
+    reader = await AsyncShardedReader.open(
+        s3_prefix="s3://bucket/prefix",
+        local_root=str(tmp_path),
+        manifest_store=store,
+        reader_factory=_async_fake_reader_factory(stores),
+    )
+    async with reader:
+        assert await reader.get(0) == b"val0"
+        assert await reader.get(1) is None
+
+
+@pytest.mark.asyncio
+async def test_async_reader_null_shard_multi_get(tmp_path: Path) -> None:
+    """multi_get across real and empty shards returns mixed results."""
+    manifest = _manifest_with_empty_shard()
+    stores = {"mem://db/shard0": {(0).to_bytes(8, "big"): b"val0"}}
+    store = _AsyncMutableManifestStore(
+        {"mem://manifest/v1": manifest}, "mem://manifest/v1"
+    )
+    reader = await AsyncShardedReader.open(
+        s3_prefix="s3://bucket/prefix",
+        local_root=str(tmp_path),
+        manifest_store=store,
+        reader_factory=_async_fake_reader_factory(stores),
+    )
+    async with reader:
+        results = await reader.multi_get([0, 1])
+        assert results[0] == b"val0"
+        assert results[1] is None
+
+
+@pytest.mark.asyncio
+async def test_async_reader_factory_not_called_for_null_shard(tmp_path: Path) -> None:
+    """Async reader factory is never invoked for shards with db_url=None."""
+    manifest = _manifest_with_empty_shard()
+    factory_calls: list[str] = []
+
+    async def tracking_factory(
+        *, db_url: str, local_dir: Path, checkpoint_id: str | None
+    ):
+        factory_calls.append(db_url)
+        return _AsyncFakeReader({})
+
+    store = _AsyncMutableManifestStore(
+        {"mem://manifest/v1": manifest}, "mem://manifest/v1"
+    )
+    reader = await AsyncShardedReader.open(
+        s3_prefix="s3://bucket/prefix",
+        local_root=str(tmp_path),
+        manifest_store=store,
+        reader_factory=tracking_factory,
+    )
+    assert factory_calls == ["mem://db/shard0"]
+    await reader.close()
