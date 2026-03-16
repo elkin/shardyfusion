@@ -246,8 +246,9 @@ def test_empty_input() -> None:
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
     )
 
-    assert len(result.winners) == 4
-    assert all(w.row_count == 0 for w in result.winners)
+    # No records → no non-empty shards in winners
+    assert len(result.winners) == 0
+    assert result.stats.rows_written == 0
 
 
 def test_batch_flushing() -> None:
