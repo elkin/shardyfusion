@@ -98,13 +98,15 @@ class SnapshotRouter:
     def _route_range(self, key: KeyInput) -> int:
         key_value = self._normalize_range_key(key)
 
+        # Prefer explicit boundaries when available — they cover all shards
+        # including empty ones, unlike intervals which exclude empty shards.
+        if self._boundaries:
+            return bisect_right(self._boundaries, key_value)
+
         if self._range_intervals:
             db_id = _search_intervals(self._range_intervals, key_value)
             if db_id is not None:
                 return db_id
-
-        if self._boundaries:
-            return bisect_right(self._boundaries, key_value)
 
         raise ValueError(
             "Range routing requires shard min/max ranges or sharding boundaries in manifest."
@@ -118,14 +120,6 @@ class SnapshotRouter:
 
         if self.strategy == ShardingStrategy.RANGE:
             return self._route_range
-
-        if self.strategy == ShardingStrategy.CUSTOM_EXPR:
-            if self._range_intervals or self._boundaries:
-                return self._route_range
-            raise ValueError(
-                "Sharding strategy custom_expr is not directly routable at read time; "
-                "manifest must include explicit boundaries or shard ranges."
-            )
 
         raise ValueError(f"Unsupported sharding strategy for routing: {self.strategy}")
 
@@ -153,18 +147,15 @@ class SnapshotRouter:
 
     @staticmethod
     def _build_range_intervals(shards: list[RequiredShardMeta]) -> list[_RangeInterval]:
+        # Exclude fully unbounded (None, None) intervals — empty shards
+        # should not participate in interval-based routing.
         intervals = [
             _RangeInterval(db_id=shard.db_id, lower=shard.min_key, upper=shard.max_key)
             for shard in shards
+            if shard.min_key is not None or shard.max_key is not None
         ]
 
         if not intervals:
-            return []
-
-        has_any_bound = any(
-            item.lower is not None or item.upper is not None for item in intervals
-        )
-        if not has_any_bound:
             return []
 
         _validate_interval_bound_types(intervals)

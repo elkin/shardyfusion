@@ -14,6 +14,7 @@ from shardyfusion._writer_core import (
     ShardAttemptResult,
     assemble_build_result,
     cleanup_losers,
+    materialize_empty_shards,
     publish_to_store,
     route_key,
     select_winners,
@@ -22,7 +23,6 @@ from shardyfusion._writer_core import (
 from shardyfusion.config import WriteConfig
 from shardyfusion.credentials import CredentialProvider
 from shardyfusion.errors import (
-    ConfigValidationError,
     ShardAssignmentError,
     ShardyfusionError,
 )
@@ -118,7 +118,7 @@ def write_sharded(
     Args:
         ddf: Dask DataFrame containing at least the key column and value column(s).
         config: Write configuration (num_dbs, s3_prefix, sharding strategy, etc.).
-            CUSTOM_EXPR sharding is not supported — only HASH and RANGE.
+            Only HASH and RANGE sharding strategies are supported.
         key_col: Name of the key column used for shard routing.
         value_spec: Specifies how DataFrame rows are serialized to bytes
             (binary_col, json_cols, or a callable encoder).
@@ -132,7 +132,7 @@ def write_sharded(
         BuildResult with manifest reference, shard metadata, and build statistics.
 
     Raises:
-        ConfigValidationError: If configuration is invalid or CUSTOM_EXPR is used.
+        ConfigValidationError: If configuration is invalid.
         ShardAssignmentError: If rows cannot be assigned to valid shard IDs.
         ShardCoverageError: If partition results don't cover all expected shards.
         PublishManifestError: If manifest upload to S3 fails.
@@ -218,7 +218,7 @@ def write_sharded(
         results_pdf = ddf_results.compute()
 
         attempts = _results_pdf_to_attempts(results_pdf)
-        attempts = _fill_empty_shards(attempts, config, run_id)
+        attempts = materialize_empty_shards(attempts, config=config, run_id=run_id)
         write_duration_ms = int((time.perf_counter() - write_started) * 1000)
 
         rows_written = sum(a.row_count for a in attempts)
@@ -297,11 +297,6 @@ def _validate_and_resolve_sharding(
     key_col: str,
 ) -> ShardingSpec:
     """Validate sharding config and resolve RANGE boundaries via Dask quantiles."""
-
-    if config.sharding.strategy == ShardingStrategy.CUSTOM_EXPR:
-        raise ConfigValidationError(
-            "Custom expression sharding is not supported in the Dask writer."
-        )
 
     if (
         config.sharding.strategy == ShardingStrategy.RANGE
@@ -648,39 +643,5 @@ def _results_pdf_to_attempts(
                 writer_info=r["writer_info"],
             )
         )
-
-    return attempts
-
-
-def _fill_empty_shards(
-    attempts: list[ShardAttemptResult],
-    config: WriteConfig,
-    run_id: str,
-) -> list[ShardAttemptResult]:
-    """Add zero-row results for any db_ids not covered by partition writes."""
-
-    seen_db_ids = {a.db_id for a in attempts}
-    for db_id in range(config.num_dbs):
-        if db_id not in seen_db_ids:
-            db_rel_path = config.output.db_path_template.format(db_id=db_id)
-            db_url = join_s3(
-                config.s3_prefix,
-                config.output.shard_prefix,
-                f"run_id={run_id}",
-                db_rel_path,
-                "attempt=00",
-            )
-            attempts.append(
-                ShardAttemptResult(
-                    db_id=db_id,
-                    db_url=db_url,
-                    attempt=0,
-                    row_count=0,
-                    min_key=None,
-                    max_key=None,
-                    checkpoint_id=None,
-                    writer_info=WriterInfo(),
-                )
-            )
 
     return attempts

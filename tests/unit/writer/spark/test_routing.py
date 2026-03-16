@@ -199,37 +199,6 @@ def test_range_router_boundary_values_use_upper_shard_when_using_boundaries() ->
     assert router.route_one(20) == 2
 
 
-def test_custom_expr_requires_routing_info() -> None:
-    required = _build_required(
-        strategy=ShardingStrategy.CUSTOM_EXPR, num_dbs=2, boundaries=None
-    )
-    shards = [
-        RequiredShardMeta(
-            db_id=0,
-            db_url="s3://bucket/prefix/db=00000",
-            attempt=0,
-            row_count=0,
-            min_key=None,
-            max_key=None,
-            checkpoint_id=None,
-            writer_info={},
-        ),
-        RequiredShardMeta(
-            db_id=1,
-            db_url="s3://bucket/prefix/db=00001",
-            attempt=0,
-            row_count=0,
-            min_key=None,
-            max_key=None,
-            checkpoint_id=None,
-            writer_info={},
-        ),
-    ]
-
-    with pytest.raises(ValueError, match="not directly routable"):
-        SnapshotRouter(required, shards)
-
-
 # ---------------------------------------------------------------------------
 # u32be encoding tests
 # ---------------------------------------------------------------------------
@@ -320,3 +289,100 @@ def test_u32be_hash_router_bytes_key_same_as_int() -> None:
 
     key = 123456
     assert router.route_one(key) == router.route_one(key.to_bytes(4, byteorder="big"))
+
+
+# ---------------------------------------------------------------------------
+# Range routing with empty shards
+# ---------------------------------------------------------------------------
+
+
+def test_range_routing_with_mixed_empty_shards_prefers_boundaries() -> None:
+    """Boundaries drive routing even when a shard has no min/max keys (empty)."""
+    required = _build_required(
+        strategy=ShardingStrategy.RANGE, num_dbs=3, boundaries=[10, 20]
+    )
+    shards = [
+        RequiredShardMeta(
+            db_id=0,
+            db_url="s3://bucket/prefix/db=00000",
+            attempt=0,
+            row_count=0,
+            min_key=None,
+            max_key=None,
+            checkpoint_id=None,
+            writer_info={},
+        ),
+        RequiredShardMeta(
+            db_id=1,
+            db_url="s3://bucket/prefix/db=00001",
+            attempt=0,
+            row_count=10,
+            min_key=10,
+            max_key=19,
+            checkpoint_id=None,
+            writer_info={},
+        ),
+        RequiredShardMeta(
+            db_id=2,
+            db_url="s3://bucket/prefix/db=00002",
+            attempt=0,
+            row_count=5,
+            min_key=20,
+            max_key=29,
+            checkpoint_id=None,
+            writer_info={},
+        ),
+    ]
+
+    router = SnapshotRouter(required, shards)
+
+    assert router.route_one(5) == 0
+    assert router.route_one(15) == 1
+    assert router.route_one(25) == 2
+
+
+def test_range_routing_empty_shards_excluded_from_intervals() -> None:
+    """When no boundaries are provided, empty shards (None, None) are excluded
+    from the interval list used for routing."""
+    required = _build_required(
+        strategy=ShardingStrategy.RANGE, num_dbs=3, boundaries=None
+    )
+    shards = [
+        RequiredShardMeta(
+            db_id=0,
+            db_url="s3://bucket/prefix/db=00000",
+            attempt=0,
+            row_count=5,
+            min_key=0,
+            max_key=9,
+            checkpoint_id=None,
+            writer_info={},
+        ),
+        RequiredShardMeta(
+            db_id=1,
+            db_url="s3://bucket/prefix/db=00001",
+            attempt=0,
+            row_count=0,
+            min_key=None,
+            max_key=None,
+            checkpoint_id=None,
+            writer_info={},
+        ),
+        RequiredShardMeta(
+            db_id=2,
+            db_url="s3://bucket/prefix/db=00002",
+            attempt=0,
+            row_count=5,
+            min_key=20,
+            max_key=29,
+            checkpoint_id=None,
+            writer_info={},
+        ),
+    ]
+
+    router = SnapshotRouter(required, shards)
+
+    # Only 2 intervals (shard 1 excluded because it's empty)
+    assert len(router._range_intervals) == 2
+    interval_db_ids = [iv.db_id for iv in router._range_intervals]
+    assert 1 not in interval_db_ids

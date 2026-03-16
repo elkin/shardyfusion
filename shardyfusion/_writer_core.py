@@ -150,6 +150,80 @@ def _winner_sort_key(item: ShardAttemptResult) -> tuple[int, int, str]:
     return (item.attempt, normalized, item.db_url)
 
 
+def materialize_empty_shards(
+    attempts: list[ShardAttemptResult],
+    *,
+    config: WriteConfig,
+    run_id: str,
+) -> list[ShardAttemptResult]:
+    """Materialize real empty shard DBs for any db_ids not covered by partition writes.
+
+    Creates an actual SlateDB database on S3 (open, flush, checkpoint, close)
+    so the manifest points to a real, openable shard with a valid checkpoint_id.
+    Shared by the Dask and Ray writers.
+    """
+    from pathlib import Path
+
+    from .slatedb_adapter import DbAdapterFactory, SlateDbFactory
+
+    seen_db_ids = {a.db_id for a in attempts}
+    missing_db_ids = [
+        db_id for db_id in range(config.num_dbs) if db_id not in seen_db_ids
+    ]
+    if not missing_db_ids:
+        return attempts
+
+    factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory(
+        credential_provider=config.credential_provider
+    )
+
+    for db_id in missing_db_ids:
+        db_rel_path = config.output.db_path_template.format(db_id=db_id)
+        db_url = join_s3(
+            config.s3_prefix,
+            config.output.shard_prefix,
+            f"run_id={run_id}",
+            db_rel_path,
+            "attempt=00",
+        )
+        local_dir = (
+            Path(config.output.local_root)
+            / f"run_id={run_id}"
+            / f"db={db_id:05d}"
+            / "attempt=00"
+        )
+        local_dir.mkdir(parents=True, exist_ok=True)
+
+        checkpoint_id: str | None = None
+        with factory(db_url=db_url, local_dir=local_dir) as adapter:
+            adapter.flush()
+            checkpoint_id = adapter.checkpoint()
+
+        log_event(
+            "empty_shard_materialized",
+            logger=_logger,
+            run_id=run_id,
+            db_id=db_id,
+            db_url=db_url,
+            checkpoint_id=checkpoint_id,
+        )
+
+        attempts.append(
+            ShardAttemptResult(
+                db_id=db_id,
+                db_url=db_url,
+                attempt=0,
+                row_count=0,
+                min_key=None,
+                max_key=None,
+                checkpoint_id=checkpoint_id,
+                writer_info=WriterInfo(),
+            )
+        )
+
+    return attempts
+
+
 def publish_to_store(
     *,
     config: WriteConfig,
@@ -465,7 +539,6 @@ def manifest_safe_sharding(sharding: ShardingSpec) -> ManifestShardingSpec:
         if sharding.boundaries is not None
         else None,
         approx_quantile_rel_error=sharding.approx_quantile_rel_error,
-        custom_expr=sharding.custom_expr,
     )
 
 
