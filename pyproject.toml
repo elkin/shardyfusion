@@ -52,6 +52,7 @@ writer-ray = [
   "boto3>=1.28",
 ]
 cli = [
+  "shardyfusion[read]",
   "click>=8.0",
   "pyyaml>=6.0",
 ]
