@@ -1,10 +1,10 @@
 """Manifest models and extensibility protocols."""
 
-import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
+import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from .sharding_types import BoundaryValue, KeyEncoding, ShardingStrategy
@@ -32,7 +32,8 @@ class ManifestShardingSpec(BaseModel):
     strategy: ShardingStrategy = ShardingStrategy.HASH
     boundaries: list[BoundaryValue] | None = None
     approx_quantile_rel_error: float = Field(default=0.01, gt=0, lt=1)
-    custom_expr: str | None = None
+    cel_expr: str | None = None
+    cel_columns: dict[str, str] | None = None
 
 
 class RequiredBuildMeta(BaseModel):
@@ -69,8 +70,8 @@ class RequiredShardMeta(BaseModel):
     db_url: str | None = None
     attempt: int = Field(ge=0)
     row_count: int = Field(ge=0)
-    min_key: int | str | None = None
-    max_key: int | str | None = None
+    min_key: int | str | bytes | None = None
+    max_key: int | str | bytes | None = None
     checkpoint_id: str | None = None
     writer_info: WriterInfo = Field(default_factory=WriterInfo)
 
@@ -155,8 +156,12 @@ class ManifestBuilder(Protocol):
         ...
 
 
-class JsonManifestBuilder:
-    """Default manifest builder emitting JSON."""
+class YamlManifestBuilder:
+    """Default manifest builder emitting YAML.
+
+    Uses ``yaml.safe_dump`` for native ``bytes`` support (``!!binary``),
+    human-readable output, and deterministic key ordering.
+    """
 
     def __init__(self) -> None:
         self._custom_fields: JsonObject = {}
@@ -171,6 +176,7 @@ class JsonManifestBuilder:
         shards: list[RequiredShardMeta],
         custom_fields: JsonObject,
     ) -> ManifestArtifact:
+
         merged_custom = dict(self._custom_fields)
         merged_custom.update(custom_fields)
 
@@ -179,10 +185,9 @@ class JsonManifestBuilder:
             "shards": [shard.model_dump(mode="json") for shard in shards],
             "custom": merged_custom,
         }
-        payload = json.dumps(
+        payload = yaml.safe_dump(
             payload_obj,
-            ensure_ascii=False,
             sort_keys=True,
-            separators=(",", ":"),
+            default_flow_style=False,
         ).encode("utf-8")
-        return ManifestArtifact(payload=payload, content_type="application/json")
+        return ManifestArtifact(payload=payload, content_type="application/x-yaml")

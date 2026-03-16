@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import yaml
+
 from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
 from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
@@ -62,7 +64,7 @@ def test_python_writer_publishes_manifest_and_current_to_local_s3(
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
     current_obj = client.get_object(Bucket=bucket, Key=current_key)
 
-    manifest_payload = json.loads(manifest_obj["Body"].read().decode("utf-8"))
+    manifest_payload = yaml.safe_load(manifest_obj["Body"].read())
     current_payload = json.loads(current_obj["Body"].read().decode("utf-8"))
 
     assert manifest_payload["required"]["run_id"] == "python-writer-local-s3"

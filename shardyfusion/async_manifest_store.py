@@ -12,9 +12,6 @@ from typing import Any, Protocol
 from .credentials import CredentialProvider, S3Credentials
 from .logging import FailureSeverity, get_logger, log_failure
 from .manifest import ManifestRef, ParsedManifest
-from .manifest_store import (
-    parse_json_manifest,
-)
 from .metrics import MetricsCollector
 from .storage import join_s3, parse_s3_url
 from .type_defs import RetryConfig, S3ConnectionOptions
@@ -85,7 +82,9 @@ class AsyncS3ManifestStore:
                 manifest_ref=ref,
             )
             raise
-        return parse_json_manifest(payload)
+        from .manifest_store import parse_manifest
+
+        return parse_manifest(payload)
 
     async def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
         from .manifest_store import parse_manifest_dir_entry

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import slatedb
+import yaml
 
 from shardyfusion.credentials import CredentialProvider, StaticCredentialProvider
 from shardyfusion.manifest import (
@@ -138,19 +139,20 @@ def run_reader_loads_manifest_scenario(
             writer_info={},
         ),
     ]
-    manifest_payload = json.dumps(
+
+    manifest_payload = yaml.safe_dump(
         {
             "required": required.model_dump(mode="json"),
             "shards": [shard.model_dump(mode="json") for shard in shards],
             "custom": {},
         },
         sort_keys=True,
-        separators=(",", ":"),
+        default_flow_style=False,
     ).encode("utf-8")
     current_payload = json.dumps(
         CurrentPointer(
             manifest_ref=manifest_ref,
-            manifest_content_type="application/json",
+            manifest_content_type="application/x-yaml",
             run_id="reader-local",
             updated_at="2026-01-01T00:00:00+00:00",
         ).model_dump(mode="json"),
@@ -164,7 +166,7 @@ def run_reader_loads_manifest_scenario(
         Bucket=bucket,
         Key=manifest_ref.split(f"s3://{bucket}/", 1)[1],
         Body=manifest_payload,
-        ContentType="application/json",
+        ContentType="application/x-yaml",
     )
     client.put_object(
         Bucket=bucket,
@@ -266,7 +268,7 @@ def run_writer_publishes_manifest_scenario(
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
     current_obj = client.get_object(Bucket=bucket, Key=current_key)
 
-    manifest_payload = json.loads(manifest_obj["Body"].read().decode("utf-8"))
+    manifest_payload = yaml.safe_load(manifest_obj["Body"].read())
     current_payload = json.loads(current_obj["Body"].read().decode("utf-8"))
 
     assert manifest_payload["required"]["run_id"] == "writer-local-s3"
@@ -471,7 +473,7 @@ def run_python_writer_publishes_manifest_scenario(
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
     current_obj = client.get_object(Bucket=bucket, Key=current_key)
 
-    manifest_payload = json.loads(manifest_obj["Body"].read().decode("utf-8"))
+    manifest_payload = yaml.safe_load(manifest_obj["Body"].read())
     current_payload = json.loads(current_obj["Body"].read().decode("utf-8"))
 
     assert manifest_payload["required"]["run_id"] == f"python-writer-{mode_label}"
@@ -573,7 +575,7 @@ def run_dask_writer_publishes_manifest_scenario(
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
     current_obj = client.get_object(Bucket=bucket, Key=current_key)
 
-    manifest_payload = json.loads(manifest_obj["Body"].read().decode("utf-8"))
+    manifest_payload = yaml.safe_load(manifest_obj["Body"].read())
     current_payload = json.loads(current_obj["Body"].read().decode("utf-8"))
 
     assert manifest_payload["required"]["run_id"] == "dask-writer-e2e"
@@ -881,7 +883,7 @@ def run_ray_writer_publishes_manifest_scenario(
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
     current_obj = client.get_object(Bucket=bucket, Key=current_key)
 
-    manifest_payload = json.loads(manifest_obj["Body"].read().decode("utf-8"))
+    manifest_payload = yaml.safe_load(manifest_obj["Body"].read())
     current_payload = json.loads(current_obj["Body"].read().decode("utf-8"))
 
     assert manifest_payload["required"]["run_id"] == "ray-writer-e2e"

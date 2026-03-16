@@ -43,7 +43,6 @@ from .manifest import (
     BuildResult,
     BuildStats,
     CurrentPointer,
-    JsonManifestBuilder,
     ManifestArtifact,
     ManifestBuilder,
     ManifestRef,
@@ -51,12 +50,13 @@ from .manifest import (
     RequiredBuildMeta,
     RequiredShardMeta,
     WriterInfo,
+    YamlManifestBuilder,
 )
 from .manifest_store import (
     InMemoryManifestStore,
     ManifestStore,
     S3ManifestStore,
-    parse_json_manifest,
+    parse_manifest,
 )
 from .metrics import MetricEvent, MetricsCollector
 from .reader import (
@@ -110,7 +110,7 @@ __all__ = [
     "FailureSeverity",
     "InMemoryManifestStore",
     "JsonFormatter",
-    "JsonManifestBuilder",
+    "YamlManifestBuilder",
     "KeyEncoding",
     "LogContext",
     "ManifestArtifact",
@@ -160,5 +160,5 @@ __all__ = [
     "WriterInfo",
     "configure_logging",
     "get_logger",
-    "parse_json_manifest",
+    "parse_manifest",
 ]

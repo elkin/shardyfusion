@@ -3,15 +3,20 @@ from __future__ import annotations
 import json
 
 import pytest
+import yaml
 
 from shardyfusion.errors import ManifestParseError
 from shardyfusion.manifest_store import (
     S3ManifestStore,
-    parse_json_manifest,
+    parse_manifest,
 )
 
 
-def test_parse_json_manifest_round_trip() -> None:
+def _to_yaml(data: dict) -> bytes:
+    return yaml.safe_dump(data, sort_keys=True).encode()
+
+
+def test_parse_manifest_round_trip() -> None:
     payload = {
         "required": {
             "run_id": "run-1",
@@ -50,14 +55,14 @@ def test_parse_json_manifest_round_trip() -> None:
         "custom": {"env": "test"},
     }
 
-    parsed = parse_json_manifest(json.dumps(payload).encode("utf-8"))
+    parsed = parse_manifest(_to_yaml(payload))
 
     assert parsed.required_build.num_dbs == 2
     assert [shard.db_id for shard in parsed.shards] == [0, 1]
     assert parsed.custom == {"env": "test"}
 
 
-def test_parse_json_manifest_rejects_bad_shard_coverage() -> None:
+def test_parse_manifest_rejects_bad_shard_coverage() -> None:
     payload = {
         "required": {
             "run_id": "run-1",
@@ -97,18 +102,18 @@ def test_parse_json_manifest_rejects_bad_shard_coverage() -> None:
     }
 
     with pytest.raises(ManifestParseError, match="exceeds num_dbs"):
-        parse_json_manifest(json.dumps(payload).encode("utf-8"))
+        parse_manifest(_to_yaml(payload))
 
 
-def test_parse_json_manifest_rejects_corrupt_json() -> None:
+def test_parse_manifest_rejects_corrupt_yaml() -> None:
     with pytest.raises(ManifestParseError, match="Manifest validation failed"):
-        parse_json_manifest(b"not-json{{{")
+        parse_manifest(b"not-yaml{{{")
 
 
-def test_parse_json_manifest_rejects_missing_required_field() -> None:
-    payload = json.dumps({"shards": [], "custom": {}}).encode("utf-8")
+def test_parse_manifest_rejects_missing_required_field() -> None:
+    payload = _to_yaml({"shards": [], "custom": {}})
     with pytest.raises(ManifestParseError, match="Manifest validation failed"):
-        parse_json_manifest(payload)
+        parse_manifest(payload)
 
 
 def test_load_current_rejects_corrupt_json(monkeypatch) -> None:
@@ -125,7 +130,7 @@ def test_load_current_rejects_missing_manifest_ref(monkeypatch) -> None:
     def fake_try_get_bytes(url, *, s3_client=None, metrics_collector=None, **kwargs):
         return json.dumps(
             {
-                "manifest_content_type": "application/json",
+                "manifest_content_type": "application/x-yaml",
                 "run_id": "run-1",
                 "updated_at": "2026-01-01T00:00:00+00:00",
             }

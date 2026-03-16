@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
+import yaml
 
 from shardyfusion.errors import ManifestParseError
-from shardyfusion.manifest_store import parse_json_manifest
+from shardyfusion.manifest_store import parse_manifest
 
 
 def _build_valid_manifest(num_dbs: int = 2) -> dict:
@@ -37,35 +36,39 @@ def _build_valid_manifest(num_dbs: int = 2) -> dict:
     }
 
 
+def _to_yaml(data: dict) -> bytes:
+    return yaml.safe_dump(data, sort_keys=True).encode()
+
+
 def test_valid_manifest_parses() -> None:
     data = _build_valid_manifest()
-    payload = json.dumps(data).encode()
-    result = parse_json_manifest(payload)
+    payload = _to_yaml(data)
+    result = parse_manifest(payload)
     assert result.required_build.num_dbs == 2
     assert len(result.shards) == 2
 
 
-def test_truncated_json() -> None:
-    payload = b'{"required": {"run_id": "test"'  # truncated
+def test_truncated_yaml() -> None:
+    payload = b"required:\n  run_id: test\n  - invalid"  # malformed YAML
     with pytest.raises(ManifestParseError):
-        parse_json_manifest(payload)
+        parse_manifest(payload)
 
 
 def test_invalid_utf8() -> None:
     payload = b"\xff\xfe invalid bytes"
     with pytest.raises(ManifestParseError):
-        parse_json_manifest(payload)
+        parse_manifest(payload)
 
 
 def test_empty_payload() -> None:
     with pytest.raises(ManifestParseError):
-        parse_json_manifest(b"")
+        parse_manifest(b"")
 
 
 def test_missing_required_fields() -> None:
-    payload = json.dumps({"required": {"run_id": "test"}, "shards": []}).encode()
+    payload = _to_yaml({"required": {"run_id": "test"}, "shards": []})
     with pytest.raises(ManifestParseError):
-        parse_json_manifest(payload)
+        parse_manifest(payload)
 
 
 def test_shard_count_exceeds_num_dbs() -> None:
@@ -80,9 +83,9 @@ def test_shard_count_exceeds_num_dbs() -> None:
             "writer_info": {},
         }
     )
-    payload = json.dumps(data).encode()
+    payload = _to_yaml(data)
     with pytest.raises(ManifestParseError, match="exceeds num_dbs"):
-        parse_json_manifest(payload)
+        parse_manifest(payload)
 
 
 def test_sparse_shards_accepted() -> None:
@@ -90,8 +93,8 @@ def test_sparse_shards_accepted() -> None:
     data = _build_valid_manifest(num_dbs=8)
     # Only include 5 shards — the other 3 are implicitly empty
     data["shards"] = data["shards"][:5]
-    payload = json.dumps(data).encode()
-    result = parse_json_manifest(payload)
+    payload = _to_yaml(data)
+    result = parse_manifest(payload)
     assert len(result.shards) == 5
 
 
@@ -99,29 +102,29 @@ def test_out_of_range_shard_ids() -> None:
     data = _build_valid_manifest(num_dbs=3)
     # Make shard ID out of range: db_id=5 with num_dbs=3
     data["shards"][2]["db_id"] = 5
-    payload = json.dumps(data).encode()
+    payload = _to_yaml(data)
     with pytest.raises(ManifestParseError, match="out of range"):
-        parse_json_manifest(payload)
+        parse_manifest(payload)
 
 
 def test_duplicate_shard_ids() -> None:
     data = _build_valid_manifest(num_dbs=2)
     # Both shards have db_id=0
     data["shards"][1]["db_id"] = 0
-    payload = json.dumps(data).encode()
+    payload = _to_yaml(data)
     with pytest.raises(ManifestParseError, match="duplicate"):
-        parse_json_manifest(payload)
+        parse_manifest(payload)
 
 
 def test_invalid_sharding_strategy() -> None:
     data = _build_valid_manifest(num_dbs=1)
     data["required"]["sharding"] = {"strategy": "nonexistent_strategy"}
-    payload = json.dumps(data).encode()
+    payload = _to_yaml(data)
     with pytest.raises(ManifestParseError):
-        parse_json_manifest(payload)
+        parse_manifest(payload)
 
 
-def test_not_a_json_object() -> None:
-    payload = json.dumps([1, 2, 3]).encode()
+def test_not_a_yaml_object() -> None:
+    payload = yaml.safe_dump([1, 2, 3]).encode()
     with pytest.raises(ManifestParseError):
-        parse_json_manifest(payload)
+        parse_manifest(payload)

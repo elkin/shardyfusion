@@ -8,6 +8,7 @@ import dask
 import dask.dataframe as dd
 import pandas as pd
 import pytest
+import yaml
 
 from shardyfusion.config import (
     ManifestOptions,
@@ -78,7 +79,7 @@ def test_single_db_dask_publishes_manifest_and_current(
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
     current_obj = client.get_object(Bucket=bucket, Key=current_key)
 
-    manifest_payload = json.loads(manifest_obj["Body"].read().decode("utf-8"))
+    manifest_payload = yaml.safe_load(manifest_obj["Body"].read())
     current_payload = json.loads(current_obj["Body"].read().decode("utf-8"))
 
     assert manifest_payload["required"]["run_id"] == "single-db-dask-test"

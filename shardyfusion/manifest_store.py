@@ -13,6 +13,8 @@ import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
+import yaml
+
 if TYPE_CHECKING:
     from .type_defs import RetryConfig
 
@@ -23,13 +25,13 @@ from .errors import ManifestParseError
 from .logging import FailureSeverity, get_logger, log_failure
 from .manifest import (
     CurrentPointer,
-    JsonManifestBuilder,
     ManifestArtifact,
     ManifestBuilder,
     ManifestRef,
     ParsedManifest,
     RequiredBuildMeta,
     RequiredShardMeta,
+    YamlManifestBuilder,
 )
 from .metrics import MetricsCollector
 from .storage import (
@@ -158,7 +160,7 @@ class S3ManifestStore:
         shards: list[RequiredShardMeta],
         custom: dict[str, Any],
     ) -> str:
-        builder = self._builder or JsonManifestBuilder()
+        builder = self._builder or YamlManifestBuilder()
         artifact = builder.build(
             required_build=required_build,
             shards=shards,
@@ -215,7 +217,7 @@ class S3ManifestStore:
                 manifest_ref=ref,
             )
             raise
-        return parse_json_manifest(payload)
+        return parse_manifest(payload)
 
     def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
         manifests_prefix = join_s3(self.s3_prefix, "manifests") + "/"
@@ -240,7 +242,7 @@ class S3ManifestStore:
 
     def set_current(self, ref: str) -> None:
         run_id = _extract_run_id_from_ref(ref)
-        self._write_current(ref, "application/json", run_id)
+        self._write_current(ref, "application/x-yaml", run_id)
 
     def _write_current(self, manifest_ref: str, content_type: str, run_id: str) -> None:
         """Write the _CURRENT pointer to S3."""
@@ -316,11 +318,16 @@ class InMemoryManifestStore:
 # ---------------------------------------------------------------------------
 
 
-def parse_json_manifest(payload: bytes) -> ParsedManifest:
-    """Parse default JSON manifest payload into typed ParsedManifest."""
+def parse_manifest(payload: bytes) -> ParsedManifest:
+    """Parse a YAML manifest payload into typed ParsedManifest."""
 
     try:
-        parsed = ParsedManifest.model_validate_json(payload)
+        data = yaml.safe_load(payload)
+    except Exception as exc:
+        raise ManifestParseError(f"Manifest payload is not valid YAML: {exc}") from exc
+
+    try:
+        parsed = ParsedManifest.model_validate(data)
     except ValidationError as exc:
         raise ManifestParseError(f"Manifest validation failed: {exc}") from exc
 

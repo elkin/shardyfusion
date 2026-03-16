@@ -16,13 +16,13 @@ from typing import Any
 from .errors import ConfigValidationError, ManifestParseError, ManifestStoreError
 from .logging import FailureSeverity, get_logger, log_failure
 from .manifest import (
-    JsonManifestBuilder,
     ManifestRef,
     ParsedManifest,
     RequiredBuildMeta,
     RequiredShardMeta,
+    YamlManifestBuilder,
 )
-from .manifest_store import parse_json_manifest
+from .manifest_store import parse_manifest
 
 _logger = get_logger(__name__)
 
@@ -96,7 +96,7 @@ class _DbManifestStoreBase(ABC):
         shards: list[RequiredShardMeta],
         custom: dict[str, Any],
     ) -> str:
-        builder = JsonManifestBuilder()
+        builder = YamlManifestBuilder()
         artifact = builder.build(
             required_build=required_build,
             shards=shards,
@@ -223,7 +223,7 @@ class _DbManifestStoreBase(ABC):
             raise ManifestParseError(f"Manifest not found: ref={ref}")
 
         payload_str = row[0]
-        return parse_json_manifest(
+        return parse_manifest(
             payload_str.encode("utf-8") if isinstance(payload_str, str) else payload_str
         )
 

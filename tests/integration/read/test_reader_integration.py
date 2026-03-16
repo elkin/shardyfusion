@@ -13,7 +13,7 @@ from shardyfusion.manifest import (
     RequiredBuildMeta,
     RequiredShardMeta,
 )
-from shardyfusion.manifest_store import parse_json_manifest
+from shardyfusion.manifest_store import parse_manifest
 from shardyfusion.reader import ConcurrentShardedReader
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 
@@ -54,7 +54,7 @@ class InMemoryManifestStore:
         )
 
     def load_manifest(self, ref: str) -> ParsedManifest:
-        return parse_json_manifest(self.manifests[ref])
+        return parse_manifest(self.manifests[ref])
 
     def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
         return []
@@ -146,14 +146,15 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
         ),
     ]
 
-    manifest_payload = json.dumps(
+    import yaml
+
+    manifest_payload = yaml.safe_dump(
         {
             "required": required.model_dump(mode="json"),
             "shards": [shard.model_dump(mode="json") for shard in shards],
             "custom": {},
         },
         sort_keys=True,
-        separators=(",", ":"),
     ).encode("utf-8")
 
     pointers = {
@@ -161,7 +162,7 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
             {
                 "format_version": 1,
                 "manifest_ref": "mem://manifest/1",
-                "manifest_content_type": "application/json",
+                "manifest_content_type": "application/x-yaml",
                 "run_id": "run-1",
                 "updated_at": "2026-01-01T00:00:00+00:00",
             },

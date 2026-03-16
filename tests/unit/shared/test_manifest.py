@@ -1,19 +1,17 @@
 from __future__ import annotations
 
-import json
-
 from shardyfusion.manifest import (
-    JsonManifestBuilder,
     ManifestShardingSpec,
     ParsedManifest,
     RequiredBuildMeta,
     RequiredShardMeta,
+    YamlManifestBuilder,
 )
 from shardyfusion.sharding_types import ShardingStrategy
 
 
 def test_json_manifest_builder_includes_required_shards_and_custom() -> None:
-    builder = JsonManifestBuilder()
+    builder = YamlManifestBuilder()
     builder.add_custom_field("source", "unit-test")
 
     required = RequiredBuildMeta(
@@ -45,8 +43,10 @@ def test_json_manifest_builder_includes_required_shards_and_custom() -> None:
         custom_fields={"env": "test"},
     )
 
-    payload = json.loads(artifact.payload.decode("utf-8"))
-    assert artifact.content_type == "application/json"
+    import yaml
+
+    payload = yaml.safe_load(artifact.payload)
+    assert artifact.content_type == "application/x-yaml"
     assert set(payload.keys()) == {"required", "shards", "custom"}
     assert payload["required"]["run_id"] == "r1"
     assert payload["custom"] == {"source": "unit-test", "env": "test"}

@@ -6,6 +6,7 @@ import json
 
 import ray
 import ray.data
+import yaml
 
 from shardyfusion.config import (
     ManifestOptions,
@@ -77,7 +78,7 @@ def test_ray_writer_publishes_manifest_and_current_to_local_s3(
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
     current_obj = client.get_object(Bucket=bucket, Key=current_key)
 
-    manifest_payload = json.loads(manifest_obj["Body"].read().decode("utf-8"))
+    manifest_payload = yaml.safe_load(manifest_obj["Body"].read())
     current_payload = json.loads(current_obj["Body"].read().decode("utf-8"))
 
     assert manifest_payload["required"]["run_id"] == "ray-writer-local-s3"

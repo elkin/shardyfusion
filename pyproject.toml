@@ -21,6 +21,7 @@ classifiers = [
 dependencies = [
   "xxhash>=3.4",
   "pydantic>=2.0",
+  "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -54,7 +55,10 @@ writer-ray = [
 cli = [
   "shardyfusion[read]",
   "click>=8.0",
-  "pyyaml>=6.0",
+]
+cel = [
+  "cel-expr-python>=0.1; python_version<'3.14'",
+  "fastdigest>=0.12",
 ]
 metrics-prometheus = ["prometheus-client>=0.20"]
 metrics-otel = ["opentelemetry-api>=1.28"]
@@ -66,7 +70,8 @@ all = [
   "boto3>=1.28",
   "aiobotocore>=2.12",
   "click>=8.0",
-  "pyyaml>=6.0",
+  "cel-expr-python>=0.1; python_version<'3.14'",
+  "fastdigest>=0.12",
   "prometheus-client>=0.20",
   "opentelemetry-api>=1.28",
 ]
@@ -137,7 +142,7 @@ ignore = [
   "E501",
   "UP042",
 ]
-per-file-ignores = { "shardyfusion/__init__.py" = ["F401"], "shardyfusion/writer/spark/__init__.py" = ["F401"], "shardyfusion/writer/python/__init__.py" = ["F401"], "shardyfusion/writer/dask/__init__.py" = ["F401"], "shardyfusion/writer/ray/__init__.py" = ["F401"], "shardyfusion/reader/__init__.py" = ["F401"], "shardyfusion/metrics/__init__.py" = ["F401"] }
+per-file-ignores = { "shardyfusion/__init__.py" = ["F401"], "shardyfusion/writer/spark/__init__.py" = ["F401"], "shardyfusion/writer/python/__init__.py" = ["F401"], "shardyfusion/writer/dask/__init__.py" = ["F401"], "shardyfusion/writer/ray/__init__.py" = ["F401"], "shardyfusion/reader/__init__.py" = ["F401"], "shardyfusion/metrics/__init__.py" = ["F401"], "tests/**/test_*cel*.py" = ["E402"] }
 
 [tool.ruff.format]
 quote-style = "double"
@@ -174,5 +179,6 @@ markers = [
   "spark: tests requiring local pyspark session",
   "dask: tests requiring writer-dask extras",
   "ray: tests requiring writer-ray extras",
+  "cel: tests requiring cel extra (cel-expr-python, fastdigest)",
   "e2e: end-to-end tests requiring a container engine (podman/docker)",
 ]
