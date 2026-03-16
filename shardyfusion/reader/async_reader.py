@@ -400,80 +400,88 @@ class AsyncShardedReader:
 
     async def get(self, key: KeyInput) -> bytes | None:
         state = self._require_state()
+        state.borrow_count += 1
 
-        if self._rate_limiter is not None:
-            await self._rate_limiter.acquire_async(1)
+        try:
+            if self._rate_limiter is not None:
+                await self._rate_limiter.acquire_async(1)
 
-        mc = self._metrics
-        t0 = time.perf_counter() if mc is not None else 0.0
+            mc = self._metrics
+            t0 = time.perf_counter() if mc is not None else 0.0
 
-        db_id = state.router.route_one(key)
-        key_bytes = state.router.encode_lookup_key(key)
-        result = await state.readers[db_id].get(key_bytes)
+            db_id = state.router.route_one(key)
+            key_bytes = state.router.encode_lookup_key(key)
+            result = await state.readers[db_id].get(key_bytes)
 
-        if mc is not None:
-            mc.emit(
-                MetricEvent.READER_GET,
-                {
-                    "duration_ms": int((time.perf_counter() - t0) * 1000),
-                    "found": result is not None,
-                },
-            )
-        return result
+            if mc is not None:
+                mc.emit(
+                    MetricEvent.READER_GET,
+                    {
+                        "duration_ms": int((time.perf_counter() - t0) * 1000),
+                        "found": result is not None,
+                    },
+                )
+            return result
+        finally:
+            self._release_state(state)
 
     async def multi_get(self, keys: Sequence[KeyInput]) -> dict[KeyInput, bytes | None]:
         state = self._require_state()
+        state.borrow_count += 1
 
-        if self._rate_limiter is not None:
-            await self._rate_limiter.acquire_async(len(keys))
+        try:
+            if self._rate_limiter is not None:
+                await self._rate_limiter.acquire_async(len(keys))
 
-        mc = self._metrics
-        t0 = time.perf_counter() if mc is not None else 0.0
+            mc = self._metrics
+            t0 = time.perf_counter() if mc is not None else 0.0
 
-        key_list = list(keys)
-        grouped = state.router.group_keys(key_list)
-        results: dict[KeyInput, bytes | None] = {}
+            key_list = list(keys)
+            grouped = state.router.group_keys(key_list)
+            results: dict[KeyInput, bytes | None] = {}
 
-        semaphore = (
-            asyncio.Semaphore(self._max_concurrency)
-            if self._max_concurrency is not None
-            else None
-        )
-
-        async def _read_group(
-            db_id: int, shard_keys: list[KeyInput]
-        ) -> dict[KeyInput, bytes | None]:
-            reader = state.readers[db_id]
-            group_results: dict[KeyInput, bytes | None] = {}
-            for key in shard_keys:
-                key_bytes = state.router.encode_lookup_key(key)
-                if semaphore is not None:
-                    async with semaphore:
-                        group_results[key] = await reader.get(key_bytes)
-                else:
-                    group_results[key] = await reader.get(key_bytes)
-            return group_results
-
-        async with asyncio.TaskGroup() as tg:
-            tasks = {
-                db_id: tg.create_task(_read_group(db_id, shard_keys))
-                for db_id, shard_keys in grouped.items()
-            }
-
-        for task in tasks.values():
-            results.update(task.result())
-
-        ordered = {key: results.get(key) for key in key_list}
-
-        if mc is not None:
-            mc.emit(
-                MetricEvent.READER_MULTI_GET,
-                {
-                    "duration_ms": int((time.perf_counter() - t0) * 1000),
-                    "num_keys": len(key_list),
-                },
+            semaphore = (
+                asyncio.Semaphore(self._max_concurrency)
+                if self._max_concurrency is not None
+                else None
             )
-        return ordered
+
+            async def _read_group(
+                db_id: int, shard_keys: list[KeyInput]
+            ) -> dict[KeyInput, bytes | None]:
+                reader = state.readers[db_id]
+                group_results: dict[KeyInput, bytes | None] = {}
+                for key in shard_keys:
+                    key_bytes = state.router.encode_lookup_key(key)
+                    if semaphore is not None:
+                        async with semaphore:
+                            group_results[key] = await reader.get(key_bytes)
+                    else:
+                        group_results[key] = await reader.get(key_bytes)
+                return group_results
+
+            async with asyncio.TaskGroup() as tg:
+                tasks = {
+                    db_id: tg.create_task(_read_group(db_id, shard_keys))
+                    for db_id, shard_keys in grouped.items()
+                }
+
+            for task in tasks.values():
+                results.update(task.result())
+
+            ordered = {key: results.get(key) for key in key_list}
+
+            if mc is not None:
+                mc.emit(
+                    MetricEvent.READER_MULTI_GET,
+                    {
+                        "duration_ms": int((time.perf_counter() - t0) * 1000),
+                        "num_keys": len(key_list),
+                    },
+                )
+            return ordered
+        finally:
+            self._release_state(state)
 
     # -- Lifecycle -------------------------------------------------------
 

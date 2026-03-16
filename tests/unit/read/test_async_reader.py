@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -730,3 +731,149 @@ async def test_close_closes_shard_readers(tmp_path) -> None:
 
     await reader.close()
     assert shard_reader.closed
+
+
+# ---------------------------------------------------------------------------
+# Concurrent borrow-count tests
+# ---------------------------------------------------------------------------
+
+
+class _SlowAsyncFakeReader:
+    def __init__(self, store: dict[bytes, bytes], delay: float = 0.1):
+        self.store = store
+        self.delay = delay
+        self.closed = False
+
+    async def get(self, key: bytes) -> bytes | None:
+        await asyncio.sleep(self.delay)
+        return self.store.get(key)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def _slow_async_fake_reader_factory(
+    stores: dict[str, dict[bytes, bytes]], delay: float = 0.1
+):
+    async def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
+        _ = (local_dir, checkpoint_id)
+        return _SlowAsyncFakeReader(stores[db_url], delay=delay)
+
+    return factory
+
+
+@pytest.mark.asyncio
+async def test_get_increments_borrow_during_read(tmp_path) -> None:
+    manifests = {"mem://manifest/one": _manifest("mem://db/one")}
+    store = _AsyncMutableManifestStore(manifests, "mem://manifest/one")
+    stores: dict[str, dict[bytes, bytes]] = {
+        "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
+    }
+
+    reader = await AsyncShardedReader.open(
+        s3_prefix="s3://bucket/prefix",
+        local_root=str(tmp_path),
+        manifest_store=store,
+        reader_factory=_slow_async_fake_reader_factory(stores, delay=0.1),
+    )
+
+    assert reader._state.borrow_count == 0
+
+    # Start get() but don't await it yet
+    task = asyncio.create_task(reader.get(1))
+
+    # Yield control so the task enters get() and increments borrow_count
+    await asyncio.sleep(0.01)
+    assert reader._state.borrow_count > 0
+
+    result = await task
+    assert result == b"val"
+    assert reader._state.borrow_count == 0
+
+    await reader.close()
+
+
+@pytest.mark.asyncio
+async def test_refresh_waits_for_inflight_get(tmp_path) -> None:
+    manifests = {
+        "mem://manifest/one": _manifest("mem://db/one"),
+        "mem://manifest/two": _manifest("mem://db/two"),
+    }
+    store = _AsyncMutableManifestStore(manifests, "mem://manifest/one")
+    stores: dict[str, dict[bytes, bytes]] = {
+        "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"one"},
+        "mem://db/two": {(1).to_bytes(8, "big", signed=False): b"two"},
+    }
+
+    reader = await AsyncShardedReader.open(
+        s3_prefix="s3://bucket/prefix",
+        local_root=str(tmp_path),
+        manifest_store=store,
+        reader_factory=_slow_async_fake_reader_factory(stores, delay=0.15),
+    )
+
+    old_state = reader._state
+
+    # Start a slow get
+    get_task = asyncio.create_task(reader.get(1))
+    await asyncio.sleep(0.01)
+
+    # Now refresh while the get is in-flight
+    store.current_ref = "mem://manifest/two"
+    changed = await reader.refresh()
+    assert changed is True
+
+    # Old state is retired but NOT closed yet because the get holds a borrow
+    assert old_state.retired is True
+    assert not all(r.closed for r in old_state.readers.values()), (
+        "Old readers should not be closed while get is in-flight"
+    )
+
+    # Complete the get — this releases the borrow and schedules deferred cleanup
+    result = await get_task
+    assert result == b"one"
+
+    # Let the deferred cleanup task run
+    await asyncio.sleep(0.01)
+    assert all(r.closed for r in old_state.readers.values())
+
+    await reader.close()
+
+
+@pytest.mark.asyncio
+async def test_close_waits_for_inflight_get(tmp_path) -> None:
+    manifests = {"mem://manifest/one": _manifest("mem://db/one")}
+    store = _AsyncMutableManifestStore(manifests, "mem://manifest/one")
+    stores: dict[str, dict[bytes, bytes]] = {
+        "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"val"},
+    }
+
+    reader = await AsyncShardedReader.open(
+        s3_prefix="s3://bucket/prefix",
+        local_root=str(tmp_path),
+        manifest_store=store,
+        reader_factory=_slow_async_fake_reader_factory(stores, delay=0.15),
+    )
+
+    state = reader._state
+
+    # Start a slow get
+    get_task = asyncio.create_task(reader.get(1))
+    await asyncio.sleep(0.01)
+
+    # Close while the get is in-flight
+    await reader.close()
+
+    # State is retired but NOT closed because the get holds a borrow
+    assert state.retired is True
+    assert not all(r.closed for r in state.readers.values()), (
+        "Readers should not be closed while get is in-flight"
+    )
+
+    # Complete the get — this releases the borrow and schedules deferred cleanup
+    result = await get_task
+    assert result == b"val"
+
+    # Let the deferred cleanup task run
+    await asyncio.sleep(0.01)
+    assert all(r.closed for r in state.readers.values())
