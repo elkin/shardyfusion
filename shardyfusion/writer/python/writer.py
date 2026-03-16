@@ -66,7 +66,7 @@ def write_sharded(
         records: Iterable of records to write. Each record is passed to
             ``key_fn`` and ``value_fn`` to extract the key and value bytes.
         config: Write configuration (num_dbs, s3_prefix, sharding strategy, etc.).
-            CUSTOM_EXPR and boundary-less RANGE sharding are not supported.
+            Only HASH and RANGE (with explicit boundaries) sharding are supported.
         key_fn: Callable that extracts the routing key from each record.
         value_fn: Callable that serializes each record to value bytes.
         parallel: If True, use one subprocess per shard (``multiprocessing.spawn``).
@@ -209,10 +209,6 @@ def write_sharded(
 
 
 def _validate_sharding(config: WriteConfig) -> None:
-    if config.sharding.strategy == ShardingStrategy.CUSTOM_EXPR:
-        raise ConfigValidationError(
-            "Custom expression sharding is not supported in the Python writer."
-        )
     if (
         config.sharding.strategy == ShardingStrategy.RANGE
         and config.sharding.boundaries is None

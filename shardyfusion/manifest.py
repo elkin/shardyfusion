@@ -24,9 +24,7 @@ class ManifestShardingSpec(BaseModel):
     """Manifest-safe sharding specification (no Callable fields).
 
     This is the Pydantic counterpart of :class:`ShardingSpec` for
-    serialization and deserialization in manifests.  Writer-side
-    ``ShardingSpec`` (which carries a ``custom_column_builder`` callable)
-    remains a plain dataclass.
+    serialization and deserialization in manifests.
     """
 
     model_config = ConfigDict(use_enum_values=False)

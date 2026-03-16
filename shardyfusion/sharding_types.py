@@ -1,9 +1,8 @@
 """Shared sharding types used by both writer and reader paths."""
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Self
+from typing import Self
 
 DB_ID_COL = "_slatedb_db_id"
 
@@ -36,7 +35,6 @@ class ShardingStrategy(str, Enum):
 
     HASH = "hash"
     RANGE = "range"
-    CUSTOM_EXPR = "custom_expr"
 
     @classmethod
     def from_value(cls, value: "ShardingStrategy | str") -> Self:
@@ -60,8 +58,6 @@ class ShardingSpec:
     strategy: ShardingStrategy = ShardingStrategy.HASH
     boundaries: list[BoundaryValue] | None = None
     approx_quantile_rel_error: float = 0.01
-    custom_expr: str | None = None
-    custom_column_builder: Callable[[str], Any] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.strategy, ShardingStrategy):
@@ -74,5 +70,4 @@ class ShardingSpec:
             "strategy": self.strategy.value,
             "boundaries": self.boundaries,
             "approx_quantile_rel_error": self.approx_quantile_rel_error,
-            "custom_expr": self.custom_expr,
         }

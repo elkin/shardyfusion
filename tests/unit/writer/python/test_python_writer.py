@@ -155,15 +155,6 @@ def test_range_without_boundaries_raises() -> None:
         write_sharded([], config, key_fn=lambda r: r, value_fn=lambda r: b"v")
 
 
-def test_custom_expr_raises() -> None:
-    config = _make_config(
-        num_dbs=2,
-        sharding=ShardingSpec(strategy=ShardingStrategy.CUSTOM_EXPR),
-    )
-    with pytest.raises(ConfigValidationError, match="Custom expression"):
-        write_sharded([], config, key_fn=lambda r: r, value_fn=lambda r: b"v")
-
-
 def test_empty_input() -> None:
     factory = _TrackingFactory()
     config = _make_config(num_dbs=4, factory=factory)

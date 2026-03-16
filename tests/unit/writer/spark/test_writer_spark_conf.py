@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from shardyfusion._writer_core import manifest_safe_sharding
-from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
 from shardyfusion.writer.spark.util import (
     DataFrameCacheContext,
     SparkConfOverrideContext,
@@ -228,21 +226,3 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
     assert result2 == "result-sentinel"
     assert fake_df.persist_calls == ["test-level", "test-level"]
     assert fake_df.unpersist_calls == [False, False]
-
-
-def testmanifest_safe_sharding_preserves_boundaries_for_custom_expr() -> None:
-    from shardyfusion.manifest import ManifestShardingSpec
-
-    spec = ShardingSpec(
-        strategy=ShardingStrategy.CUSTOM_EXPR,
-        boundaries=[10, 20],
-        custom_expr="id % 2",
-    )
-
-    manifest_spec = manifest_safe_sharding(spec)
-
-    assert isinstance(manifest_spec, ManifestShardingSpec)
-    assert manifest_spec.strategy == ShardingStrategy.CUSTOM_EXPR
-    assert manifest_spec.boundaries == [10, 20]
-    assert manifest_spec.custom_expr == "id % 2"
-    assert not hasattr(manifest_spec, "custom_column_builder")

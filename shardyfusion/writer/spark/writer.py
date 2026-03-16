@@ -307,7 +307,7 @@ def verify_routing_agreement(
         ):
             python_db_id = bisect_right(resolved_sharding.boundaries, key)
         else:
-            return  # cannot verify custom_expr or range without boundaries
+            return  # cannot verify range without boundaries
 
         if python_db_id != spark_db_id:
             mismatches.append((key, spark_db_id, python_db_id))

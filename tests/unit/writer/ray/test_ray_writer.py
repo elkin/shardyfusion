@@ -6,7 +6,6 @@ import pathlib
 from collections.abc import Iterable
 from typing import Self
 
-import pytest
 import ray
 import ray.data
 
@@ -16,7 +15,6 @@ from shardyfusion.config import (
     OutputOptions,
     WriteConfig,
 )
-from shardyfusion.errors import ConfigValidationError
 from shardyfusion.manifest import BuildResult
 from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.metrics import MetricEvent
@@ -184,24 +182,6 @@ def test_range_explicit_boundaries() -> None:
     assert result.winners[0].row_count == 10
     assert result.winners[1].row_count == 10
     assert result.winners[2].row_count == 10
-
-
-def test_custom_expr_raises() -> None:
-    config = _make_config(
-        num_dbs=2,
-        sharding=ShardingSpec(strategy=ShardingStrategy.CUSTOM_EXPR),
-    )
-
-    records = [{"id": i} for i in range(10)]
-    ds = _make_ray_ds(records, parallelism=1)
-
-    with pytest.raises(ConfigValidationError, match="Custom expression"):
-        write_sharded(
-            ds,
-            config,
-            key_col="id",
-            value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-        )
 
 
 def test_empty_input() -> None:

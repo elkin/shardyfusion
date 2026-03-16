@@ -17,7 +17,6 @@ from shardyfusion.config import (
     OutputOptions,
     WriteConfig,
 )
-from shardyfusion.errors import ConfigValidationError
 from shardyfusion.manifest import BuildResult
 from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.metrics import MetricEvent
@@ -228,24 +227,6 @@ def test_range_auto_computed_boundaries() -> None:
     assert sum(w.row_count for w in result.winners) == 90
     # All three shards should have some records (boundaries computed from quantiles)
     assert all(w.row_count > 0 for w in result.winners)
-
-
-def test_custom_expr_raises() -> None:
-    config = _make_config(
-        num_dbs=2,
-        sharding=ShardingSpec(strategy=ShardingStrategy.CUSTOM_EXPR),
-    )
-
-    records = [{"id": i} for i in range(10)]
-    ddf = _make_dask_df(records, npartitions=1)
-
-    with pytest.raises(ConfigValidationError, match="Custom expression"):
-        write_sharded(
-            ddf,
-            config,
-            key_col="id",
-            value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-        )
 
 
 def test_empty_input() -> None:

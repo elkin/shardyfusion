@@ -33,8 +33,6 @@ def add_db_id_column(
         strategy=sharding.strategy,
         boundaries=sharding.boundaries,
         approx_quantile_rel_error=sharding.approx_quantile_rel_error,
-        custom_expr=sharding.custom_expr,
-        custom_column_builder=sharding.custom_column_builder,
     )
 
     # For HASH and RANGE strategies we can validate key column type and resolve any missing boundaries before adding the db_id column.
@@ -61,10 +59,10 @@ def add_db_id_column(
             else:
                 db_expr = _range_bucket_expr(key_col, boundaries)
                 df_with_db_id = df.withColumn(DB_ID_COL, db_expr.cast("int"))
-        case ShardingStrategy.CUSTOM_EXPR:
-            db_expr = _custom_expr(sharding, key_col)
-            df_with_db_id = df.withColumn(DB_ID_COL, db_expr.cast("int"))
-
+        case _:
+            raise ShardAssignmentError(
+                f"Unsupported sharding strategy: {sharding.strategy!r}"
+            )
     invalid_count = (
         df_with_db_id.where(
             (F.col(DB_ID_COL).isNull())
@@ -128,10 +126,6 @@ def validate_key_col_type(
                     "IntegerType, LongType, StringType; "
                     f"got {type(dtype).__name__} for `{key_col}`"
                 )
-            return
-
-        case ShardingStrategy.CUSTOM_EXPR:
-            # Custom sharding strategies may have arbitrary requirements, so we skip validation here.
             return
 
 
@@ -211,16 +205,6 @@ def _range_bucketize_df(
         handleInvalid="error",
     )
     return bucketizer.transform(df).withColumn(DB_ID_COL, F.col(DB_ID_COL).cast("int"))
-
-
-def _custom_expr(sharding: ShardingSpec, key_col: str) -> Column:
-    if sharding.custom_expr:
-        return F.expr(sharding.custom_expr)
-    if sharding.custom_column_builder is not None:
-        return sharding.custom_column_builder(key_col)
-    raise ShardAssignmentError(
-        "custom_expr sharding requires either `custom_expr` SQL text or `custom_column_builder`."
-    )
 
 
 def _validate_boundaries(boundaries: Sequence[BoundaryValue]) -> None:
