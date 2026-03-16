@@ -103,8 +103,16 @@ class WriteConfig:
             except ValueError as exc:
                 raise ConfigValidationError(str(exc)) from exc
 
-        if self.num_dbs <= 0:
+        # max_keys_per_shard means num_dbs is computed at write time; allow 0 or unset
+        if self.sharding.max_keys_per_shard is not None:
+            if self.num_dbs != 0:
+                raise ConfigValidationError(
+                    "num_dbs must be 0 when max_keys_per_shard is set "
+                    "(num_dbs will be computed at write time)"
+                )
+        elif self.num_dbs <= 0:
             raise ConfigValidationError("num_dbs must be > 0")
+
         if self.batch_size <= 0:
             raise ConfigValidationError("batch_size must be > 0")
 

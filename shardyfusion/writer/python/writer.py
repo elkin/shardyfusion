@@ -53,6 +53,7 @@ def write_sharded(
     *,
     key_fn: Callable[[T], KeyLike],
     value_fn: Callable[[T], bytes],
+    columns_fn: Callable[[T], dict[str, Any]] | None = None,
     parallel: bool = False,
     max_queue_size: int = 100,
     max_writes_per_second: float | None = None,
@@ -125,6 +126,7 @@ def write_sharded(
                 factory=factory,
                 key_fn=key_fn,
                 value_fn=value_fn,
+                columns_fn=columns_fn,
                 max_queue_size=max_queue_size,
                 max_writes_per_second=max_writes_per_second,
                 max_write_bytes_per_second=max_write_bytes_per_second,
@@ -137,6 +139,7 @@ def write_sharded(
                 factory=factory,
                 key_fn=key_fn,
                 value_fn=value_fn,
+                columns_fn=columns_fn,
                 max_writes_per_second=max_writes_per_second,
                 max_write_bytes_per_second=max_write_bytes_per_second,
                 max_total_batched_items=max_total_batched_items,
@@ -216,6 +219,11 @@ def _validate_sharding(config: WriteConfig) -> None:
         raise ConfigValidationError(
             "Range sharding without explicit boundaries requires Spark."
         )
+    if config.sharding.strategy == ShardingStrategy.CEL:
+        if config.sharding.boundaries is None:
+            raise ConfigValidationError(
+                "CEL sharding in Python writer requires precomputed boundaries."
+            )
 
 
 def _batch_bytes(batch: list[tuple[bytes, bytes]]) -> int:
@@ -269,6 +277,7 @@ def _write_single_process(
     factory: DbAdapterFactory,
     key_fn: Callable[[T], KeyLike],
     value_fn: Callable[[T], bytes],
+    columns_fn: Callable[[T], dict[str, Any]] | None = None,
     max_writes_per_second: float | None,
     max_write_bytes_per_second: float | None,
     max_total_batched_items: int | None,
@@ -329,11 +338,13 @@ def _write_single_process(
 
         for record in records:
             key = key_fn(record)
+            routing_context = columns_fn(record) if columns_fn is not None else None
             db_id = route_key(
                 key,
                 num_dbs=num_dbs,
                 sharding=config.sharding,
                 key_encoding=config.key_encoding,
+                routing_context=routing_context,
             )
             key_bytes = key_encoder(key)
             value_bytes = value_fn(record)
@@ -508,6 +519,7 @@ def _write_parallel(
     factory: DbAdapterFactory,
     key_fn: Callable[[T], KeyLike],
     value_fn: Callable[[T], bytes],
+    columns_fn: Callable[[T], dict[str, Any]] | None = None,
     max_queue_size: int,
     max_writes_per_second: float | None,
     max_write_bytes_per_second: float | None,
@@ -551,11 +563,13 @@ def _write_parallel(
     try:
         for record in records:
             key = key_fn(record)
+            routing_context = columns_fn(record) if columns_fn is not None else None
             db_id = route_key(
                 key,
                 num_dbs=num_dbs,
                 sharding=config.sharding,
                 key_encoding=config.key_encoding,
+                routing_context=routing_context,
             )
             key_bytes = key_encoder(key)
             value_bytes = value_fn(record)

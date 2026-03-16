@@ -8,7 +8,7 @@ JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
 
 KeyInput: TypeAlias = int | str | bytes
-KeyLike: TypeAlias = int | str
+KeyLike: TypeAlias = int | str | bytes
 
 
 class ShardReader(Protocol):

@@ -39,10 +39,10 @@ class _FakeReader:
     def key_encoding(self) -> str:
         return self._key_encoding
 
-    def get(self, key: Any) -> bytes | None:
+    def get(self, key: Any, **kwargs: Any) -> bytes | None:
         return self._store.get(key)
 
-    def multi_get(self, keys: list[Any]) -> dict[Any, bytes | None]:
+    def multi_get(self, keys: list[Any], **kwargs: Any) -> dict[Any, bytes | None]:
         return {k: self._store.get(k) for k in keys}
 
     def refresh(self) -> bool:
@@ -77,7 +77,7 @@ class _FakeReader:
             ),
         ]
 
-    def route_key(self, key: Any) -> int:
+    def route_key(self, key: Any, **kwargs: Any) -> int:
         return 0 if (isinstance(key, int) and key < 50) else 1
 
     def close(self) -> None:

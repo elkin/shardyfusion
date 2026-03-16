@@ -33,9 +33,11 @@ def add_db_id_column(
         strategy=sharding.strategy,
         boundaries=sharding.boundaries,
         approx_quantile_rel_error=sharding.approx_quantile_rel_error,
+        cel_expr=sharding.cel_expr,
+        cel_columns=sharding.cel_columns,
     )
 
-    # For HASH and RANGE strategies we can validate key column type and resolve any missing boundaries before adding the db_id column.
+    # Validate key column type for HASH/RANGE (CEL validates its own columns).
     validate_key_col_type(
         df=df,
         key_col=key_col,
@@ -59,6 +61,55 @@ def add_db_id_column(
             else:
                 db_expr = _range_bucket_expr(key_col, boundaries)
                 df_with_db_id = df.withColumn(DB_ID_COL, db_expr.cast("int"))
+        case ShardingStrategy.CEL:
+            from shardyfusion.cel import (
+                compile_cel,
+                pandas_rows_to_contexts,
+                resolve_cel_boundaries,
+            )
+
+            assert sharding.cel_expr is not None and sharding.cel_columns is not None
+            compiled = compile_cel(sharding.cel_expr, sharding.cel_columns)
+
+            if sharding.boundaries is not None:
+                boundaries_for_cel = list(sharding.boundaries)
+            else:
+                sample_pdf = (
+                    df.select(*sharding.cel_columns.keys()).limit(10000).toPandas()
+                )
+                sampled = pandas_rows_to_contexts(sample_pdf, sharding.cel_columns)
+                cel_resolved = resolve_cel_boundaries(
+                    compiled, sampled, num_dbs, sharding
+                )
+                boundaries_for_cel = cel_resolved.boundaries or []
+            resolved.boundaries = boundaries_for_cel
+            resolved.cel_expr = sharding.cel_expr
+            resolved.cel_columns = sharding.cel_columns
+
+            # Capture serializable values (strings, list) — NOT the C++ compiled object.
+            _cel_expr = sharding.cel_expr
+            _cel_cols = dict(sharding.cel_columns)
+
+            def _cel_map_arrow(iterator):  # type: ignore[no-untyped-def]
+                import pyarrow as pa  # type: ignore[import-not-found]
+
+                from shardyfusion.cel import compile_cel as _compile
+                from shardyfusion.cel import route_cel_batch
+
+                _compiled = _compile(_cel_expr, _cel_cols)
+                for batch in iterator:
+                    db_ids = route_cel_batch(_compiled, batch, boundaries_for_cel)
+                    yield batch.append_column(
+                        DB_ID_COL, pa.array(db_ids, type=pa.int32())
+                    )
+
+            # Apply CEL + boundary assignment via mapInArrow
+            from pyspark.sql.types import StructField, StructType
+
+            output_schema = StructType(
+                list(df.schema.fields) + [StructField(DB_ID_COL, IntegerType(), False)]
+            )
+            df_with_db_id = df.mapInArrow(_cel_map_arrow, output_schema)
         case _:
             raise ShardAssignmentError(
                 f"Unsupported sharding strategy: {sharding.strategy!r}"
@@ -101,6 +152,10 @@ def validate_key_col_type(
     key_col: str,
     strategy: ShardingStrategy,
 ) -> None:
+    # CEL validates its own columns — key_col may not exist in the schema.
+    if strategy == ShardingStrategy.CEL:
+        return
+
     try:
         dtype = df.schema[key_col].dataType
     except KeyError as exc:
@@ -127,6 +182,8 @@ def validate_key_col_type(
                     f"got {type(dtype).__name__} for `{key_col}`"
                 )
             return
+
+        # CEL handled by early return above.
 
 
 def _resolve_boundaries(

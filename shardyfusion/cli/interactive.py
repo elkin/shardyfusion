@@ -41,15 +41,15 @@ class ShardyRepl(cmd.Cmd):
     # ------------------------------------------------------------------
 
     def do_get(self, line: str) -> None:
-        """get KEY — Look up a single key."""
+        """get KEY [--routing-context k=v ...] — Look up a single key."""
         parts = shlex.split(line)
-        if len(parts) != 1:
-            self._error("get", None, "Usage: get KEY")
+        raw_key, routing_context = self._parse_key_and_context(parts)
+        if raw_key is None:
+            self._error("get", None, "Usage: get KEY [--routing-context k=v ...]")
             return
-        raw_key = parts[0]
         try:
             coerced = coerce_cli_key(raw_key, self._reader.key_encoding)
-            value = self._reader.get(coerced)
+            value = self._reader.get(coerced, routing_context=routing_context)
             result = build_get_result(raw_key, value, self._interactive_cfg)
             emit(result, self._interactive_cfg)
         except Exception as exc:
@@ -104,15 +104,15 @@ class ShardyRepl(cmd.Cmd):
             self._error("shards", None, str(exc))
 
     def do_route(self, line: str) -> None:
-        """route KEY — Show which shard a key routes to."""
+        """route KEY [--routing-context k=v ...] — Show which shard a key routes to."""
         parts = shlex.split(line)
-        if len(parts) != 1:
-            self._error("route", None, "Usage: route KEY")
+        raw_key, routing_context = self._parse_key_and_context(parts)
+        if raw_key is None:
+            self._error("route", None, "Usage: route KEY [--routing-context k=v ...]")
             return
-        raw_key = parts[0]
         try:
             coerced = coerce_cli_key(raw_key, self._reader.key_encoding)
-            db_id = self._reader.route_key(coerced)
+            db_id = self._reader.route_key(coerced, routing_context=routing_context)
             result = build_route_result(raw_key, db_id)
             emit(result, self._interactive_cfg)
         except Exception as exc:
@@ -222,6 +222,31 @@ class ShardyRepl(cmd.Cmd):
     def do_EOF(self, line: str) -> bool:
         print()  # newline after ^D
         return True
+
+    # ------------------------------------------------------------------
+    # Routing context helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_key_and_context(
+        parts: list[str],
+    ) -> tuple[str | None, dict[str, str] | None]:
+        """Extract key and optional --routing-context from command args."""
+        from .config import parse_routing_context
+
+        if not parts:
+            return None, None
+        key = parts[0]
+        ctx_pairs: list[str] = []
+        i = 1
+        while i < len(parts):
+            if parts[i] == "--routing-context" and i + 1 < len(parts):
+                ctx_pairs.append(parts[i + 1])
+                i += 2
+            else:
+                i += 1
+        routing_context = parse_routing_context(tuple(ctx_pairs)) if ctx_pairs else None
+        return key, routing_context
 
     # ------------------------------------------------------------------
     # Error helper

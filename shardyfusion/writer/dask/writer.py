@@ -312,6 +312,28 @@ def _validate_and_resolve_sharding(
             approx_quantile_rel_error=config.sharding.approx_quantile_rel_error,
         )
 
+    if config.sharding.strategy == ShardingStrategy.CEL:
+        if config.sharding.boundaries is not None:
+            return config.sharding
+        from shardyfusion.cel import (
+            compile_cel,
+            pandas_rows_to_contexts,
+            resolve_cel_boundaries,
+        )
+
+        assert (
+            config.sharding.cel_expr is not None
+            and config.sharding.cel_columns is not None
+        )
+        compiled = compile_cel(config.sharding.cel_expr, config.sharding.cel_columns)
+        sample_pdf = ddf[list(config.sharding.cel_columns.keys())].head(
+            10000, npartitions=-1
+        )
+        sampled = pandas_rows_to_contexts(sample_pdf, config.sharding.cel_columns)
+        return resolve_cel_boundaries(
+            compiled, sampled, config.num_dbs, config.sharding
+        )
+
     return config.sharding
 
 

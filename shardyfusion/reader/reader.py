@@ -142,8 +142,8 @@ class ShardDetail:
 
     db_id: int
     row_count: int
-    min_key: int | float | str | None
-    max_key: int | float | str | None
+    min_key: int | float | str | bytes | None
+    max_key: int | float | str | bytes | None
     db_url: str | None
 
 
@@ -521,9 +521,14 @@ class ShardedReader(_BaseShardedReader):
             is_closed=False,
         )
 
-    def route_key(self, key: KeyInput) -> int:
+    def route_key(
+        self,
+        key: KeyInput,
+        *,
+        routing_context: dict[str, object] | None = None,
+    ) -> int:
         """Return the shard db_id a key would route to."""
-        return self._state.router.route_one(key)
+        return self._state.router.route(key, routing_context=routing_context)
 
     def shard_for_key(self, key: KeyInput) -> RequiredShardMeta:
         """Return shard metadata for the shard a key routes to."""
@@ -565,7 +570,12 @@ class ShardedReader(_BaseShardedReader):
             for key in unique_keys
         }
 
-    def get(self, key: KeyInput) -> bytes | None:
+    def get(
+        self,
+        key: KeyInput,
+        *,
+        routing_context: dict[str, object] | None = None,
+    ) -> bytes | None:
         if self._closed:
             raise ReaderStateError("Reader is closed")
 
@@ -576,7 +586,7 @@ class ShardedReader(_BaseShardedReader):
         t0 = time.perf_counter() if mc is not None else 0.0
 
         state = self._state
-        db_id = state.router.route_one(key)
+        db_id = state.router.route(key, routing_context=routing_context)
         key_bytes = state.router.encode_lookup_key(key)
         result = state.readers[db_id].get(key_bytes)
 
@@ -591,7 +601,12 @@ class ShardedReader(_BaseShardedReader):
 
         return result
 
-    def multi_get(self, keys: Sequence[KeyInput]) -> dict[KeyInput, bytes | None]:
+    def multi_get(
+        self,
+        keys: Sequence[KeyInput],
+        *,
+        routing_context: dict[str, object] | None = None,
+    ) -> dict[KeyInput, bytes | None]:
         if self._closed:
             raise ReaderStateError("Reader is closed")
 
@@ -603,7 +618,8 @@ class ShardedReader(_BaseShardedReader):
 
         key_list = list(keys)
         state = self._state
-        grouped = state.router.group_keys(key_list)
+
+        grouped = state.router.group_keys(key_list, routing_context=routing_context)
         results: dict[KeyInput, bytes | None] = {}
 
         if self._executor is not None and len(grouped) > 1:
@@ -891,10 +907,15 @@ class ConcurrentShardedReader(_BaseShardedReader):
             is_closed=False,
         )
 
-    def route_key(self, key: KeyInput) -> int:
+    def route_key(
+        self,
+        key: KeyInput,
+        *,
+        routing_context: dict[str, object] | None = None,
+    ) -> int:
         """Return the shard db_id a key would route to."""
         with self._use_state() as state:
-            return state.router.route_one(key)
+            return state.router.route(key, routing_context=routing_context)
 
     def shard_for_key(self, key: KeyInput) -> RequiredShardMeta:
         """Return shard metadata for the shard a key routes to."""
@@ -946,7 +967,12 @@ class ConcurrentShardedReader(_BaseShardedReader):
             )
         return result
 
-    def get(self, key: KeyInput) -> bytes | None:
+    def get(
+        self,
+        key: KeyInput,
+        *,
+        routing_context: dict[str, object] | None = None,
+    ) -> bytes | None:
         if self._rate_limiter is not None:
             self._rate_limiter.acquire(1)
 
@@ -954,7 +980,7 @@ class ConcurrentShardedReader(_BaseShardedReader):
         t0 = time.perf_counter() if mc is not None else 0.0
 
         with self._use_state() as state:
-            db_id = state.router.route_one(key)
+            db_id = state.router.route(key, routing_context=routing_context)
             key_bytes = state.router.encode_lookup_key(key)
             handle = state.handles[db_id]
             result = _read_one(handle, key_bytes)
@@ -970,7 +996,12 @@ class ConcurrentShardedReader(_BaseShardedReader):
 
         return result
 
-    def multi_get(self, keys: Sequence[KeyInput]) -> dict[KeyInput, bytes | None]:
+    def multi_get(
+        self,
+        keys: Sequence[KeyInput],
+        *,
+        routing_context: dict[str, object] | None = None,
+    ) -> dict[KeyInput, bytes | None]:
         if self._rate_limiter is not None:
             self._rate_limiter.acquire(len(keys))
 
@@ -979,7 +1010,7 @@ class ConcurrentShardedReader(_BaseShardedReader):
 
         key_list = list(keys)
         with self._use_state() as state:
-            grouped = state.router.group_keys(key_list)
+            grouped = state.router.group_keys(key_list, routing_context=routing_context)
             results: dict[KeyInput, bytes | None] = {}
 
             if self._executor is not None and len(grouped) > 1:

@@ -12,7 +12,7 @@ from .serde import make_key_encoder
 from .sharding_types import KeyEncoding, ShardingStrategy
 from .type_defs import KeyInput
 
-RangeValue = int | float | str
+RangeValue = int | float | str | bytes
 _RANGE_INTERVAL_MISMATCH = (
     "Range shard intervals use mixed bound types and are not routable"
 )
@@ -51,17 +51,42 @@ class SnapshotRouter:
         self.key_encoding = required_build.key_encoding
 
         self._boundaries = list(required_build.sharding.boundaries or [])
-        self._range_intervals = self._build_range_intervals(self.shards)
+        # Range intervals are only for RANGE strategy — CEL uses boundaries + bisect_right
+        self._range_intervals = (
+            self._build_range_intervals(self.shards)
+            if self.strategy == ShardingStrategy.RANGE
+            else []
+        )
+        self._cel_compiled: object | None = None
+        self._cel_expr = required_build.sharding.cel_expr
+        self._cel_columns = required_build.sharding.cel_columns
         self.route_one = self._build_route_one()
         self.encode_lookup_key = self._build_lookup_key_encoder()
 
-    def group_keys(self, keys: list[KeyInput]) -> dict[int, list[KeyInput]]:
+    def route(
+        self, key: KeyInput, *, routing_context: dict[str, object] | None = None
+    ) -> int:
+        """Route a key, using routing_context for CEL split mode if provided."""
+        if routing_context is not None:
+            return self.route_with_context(routing_context)
+        return self.route_one(key)
+
+    def group_keys(
+        self,
+        keys: list[KeyInput],
+        *,
+        routing_context: dict[str, object] | None = None,
+    ) -> dict[int, list[KeyInput]]:
         """Group keys by routed db id while preserving order within each shard bucket."""
 
         grouped: dict[int, list[KeyInput]] = {}
-        for key in keys:
-            db_id = self.route_one(key)
-            grouped.setdefault(db_id, []).append(key)
+        if routing_context is not None:
+            db_id = self.route_with_context(routing_context)
+            grouped[db_id] = list(keys)
+        else:
+            for key in keys:
+                db_id = self.route_one(key)
+                grouped.setdefault(db_id, []).append(key)
         return grouped
 
     def _build_lookup_key_encoder(self) -> Callable[[KeyInput], bytes]:
@@ -92,6 +117,10 @@ class SnapshotRouter:
                 return encoder(key)
 
             return _encode_u32be
+
+        if self.key_encoding in (KeyEncoding.UTF8, KeyEncoding.RAW):
+            encoder = make_key_encoder(self.key_encoding)
+            return encoder  # type: ignore[return-value]
 
         def _encode_fallback(key: KeyInput) -> bytes:
             if isinstance(key, bytes):
@@ -130,7 +159,31 @@ class SnapshotRouter:
         if self.strategy == ShardingStrategy.RANGE:
             return self._route_range
 
+        if self.strategy == ShardingStrategy.CEL:
+            from .cel import compile_cel, route_cel
+
+            assert self._cel_expr is not None and self._cel_columns is not None
+            compiled = compile_cel(self._cel_expr, self._cel_columns)
+            boundaries = self._boundaries
+            # Tight closure like HASH — no per-call lazy checks.
+            return lambda key: route_cel(compiled, {"key": key}, boundaries)
+
         raise ValueError(f"Unsupported sharding strategy for routing: {self.strategy}")
+
+    def route_with_context(self, routing_context: dict[str, object]) -> int:
+        """Route using CEL with explicit routing context (split mode).
+
+        In split mode, the CEL expression evaluates over multiple columns
+        from the routing context, not just the key.
+        """
+        from .cel import route_cel
+
+        if self._cel_compiled is None:
+            from .cel import compile_cel
+
+            assert self._cel_expr is not None and self._cel_columns is not None
+            self._cel_compiled = compile_cel(self._cel_expr, self._cel_columns)
+        return route_cel(self._cel_compiled, routing_context, self._boundaries)  # type: ignore[arg-type]
 
     def _normalize_range_key(self, key: KeyInput) -> RangeValue:
         if isinstance(key, (int, float, str)):
@@ -171,7 +224,7 @@ class SnapshotRouter:
 
         sorted_intervals = sorted(intervals, key=_interval_sort_key)
 
-        prev_upper: int | float | str | None = None
+        prev_upper: RangeValue | None = None
         for current in sorted_intervals:
             if prev_upper is not None and current.lower is not None:
                 if (

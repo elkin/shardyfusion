@@ -308,6 +308,8 @@ def verify_routing_agreement(
             and resolved_sharding.boundaries is not None
         ):
             python_db_id = bisect_right(resolved_sharding.boundaries, key)
+        elif resolved_sharding.strategy == ShardingStrategy.CEL:
+            return  # CEL routing is verified by construction
         else:
             return  # cannot verify range without boundaries
 

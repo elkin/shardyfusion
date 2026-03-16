@@ -333,6 +333,27 @@ def _validate_and_resolve_sharding(
             approx_quantile_rel_error=config.sharding.approx_quantile_rel_error,
         )
 
+    if config.sharding.strategy == ShardingStrategy.CEL:
+        if config.sharding.boundaries is not None:
+            return config.sharding
+        from shardyfusion.cel import compile_cel, resolve_cel_boundaries
+
+        assert (
+            config.sharding.cel_expr is not None
+            and config.sharding.cel_columns is not None
+        )
+        compiled = compile_cel(config.sharding.cel_expr, config.sharding.cel_columns)
+        sample_rows = ds.take(10_000)
+        if not sample_rows:
+            raise ShardAssignmentError("CEL sharding requires a non-empty dataset")
+        sampled_contexts = [
+            {col: row[col] for col in config.sharding.cel_columns}
+            for row in sample_rows
+        ]
+        return resolve_cel_boundaries(
+            compiled, sampled_contexts, config.num_dbs, config.sharding
+        )
+
     return config.sharding
 
 

@@ -47,6 +47,30 @@ def _encode_key_u32be(key: object) -> bytes:
     return key.to_bytes(4, byteorder="big", signed=False)
 
 
+def _encode_key_utf8(key: object) -> bytes:
+    """Encode key as UTF-8 bytes from a string."""
+
+    if isinstance(key, str):
+        return key.encode("utf-8")
+    if isinstance(key, bytes):
+        return key
+    raise ConfigValidationError(
+        f"utf8 encoding expects str or bytes key, got {type(key)!r}"
+    )
+
+
+def _encode_key_raw(key: object) -> bytes:
+    """Pass-through bytes encoding."""
+
+    if isinstance(key, bytes):
+        return key
+    if isinstance(key, str):
+        return key.encode("utf-8")
+    raise ConfigValidationError(
+        f"raw encoding expects bytes or str key, got {type(key)!r}"
+    )
+
+
 def make_key_encoder(encoding: KeyEncoding) -> KeyEncoder:
     """Return a key encoder for the given encoding.
 
@@ -58,6 +82,10 @@ def make_key_encoder(encoding: KeyEncoding) -> KeyEncoder:
         return _encode_key_u64be
     if encoding == KeyEncoding.U32BE:
         return _encode_key_u32be
+    if encoding == KeyEncoding.UTF8:
+        return _encode_key_utf8
+    if encoding == KeyEncoding.RAW:
+        return _encode_key_raw
     raise ConfigValidationError(f"Unsupported key encoding: {encoding}")
 
 

@@ -6,7 +6,7 @@ from typing import Self
 
 DB_ID_COL = "_slatedb_db_id"
 
-BoundaryValue = int | float | str
+BoundaryValue = int | float | str | bytes
 
 
 class KeyEncoding(str, Enum):
@@ -14,6 +14,8 @@ class KeyEncoding(str, Enum):
 
     U64BE = "u64be"
     U32BE = "u32be"
+    UTF8 = "utf8"
+    RAW = "raw"
 
     @classmethod
     def from_value(cls, value: "KeyEncoding | str") -> Self:
@@ -35,6 +37,7 @@ class ShardingStrategy(str, Enum):
 
     HASH = "hash"
     RANGE = "range"
+    CEL = "cel"
 
     @classmethod
     def from_value(cls, value: "ShardingStrategy | str") -> Self:
@@ -58,16 +61,33 @@ class ShardingSpec:
     strategy: ShardingStrategy = ShardingStrategy.HASH
     boundaries: list[BoundaryValue] | None = None
     approx_quantile_rel_error: float = 0.01
+    cel_expr: str | None = None
+    cel_columns: dict[str, str] | None = None
+    max_keys_per_shard: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.strategy, ShardingStrategy):
             raise ValueError("strategy must be ShardingStrategy")
+        if self.strategy == ShardingStrategy.CEL:
+            if not self.cel_expr:
+                raise ValueError("CEL strategy requires cel_expr")
+            if not self.cel_columns:
+                raise ValueError("CEL strategy requires cel_columns")
+        elif self.cel_expr is not None:
+            raise ValueError("cel_expr is only valid with CEL strategy")
+        if self.max_keys_per_shard is not None and self.max_keys_per_shard <= 0:
+            raise ValueError("max_keys_per_shard must be > 0")
 
     def to_manifest_dict(self) -> dict[str, object]:
         """Return manifest-safe representation (Spark callables omitted)."""
 
-        return {
+        d: dict[str, object] = {
             "strategy": self.strategy.value,
             "boundaries": self.boundaries,
             "approx_quantile_rel_error": self.approx_quantile_rel_error,
         }
+        if self.cel_expr is not None:
+            d["cel_expr"] = self.cel_expr
+        if self.cel_columns is not None:
+            d["cel_columns"] = self.cel_columns
+        return d

@@ -374,14 +374,26 @@ def cli(
 
 @cli.command("get")
 @click.argument("key")
+@click.option(
+    "--routing-context",
+    "routing_ctx_pairs",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help="Routing context for CEL split mode (repeatable).",
+)
 @click.pass_context
-def get_cmd(ctx: click.Context, key: str) -> None:
+def get_cmd(ctx: click.Context, key: str, routing_ctx_pairs: tuple[str, ...]) -> None:
     """Look up a single KEY."""
+    from .config import parse_routing_context
+
     output_cfg = _get_output_cfg(ctx)
+    routing_context = (
+        parse_routing_context(routing_ctx_pairs) if routing_ctx_pairs else None
+    )
     with _build_reader(ctx) as reader:
         try:
             coerced = coerce_cli_key(key, reader.key_encoding)
-            value = reader.get(coerced)
+            value = reader.get(coerced, routing_context=routing_context)
             result = build_get_result(key, value, output_cfg)
             emit(result, output_cfg)
         except Exception as exc:
@@ -392,12 +404,23 @@ def get_cmd(ctx: click.Context, key: str) -> None:
 
 @cli.command("multiget")
 @click.argument("keys", nargs=-1, required=True)
+@click.option(
+    "--routing-context",
+    "routing_ctx_pairs",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help="Routing context for CEL split mode (repeatable).",
+)
 @click.pass_context
-def multiget_cmd(ctx: click.Context, keys: tuple[str, ...]) -> None:
+def multiget_cmd(
+    ctx: click.Context, keys: tuple[str, ...], routing_ctx_pairs: tuple[str, ...]
+) -> None:
     """Look up multiple KEYS (space-separated).
 
     Pass a single '-' to read keys from stdin, one per line.
     """
+    from .config import parse_routing_context
+
     # Support reading keys from stdin when '-' is the sole argument
     if keys == ("-",):
         stdin_keys = [line.strip() for line in sys.stdin if line.strip()]
@@ -406,10 +429,13 @@ def multiget_cmd(ctx: click.Context, keys: tuple[str, ...]) -> None:
         keys = tuple(stdin_keys)
 
     output_cfg = _get_output_cfg(ctx)
+    routing_context = (
+        parse_routing_context(routing_ctx_pairs) if routing_ctx_pairs else None
+    )
     with _build_reader(ctx) as reader:
         try:
             coerced = [coerce_cli_key(k, reader.key_encoding) for k in keys]
-            values = reader.multi_get(coerced)
+            values = reader.multi_get(coerced, routing_context=routing_context)
             display_keys = list(keys)
             result = build_multiget_result(
                 display_keys, values, output_cfg, coerced_keys=coerced
@@ -454,14 +480,26 @@ def shards_cmd(ctx: click.Context) -> None:
 
 @cli.command("route")
 @click.argument("key")
+@click.option(
+    "--routing-context",
+    "routing_ctx_pairs",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help="Routing context for CEL split mode (repeatable).",
+)
 @click.pass_context
-def route_cmd(ctx: click.Context, key: str) -> None:
+def route_cmd(ctx: click.Context, key: str, routing_ctx_pairs: tuple[str, ...]) -> None:
     """Show which shard a KEY routes to (without performing a lookup)."""
+    from .config import parse_routing_context
+
     output_cfg = _get_output_cfg(ctx)
+    routing_context = (
+        parse_routing_context(routing_ctx_pairs) if routing_ctx_pairs else None
+    )
     with _build_reader(ctx) as reader:
         try:
             coerced = coerce_cli_key(key, reader.key_encoding)
-            db_id = reader.route_key(coerced)
+            db_id = reader.route_key(coerced, routing_context=routing_context)
             result = build_route_result(key, db_id)
             emit(result, output_cfg)
         except Exception as exc:

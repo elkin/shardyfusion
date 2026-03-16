@@ -203,11 +203,12 @@ def coerce_s3_option(key: str, value: str) -> bool | int | str:
     return value  # str or unknown key -> leave as string
 
 
-def coerce_cli_key(key: str, key_encoding: str) -> int | str:
+def coerce_cli_key(key: str, key_encoding: str) -> int | str | bytes:
     """Coerce a CLI key string to the type expected by the reader.
 
     For ``u64be`` / ``u32be`` encoding the key must be a valid integer; for
-    other encodings the raw string is returned unchanged.
+    ``raw`` encoding the key is converted to bytes; for ``utf8`` and other
+    encodings the raw string is returned unchanged.
     """
     from ..sharding_types import KeyEncoding
 
@@ -223,7 +224,21 @@ def coerce_cli_key(key: str, key_encoding: str) -> int | str:
             raise ValueError(
                 f"Key {key!r} is not a valid integer (required by {enc.value} encoding)"
             ) from None
+    if enc == KeyEncoding.RAW:
+        return key.encode("utf-8")
+    # UTF8 and other encodings return the string directly
     return key
+
+
+def parse_routing_context(pairs: tuple[str, ...]) -> dict[str, str]:
+    """Parse ``--routing-context key=value`` pairs into a dict."""
+    ctx: dict[str, str] = {}
+    for pair in pairs:
+        if "=" not in pair:
+            raise ValueError(f"--routing-context must be key=value, got: {pair!r}")
+        k, _, v = pair.partition("=")
+        ctx[k.strip()] = v.strip()
+    return ctx
 
 
 def resolve_current_url(

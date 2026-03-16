@@ -413,7 +413,12 @@ class AsyncShardedReader:
 
     # -- Async read operations -------------------------------------------
 
-    async def get(self, key: KeyInput) -> bytes | None:
+    async def get(
+        self,
+        key: KeyInput,
+        *,
+        routing_context: dict[str, object] | None = None,
+    ) -> bytes | None:
         state = self._require_state()
         state.borrow_count += 1
 
@@ -424,7 +429,7 @@ class AsyncShardedReader:
             mc = self._metrics
             t0 = time.perf_counter() if mc is not None else 0.0
 
-            db_id = state.router.route_one(key)
+            db_id = state.router.route(key, routing_context=routing_context)
             key_bytes = state.router.encode_lookup_key(key)
             result = await state.readers[db_id].get(key_bytes)
 
@@ -440,7 +445,12 @@ class AsyncShardedReader:
         finally:
             self._release_state(state)
 
-    async def multi_get(self, keys: Sequence[KeyInput]) -> dict[KeyInput, bytes | None]:
+    async def multi_get(
+        self,
+        keys: Sequence[KeyInput],
+        *,
+        routing_context: dict[str, object] | None = None,
+    ) -> dict[KeyInput, bytes | None]:
         state = self._require_state()
         state.borrow_count += 1
 
@@ -452,7 +462,8 @@ class AsyncShardedReader:
             t0 = time.perf_counter() if mc is not None else 0.0
 
             key_list = list(keys)
-            grouped = state.router.group_keys(key_list)
+
+            grouped = state.router.group_keys(key_list, routing_context=routing_context)
             results: dict[KeyInput, bytes | None] = {}
 
             semaphore = (

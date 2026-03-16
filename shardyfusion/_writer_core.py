@@ -45,8 +45,8 @@ class ShardAttemptResult:
     db_url: str | None
     attempt: int
     row_count: int
-    min_key: int | str | None
-    max_key: int | str | None
+    min_key: KeyLike | None
+    max_key: KeyLike | None
     checkpoint_id: str | None
     writer_info: WriterInfo
 
@@ -75,12 +75,26 @@ class PartitionWriteOutcome:
     write_duration_ms: int
 
 
+_CEL_CACHE: dict[str, Any] = {}
+_cel_imports: tuple[Any, ...] | None = None
+
+
+def _get_cel_imports() -> tuple[Any, ...]:
+    global _cel_imports
+    if _cel_imports is None:
+        from .cel import CompiledCel, compile_cel, route_cel
+
+        _cel_imports = (CompiledCel, compile_cel, route_cel)
+    return _cel_imports
+
+
 def route_key(
     key: KeyLike,
     *,
     num_dbs: int,
     sharding: ShardingSpec,
     key_encoding: KeyEncoding,
+    routing_context: dict[str, object] | None = None,
 ) -> int:
     """Route a key to a shard db_id (non-Spark path)."""
 
@@ -92,6 +106,17 @@ def route_key(
                 "Range sharding without explicit boundaries requires a framework writer (Spark or Dask)."
             )
         return bisect_right(sharding.boundaries, key)
+    if sharding.strategy == ShardingStrategy.CEL:
+        CompiledCel, compile_cel, route_cel = _get_cel_imports()
+        assert sharding.cel_expr is not None and sharding.cel_columns is not None
+        if sharding.boundaries is None:
+            raise ConfigValidationError("CEL sharding requires precomputed boundaries.")
+        cached = _CEL_CACHE.get(sharding.cel_expr)
+        if not isinstance(cached, CompiledCel):
+            cached = compile_cel(sharding.cel_expr, sharding.cel_columns)
+            _CEL_CACHE[sharding.cel_expr] = cached
+        ctx = routing_context if routing_context is not None else {"key": key}
+        return route_cel(cached, ctx, sharding.boundaries)
     raise ConfigValidationError(
         f"Sharding strategy {sharding.strategy!r} not supported in non-Spark writers."
     )
@@ -489,6 +514,10 @@ def manifest_safe_sharding(sharding: ShardingSpec) -> ManifestShardingSpec:
         if sharding.boundaries is not None
         else None,
         approx_quantile_rel_error=sharding.approx_quantile_rel_error,
+        cel_expr=sharding.cel_expr,
+        cel_columns=dict(sharding.cel_columns)
+        if sharding.cel_columns is not None
+        else None,
     )
 
 
