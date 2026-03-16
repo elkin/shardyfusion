@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Tooling
 
-**Package manager**: uv. Extras: `read`, `read-async` (adds aiobotocore for native async S3), `writer-spark` (requires Java), `writer-python`, `writer-dask`, `writer-ray`, `cli`. Full dev: `uv sync --all-extras --dev`.
+**Package manager**: uv. Extras: `read`, `read-async` (adds aiobotocore for native async S3), `writer-spark` (requires Java), `writer-python`, `writer-dask`, `writer-ray`, `cli`, `cel` (adds cel-expr-python, fastdigest). Core dependency: `pyyaml>=6.0`. Full dev: `uv sync --all-extras --dev`.
 
 **Workflows**: Run `just --list` for all local and container (`d-*`) targets. Key entry points: `just setup` (bootstrap a fresh clone), `just doctor` (verify environment), `just fix` (auto-format), `just ci` (quality + unit + integration), `just clean` / `just clean-all` (remove caches/artifacts). Container default engine is Podman; override with `CONTAINER_ENGINE=docker`.
 
@@ -30,7 +30,7 @@ Container venv is at `/opt/shardyfusion-venv`, not the host `.venv`.
 
 ## CI Pipeline (GitHub Actions)
 
-On every push/PR: **quality → package → unit → integration** (parallel within each stage). E2E is local/container only (`just d-e2e`). Java 17 (temurin) for Spark jobs. **Dask and Ray do not run on py3.14.** Weekly scheduled build on Mondays at 06:00 UTC.
+On every push/PR: **quality → package → unit → integration** (parallel within each stage). E2E is local/container only (`just d-e2e`). Java 17 (temurin) for Spark jobs. **Dask, Ray, and CEL do not run on py3.14.** Weekly scheduled build on Mondays at 06:00 UTC.
 
 ## Architecture
 
@@ -65,7 +65,7 @@ The library is split into six independent paths that share config, manifest mode
 
 ```
 Layer 0 — Core types & errors: errors.py, type_defs.py (incl. RetryConfig), sharding_types.py, ordering.py, logging.py (incl. LogContext/JsonFormatter), metrics/ (package: _events.py, _protocol.py)
-Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py
+Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py, cel.py (CEL compile/evaluate/boundaries, optional cel extra)
 Layer 2 — Storage, routing, manifest: storage.py (w/ RetryConfig, list_prefixes), manifest.py, routing.py, manifest_store.py (delegates to list_prefixes), async_manifest_store.py, db_manifest_store.py
 Layer 3 — Writer core: _writer_core.py (shared by all writers; empty_shard_result, cleanup: CleanupAction, cleanup_stale_attempts, cleanup_old_runs)
 Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/reader.py (w/ ReaderHealth), reader/async_reader.py, cli/app.py
@@ -106,8 +106,8 @@ Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus ext
 
 1. `ShardedReader` / `ConcurrentShardedReader` in `reader/reader.py` loads the `_CURRENT` pointer from S3 and dereferences the manifest. On cold start, if `load_manifest()` raises `ManifestParseError`, the reader falls back to previous manifests via `list_manifests()` (up to `max_fallback_attempts`, default 3).
 2. Builds a `SnapshotRouter` from the manifest sharding metadata (mirrors write-time sharding logic). For empty shards (absent from manifest, padded by router with `db_url=None`), a `_NullShardReader` is used instead of opening a real DB.
-3. `get(key)` / `multi_get(keys)` routes keys to shard IDs, then reads from the appropriate shard. Keys routed to empty shards return `None` immediately via the null reader.
-4. `shard_for_key(key)` / `shards_for_keys(keys)` return `RequiredShardMeta` for routing inspection without DB access. `reader_for_key(key)` / `readers_for_keys(keys)` return borrowed `ShardReaderHandle` handles for direct shard access.
+3. `get(key, *, routing_context=None)` / `multi_get(keys, *, routing_context=None)` routes keys to shard IDs, then reads from the appropriate shard. Keys routed to empty shards return `None` immediately via the null reader. The optional `routing_context: dict[str, object] | None` parameter is forwarded to the router for CEL-based sharding (provides column values used in the CEL expression).
+4. `shard_for_key(key, *, routing_context=None)` / `shards_for_keys(keys)` return `RequiredShardMeta` for routing inspection without DB access. `reader_for_key(key)` / `readers_for_keys(keys)` return borrowed `ShardReaderHandle` handles for direct shard access. `route_key(key, *, routing_context=None)` also accepts `routing_context` for CEL routing.
 5. `ShardedReader` swaps state directly on refresh. `ConcurrentShardedReader` serialises refresh I/O via `_refresh_lock` and atomically swaps readers using reference counting with a compare-and-swap guard for safe cleanup. Borrowed `ShardReaderHandle` handles hold refcount increments, preventing cleanup of old state while borrows are outstanding. On `refresh()`, a malformed manifest is silently skipped (returns `False`), keeping the previous good state.
 6. `ConcurrentShardedReader` provides thread safety via `threading.Lock` (default) or `ThreadPoolExecutor` pool mode (`thread_safety` config). Pool mode supports configurable checkout timeout (`pool_checkout_timeout`, default 30s).
 
@@ -132,18 +132,18 @@ Key coercion: CLI keys are strings; when manifest uses integer encoding (`u64be`
 
 ### Manifest & CURRENT Data Formats
 
-**Manifest** (JSON, published to `s3_prefix/manifests/{timestamp}_run_id={run_id}/manifest`):
-```json
-{"required": {/* RequiredBuildMeta: run_id, num_dbs, s3_prefix, sharding, key_encoding, ... */},
- "shards": [/* list of RequiredShardMeta: db_id, db_url, checkpoint_id, row_count, ... */],
- "custom": {/* user-defined fields from ManifestOptions.custom_manifest_fields */}}
+**Manifest** (YAML, published to `s3_prefix/manifests/{timestamp}_run_id={run_id}/manifest`):
+```yaml
+required:  # RequiredBuildMeta: run_id, num_dbs, s3_prefix, sharding, key_encoding, ...
+shards:    # list of RequiredShardMeta: db_id, db_url, checkpoint_id, row_count, ...
+custom:    # user-defined fields from ManifestOptions.custom_manifest_fields
 ```
 
 Manifest S3 keys are timestamp-prefixed (e.g., `2026-03-14T10:30:00.000000Z_run_id=abc123/manifest`) for chronological listing via S3 `CommonPrefixes`.
 
 **CURRENT pointer** (JSON, published to `s3_prefix/_CURRENT`):
 ```json
-{"manifest_ref": "s3://bucket/.../manifest.json", "manifest_content_type": "application/json",
+{"manifest_ref": "s3://bucket/.../manifest.yaml", "manifest_content_type": "application/x-yaml",
  "run_id": "...", "updated_at": "...", "format_version": 1}
 ```
 
@@ -157,7 +157,7 @@ These are all Protocols, allowing user-provided implementations:
 
 | Protocol | Default Implementation | Purpose |
 |---|---|---|
-| `ManifestBuilder` | `JsonManifestBuilder` | Manifest serialization format |
+| `ManifestBuilder` | `YamlManifestBuilder` | Manifest serialization format |
 | `ManifestStore` | `S3ManifestStore` | Unified manifest read/write (publish + load + list + set_current) |
 | `AsyncManifestStore` | `AsyncS3ManifestStore` | Async read-only manifest loading (load + list) |
 | `AsyncShardReader` | `_SlateDbAsyncShardReader` | Async shard reader (get/close) |
@@ -208,6 +208,8 @@ The `key_encoding` field on `WriteConfig` (default `"u64be"`) controls how keys 
 
 - **`u64be`** (default): 8-byte big-endian unsigned integer. Keys in `[0, 2^64-1]`.
 - **`u32be`**: 4-byte big-endian unsigned integer. Keys in `[0, 2^32-1]`. Cuts key storage in half.
+- **`utf8`**: UTF-8 encoded string keys. Variable length.
+- **`raw`**: Raw bytes passed through without transformation.
 
 Both encodings produce identical hash routing results for keys in `[0, 2^32-1]` because the routing layer zero-extends to 8-byte little-endian before hashing (matching Spark's `xxhash64(cast(key as long))`). The encoding is stored in the manifest and used by the reader/CLI for key coercion and lookup encoding.
 
@@ -215,6 +217,7 @@ Both encodings produce identical hash routing results for keys in `[0, 2^32-1]` 
 
 - **Hash** (default): `pmod(xxhash64(cast(key as long)), num_dbs)` — requires integer key column
 - **Range**: Explicit boundaries or computed via `approxQuantile` — supports int/float/string keys
+- **CEL**: User-provided CEL expression evaluated at write time (shard assignment) and read time (routing). Boundaries computed automatically via t-digest or provided explicitly. Requires `cel` extra (`cel-expr-python`, `fastdigest`). `ShardingSpec` fields: `cel_expr` (the CEL expression string), `cel_columns` (list of column names used in the expression), `max_keys_per_shard` (optional capacity hint for boundary discovery).
 
 The `SnapshotRouter` in `routing.py` mirrors the writer's sharding logic exactly for consistent key routing at read time. Manifests are sparse: only shards with data appear in the `shards` list. `SnapshotRouter.__init__` pads missing db_ids with synthetic `RequiredShardMeta(db_url=None, row_count=0)` entries so `router.shards[db_id]` always works. Range routing prefers explicit manifest boundaries over shard min/max intervals; empty shards (`None`, `None` bounds) are excluded from interval-based routing.
 
@@ -241,7 +244,7 @@ All errors inherit from `ShardyfusionError` with `retryable: bool`. Non-retryabl
 
 ## Public API Summary
 
-Core types exported from `shardyfusion.__init__` (always available, no optional extras required). See `__init__.py` for the full list. Manifest types include `ManifestRef`, `ManifestStore`, `S3ManifestStore`, `InMemoryManifestStore`, `ManifestBuilder`, `JsonManifestBuilder`, `WriterInfo`. Reader types include `ShardedReader`, `ConcurrentShardedReader`, `ShardReaderHandle`, `ShardDetail`, `SnapshotInfo`, `SlateDbReaderFactory`, `ReaderHealth`. Async reader types include `AsyncShardedReader`, `AsyncShardReaderHandle`, `AsyncSlateDbReaderFactory`, `AsyncShardReader`, `AsyncShardReaderFactory`, `AsyncManifestStore`, `AsyncS3ManifestStore`. Rate limiting: `AcquireResult`, `RateLimiter`, `TokenBucket`. Retry: `RetryConfig`. Logging: `LogContext`, `JsonFormatter`, `configure_logging`. All are in `__all__`.
+Core types exported from `shardyfusion.__init__` (always available, no optional extras required). See `__init__.py` for the full list. Manifest types include `ManifestRef`, `ManifestStore`, `S3ManifestStore`, `InMemoryManifestStore`, `ManifestBuilder`, `YamlManifestBuilder`, `parse_manifest`, `WriterInfo`. Reader types include `ShardedReader`, `ConcurrentShardedReader`, `ShardReaderHandle`, `ShardDetail`, `SnapshotInfo`, `SlateDbReaderFactory`, `ReaderHealth`. Async reader types include `AsyncShardedReader`, `AsyncShardReaderHandle`, `AsyncSlateDbReaderFactory`, `AsyncShardReader`, `AsyncShardReaderFactory`, `AsyncManifestStore`, `AsyncS3ManifestStore`. Rate limiting: `AcquireResult`, `RateLimiter`, `TokenBucket`. Retry: `RetryConfig`. Logging: `LogContext`, `JsonFormatter`, `configure_logging`. All are in `__all__`.
 
 Writer functions are imported from subpackages (not re-exported at top level):
 - **Spark:** `from shardyfusion.writer.spark import write_sharded, write_single_db, DataFrameCacheContext, SparkConfOverrideContext`
@@ -257,7 +260,8 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **`tests/integration/`** — S3 via `moto`; Spark writer tests require Spark + Java
 - **`tests/e2e/`** — Garage S3 via compose; `just d-e2e`
 - **`tests/helpers/`** — `s3_test_scenarios.py` (shared scenarios for moto/Garage), `tracking.py` (test doubles: `TrackingAdapter`, `TrackingFactory`, `RecordingTokenBucket`, `InMemoryPublisher`)
-- Markers: `@pytest.mark.spark`, `@pytest.mark.dask`, `@pytest.mark.ray`, `@pytest.mark.e2e`
+- Markers: `@pytest.mark.spark`, `@pytest.mark.dask`, `@pytest.mark.ray`, `@pytest.mark.cel`, `@pytest.mark.e2e`
+- **CEL tests**: require `cel` extra (`cel-expr-python`, `fastdigest`). Use `@pytest.mark.cel` marker. Skipped via `pytest.importorskip()` when the extra is not installed.
 - **Contract tests**: hypothesis property tests in `test_routing_contract.py`, framework cross-checks in `writer/spark/`, `writer/dask/`, and `writer/ray/`
 - **Cleanup tests**: `tests/unit/cli/test_cleanup.py` tests the `cleanup` CLI command; `tests/unit/writer/test_cleanup_core.py` tests core cleanup functions (`cleanup_stale_attempts`, `cleanup_old_runs`)
 - For behavior changes: add/adjust unit tests first, then integration tests where routing/publishing or framework behavior is affected
@@ -288,10 +292,11 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **`acquire_async()` is part of the `RateLimiter` Protocol**: Uses `asyncio.sleep` — safe for event loops. The sync `acquire()` uses `time.sleep` and must not be called from async code.
 - **`try_acquire()` is pure arithmetic**: Guaranteed non-blocking (replenish + compare + deduct). Safe to call from async code directly without `to_thread()`.
 - **`RetryConfig` is S3-specific**: Lives on `S3ManifestStore` (and `AsyncS3ManifestStore`), not on reader/writer constructors. Controls exponential backoff for transient S3 errors.
+- **`cel-expr-python` does not support Python 3.14**: The `cel` extra depends on `cel-expr-python` which has no py3.14 wheels. CEL tests are skipped on py3.14 via `pytest.importorskip()`.
 
 ## Environment Notes
 
 - Spark-based writer flows require **Java 17** (`JAVA_HOME` or `PATH`). CI uses temurin distribution.
 - `SPARK_LOCAL_IP=127.0.0.1` is set in tox and devcontainer to avoid hostname resolution issues.
 - Reader-only, Python writer, Dask writer, and Ray writer usage do not require Spark/Java.
-- **Ray does not run on py3.14** (same as Dask).
+- **Ray does not run on py3.14** (same as Dask and CEL).

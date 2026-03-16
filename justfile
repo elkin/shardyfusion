@@ -233,7 +233,7 @@ d-integration p="2":
 
 # End-to-end tests against Garage (in container via compose)
 [group('container')]
-d-e2e:
+d-e2e: d-build
     docker/run-e2e.sh {{engine}}
 
 # Quality + unit + integration in sequence (in container)
