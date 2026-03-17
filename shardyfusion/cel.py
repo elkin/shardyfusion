@@ -147,7 +147,9 @@ def evaluate_cel_arrow_batch(
 ) -> list[int | str | bytes]:
     """Evaluate CEL on each row of a PyArrow RecordBatch/Table.
 
-    Shared by Spark (mapInArrow), Ray (map_batches), and Dask writers.
+    Used by the Spark writer via ``route_cel_batch`` (``mapInArrow``
+    naturally delivers Arrow batches).  Dask and Ray writers route
+    through ``route_key()`` → ``route_cel()`` per row instead.
 
     Args:
         compiled: Compiled CEL expression.
@@ -157,18 +159,7 @@ def evaluate_cel_arrow_batch(
         List of routing key values, one per row.
     """
     col_names = list(compiled.columns)
-    col_arrays = {name: batch.column(name).to_pylist() for name in col_names}
-    num_rows = len(batch)
-
-    # Reuse a single mutable dict to avoid per-row allocation.
-    context: dict[str, Any] = {}
-    results: list[int | str | bytes] = []
-    for i in range(num_rows):
-        for name in col_names:
-            context[name] = col_arrays[name][i]
-        results.append(compiled.evaluate(context))
-
-    return results
+    return [compiled.evaluate(row) for row in batch.select(col_names).to_pylist()]
 
 
 def route_cel_batch(
