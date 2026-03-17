@@ -172,7 +172,7 @@ These are all Protocols, allowing user-provided implementations:
 
 `MetricsCollector` (Protocol in `metrics/_protocol.py`) is an optional observer: set `WriteConfig.metrics_collector` or pass it to the reader. The `MetricEvent` enum (in `metrics/_events.py`) defines events across writer lifecycle (e.g., `WRITE_STARTED`, `SHARD_WRITE_COMPLETED`), reader lifecycle (`READER_GET`, `READER_REFRESHED`), and infrastructure (`S3_RETRY`, `RATE_LIMITER_THROTTLED`). Collectors receive `(event, payload_dict)` and should silently ignore unknown events for forward compatibility.
 
-The `metrics/` package (`_events.py`, `_protocol.py`, `_payloads.py`) is always available. Optional publishers require extras:
+The `metrics/` package (`_events.py`, `_protocol.py`) is always available. Optional publishers require extras:
 - **`PrometheusCollector`** (`metrics/prometheus.py`): requires `metrics-prometheus` extra. Uses isolated `CollectorRegistry` for test safety.
 - **`OtelCollector`** (`metrics/otel.py`): requires `metrics-otel` extra. Accepts optional `meter_provider` for test isolation.
 
