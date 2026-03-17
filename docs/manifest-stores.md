@@ -95,7 +95,7 @@ store = S3ManifestStore(
     s3_prefix="s3://bucket/prefix",
     manifest_name="manifest",              # default
     current_name="_CURRENT",               # default
-    manifest_builder=None,                 # default: JsonManifestBuilder
+    manifest_builder=None,                 # default: YamlManifestBuilder
     credential_provider=None,              # optional CredentialProvider
     s3_connection_options=None,            # optional S3ConnectionOptions
     metrics_collector=None,                # optional MetricsCollector
@@ -153,7 +153,7 @@ store = S3ManifestStore(
 ```json
 {
   "manifest_ref": "s3://bucket/prefix/manifests/2026-03-14T10:30:00.000000Z_run_id=abc123/manifest",
-  "manifest_content_type": "application/json",
+  "manifest_content_type": "application/x-yaml",
   "run_id": "abc123",
   "updated_at": "2026-03-14T10:30:01Z",
   "format_version": 1
