@@ -27,7 +27,7 @@ from shardyfusion.logging import (
 )
 from shardyfusion.manifest import ParsedManifest, RequiredShardMeta
 from shardyfusion.metrics import MetricEvent, MetricsCollector
-from shardyfusion.reader.reader import (
+from shardyfusion.reader._types import (
     ReaderHealth,
     ShardDetail,
     SnapshotInfo,

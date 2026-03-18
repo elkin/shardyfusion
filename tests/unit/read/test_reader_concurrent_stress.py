@@ -19,7 +19,7 @@ from shardyfusion.manifest import (
     RequiredBuildMeta,
     RequiredShardMeta,
 )
-from shardyfusion.reader.reader import ConcurrentShardedReader
+from shardyfusion.reader import ConcurrentShardedReader
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 
 

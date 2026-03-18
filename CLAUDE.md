@@ -53,7 +53,7 @@ The library is split into six independent paths that share config, manifest mode
 `writer/python/writer.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
 
 **Reader path (sync)** (no Spark/Java needed):
-`reader/reader.py` → `routing.py` → `manifest_store.py`, `db_manifest_store.py`
+`reader/reader.py` (ShardedReader) / `reader/concurrent_reader.py` (ConcurrentShardedReader) → `reader/_base.py` → `reader/_types.py`, `reader/_state.py` → `routing.py` → `manifest_store.py`, `db_manifest_store.py`
 
 **Reader path (async)** (no Spark/Java needed; optional `aiobotocore` for native async S3):
 `reader/async_reader.py` → `routing.py` → `async_manifest_store.py` (`AsyncS3ManifestStore`)
@@ -68,7 +68,7 @@ Layer 0 — Core types & errors: errors.py, type_defs.py (incl. RetryConfig), sh
 Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py, cel.py (CEL compile/evaluate/boundaries, optional cel extra)
 Layer 2 — Storage, routing, manifest: storage.py (w/ RetryConfig, list_prefixes), manifest.py, routing.py, manifest_store.py (delegates to list_prefixes), async_manifest_store.py, db_manifest_store.py
 Layer 3 — Writer core: _writer_core.py (shared by all writers; empty_shard_result, cleanup: CleanupAction, cleanup_stale_attempts, cleanup_old_runs)
-Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/reader.py (w/ ReaderHealth), reader/async_reader.py, cli/app.py
+Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/ (reader.py, concurrent_reader.py, _base.py, _types.py, _state.py), reader/async_reader.py, cli/app.py
 Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
 Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus extra), metrics/otel.py (metrics-otel extra)
 ```
@@ -244,7 +244,7 @@ All errors inherit from `ShardyfusionError` with `retryable: bool`. Non-retryabl
 
 ## Public API Summary
 
-Core types exported from `shardyfusion.__init__` (always available, no optional extras required). See `__init__.py` for the full list. Manifest types include `ManifestRef`, `ManifestStore`, `S3ManifestStore`, `InMemoryManifestStore`, `ManifestBuilder`, `YamlManifestBuilder`, `parse_manifest`, `WriterInfo`. Reader types include `ShardedReader`, `ConcurrentShardedReader`, `ShardReaderHandle`, `ShardDetail`, `SnapshotInfo`, `SlateDbReaderFactory`, `ReaderHealth`. Async reader types include `AsyncShardedReader`, `AsyncShardReaderHandle`, `AsyncSlateDbReaderFactory`, `AsyncShardReader`, `AsyncShardReaderFactory`, `AsyncManifestStore`, `AsyncS3ManifestStore`. Rate limiting: `AcquireResult`, `RateLimiter`, `TokenBucket`. Retry: `RetryConfig`. Logging: `LogContext`, `JsonFormatter`, `configure_logging`. All are in `__all__`.
+Core types exported from `shardyfusion.__init__` (always available, no optional extras required). See `__init__.py` for the full list. Manifest types include `ManifestRef`, `ManifestStore`, `S3ManifestStore`, `InMemoryManifestStore`, `ManifestBuilder`, `YamlManifestBuilder`, `parse_manifest`, `WriterInfo`. Reader types include `ShardedReader`, `ConcurrentShardedReader`, `ShardReaderHandle`, `ShardDetail`, `SnapshotInfo`, `SlateDbReaderFactory`, `ReaderHealth`. Async reader types include `AsyncShardedReader`, `AsyncShardReaderHandle`, `AsyncSlateDbReaderFactory`, `AsyncShardReader`, `AsyncShardReaderFactory`, `AsyncManifestStore`, `AsyncS3ManifestStore`. Rate limiting: `AcquireResult`, `RateLimiter`, `TokenBucket`, `ThreadSafeTokenBucket`. Retry: `RetryConfig`. Logging: `LogContext`, `JsonFormatter`, `configure_logging`. All are in `__all__`.
 
 Writer functions are imported from subpackages (not re-exported at top level):
 - **Spark:** `from shardyfusion.writer.spark import write_sharded, write_single_db, DataFrameCacheContext, SparkConfOverrideContext`
@@ -278,7 +278,7 @@ Writer functions are imported from subpackages (not re-exported at top level):
 
 - **SlateDB import is deferred**: `slatedb_adapter.py` imports the `slatedb` module inside `__init__`, not at module load. Tests monkeypatch `sys.modules["slatedb"]` to provide fakes.
 - **Python writer parallel mode uses `spawn`**: `multiprocessing.get_context("spawn")` is hardcoded. All objects passed to workers must be picklable. Min/max key tracking happens in the main process.
-- **Rate limiter is not thread-safe**: `TokenBucket` has no internal lock; a `ThreadSafeTokenBucket` subclass will be added when needed. Writers and readers depend on the `RateLimiter` Protocol, not the concrete class. Writers support both `max_writes_per_second` (ops) and `max_write_bytes_per_second` (bytes) via independent `TokenBucket` instances. Readers accept a `rate_limiter` parameter for reads/sec limiting.
+- **Rate limiter thread safety**: `TokenBucket` has no internal lock. Use `ThreadSafeTokenBucket` when sharing a limiter across threads (e.g. `ConcurrentShardedReader`). `ThreadSafeTokenBucket` locks around `try_acquire()` and loops with sleep outside the lock. Writers and readers depend on the `RateLimiter` Protocol, not the concrete class. Writers support both `max_writes_per_second` (ops) and `max_write_bytes_per_second` (bytes) via independent `TokenBucket` instances. Readers accept a `rate_limiter` parameter for reads/sec limiting.
 - **Reader reference counting**: `refresh()` serialises I/O via `_refresh_lock`, atomically swaps `_ReaderState` with a compare-and-swap guard, and defers closing old handles until `refcount` drops to zero. Pool-mode checkout has a configurable timeout (default 30s) — raises `PoolExhaustedError` (retryable) when exhausted. Metadata methods (`key_encoding`, `snapshot_info`, `shard_details`, `route_key`) use `_use_state()` and raise `ReaderStateError` on a closed reader.
 - **Borrow handle safety nets**: `ShardReaderHandle` and `AsyncShardReaderHandle` implement `__del__()` that logs a warning and releases the borrow if the handle was not explicitly closed. Prefer explicit `close()` or `with`/`async with` context managers.
 - **Async reader uses `open()` classmethod**: `AsyncShardedReader.__init__` does no I/O. Use `await AsyncShardedReader.open(...)` or `async with AsyncShardedReader(...)`. Requires `aiobotocore` (the `read-async` extra).

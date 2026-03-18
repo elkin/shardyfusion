@@ -1,17 +1,12 @@
+from ._state import ShardReaderHandle
+from ._types import ReaderHealth, ShardDetail, SlateDbReaderFactory, SnapshotInfo
 from .async_reader import (
     AsyncShardedReader,
     AsyncShardReaderHandle,
     AsyncSlateDbReaderFactory,
 )
-from .reader import (
-    ConcurrentShardedReader,
-    ReaderHealth,
-    ShardDetail,
-    ShardedReader,
-    ShardReaderHandle,
-    SlateDbReaderFactory,
-    SnapshotInfo,
-)
+from .concurrent_reader import ConcurrentShardedReader
+from .reader import ShardedReader
 
 __all__ = [
     "AsyncShardedReader",
@@ -19,9 +14,9 @@ __all__ = [
     "AsyncSlateDbReaderFactory",
     "ConcurrentShardedReader",
     "ReaderHealth",
-    "ShardReaderHandle",
     "ShardDetail",
     "ShardedReader",
+    "ShardReaderHandle",
     "SlateDbReaderFactory",
     "SnapshotInfo",
 ]

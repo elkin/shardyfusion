@@ -14,7 +14,7 @@ import click.testing
 
 from shardyfusion.cli.app import _build_manifest_store, cli
 from shardyfusion.cli.config import ManifestStoreConfig
-from shardyfusion.reader.reader import ShardDetail, SnapshotInfo
+from shardyfusion.reader import ShardDetail, SnapshotInfo
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 
 _FAKE_CREATED_AT = datetime.fromisoformat("2026-01-01T00:00:00+00:00")

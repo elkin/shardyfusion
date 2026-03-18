@@ -1243,7 +1243,7 @@ class TestOrderedLock:
 
     def test_correct_order_succeeds(self) -> None:
         """Acquiring locks in ascending level order raises no error."""
-        from shardyfusion.reader.reader import _OrderedLock
+        from shardyfusion.reader._state import _OrderedLock
 
         lock_a = _OrderedLock(0, "first")
         lock_b = _OrderedLock(1, "second")
@@ -1255,7 +1255,7 @@ class TestOrderedLock:
 
     def test_reverse_order_raises(self) -> None:
         """Acquiring a lower-level lock while holding a higher one raises."""
-        from shardyfusion.reader.reader import _OrderedLock
+        from shardyfusion.reader._state import _OrderedLock
 
         lock_a = _OrderedLock(0, "first")
         lock_b = _OrderedLock(1, "second")
@@ -1266,7 +1266,7 @@ class TestOrderedLock:
 
     def test_same_level_raises(self) -> None:
         """Acquiring two locks at the same level raises (prevents self-deadlock)."""
-        from shardyfusion.reader.reader import _OrderedLock
+        from shardyfusion.reader._state import _OrderedLock
 
         lock_x = _OrderedLock(0, "x")
         lock_y = _OrderedLock(0, "y")
@@ -1277,7 +1277,7 @@ class TestOrderedLock:
 
     def test_standalone_acquisition_succeeds(self) -> None:
         """Acquiring a higher-level lock without holding any other lock works."""
-        from shardyfusion.reader.reader import _OrderedLock
+        from shardyfusion.reader._state import _OrderedLock
 
         lock_b = _OrderedLock(1, "second")
 
@@ -1430,20 +1430,20 @@ class TestReaderPoolInternals:
     """Verify defensive invariants on _ReaderPool."""
 
     def test_reader_pool_queue_bounded(self) -> None:
-        from shardyfusion.reader.reader import _ReaderPool
+        from shardyfusion.reader._state import _ReaderPool
 
         readers = [_FakeReader({}), _FakeReader({}), _FakeReader({})]
         pool = _ReaderPool(readers)
         assert pool._indexes.maxsize == 3
 
     def test_reader_pool_checkout_timeout_zero_raises(self) -> None:
-        from shardyfusion.reader.reader import _ReaderPool
+        from shardyfusion.reader._state import _ReaderPool
 
         with pytest.raises(ValueError, match="must be > 0"):
             _ReaderPool([_FakeReader({})], checkout_timeout=0)
 
     def test_reader_pool_readers_is_tuple(self) -> None:
-        from shardyfusion.reader.reader import _ReaderPool
+        from shardyfusion.reader._state import _ReaderPool
 
         readers = [_FakeReader({}), _FakeReader({})]
         pool = _ReaderPool(readers)

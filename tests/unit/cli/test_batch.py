@@ -12,7 +12,7 @@ import pytest
 
 from shardyfusion.cli.batch import load_script, run_script
 from shardyfusion.cli.config import OutputConfig
-from shardyfusion.reader.reader import ShardDetail, SnapshotInfo
+from shardyfusion.reader import ShardDetail, SnapshotInfo
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 
 _FAKE_CREATED_AT = datetime.fromisoformat("2026-01-01T00:00:00+00:00")

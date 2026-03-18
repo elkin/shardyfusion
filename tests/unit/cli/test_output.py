@@ -224,7 +224,7 @@ class TestFormatResult:
 class TestBuildShardsResult:
     def test_structure(self) -> None:
         from shardyfusion.cli.output import build_shards_result
-        from shardyfusion.reader.reader import ShardDetail
+        from shardyfusion.reader import ShardDetail
 
         shards = [
             ShardDetail(

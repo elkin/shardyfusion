@@ -10,7 +10,7 @@ from typing import Any
 
 from shardyfusion.cli.config import OutputConfig
 from shardyfusion.cli.interactive import ShardyRepl
-from shardyfusion.reader.reader import ShardDetail, SnapshotInfo
+from shardyfusion.reader import ShardDetail, SnapshotInfo
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 
 _FAKE_CREATED_AT = datetime.fromisoformat("2026-01-01T00:00:00+00:00")
