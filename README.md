@@ -2,144 +2,91 @@
 
 [![CI](https://github.com/slatedb/shardyfusion/actions/workflows/ci.yml/badge.svg)](https://github.com/slatedb/shardyfusion/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/shardyfusion)](https://pypi.org/project/shardyfusion/)
+[![Docs](https://img.shields.io/badge/docs-elkin.github.io%2Fshardyfusion-blue)](https://elkin.github.io/shardyfusion/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-## What is shardyfusion?
+Build and read sharded key-value snapshots on S3, powered by [SlateDB](https://slatedb.io).
 
-shardyfusion solves the problem of building and reading sharded key-value snapshots on S3-compatible storage. It lets you write millions of key-value pairs across N independent [SlateDB](https://slatedb.io) shard databases using your preferred compute framework, then read them back with consistent routing from any Python service.
+Write millions of key-value pairs across N independent shard databases using Spark, Dask, Ray, or plain Python. Read them back from any Python service with consistent routing — the reader always finds the right shard.
 
-**When to use it:** You have a batch pipeline that produces key-value data (features, embeddings, precomputed results) and a serving layer that needs fast key lookups. shardyfusion handles the sharding, publishing, and routing so your serving code just calls `reader.get(key)`.
+## When to use shardyfusion
 
-## Features
+**Daily feature store refresh** — A Spark job writes feature vectors overnight across 64 shards. Your serving fleet opens a `ShardedReader` and serves lookups all day. When the next snapshot lands, call `refresh()` for an atomic swap with zero downtime.
 
-- Writer-side APIs to build `num_dbs` independent SlateDB shard databases
-  - **Spark** (`writer-spark`) — PySpark DataFrame-based, requires Java
-  - **Dask** (`writer-dask`) — Dask DataFrame-based, no Java required
-  - **Ray** (`writer-ray`) — Ray Data Dataset-based, no Java required
-  - **Python** (`writer-python`) — pure-Python iterator-based, no Java required
-- Manifest + `_CURRENT` publishing protocol (default S3, pluggable interfaces)
-- Reader-side routing helpers for service-side `get` and `multi_get`
-- `shardy` CLI for interactive and batch lookups
-- Token-bucket rate limiting for all writer paths
-- Pluggable interfaces for manifest building, publishing, and reading
+**Embedding snapshot for search** — A Ray pipeline encodes embeddings into sharded SlateDB databases. An async API serves lookups via `AsyncShardedReader` with rate limiting and concurrency control.
 
-### When to use each writer backend
-
-| Backend | Best for | Requires |
-|---|---|---|
-| **Spark** | Large-scale batch ETL, existing Spark pipelines | Java 17+ |
-| **Dask** | Medium-scale batch, Python-native distributed computing | — |
-| **Ray** | ML pipelines, Ray ecosystem integration | — |
-| **Python** | Small datasets, scripts, testing, custom pipelines | — |
+**Config/rule distribution** — A Python script packs business rules into a small snapshot. Microservices load the latest version on startup and periodically refresh, all reading from the same S3 prefix.
 
 ## Architecture
 
 ```mermaid
-graph LR
-    subgraph Write
-        A[DataFrame / Iterable] --> B[Sharding]
-        B --> C[Shard Writers]
-        C --> D[S3: shard DBs]
-        C --> E[S3: manifest]
-        E --> F[S3: _CURRENT]
+graph TB
+    subgraph Writers["Writer Backends"]
+        spark["Spark · mapInArrow"]
+        dask["Dask · map_partitions"]
+        ray["Ray · map_batches"]
+        python["Python · Iterable"]
     end
-    subgraph Read
-        F --> G[SnapshotRouter]
-        G --> H[get / multi_get]
-        H --> D
+
+    core["Shared Core — xxh3 routing · winner selection · manifest build"]
+
+    subgraph Publish["Two-Phase Publish"]
+        s3manifest["S3: manifest YAML"]
+        s3current["S3: _CURRENT pointer"]
     end
+
+    shards[("S3: shard DBs")]
+
+    router["SnapshotRouter"]
+
+    subgraph Readers["Reader Variants"]
+        sync["ShardedReader"]
+        concurrent["ConcurrentShardedReader"]
+        async_r["AsyncShardedReader"]
+    end
+
+    cli["shardy CLI"]
+
+    Writers --> core --> Publish
+    s3manifest --> s3current
+    Writers --> shards
+    s3current --> router --> Readers --> shards
+    cli -.-> router
 ```
 
-[Full documentation](https://slatedb.github.io/shardyfusion/) | [Architecture details](docs/how-it-works.md)
+## Writer backends
 
-## Runtime Prerequisites
+| Backend | Best for | Requires | Install extra |
+|---|---|---|---|
+| **Spark** | Large-scale batch ETL, existing Spark pipelines | Java 17+ | `writer-spark` |
+| **Dask** | Medium-scale batch, Python-native distributed computing | — | `writer-dask` |
+| **Ray** | ML pipelines, Ray ecosystem integration | — | `writer-ray` |
+| **Python** | Small datasets, scripts, testing, custom pipelines | — | `writer-python` |
 
-- Reader-only, Python writer, Dask writer, and Ray writer usage do not require Java.
-- Spark writer requires a local Java runtime (JRE/JDK) available on `PATH`
-  or via `JAVA_HOME`.
-- Running Spark-based tests also requires Java.
+## Reader variants
 
-## Installation
+| Variant | Use case | Thread safety |
+|---|---|---|
+| `ShardedReader` | Single-threaded services, scripts | Not thread-safe |
+| `ConcurrentShardedReader` | Multi-threaded services (Flask, Django) | Lock or pool mode |
+| `AsyncShardedReader` | Asyncio services (FastAPI, aiohttp) | Async-native |
+
+## Quick start
 
 ```bash
-# Reader-side dependencies only (no Spark)
-uv sync --extra read
-
-# Async reader (includes aiobotocore for native async S3)
-uv sync --extra read-async
-
-# Spark writer (includes PySpark, requires Java)
-uv sync --extra writer-spark
-
-# Python writer (no Spark/Java required)
-uv sync --extra writer-python
-
-# Dask writer (no Spark/Java required)
-uv sync --extra writer-dask
-
-# Ray writer (no Spark/Java required)
-uv sync --extra writer-ray
-
-# Full install
-uv sync --all-extras
+pip install shardyfusion[writer-python]  # write
+pip install shardyfusion[read]           # read
 ```
 
-For development:
+<details>
+<summary>All available extras</summary>
 
-```bash
-uv sync --all-extras --dev
-```
+`read`, `read-async`, `writer-spark`, `writer-dask`, `writer-ray`, `writer-python`, `cli`, `cel`, `metrics-prometheus`, `metrics-otel`
 
-## Minimal Writer Usage
+See [Getting Started](https://elkin.github.io/shardyfusion/getting-started/) for full installation and dev setup.
+</details>
 
-### Spark
-
-```python
-from shardyfusion import WriteConfig, ValueSpec
-from shardyfusion.writer.spark import write_sharded
-
-config = WriteConfig(num_dbs=8, s3_prefix="s3://bucket/prefix")
-
-result = write_sharded(
-    df, config,
-    key_col="id",
-    value_spec=ValueSpec.binary_col("payload"),
-)
-```
-
-### Dask
-
-```python
-from shardyfusion import WriteConfig, ValueSpec
-from shardyfusion.writer.dask import write_sharded
-
-config = WriteConfig(num_dbs=8, s3_prefix="s3://bucket/prefix")
-
-result = write_sharded(
-    ddf, config,
-    key_col="id",
-    value_spec=ValueSpec.binary_col("payload"),
-)
-```
-
-### Ray
-
-```python
-import ray
-from shardyfusion import WriteConfig, ValueSpec
-from shardyfusion.writer.ray import write_sharded
-
-config = WriteConfig(num_dbs=8, s3_prefix="s3://bucket/prefix")
-ds = ray.data.from_items([{"id": i, "payload": b"..."} for i in range(1000)])
-
-result = write_sharded(
-    ds, config,
-    key_col="id",
-    value_spec=ValueSpec.binary_col("payload"),
-)
-```
-
-### Python
+**Write** a sharded snapshot (Python writer — simplest, no Java):
 
 ```python
 from shardyfusion import WriteConfig
@@ -154,135 +101,75 @@ result = write_sharded(
 )
 ```
 
-## Minimal Reader Usage
+**Read** it back from any service:
 
 ```python
 from shardyfusion import ShardedReader
 
-reader = ShardedReader(
+with ShardedReader(
     s3_prefix="s3://bucket/prefix",
     local_root="/tmp/shardyfusion-reader",
-)
-
-value = reader.get(123)
-batch = reader.multi_get([1, 2, 3])
-reader.refresh()
-reader.close()
+) as reader:
+    value = reader.get(123)
+    batch = reader.multi_get([1, 2, 3])
+    reader.refresh()  # atomic swap to latest snapshot
 ```
 
-For multi-threaded services, use `ConcurrentShardedReader`. For asyncio services, use `AsyncShardedReader` — see the [reader docs](https://slatedb.github.io/shardyfusion/reader/).
+See the [Writer docs](https://elkin.github.io/shardyfusion/writer/) and [Reader docs](https://elkin.github.io/shardyfusion/reader/) for all backends and configuration options.
 
-## Development Workflow
+## Key design decisions
 
-### Lint and style
+- **Two-phase publish** — Manifest is written first, then `_CURRENT` pointer is updated. Readers never see a half-written snapshot.
+- **Deterministic winner selection** — Speculative execution (Spark task retries, Dask/Ray restarts) can produce duplicate shard writes. Winners are selected deterministically, so results are reproducible.
+- **Routing parity** — All writers and readers share the same routing implementation — never reimplemented per framework. The default is `xxh3_64` hash-based, but sharding is configurable with expression-based strategies for custom partitioning schemes.
+- **Sparse manifests** — Only shards with data appear in the manifest. The router pads missing IDs with null readers that return `None` instantly.
+- **Atomic refresh** — `refresh()` loads the new manifest, opens new shard handles, and swaps state atomically. In-flight reads complete against the old state.
+
+## CLI
+
+The `shardy` CLI provides interactive and batch access to published snapshots:
 
 ```bash
-uv run ruff check .
-uv run ruff format --check .
+pip install shardyfusion[cli]
+
+shardy --s3-prefix s3://bucket/prefix get 42
+shardy --s3-prefix s3://bucket/prefix info
+shardy --s3-prefix s3://bucket/prefix       # interactive REPL
 ```
 
-### Type checking
+See the [CLI docs](https://elkin.github.io/shardyfusion/cli/) for all commands including `multiget`, `history`, `rollback`, and `cleanup`.
 
-```bash
-uv run pyright shardyfusion
-```
+## Future directions
 
-### Tests
-
-```bash
-# Direct pytest run
-uv run pytest -q
-
-# Tox quality/stage targets
-uv run tox -e lint,format,type
-uv run tox -e py311-all-spark35-unit
-uv run tox -e py311-read-integration,py311-sparkwriter-spark4-integration
-```
-
-Parallel tox environments (cap env-level parallelism to avoid OOM):
-
-```bash
-uv run tox p -p 2
-```
-
-Containerized local development run (Podman):
-
-```bash
-podman build -f docker/ci.Dockerfile -t shardyfusion-ci .
-podman run --rm -v "$PWD:/workspace" -w /workspace shardyfusion-ci \
-  /bin/bash -lc "uv sync --all-extras --dev && uv run tox -m quality && uv run tox -m unit && uv run tox -m integration"
-```
-
-The image includes Python 3.11 and later so tox `py311-*` and above
-environments execute instead of being skipped.
-
-Short container prefix via `just`:
-
-```bash
-just d-build
-just d uv run tox -m quality
-just d uv run tox -m unit
-just d uv run tox -m integration
-```
-
-`just d ...` runs the same command shape as local usage, but inside the container.
-It uses container-only uv state and a container-only project venv path
-(`UV_PROJECT_ENVIRONMENT=/opt/shardyfusion-venv`), so it does not reuse host `.venv`.
-
-Container runtime defaults to `podman`; switch to Docker with:
-
-```bash
-CONTAINER_ENGINE=docker just d-build
-CONTAINER_ENGINE=docker just d uv run tox -m quality
-```
-
-Dev Container (VS Code):
-
-1. Install the VS Code `Dev Containers` extension.
-2. Open this repository in VS Code.
-3. Run `Dev Containers: Reopen in Container`.
-
-The Dev Container reuses `docker/ci.Dockerfile` and runs
-`uv sync --all-extras --dev` automatically after container creation.
-
-If you use Podman as the backend, expose a Docker-compatible socket
-(`podman system service`) and point VS Code Dev Containers to it.
-
-### Build package artifacts
-
-```bash
-uv build
-```
-
-## Release Process
-
-1. Bump version:
-
-```bash
-uv version X.Y.Z
-```
-
-2. Commit + merge to `main`.
-3. Tag and push:
-
-```bash
-git tag vX.Y.Z
-git push origin vX.Y.Z
-```
-
-4. GitHub Actions `Release` workflow validates and publishes to PyPI via trusted publishing.
+- **Reliable cleanup** — Deferred retry for cleaning stale write attempts and old snapshot runs
+- **Global rate limiting** — Cross-worker coordination for distributed write pipelines
+- **Additional framework integrations** — DuckDB, Polars writer backends
+- **Enhanced observability** — Richer metrics, tracing spans, dashboard templates
 
 ## Documentation
 
-MkDocs site is published from `main` to GitHub Pages.
+| Page | Description |
+|---|---|
+| [Getting Started](https://elkin.github.io/shardyfusion/getting-started/) | Installation, dev setup, container workflow |
+| [Architecture](https://elkin.github.io/shardyfusion/how-it-works/) | Internals, sharding, publish protocol |
+| [Writer Side](https://elkin.github.io/shardyfusion/writer/) | All 4 backends, config, rate limiting |
+| [Reader Side](https://elkin.github.io/shardyfusion/reader/) | Sync, concurrent, async readers |
+| [Manifest Stores](https://elkin.github.io/shardyfusion/manifest-stores/) | S3, DB-backed, custom stores |
+| [CLI](https://elkin.github.io/shardyfusion/cli/) | Commands, REPL, batch mode |
+| [Observability](https://elkin.github.io/shardyfusion/observability/) | Metrics, logging, Prometheus, OTel |
+| [Error Handling](https://elkin.github.io/shardyfusion/error-handling/) | Error hierarchy, retry behavior |
+| [Operations](https://elkin.github.io/shardyfusion/operations/) | Cleanup, rollback, history |
+| [Cloud Testing](https://elkin.github.io/shardyfusion/cloud-testing/) | AWS integration tests |
+| [Release Process](https://elkin.github.io/shardyfusion/release/) | Versioning, PyPI publishing |
+| [Glossary](https://elkin.github.io/shardyfusion/glossary/) | Terms and concepts |
+| [API Reference](https://elkin.github.io/shardyfusion/api/) | Full API docs |
 
-- docs build check runs on pull requests
-- docs publish runs on pushes to `main`
-
-Local docs build:
+## Contributing
 
 ```bash
-uv run mkdocs build --strict
+just setup    # bootstrap environment
+just doctor   # verify everything works
+just ci       # quality + unit + integration tests
 ```
 
-See `docs/` and `docs/how-it-works.md` for architecture and operational details.
+See [Getting Started](https://elkin.github.io/shardyfusion/getting-started/) for the full development workflow.
