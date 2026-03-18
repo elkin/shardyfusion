@@ -82,7 +82,7 @@ result = write_sharded(ddf, config, key_col="id", value_spec=ValueSpec.binary_co
 ```
 
 - [ ] Hash sharding completes
-- [ ] Range sharding completes (with `ShardingSpec(strategy=ShardingStrategy.RANGE)`)
+- [ ] CEL sharding completes (with `ShardingSpec(strategy=ShardingStrategy.CEL, ...)`)
 - [ ] Rate limiting verified (`max_writes_per_second=1000`)
 - [ ] Read test with `ShardedReader` passes
 

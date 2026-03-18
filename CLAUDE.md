@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Tooling
 
-**Package manager**: uv. Extras: `read`, `read-async` (adds aiobotocore for native async S3), `writer-spark` (requires Java), `writer-python`, `writer-dask`, `writer-ray`, `cli`, `cel` (adds cel-expr-python, fastdigest). Core dependency: `pyyaml>=6.0`. Full dev: `uv sync --all-extras --dev`.
+**Package manager**: uv. Extras: `read`, `read-async` (adds aiobotocore for native async S3), `writer-spark` (requires Java), `writer-python`, `writer-dask`, `writer-ray`, `cli`, `cel` (adds cel-expr-python). Core dependency: `pyyaml>=6.0`. Full dev: `uv sync --all-extras --dev`.
 
 **Workflows**: Run `just --list` for all local and container (`d-*`) targets. Key entry points: `just setup` (bootstrap a fresh clone), `just doctor` (verify environment), `just fix` (auto-format), `just ci` (quality + unit + integration), `just clean` / `just clean-all` (remove caches/artifacts). Container default engine is Podman; override with `CONTAINER_ENGINE=docker`.
 
@@ -77,21 +77,21 @@ Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus ext
 
 **Spark writer** (`write_sharded`):
 1. Entry point in `writer/spark/writer.py`. Optionally applies Spark conf overrides via `SparkConfOverrideContext`.
-2. `writer/spark/sharding.py` adds `_slatedb_db_id` column via Spark SQL expressions (hash, range, or custom), then converts the DataFrame to a pair RDD partitioned so partition index = db_id.
+2. `writer/spark/sharding.py` adds `_slatedb_db_id` column via `mapInArrow` (hash or CEL, all Python-based), then converts the DataFrame to a pair RDD partitioned so partition index = db_id.
 3. Each partition writes one shard to S3 at a shard path (`shards/run_id=.../db=XXXXX/attempt=YY/`).
 4. The driver streams results via `toLocalIterator()` and selects deterministic winners (lowest attempt → task_attempt_id → URL).
 5. A manifest artifact is built and published, and the `_CURRENT` pointer is updated.
 
 **Dask writer** (`write_sharded`):
 1. Entry point in `writer/dask/writer.py`. Accepts `dd.DataFrame` with `key_col`/`value_spec`.
-2. `writer/dask/sharding.py` adds `_slatedb_db_id` column via Python routing function applied per partition (not Spark SQL). Range boundaries computed via Dask quantiles.
+2. `writer/dask/sharding.py` adds `_slatedb_db_id` column via Python routing function applied per partition.
 3. Shuffles by `_slatedb_db_id`, then `map_partitions` writes each shard. Empty shards (no rows in partition) are omitted from the manifest; `select_winners()` filters them out.
 4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `verify_routing_agreement()`.
 5. Uses the same `_writer_core.py` functions for winner selection, manifest building, and publishing.
 
 **Ray writer** (`write_sharded`):
 1. Entry point in `writer/ray/writer.py`. Accepts `ray.data.Dataset` with `key_col`/`value_spec`.
-2. `writer/ray/sharding.py` adds `_slatedb_db_id` column via Arrow batch format (`map_batches` with `batch_format="pyarrow"`, `zero_copy_batch=True`). Range boundaries computed via sampling.
+2. `writer/ray/sharding.py` adds `_slatedb_db_id` column via Arrow batch format (`map_batches` with `batch_format="pyarrow"`, `zero_copy_batch=True`).
 3. Repartitions by `_slatedb_db_id` using hash shuffle (`DataContext.shuffle_strategy = "HASH_SHUFFLE"`; saved/restored). Then `map_batches` writes each shard with `batch_format="pandas"`. Empty shards (no rows in partition) are omitted from the manifest; `select_winners()` filters them out.
 4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `_verify_routing_agreement()`.
 5. Uses the same `_writer_core.py` functions for winner selection, manifest building, and publishing.
@@ -211,32 +211,32 @@ The `key_encoding` field on `WriteConfig` (default `"u64be"`) controls how keys 
 - **`utf8`**: UTF-8 encoded string keys. Variable length.
 - **`raw`**: Raw bytes passed through without transformation.
 
-Both encodings produce identical hash routing results for keys in `[0, 2^32-1]` because the routing layer zero-extends to 8-byte little-endian before hashing (matching Spark's `xxhash64(cast(key as long))`). The encoding is stored in the manifest and used by the reader/CLI for key coercion and lookup encoding.
+Key encoding controls how keys are serialized to bytes in SlateDB storage. Hash routing is encoding-independent — it uses `canonical_bytes()` (int → 8-byte signed LE, str → UTF-8, bytes → passthrough) regardless of the storage encoding. The encoding is stored in the manifest and used by the reader/CLI for key coercion and lookup encoding.
 
 ### Sharding Strategies
 
-- **Hash** (default): `pmod(xxhash64(cast(key as long)), num_dbs)` — requires integer key column
-- **Range**: Explicit boundaries or computed via `approxQuantile` — supports int/float/string keys
-- **CEL**: User-provided CEL expression evaluated at write time (shard assignment) and read time (routing). Boundaries computed automatically via t-digest or provided explicitly. Requires `cel` extra (`cel-expr-python`, `fastdigest`). `ShardingSpec` fields: `cel_expr` (the CEL expression string), `cel_columns` (list of column names used in the expression), `max_keys_per_shard` (optional capacity hint for boundary discovery).
+- **Hash** (default): `xxh3_64(canonical_bytes(key), seed=0) % num_dbs` — supports int, string, and bytes keys uniformly. All writers use the same Python-based hash via `routing.xxh3_db_id()`. `num_dbs` is either provided explicitly or computed from `max_keys_per_shard` (= `ceil(count / max_keys_per_shard)`).
+- **CEL**: User-provided CEL expression evaluated at write time (shard assignment) and read time (routing). The expression must produce **consecutive 0-based integer shard IDs** (e.g., `shard_hash(key) % 100u` produces IDs 0–99). A custom `shard_hash()` function is available in CEL expressions (wraps `xxh3_64`). `num_dbs` is always discovered from data (`max(db_id) + 1`); it must not be provided explicitly. Optional `boundaries` field enables `bisect_right`-based routing for range-like patterns. Requires `cel` extra (`cel-expr-python`). `ShardingSpec` fields: `cel_expr`, `cel_columns`, `boundaries` (optional).
 
-The `SnapshotRouter` in `routing.py` mirrors the writer's sharding logic exactly for consistent key routing at read time. Manifests are sparse: only shards with data appear in the `shards` list. `SnapshotRouter.__init__` pads missing db_ids with synthetic `RequiredShardMeta(db_url=None, row_count=0)` entries so `router.shards[db_id]` always works. Range routing prefers explicit manifest boundaries over shard min/max intervals; empty shards (`None`, `None` bounds) are excluded from interval-based routing.
+The `SnapshotRouter` in `routing.py` mirrors the writer's sharding logic exactly for consistent key routing at read time. Manifests are sparse: only shards with data appear in the `shards` list. `SnapshotRouter.__init__` pads missing db_ids with synthetic `RequiredShardMeta(db_url=None, row_count=0)` entries so `router.shards[db_id]` always works.
 
 ## Critical Invariants
 
-### Sharding Invariant (xxhash64)
+### Sharding Invariant (xxh3_64)
 
 **This is the most important correctness property.** The reader and writer MUST compute identical shard IDs for every key. A violation means reads silently go to the wrong shard.
 
-The invariant: `pmod(xxhash64(payload, seed=42), num_dbs)` where:
-- **Seed**: 42 (Spark's `XxHash64` default seed, hardcoded in `routing.py:_XXHASH64_SEED`)
-- **Payload**: 8-byte little-endian representation of the key (matching JVM `Long.reverseBytes`)
-- **Signed conversion**: digest is converted to signed int64 (matching JVM's signed long)
-- **Modulo**: Python `%` with positive `num_dbs` equals Spark `pmod`
+The invariant: `xxhash.xxh3_64_intdigest(canonical_bytes(key), seed=0) % num_dbs` where:
+- **Hash**: xxh3_64 (from `xxhash` package), seed=0
+- **Canonical bytes**: `int → 8-byte signed little-endian`, `str → UTF-8`, `bytes → as-is` (see `routing.canonical_bytes()`)
+- **Modulo**: unsigned 64-bit digest `%` positive `num_dbs`
+- **Key types**: int (signed 64-bit range), str, bytes — all supported uniformly
+- **All writers use the same Python code** — Spark uses `mapInArrow`, not JVM-side hashing
 
 **Safety mechanisms:**
 1. `verify_routing_agreement()` in `writer/spark/writer.py`, `writer/dask/writer.py`, and `writer/ray/writer.py` — runtime spot-check comparing framework-assigned shard IDs vs Python routing on a sample of written rows. Controlled by `verify_routing=True` (default).
-2. `tests/unit/writer/test_routing_contract.py` — hypothesis property tests (Python-only). `tests/unit/writer/spark/test_routing_contract.py` — Spark-vs-Python cross-checks with ~200 edge-case keys. `tests/unit/writer/dask/test_dask_routing_contract.py` — Dask-vs-Python cross-checks. `tests/unit/writer/ray/test_ray_routing_contract.py` — Ray-vs-Python cross-checks.
-3. Single implementation in `routing.py:xxhash64_db_id()` imported by all writer paths (never reimplemented).
+2. `tests/unit/writer/test_routing_contract.py` — hypothesis property tests (Python-only) for int/str/bytes keys. `tests/unit/writer/spark/test_routing_contract.py` — Spark `add_db_id_column` vs Python cross-checks. `tests/unit/writer/dask/test_dask_routing_contract.py` — Dask-vs-Python cross-checks. `tests/unit/writer/ray/test_ray_routing_contract.py` — Ray-vs-Python cross-checks.
+3. Single implementation in `routing.py:xxh3_db_id()` imported by all writer paths (never reimplemented).
 
 ### Error Hierarchy
 
@@ -261,7 +261,7 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **`tests/e2e/`** — Garage S3 via compose; `just d-e2e`
 - **`tests/helpers/`** — `s3_test_scenarios.py` (shared scenarios for moto/Garage), `tracking.py` (test doubles: `TrackingAdapter`, `TrackingFactory`, `RecordingTokenBucket`, `InMemoryPublisher`)
 - Markers: `@pytest.mark.spark`, `@pytest.mark.dask`, `@pytest.mark.ray`, `@pytest.mark.cel`, `@pytest.mark.e2e`
-- **CEL tests**: require `cel` extra (`cel-expr-python`, `fastdigest`). Use `@pytest.mark.cel` marker. Skipped via `pytest.importorskip()` when the extra is not installed.
+- **CEL tests**: require `cel` extra (`cel-expr-python`). Use `@pytest.mark.cel` marker. Skipped via `pytest.importorskip()` when the extra is not installed.
 - **Contract tests**: hypothesis property tests in `test_routing_contract.py`, framework cross-checks in `writer/spark/`, `writer/dask/`, and `writer/ray/`
 - **Cleanup tests**: `tests/unit/cli/test_cleanup.py` tests the `cleanup` CLI command; `tests/unit/writer/test_cleanup_core.py` tests core cleanup functions (`cleanup_stale_attempts`, `cleanup_old_runs`)
 - For behavior changes: add/adjust unit tests first, then integration tests where routing/publishing or framework behavior is affected
@@ -296,7 +296,8 @@ Writer functions are imported from subpackages (not re-exported at top level):
 
 ## Environment Notes
 
-- Spark-based writer flows require **Java 17** (`JAVA_HOME` or `PATH`). CI uses temurin distribution.
+- Spark-based writer flows require **Java 17** (`JAVA_HOME` or `PATH`). Java 21 is not supported with Spark 3.5 (Arrow JVM module access issues). CI uses temurin distribution.
+- Spark writer uses `mapInArrow` which requires `pandas>=2.2` and `pyarrow>=15.0` (both included in the `writer-spark` extra).
 - `SPARK_LOCAL_IP=127.0.0.1` is set in tox and devcontainer to avoid hostname resolution issues.
 - Reader-only, Python writer, Dask writer, and Ray writer usage do not require Spark/Java.
 - **Ray does not run on py3.14** (same as Dask and CEL).

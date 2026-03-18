@@ -42,5 +42,5 @@
 **Winner**
 : The selected attempt for each `db_id` when multiple attempts exist (e.g., Spark task retries). Selected deterministically to ensure consistent results across pipeline reruns.
 
-**xxhash64**
-: The hash function used for hash-based shard routing. Uses seed=42 (Spark's default) and an 8-byte little-endian key payload. `pmod(xxhash64(payload), num_dbs)` determines the `db_id`.
+**xxh3_64**
+: The hash function used for hash-based shard routing. Uses seed=0 and `canonical_bytes(key)` (int → 8-byte signed LE, str → UTF-8, bytes → passthrough). `xxh3_64(canonical_bytes(key), seed=0) % num_dbs` determines the `db_id`. All writers use the same Python implementation.

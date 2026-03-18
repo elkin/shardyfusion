@@ -28,9 +28,9 @@ Entrypoint: `shardyfusion.writer.spark.write_sharded`
 
 1. Optional Spark conf overrides are applied during the call.
 2. Optional input persistence (`persist`) is applied if `cache_input=True`.
-3. `add_db_id_column` computes shard assignment using `ShardingSpec`:
-   - `hash`: `pmod(xxhash64(cast(key_col as long)), num_dbs)`
-   - `range`: explicit boundaries or boundaries from `approxQuantile`
+3. `add_db_id_column` computes shard assignment using `ShardingSpec` via `mapInArrow`:
+   - `hash`: `xxh3_64(canonical_bytes(key), seed=0) % num_dbs`
+   - `cel`: CEL expression evaluated per row (with `shard_hash()` available)
 4. `prepare_partitioned_rdd` enforces `num_dbs` writer partitions:
    - data is converted to pair RDD `(db_id, row)`
    - `partitionBy(num_dbs, ...)`
@@ -45,7 +45,6 @@ Entrypoint: `shardyfusion.writer.spark.write_sharded`
 Entrypoint: `shardyfusion.writer.dask.write_sharded`
 
 1. `add_db_id_column` computes shard assignment via Python `route_key()` per partition.
-   Range boundaries are computed via Dask quantiles.
 2. Dask DataFrame is shuffled by `_slatedb_db_id`, then `map_partitions` writes each shard.
 3. Empty shards (partitions with no rows) are omitted from the manifest — no S3 I/O is performed.
 4. Optional rate limiting and routing verification.
@@ -57,7 +56,6 @@ Entrypoint: `shardyfusion.writer.ray.write_sharded`
 
 1. `add_db_id_column` computes shard assignment via `map_batches` with Arrow batch format
    (`batch_format="pyarrow"`, `zero_copy_batch=True`) to avoid Arrow→pandas→Arrow overhead.
-   Range boundaries are computed via sampling.
 2. Dataset is repartitioned by `_slatedb_db_id` using hash shuffle
    (`repartition(num_dbs, shuffle=True, keys=[DB_ID_COL])`).
    `DataContext.shuffle_strategy` is saved/restored in a `try/finally` block.
@@ -178,7 +176,7 @@ Direct fields:
 Grouped options:
 
 - `sharding: ShardingSpec`
-  - `strategy`, `boundaries`, `approx_quantile_rel_error`
+  - `strategy`, `boundaries`, `cel_expr`, `cel_columns`, `max_keys_per_shard`
 - `output: OutputOptions`
   - `run_id`
   - `db_path_template`
@@ -210,7 +208,7 @@ Extra runtime controls on `write_sharded` (vary by backend):
 | Strategy | Spark | Dask | Ray | Python |
 |----------|-------|------|-----|--------|
 | `HASH` | Yes | Yes | Yes | Yes |
-| `RANGE` | Yes | Yes | Yes | Yes |
+| `CEL` | Yes | Yes | Yes | Yes |
 
 ## Reader Side
 
@@ -239,14 +237,8 @@ Primary classes: `ShardedReader`, `ConcurrentShardedReader`, `AsyncShardedReader
 
 ### Routing semantics
 
-- `hash`:
-  - Spark writer: `xxhash64(cast(key_col as long))` (Spark SQL)
-  - Dask/Ray/Python writers: `route_key()` from `_writer_core.py` (same xxhash64 algorithm)
-  - reader: Python `xxhash` implementation aligned with Spark semantics for this contract
-- `range`:
-  - prefers explicit shard boundaries over min/max intervals when both are available
-  - route by shard min/max intervals when present; empty shards (`None`/`None` bounds) are excluded from interval routing
-  - fallback to manifest boundaries using right-biased boundary handling
+- `hash`: `xxh3_64(canonical_bytes(key), seed=0) % num_dbs` — all writers and the reader use the same Python implementation via `routing.xxh3_db_id()`. Supports int, str, and bytes keys.
+- `cel`: CEL expression evaluated with the same `compile_cel()` + `route_cel()` in both writer and reader. Must produce consecutive 0-based shard IDs. Optional `boundaries` for `bisect_right`-based routing.
 
 ### Refresh and concurrency model
 
