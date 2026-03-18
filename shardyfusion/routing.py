@@ -23,7 +23,7 @@ def canonical_bytes(key: KeyInput) -> bytes:
 
     - ``int`` → 8-byte signed little-endian (range [-2^63, 2^63-1])
     - ``str`` → UTF-8 encoded bytes
-    - ``bytes`` → passed through as-is
+    - ``bytes`` / ``bytearray`` → passed through as-is
     """
     if isinstance(key, int):
         if key < _INT64_SIGNED_MIN or key > _INT64_SIGNED_MAX:
@@ -33,8 +33,8 @@ def canonical_bytes(key: KeyInput) -> bytes:
         return key.to_bytes(8, "little", signed=True)
     if isinstance(key, str):
         return key.encode("utf-8")
-    if isinstance(key, bytes):
-        return key
+    if isinstance(key, (bytes, bytearray)):
+        return bytes(key)
     raise ValueError(f"Unsupported key type for hashing: {type(key)!r}")
 
 

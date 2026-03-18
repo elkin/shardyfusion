@@ -76,6 +76,12 @@ class TestShardHash:
         assert isinstance(result, int)
         assert 0 <= result < 100
 
+    def test_bytes_key(self) -> None:
+        compiled = compile_cel("shard_hash(key) % 100u", {"key": "bytes"})
+        result = compiled.evaluate({"key": b"hello"})
+        assert isinstance(result, int)
+        assert 0 <= result < 100
+
     def test_deterministic(self) -> None:
         compiled = compile_cel("shard_hash(key) % 100u", {"key": "int"})
         first = compiled.evaluate({"key": 99})

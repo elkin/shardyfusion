@@ -249,6 +249,48 @@ class TestCelUnifiedMode:
         for r in records:
             assert all_kv[encoder(r)] == f"value-{r}".encode()
 
+    def test_direct_mode_shard_hash(self, tmp_path: Path) -> None:
+        """CEL direct mode: shard_hash(key) % N produces shard IDs directly, no boundaries."""
+        store = InMemoryManifestStore()
+        root_dir = str(tmp_path / "file_backed")
+        config = WriteConfig(
+            num_dbs=0,
+            s3_prefix="s3://bucket/prefix",
+            key_encoding=KeyEncoding.U64BE,
+            adapter_factory=file_backed_adapter_factory(root_dir),
+            sharding=ShardingSpec(
+                strategy=ShardingStrategy.CEL,
+                cel_expr="shard_hash(key) % 4u",
+                cel_columns={"key": "int"},
+                boundaries=[],
+            ),
+            output=OutputOptions(run_id="test-direct-hash"),
+            manifest=ManifestOptions(store=store),
+        )
+
+        records = list(range(100))
+        result = write_sharded(
+            records,
+            config,
+            key_fn=lambda r: r,
+            value_fn=lambda r: f"v{r}".encode(),
+        )
+
+        assert isinstance(result, BuildResult)
+        assert len(result.winners) == 4
+        assert sum(w.row_count for w in result.winners) == 100
+
+        # Verify data integrity: read back all keys from file-backed shards
+        all_kv: dict[bytes, bytes] = {}
+        for winner in result.winners:
+            shard_data = file_backed_load_db(root_dir, winner.db_url)
+            all_kv.update(shard_data)
+
+        assert len(all_kv) == 100
+        encoder = make_key_encoder(config.key_encoding)
+        for r in records:
+            assert all_kv[encoder(r)] == f"v{r}".encode()
+
 
 # ---------------------------------------------------------------------------
 # CEL Split Mode Tests (routing context)
