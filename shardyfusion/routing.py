@@ -6,7 +6,7 @@ import xxhash
 
 from .manifest import RequiredBuildMeta, RequiredShardMeta
 from .serde import make_key_encoder
-from .sharding_types import KeyEncoding, ShardingStrategy
+from .sharding_types import KeyEncoding, ShardingStrategy, validate_boundaries
 from .type_defs import KeyInput
 
 # ---------------------------------------------------------------------------
@@ -85,6 +85,8 @@ class SnapshotRouter:
         self.key_encoding = required_build.key_encoding
 
         self._boundaries = list(required_build.sharding.boundaries or [])
+        if self._boundaries:
+            validate_boundaries(self._boundaries)
         self._cel_compiled: object | None = None
         self._cel_expr = required_build.sharding.cel_expr
         self._cel_columns = required_build.sharding.cel_columns

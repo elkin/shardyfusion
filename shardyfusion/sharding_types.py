@@ -1,12 +1,49 @@
 """Shared sharding types used by both writer and reader paths."""
 
+from __future__ import annotations
+
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Self
 
+from .ordering import compare_ordered
+
 DB_ID_COL = "_slatedb_db_id"
 
 BoundaryValue = int | float | str | bytes
+
+
+def validate_boundaries(boundaries: Sequence[BoundaryValue]) -> None:
+    """Validate boundaries are non-null, same-type, and strictly increasing.
+
+    Raises :class:`ValueError` on invalid input.
+    """
+    if any(b is None for b in boundaries):
+        raise ValueError("Boundaries must not contain null values")
+    if any(isinstance(b, bool) for b in boundaries):
+        raise ValueError("Boundaries must not be boolean values")
+    for idx in range(1, len(boundaries)):
+        left = boundaries[idx - 1]
+        right = boundaries[idx]
+        if type(left) is not type(right):
+            raise ValueError(
+                "Boundaries must all share the same type; "
+                f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
+            )
+        msg = (
+            "Boundaries contain non-comparable values; "
+            f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
+        )
+        try:
+            is_increasing = compare_ordered(left, right, mismatch_message=msg) < 0
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        if not is_increasing:
+            raise ValueError(
+                "Boundaries must be strictly increasing; "
+                f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
+            )
 
 
 class KeyEncoding(str, Enum):
@@ -18,7 +55,7 @@ class KeyEncoding(str, Enum):
     RAW = "raw"
 
     @classmethod
-    def from_value(cls, value: "KeyEncoding | str") -> Self:
+    def from_value(cls, value: KeyEncoding | str) -> Self:
         """Parse an encoding value from enum or string input."""
 
         if isinstance(value, cls):
@@ -39,7 +76,7 @@ class ShardingStrategy(str, Enum):
     CEL = "cel"
 
     @classmethod
-    def from_value(cls, value: "ShardingStrategy | str") -> Self:
+    def from_value(cls, value: ShardingStrategy | str) -> Self:
         """Parse a strategy value from enum or string input."""
 
         if isinstance(value, cls):
@@ -88,6 +125,8 @@ class ShardingSpec:
             raise ValueError("cel_expr is only valid with CEL strategy")
         if self.boundaries is not None and self.strategy != ShardingStrategy.CEL:
             raise ValueError("boundaries are only valid with CEL strategy")
+        if self.boundaries:
+            validate_boundaries(self.boundaries)
         if (
             self.max_keys_per_shard is not None
             and self.strategy != ShardingStrategy.HASH

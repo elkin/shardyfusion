@@ -115,3 +115,27 @@ class TestSnapshotRouterCelMultiColumn:
 
         with pytest.raises(ValueError, match="routing_context"):
             router.route_one("anything")
+
+
+class TestSnapshotRouterBoundaryValidation:
+    """Router rejects unsorted boundaries from manifest data."""
+
+    def test_rejects_unsorted_boundaries(self) -> None:
+        required = _build_required(
+            num_dbs=3,
+            cel_expr="key",
+            cel_columns={"key": "int"},
+            boundaries=[20, 10],
+        )
+        with pytest.raises(ValueError, match="strictly increasing"):
+            SnapshotRouter(required, _make_shards(3))
+
+    def test_rejects_duplicate_boundaries(self) -> None:
+        required = _build_required(
+            num_dbs=3,
+            cel_expr="key",
+            cel_columns={"key": "int"},
+            boundaries=[10, 10],
+        )
+        with pytest.raises(ValueError, match="strictly increasing"):
+            SnapshotRouter(required, _make_shards(3))

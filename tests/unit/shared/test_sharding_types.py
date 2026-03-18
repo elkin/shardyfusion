@@ -56,6 +56,62 @@ class TestShardingSpecCel:
         assert spec.max_keys_per_shard == 1000
 
 
+class TestBoundaryValidation:
+    """Boundaries must be strictly increasing, non-null, same-type, non-boolean."""
+
+    def _cel_spec(self, boundaries: list[BoundaryValue] | None) -> ShardingSpec:
+        return ShardingSpec(
+            strategy=ShardingStrategy.CEL,
+            cel_expr="key",
+            cel_columns={"key": "int"},
+            boundaries=boundaries,
+        )
+
+    def test_rejects_unsorted(self) -> None:
+        with pytest.raises(ValueError, match="strictly increasing"):
+            self._cel_spec([20, 10])
+
+    def test_rejects_duplicates(self) -> None:
+        with pytest.raises(ValueError, match="strictly increasing"):
+            self._cel_spec([10, 10])
+
+    def test_rejects_nulls(self) -> None:
+        with pytest.raises(ValueError, match="null"):
+            self._cel_spec([10, None])  # type: ignore[list-item]
+
+    def test_rejects_booleans(self) -> None:
+        with pytest.raises(ValueError, match="boolean"):
+            self._cel_spec([True])
+
+    def test_rejects_mixed_types(self) -> None:
+        with pytest.raises(ValueError, match="same type"):
+            self._cel_spec([10, "hello"])  # type: ignore[list-item]
+
+    def test_accepts_valid_ints(self) -> None:
+        spec = self._cel_spec([10, 20, 30])
+        assert spec.boundaries == [10, 20, 30]
+
+    def test_accepts_valid_strings(self) -> None:
+        spec = self._cel_spec(["a", "b", "c"])
+        assert spec.boundaries == ["a", "b", "c"]
+
+    def test_accepts_valid_bytes(self) -> None:
+        spec = self._cel_spec([b"\x00", b"\x80", b"\xff"])
+        assert spec.boundaries == [b"\x00", b"\x80", b"\xff"]
+
+    def test_accepts_none_boundaries(self) -> None:
+        spec = self._cel_spec(None)
+        assert spec.boundaries is None
+
+    def test_accepts_empty_boundaries(self) -> None:
+        spec = self._cel_spec([])
+        assert spec.boundaries == []
+
+    def test_accepts_single_boundary(self) -> None:
+        spec = self._cel_spec([42])
+        assert spec.boundaries == [42]
+
+
 class TestBoundaryValueBytes:
     def test_bytes_boundary_type(self) -> None:
         boundaries: list[BoundaryValue] = [b"\x00", b"\x80", b"\xff"]
