@@ -230,9 +230,9 @@ def coerce_cli_key(key: str, key_encoding: str) -> int | str | bytes:
     return key
 
 
-def parse_routing_context(pairs: tuple[str, ...]) -> dict[str, str]:
+def parse_routing_context(pairs: tuple[str, ...]) -> dict[str, object]:
     """Parse ``--routing-context key=value`` pairs into a dict."""
-    ctx: dict[str, str] = {}
+    ctx: dict[str, object] = {}
     for pair in pairs:
         if "=" not in pair:
             raise ValueError(f"--routing-context must be key=value, got: {pair!r}")

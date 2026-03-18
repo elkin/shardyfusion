@@ -103,7 +103,12 @@ class _BaseShardedReader:
         return current
 
     def _open_one_reader(self, shard: RequiredShardMeta) -> ShardReader:
-        """Create local dir and open a single shard reader."""
+        """Create local dir and open a single shard reader.
+
+        Callers must only pass shards with ``db_url is not None``
+        (empty shards use ``_NullShardReader`` instead).
+        """
+        assert shard.db_url is not None, f"shard {shard.db_id} has no db_url"
         local_path = Path(self.local_root) / f"shard={shard.db_id:05d}"
         local_path.mkdir(parents=True, exist_ok=True)
 

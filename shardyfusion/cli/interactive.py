@@ -237,7 +237,7 @@ class ShardyRepl(cmd.Cmd):
     @staticmethod
     def _parse_key_and_context(
         parts: list[str],
-    ) -> tuple[str | None, dict[str, str] | None]:
+    ) -> tuple[str | None, dict[str, object] | None]:
         """Extract key and optional --routing-context from command args."""
         from .config import parse_routing_context
 
