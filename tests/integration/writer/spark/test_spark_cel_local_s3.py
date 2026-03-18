@@ -6,7 +6,6 @@ import pytest
 import yaml
 
 cel_expr_python = pytest.importorskip("cel_expr_python")  # noqa: F841
-fastdigest = pytest.importorskip("fastdigest")  # noqa: F841
 
 from shardyfusion.cel import compile_cel, route_cel
 from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
@@ -28,7 +27,7 @@ def test_spark_cel_unified_publishes_manifest(spark, local_s3_service, tmp_path)
     root = str(tmp_path / "file-backed")
 
     config = WriteConfig(
-        num_dbs=4,
+        num_dbs=0,
         s3_prefix=s3_prefix,
         adapter_factory=file_backed_adapter_factory(root),
         sharding=ShardingSpec(

@@ -30,20 +30,27 @@ class TestShardingSpecCel:
                 cel_expr="key % 10",
             )
 
-    def test_max_keys_per_shard_positive(self) -> None:
-        with pytest.raises(ValueError, match="max_keys_per_shard must be > 0"):
+    def test_max_keys_per_shard_rejected_for_cel(self) -> None:
+        with pytest.raises(
+            ValueError, match="max_keys_per_shard is only valid with HASH"
+        ):
             ShardingSpec(
                 strategy=ShardingStrategy.CEL,
                 cel_expr="key",
                 cel_columns={"key": "int"},
+                max_keys_per_shard=1000,
+            )
+
+    def test_max_keys_per_shard_positive(self) -> None:
+        with pytest.raises(ValueError, match="max_keys_per_shard must be > 0"):
+            ShardingSpec(
+                strategy=ShardingStrategy.HASH,
                 max_keys_per_shard=0,
             )
 
     def test_max_keys_per_shard_valid(self) -> None:
         spec = ShardingSpec(
-            strategy=ShardingStrategy.CEL,
-            cel_expr="key",
-            cel_columns={"key": "int"},
+            strategy=ShardingStrategy.HASH,
             max_keys_per_shard=1000,
         )
         assert spec.max_keys_per_shard == 1000

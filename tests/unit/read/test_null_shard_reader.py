@@ -109,7 +109,8 @@ class TestShardedReaderNullShards:
     def test_get_returns_none_for_empty_shard(self, tmp_path: Path) -> None:
         """Keys routed to an empty shard return None without opening a real reader."""
         manifest = _manifest_with_empty_shard()
-        stores = {"mem://db/shard0": {(0).to_bytes(8, "big"): b"val0"}}
+        # key=1 routes to shard 0 under xxh3_64, key=0 routes to shard 1
+        stores = {"mem://db/shard0": {(1).to_bytes(8, "big"): b"val1"}}
 
         reader = ShardedReader(
             s3_prefix="s3://bucket/prefix",
@@ -118,13 +119,11 @@ class TestShardedReaderNullShards:
             reader_factory=_fake_reader_factory(stores),
         )
 
-        # Shard 0 has data
-        assert reader.get(0) == b"val0"
+        # Shard 0 has data — key=1 routes to shard 0
+        assert reader.get(1) == b"val1"
 
-        # Shard 1 is empty — should return None
-        # We need a key that routes to shard 1. With hash sharding and 2 dbs,
-        # key 1 routes to shard 1 (xxhash64 pmod 2).
-        result = reader.get(1)
+        # Shard 1 is empty — key=0 routes to shard 1, should return None
+        result = reader.get(0)
         assert result is None
 
         reader.close()
@@ -180,7 +179,7 @@ class TestShardedReaderNullShards:
 class TestConcurrentReaderNullShards:
     def test_lock_mode(self, tmp_path: Path) -> None:
         manifest = _manifest_with_empty_shard()
-        stores = {"mem://db/shard0": {(0).to_bytes(8, "big"): b"val0"}}
+        stores = {"mem://db/shard0": {(1).to_bytes(8, "big"): b"val1"}}
 
         with ConcurrentShardedReader(
             s3_prefix="s3://bucket/prefix",
@@ -189,12 +188,12 @@ class TestConcurrentReaderNullShards:
             reader_factory=_fake_reader_factory(stores),
             thread_safety="lock",
         ) as reader:
-            assert reader.get(0) == b"val0"
-            assert reader.get(1) is None
+            assert reader.get(1) == b"val1"
+            assert reader.get(0) is None
 
     def test_pool_mode(self, tmp_path: Path) -> None:
         manifest = _manifest_with_empty_shard()
-        stores = {"mem://db/shard0": {(0).to_bytes(8, "big"): b"val0"}}
+        stores = {"mem://db/shard0": {(1).to_bytes(8, "big"): b"val1"}}
 
         with ConcurrentShardedReader(
             s3_prefix="s3://bucket/prefix",
@@ -203,13 +202,13 @@ class TestConcurrentReaderNullShards:
             reader_factory=_fake_reader_factory(stores),
             thread_safety="pool",
         ) as reader:
-            assert reader.get(0) == b"val0"
-            assert reader.get(1) is None
+            assert reader.get(1) == b"val1"
+            assert reader.get(0) is None
 
     def test_multi_get_mixed_shards(self, tmp_path: Path) -> None:
         """multi_get across real and empty shards returns mixed results."""
         manifest = _manifest_with_empty_shard()
-        stores = {"mem://db/shard0": {(0).to_bytes(8, "big"): b"val0"}}
+        stores = {"mem://db/shard0": {(1).to_bytes(8, "big"): b"val1"}}
 
         with ConcurrentShardedReader(
             s3_prefix="s3://bucket/prefix",
@@ -217,9 +216,9 @@ class TestConcurrentReaderNullShards:
             manifest_store=_StaticManifestStore(manifest),
             reader_factory=_fake_reader_factory(stores),
         ) as reader:
-            results = reader.multi_get([0, 1])
-            assert results[0] == b"val0"
-            assert results[1] is None
+            results = reader.multi_get([1, 0])
+            assert results[1] == b"val1"
+            assert results[0] is None
 
 
 # ---------------------------------------------------------------------------

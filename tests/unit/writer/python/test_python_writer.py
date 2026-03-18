@@ -10,7 +10,6 @@ import pytest
 
 from shardyfusion._writer_core import route_key
 from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
-from shardyfusion.errors import ConfigValidationError
 from shardyfusion.manifest import BuildResult
 from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.metrics import MetricEvent
@@ -18,7 +17,6 @@ from shardyfusion.serde import make_key_encoder
 from shardyfusion.sharding_types import (
     KeyEncoding,
     ShardingSpec,
-    ShardingStrategy,
 )
 from shardyfusion.slatedb_adapter import DbAdapterFactory
 from shardyfusion.testing import (
@@ -120,41 +118,6 @@ def test_hash_routing_round_trip() -> None:
     assert result.manifest_ref.startswith("mem://manifests/")
 
 
-def test_range_explicit_boundaries() -> None:
-    factory = _TrackingFactory()
-    config = _make_config(
-        num_dbs=3,
-        factory=factory,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=[10, 20],
-        ),
-    )
-
-    records = list(range(30))
-    result = write_sharded(
-        records,
-        config,
-        key_fn=lambda r: r,
-        value_fn=lambda r: b"v",
-    )
-
-    assert len(result.winners) == 3
-    # Shard 0: keys 0–9, shard 1: keys 10–19, shard 2: keys 20–29
-    assert result.winners[0].row_count == 10
-    assert result.winners[1].row_count == 10
-    assert result.winners[2].row_count == 10
-
-
-def test_range_without_boundaries_raises() -> None:
-    config = _make_config(
-        num_dbs=3,
-        sharding=ShardingSpec(strategy=ShardingStrategy.RANGE, boundaries=None),
-    )
-    with pytest.raises(ConfigValidationError, match="boundaries"):
-        write_sharded([], config, key_fn=lambda r: r, value_fn=lambda r: b"v")
-
-
 def test_empty_input() -> None:
     factory = _TrackingFactory()
     config = _make_config(num_dbs=4, factory=factory)
@@ -189,34 +152,6 @@ def test_batch_flushing() -> None:
     total_pairs = sum(len(call) for call in adapter.write_calls)
     assert total_pairs == 7
     assert len(adapter.write_calls) >= 3  # at least 2 full + 1 final
-
-
-def test_min_max_key_tracking() -> None:
-    factory = _TrackingFactory()
-    config = _make_config(
-        num_dbs=2,
-        factory=factory,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=[50],
-        ),
-    )
-
-    records = [10, 20, 30, 60, 70, 80]
-    result = write_sharded(
-        records,
-        config,
-        key_fn=lambda r: r,
-        value_fn=lambda r: b"v",
-    )
-
-    # Shard 0: keys 10, 20, 30; Shard 1: keys 60, 70, 80
-    shard0 = next(w for w in result.winners if w.db_id == 0)
-    shard1 = next(w for w in result.winners if w.db_id == 1)
-    assert shard0.min_key == 10
-    assert shard0.max_key == 30
-    assert shard1.min_key == 60
-    assert shard1.max_key == 80
 
 
 def test_rate_limited_write() -> None:
@@ -355,10 +290,6 @@ def test_rate_limiter_shared_bucket_across_shards(
     config = _make_config(
         num_dbs=2,
         batch_size=1,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=[50],
-        ),
     )
 
     records = [10, 20, 30, 60, 70, 80]
@@ -440,34 +371,6 @@ def test_parallel_hash_routing_round_trip(tmp_path: Path) -> None:
         assert all_kv[key_bytes] == f"v{r}".encode()
 
 
-def test_parallel_range_explicit_boundaries(tmp_path: Path) -> None:
-    root_dir = str(tmp_path / "file_backed")
-    factory = file_backed_adapter_factory(root_dir)
-    config = _make_parallel_config(
-        tmp_path,
-        factory,
-        num_dbs=3,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=[10, 20],
-        ),
-    )
-
-    records = list(range(30))
-    result = write_sharded(
-        records,
-        config,
-        key_fn=lambda r: r,
-        value_fn=lambda r: b"v",
-        parallel=True,
-    )
-
-    assert len(result.winners) == 3
-    assert result.winners[0].row_count == 10
-    assert result.winners[1].row_count == 10
-    assert result.winners[2].row_count == 10
-
-
 def test_parallel_empty_input(tmp_path: Path) -> None:
     config = _make_parallel_config(tmp_path, fake_adapter_factory, num_dbs=4)
 
@@ -482,34 +385,6 @@ def test_parallel_empty_input(tmp_path: Path) -> None:
     # No records → no non-empty shards in winners
     assert len(result.winners) == 0
     assert result.stats.rows_written == 0
-
-
-def test_parallel_min_max_key_tracking(tmp_path: Path) -> None:
-    config = _make_parallel_config(
-        tmp_path,
-        fake_adapter_factory,
-        num_dbs=2,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=[50],
-        ),
-    )
-
-    records = [10, 20, 30, 60, 70, 80]
-    result = write_sharded(
-        records,
-        config,
-        key_fn=lambda r: r,
-        value_fn=lambda r: b"v",
-        parallel=True,
-    )
-
-    shard0 = next(w for w in result.winners if w.db_id == 0)
-    shard1 = next(w for w in result.winners if w.db_id == 1)
-    assert shard0.min_key == 10
-    assert shard0.max_key == 30
-    assert shard1.min_key == 60
-    assert shard1.max_key == 80
 
 
 def test_parallel_batch_flushing(tmp_path: Path) -> None:

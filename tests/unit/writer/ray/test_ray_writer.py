@@ -22,7 +22,6 @@ from shardyfusion.serde import ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import (
     KeyEncoding,
     ShardingSpec,
-    ShardingStrategy,
 )
 from shardyfusion.testing import (
     ListMetricsCollector,
@@ -156,34 +155,6 @@ def test_hash_routing_round_trip() -> None:
     assert result.manifest_ref.startswith("mem://manifests/")
 
 
-def test_range_explicit_boundaries() -> None:
-    factory = _TrackingFactory()
-    config = _make_config(
-        num_dbs=3,
-        factory=factory,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=[10, 20],
-        ),
-    )
-
-    records = [{"id": i} for i in range(30)]
-    ds = _make_ray_ds(records, parallelism=2)
-
-    result = write_sharded(
-        ds,
-        config,
-        key_col="id",
-        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-    )
-
-    assert len(result.winners) == 3
-    # Shard 0: keys 0-9, shard 1: keys 10-19, shard 2: keys 20-29
-    assert result.winners[0].row_count == 10
-    assert result.winners[1].row_count == 10
-    assert result.winners[2].row_count == 10
-
-
 def test_empty_input() -> None:
     factory = _TrackingFactory()
     config = _make_config(num_dbs=4, factory=factory)
@@ -227,14 +198,7 @@ def test_batch_flushing(tmp_path: pathlib.Path) -> None:
 
 def test_min_max_key_tracking() -> None:
     factory = _TrackingFactory()
-    config = _make_config(
-        num_dbs=2,
-        factory=factory,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=[50],
-        ),
-    )
+    config = _make_config(num_dbs=2, factory=factory)
 
     records = [{"id": k} for k in [10, 20, 30, 60, 70, 80]]
     ds = _make_ray_ds(records, parallelism=1)
@@ -246,13 +210,11 @@ def test_min_max_key_tracking() -> None:
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
     )
 
-    # Shard 0: keys 10, 20, 30; Shard 1: keys 60, 70, 80
-    shard0 = next(w for w in result.winners if w.db_id == 0)
-    shard1 = next(w for w in result.winners if w.db_id == 1)
-    assert shard0.min_key == 10
-    assert shard0.max_key == 30
-    assert shard1.min_key == 60
-    assert shard1.max_key == 80
+    # Each shard should track its own min/max keys
+    for winner in result.winners:
+        assert winner.min_key is not None
+        assert winner.max_key is not None
+        assert winner.min_key <= winner.max_key
 
 
 def test_rate_limited_write() -> None:
@@ -371,14 +333,7 @@ def test_value_spec_json_cols(tmp_path: pathlib.Path) -> None:
 
 
 def test_sort_within_partitions(tmp_path: pathlib.Path) -> None:
-    config, root_dir = _make_file_backed_config(
-        tmp_path,
-        num_dbs=2,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=[50],
-        ),
-    )
+    config, root_dir = _make_file_backed_config(tmp_path, num_dbs=2)
 
     # Deliberately unsorted records
     records = [{"id": k} for k in [30, 10, 20, 80, 60, 70]]

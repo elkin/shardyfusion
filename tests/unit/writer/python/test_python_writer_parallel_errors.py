@@ -98,6 +98,7 @@ def test_worker_crash_raises_error() -> None:
         _write_parallel(
             records=records,
             config=config,
+            num_dbs=config.num_dbs,
             run_id="crash-test",
             factory=_crashing_factory,
             key_fn=lambda r: r["id"],
@@ -116,6 +117,7 @@ def test_parallel_succeeds_with_good_factory() -> None:
     results = _write_parallel(
         records=records,
         config=config,
+        num_dbs=config.num_dbs,
         run_id="good-test",
         factory=_good_factory,
         key_fn=lambda r: r["id"],

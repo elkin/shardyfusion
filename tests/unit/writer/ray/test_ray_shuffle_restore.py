@@ -11,11 +11,9 @@ from ray.data.context import DataContext
 from shardyfusion.config import (
     ManifestOptions,
     OutputOptions,
-    ShardingSpec,
     WriteConfig,
 )
 from shardyfusion.manifest_store import InMemoryManifestStore
-from shardyfusion.sharding_types import ShardingStrategy
 from shardyfusion.writer.ray import write_sharded
 
 
@@ -41,10 +39,6 @@ def test_shuffle_strategy_restored_on_repartition_failure() -> None:
     config = _make_config()
 
     with (
-        patch(
-            "shardyfusion.writer.ray.writer._validate_and_resolve_sharding",
-            return_value=ShardingSpec(strategy=ShardingStrategy.HASH),
-        ),
         patch(
             "shardyfusion.writer.ray.writer.add_db_id_column",
             return_value=mock_ds,

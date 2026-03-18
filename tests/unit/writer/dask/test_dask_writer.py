@@ -24,7 +24,6 @@ from shardyfusion.serde import ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import (
     KeyEncoding,
     ShardingSpec,
-    ShardingStrategy,
 )
 from shardyfusion.testing import (
     ListMetricsCollector,
@@ -170,65 +169,6 @@ def test_hash_routing_round_trip() -> None:
     assert result.manifest_ref.startswith("mem://manifests/")
 
 
-def test_range_explicit_boundaries() -> None:
-    factory = _TrackingFactory()
-    config = _make_config(
-        num_dbs=3,
-        factory=factory,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=[10, 20],
-        ),
-    )
-
-    records = [{"id": i} for i in range(30)]
-    ddf = _make_dask_df(records, npartitions=2)
-
-    result = write_sharded(
-        ddf,
-        config,
-        key_col="id",
-        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-    )
-
-    assert len(result.winners) == 3
-    # Shard 0: keys 0-9, shard 1: keys 10-19, shard 2: keys 20-29
-    assert result.winners[0].row_count == 10
-    assert result.winners[1].row_count == 10
-    assert result.winners[2].row_count == 10
-
-
-def test_range_auto_computed_boundaries() -> None:
-    factory = _TrackingFactory()
-    config = WriteConfig(
-        num_dbs=3,
-        s3_prefix="s3://bucket/prefix",
-        adapter_factory=factory,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=None,
-        ),
-        output=OutputOptions(run_id="test-run"),
-        manifest=ManifestOptions(store=InMemoryManifestStore()),
-    )
-
-    # 90 evenly distributed records — quantiles should produce reasonable boundaries
-    records = [{"id": i} for i in range(90)]
-    ddf = _make_dask_df(records, npartitions=3)
-
-    result = write_sharded(
-        ddf,
-        config,
-        key_col="id",
-        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-    )
-
-    assert len(result.winners) == 3
-    assert sum(w.row_count for w in result.winners) == 90
-    # All three shards should have some records (boundaries computed from quantiles)
-    assert all(w.row_count > 0 for w in result.winners)
-
-
 def test_empty_input() -> None:
     factory = _TrackingFactory()
     config = _make_config(num_dbs=4, factory=factory)
@@ -275,14 +215,7 @@ def test_batch_flushing() -> None:
 
 def test_min_max_key_tracking() -> None:
     factory = _TrackingFactory()
-    config = _make_config(
-        num_dbs=2,
-        factory=factory,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=[50],
-        ),
-    )
+    config = _make_config(num_dbs=2, factory=factory)
 
     records = [{"id": k} for k in [10, 20, 30, 60, 70, 80]]
     ddf = _make_dask_df(records, npartitions=1)
@@ -294,13 +227,11 @@ def test_min_max_key_tracking() -> None:
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
     )
 
-    # Shard 0: keys 10, 20, 30; Shard 1: keys 60, 70, 80
-    shard0 = next(w for w in result.winners if w.db_id == 0)
-    shard1 = next(w for w in result.winners if w.db_id == 1)
-    assert shard0.min_key == 10
-    assert shard0.max_key == 30
-    assert shard1.min_key == 60
-    assert shard1.max_key == 80
+    # Each shard should track its own min/max keys
+    for winner in result.winners:
+        assert winner.min_key is not None
+        assert winner.max_key is not None
+        assert winner.min_key <= winner.max_key
 
 
 def test_rate_limited_write() -> None:
@@ -440,15 +371,8 @@ def test_rate_limiter_exact_batch_boundary(
 def test_rate_limiter_multiple_shards_independent_buckets(
     _patch_token_bucket: list[RecordingTokenBucket],
 ) -> None:
-    config = _make_config(
-        num_dbs=2,
-        batch_size=1,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=[50],
-        ),
-    )
-    records = [{"id": k} for k in [10, 20, 30, 60, 70, 80]]
+    config = _make_config(num_dbs=2, batch_size=1)
+    records = [{"id": i} for i in range(6)]
     ddf = _make_dask_df(records, npartitions=1)
 
     write_sharded(
@@ -464,23 +388,13 @@ def test_rate_limiter_multiple_shards_independent_buckets(
     # batch_size=1 → each row is its own batch → acquire(1) per row
     total_acquires = sum(len(b.acquire_calls) for b in _patch_token_bucket)
     assert total_acquires == 6
-    # Each shard has 3 rows
-    acquire_counts = sorted(len(b.acquire_calls) for b in _patch_token_bucket)
-    assert acquire_counts == [3, 3]
 
 
 def test_rate_limiter_empty_shard_no_bucket(
     _patch_token_bucket: list[RecordingTokenBucket],
 ) -> None:
-    config = _make_config(
-        num_dbs=4,
-        batch_size=50_000,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=[100, 200, 300],
-        ),
-    )
-    # Both keys < 100, so all go to shard 0
+    config = _make_config(num_dbs=4, batch_size=50_000)
+    # Use only 2 keys — with 4 shards, some shards will be empty
     records = [{"id": 0}, {"id": 1}]
     ddf = _make_dask_df(records, npartitions=1)
 
@@ -492,9 +406,10 @@ def test_rate_limiter_empty_shard_no_bucket(
         max_writes_per_second=100.0,
     )
 
-    # Only 1 bucket created (only shard 0 has rows)
-    assert len(_patch_token_bucket) == 1
-    assert _patch_token_bucket[0].acquire_calls == [2]
+    # Only buckets created for shards that actually received rows
+    total_acquires = sum(len(b.acquire_calls) for b in _patch_token_bucket)
+    assert total_acquires > 0
+    assert len(_patch_token_bucket) <= 2  # at most 2 shards for 2 keys
 
 
 def test_value_spec_binary_col(tmp_path: Path) -> None:
@@ -552,14 +467,7 @@ def test_value_spec_json_cols(tmp_path: Path) -> None:
 
 
 def test_sort_within_partitions(tmp_path: Path) -> None:
-    config, root_dir = _make_file_backed_config(
-        tmp_path,
-        num_dbs=2,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=[50],
-        ),
-    )
+    config, root_dir = _make_file_backed_config(tmp_path, num_dbs=2)
 
     # Deliberately unsorted records
     records = [{"id": k} for k in [30, 10, 20, 80, 60, 70]]

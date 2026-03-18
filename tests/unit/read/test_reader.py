@@ -265,7 +265,7 @@ def test_context_manager_returns_self_and_calls_close(tmp_path) -> None:
 
 
 def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
-    """Two-shard range manifest: keys <=5 → shard 0, keys >=6 → shard 1."""
+    """Two-shard hash manifest: key=1 → shard 0, key=6 → shard 1 (via xxh3)."""
     required = RequiredBuildMeta(
         run_id="run",
         created_at="2026-01-01T00:00:00+00:00",
@@ -273,7 +273,7 @@ def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding=KeyEncoding.U64BE,
-        sharding=ManifestShardingSpec(strategy=ShardingStrategy.RANGE),
+        sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
     )
@@ -286,7 +286,7 @@ def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
                 attempt=0,
                 row_count=1,
                 min_key=None,
-                max_key=5,
+                max_key=None,
                 checkpoint_id=None,
                 writer_info={},
             ),
@@ -295,7 +295,7 @@ def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
                 db_url=db_url_1,
                 attempt=0,
                 row_count=1,
-                min_key=6,
+                min_key=None,
                 max_key=None,
                 checkpoint_id=None,
                 writer_info={},
@@ -325,7 +325,7 @@ def test_multi_get_shard_failure_raises_slate_db_api_error(tmp_path) -> None:
         reader_factory=lambda *, db_url, local_dir, checkpoint_id: _BrokenReader(),
         max_workers=2,
     ) as reader:
-        # key=1 routes to shard 0, key=6 routes to shard 1 → both shards in executor
+        # key=1 routes to shard 0, key=6 routes to shard 1 via xxh3 → both shards in executor
         with pytest.raises(SlateDbApiError, match="db_id="):
             reader.multi_get([1, 6])
 
@@ -641,7 +641,7 @@ def test_thread_safe_reader_executor_created_at_init(tmp_path) -> None:
 
 
 def _2shard_setup(tmp_path):
-    """Shared helper: 2-shard range reader (keys <=5 → shard 0, >=6 → shard 1)."""
+    """Shared helper: 2-shard hash reader (key=1 → shard 0, key=6 → shard 1 via xxh3)."""
     manifests = {
         "mem://manifest/one": _manifest_2shard("mem://db/zero", "mem://db/one")
     }

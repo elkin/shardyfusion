@@ -79,23 +79,27 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
     db1_url = f"file://{(object_store_root / 'db1').as_posix()}"
     db2_url = f"file://{(object_store_root / 'db2').as_posix()}"
 
+    # With xxh3 hash routing and num_dbs=3:
+    #   shard 0: keys 4, 9
+    #   shard 1: keys 2, 15
+    #   shard 2: keys 1, 10
     db0 = slatedb.SlateDB(str(db0_local), url=db0_url)
-    db0.put((1).to_bytes(8, "big", signed=False), b"v1")
+    db0.put((4).to_bytes(8, "big", signed=False), b"v4")
     db0.put((9).to_bytes(8, "big", signed=False), b"v9")
     db0.flush_with_options("wal")
     db0_ckpt = db0.create_checkpoint(scope="durable")["id"]
     db0.close()
 
     db1 = slatedb.SlateDB(str(db1_local), url=db1_url)
-    db1.put((10).to_bytes(8, "big", signed=False), b"v10")
+    db1.put((2).to_bytes(8, "big", signed=False), b"v2")
     db1.put((15).to_bytes(8, "big", signed=False), b"v15")
     db1.flush_with_options("wal")
     db1_ckpt = db1.create_checkpoint(scope="durable")["id"]
     db1.close()
 
     db2 = slatedb.SlateDB(str(db2_local), url=db2_url)
-    db2.put((20).to_bytes(8, "big", signed=False), b"v20")
-    db2.put((27).to_bytes(8, "big", signed=False), b"v27")
+    db2.put((1).to_bytes(8, "big", signed=False), b"v1")
+    db2.put((10).to_bytes(8, "big", signed=False), b"v10")
     db2.flush_with_options("wal")
     db2_ckpt = db2.create_checkpoint(scope="durable")["id"]
     db2.close()
@@ -107,9 +111,7 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding=KeyEncoding.U64BE,
-        sharding=ManifestShardingSpec(
-            strategy=ShardingStrategy.RANGE, boundaries=[10, 20]
-        ),
+        sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
     )
@@ -119,8 +121,8 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
             db_url=db0_url,
             attempt=0,
             row_count=2,
-            min_key=0,
-            max_key=9,
+            min_key=None,
+            max_key=None,
             checkpoint_id=db0_ckpt,
             writer_info={},
         ),
@@ -129,8 +131,8 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
             db_url=db1_url,
             attempt=0,
             row_count=2,
-            min_key=10,
-            max_key=19,
+            min_key=None,
+            max_key=None,
             checkpoint_id=db1_ckpt,
             writer_info={},
         ),
@@ -139,7 +141,7 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
             db_url=db2_url,
             attempt=0,
             row_count=2,
-            min_key=20,
+            min_key=None,
             max_key=None,
             checkpoint_id=db2_ckpt,
             writer_info={},
@@ -160,7 +162,7 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
     pointers = {
         "mem://current": json.dumps(
             {
-                "format_version": 1,
+                "format_version": 2,
                 "manifest_ref": "mem://manifest/1",
                 "manifest_content_type": "application/x-yaml",
                 "run_id": "run-1",
@@ -183,9 +185,9 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
         max_workers=4,
     ) as reader:
         assert reader.get(15) == b"v15"
-        got = reader.multi_get([1, 20, 10, 27, 9])
+        got = reader.multi_get([1, 2, 10, 4, 9])
         assert got[1] == b"v1"
-        assert got[20] == b"v20"
+        assert got[2] == b"v2"
         assert got[10] == b"v10"
-        assert got[27] == b"v27"
+        assert got[4] == b"v4"
         assert got[9] == b"v9"

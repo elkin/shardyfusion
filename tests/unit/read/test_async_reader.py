@@ -147,6 +147,7 @@ def _manifest(db_url: str) -> ParsedManifest:
 
 
 def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
+    """Two-shard hash manifest: key=1 -> shard 0, key=6 -> shard 1 (via xxh3)."""
     required = RequiredBuildMeta(
         run_id="run",
         created_at="2026-01-01T00:00:00+00:00",
@@ -154,7 +155,7 @@ def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding=KeyEncoding.U64BE,
-        sharding=ManifestShardingSpec(strategy=ShardingStrategy.RANGE),
+        sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
     )
@@ -167,7 +168,7 @@ def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
                 attempt=0,
                 row_count=1,
                 min_key=None,
-                max_key=5,
+                max_key=None,
                 checkpoint_id=None,
                 writer_info={},
             ),
@@ -176,7 +177,7 @@ def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
                 db_url=db_url_1,
                 attempt=0,
                 row_count=1,
-                min_key=6,
+                min_key=None,
                 max_key=None,
                 checkpoint_id=None,
                 writer_info={},
@@ -919,9 +920,12 @@ def _manifest_with_empty_shard() -> ParsedManifest:
 
 @pytest.mark.asyncio
 async def test_async_reader_null_shard_get(tmp_path: Path) -> None:
-    """Keys routed to an empty shard return None via null async reader."""
+    """Keys routed to an empty shard return None via null async reader.
+
+    With xxh3 and num_dbs=2: key=1 -> shard 0 (real), key=0 -> shard 1 (empty).
+    """
     manifest = _manifest_with_empty_shard()
-    stores = {"mem://db/shard0": {(0).to_bytes(8, "big"): b"val0"}}
+    stores = {"mem://db/shard0": {(1).to_bytes(8, "big"): b"val1"}}
     store = _AsyncMutableManifestStore(
         {"mem://manifest/v1": manifest}, "mem://manifest/v1"
     )
@@ -932,15 +936,18 @@ async def test_async_reader_null_shard_get(tmp_path: Path) -> None:
         reader_factory=_async_fake_reader_factory(stores),
     )
     async with reader:
-        assert await reader.get(0) == b"val0"
-        assert await reader.get(1) is None
+        assert await reader.get(1) == b"val1"
+        assert await reader.get(0) is None
 
 
 @pytest.mark.asyncio
 async def test_async_reader_null_shard_multi_get(tmp_path: Path) -> None:
-    """multi_get across real and empty shards returns mixed results."""
+    """multi_get across real and empty shards returns mixed results.
+
+    With xxh3 and num_dbs=2: key=1 -> shard 0 (real), key=0 -> shard 1 (empty).
+    """
     manifest = _manifest_with_empty_shard()
-    stores = {"mem://db/shard0": {(0).to_bytes(8, "big"): b"val0"}}
+    stores = {"mem://db/shard0": {(1).to_bytes(8, "big"): b"val1"}}
     store = _AsyncMutableManifestStore(
         {"mem://manifest/v1": manifest}, "mem://manifest/v1"
     )
@@ -951,9 +958,9 @@ async def test_async_reader_null_shard_multi_get(tmp_path: Path) -> None:
         reader_factory=_async_fake_reader_factory(stores),
     )
     async with reader:
-        results = await reader.multi_get([0, 1])
-        assert results[0] == b"val0"
-        assert results[1] is None
+        results = await reader.multi_get([1, 0])
+        assert results[1] == b"val1"
+        assert results[0] is None
 
 
 @pytest.mark.asyncio

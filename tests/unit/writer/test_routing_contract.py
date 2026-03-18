@@ -1,7 +1,7 @@
 """Contract tests verifying the writer-reader sharding invariant.
 
-The core invariant: for any key K, num_dbs N, and encoding E,
-the Spark writer and the Python reader/writer MUST compute the same
+The core invariant: for any key K and num_dbs N,
+the writer and the Python reader MUST compute the same
 shard ID. A violation means reads silently go to the wrong shard.
 
 This module contains Python-only property tests (hypothesis).
@@ -14,6 +14,7 @@ with the Spark and Dask routing contract tests.
 from __future__ import annotations
 
 import random
+import struct
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -27,9 +28,8 @@ from shardyfusion.manifest import (
 )
 from shardyfusion.routing import (
     SnapshotRouter,
-    xxhash64_db_id,
-    xxhash64_payload,
-    xxhash64_signed,
+    canonical_bytes,
+    xxh3_db_id,
 )
 from shardyfusion.sharding_types import (
     KeyEncoding,
@@ -41,13 +41,16 @@ from shardyfusion.sharding_types import (
 # Shared strategies and constants
 # ---------------------------------------------------------------------------
 
-_INT64_MIN = -(1 << 63)
-_INT64_MAX = (1 << 63) - 1
+_INT64_SIGNED_MIN = -(1 << 63)
+_INT64_SIGNED_MAX = (1 << 63) - 1
 _UINT32_MAX = (1 << 32) - 1
 _UINT64_MAX = (1 << 64) - 1
 
+int_keys = st.integers(min_value=_INT64_SIGNED_MIN, max_value=_INT64_SIGNED_MAX)
 u64be_keys = st.integers(min_value=0, max_value=_UINT64_MAX)
 u32be_keys = st.integers(min_value=0, max_value=_UINT32_MAX)
+str_keys = st.text(min_size=0, max_size=128)
+bytes_keys = st.binary(min_size=0, max_size=128)
 num_dbs_st = st.integers(min_value=1, max_value=1024)
 
 
@@ -71,7 +74,6 @@ def _build_router(
     num_dbs: int,
     strategy: ShardingStrategy = ShardingStrategy.HASH,
     encoding: KeyEncoding = KeyEncoding.U64BE,
-    boundaries: list[int | float | str] | None = None,
 ) -> SnapshotRouter:
     required = RequiredBuildMeta(
         run_id="contract-test",
@@ -80,93 +82,164 @@ def _build_router(
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding=encoding,
-        sharding=ManifestShardingSpec(strategy=strategy, boundaries=boundaries),
+        sharding=ManifestShardingSpec(strategy=strategy),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
     )
     return SnapshotRouter(required, _make_shards(num_dbs))
 
 
-@given(key=u64be_keys, num_dbs=num_dbs_st)
+# ---------------------------------------------------------------------------
+# canonical_bytes tests
+# ---------------------------------------------------------------------------
+
+
+@given(key=int_keys)
 @settings(max_examples=500)
-def test_hash_routing_deterministic(key: int, num_dbs: int) -> None:
-    """Same key + num_dbs always produces the same db_id."""
-    a = xxhash64_db_id(key, num_dbs, KeyEncoding.U64BE)
-    b = xxhash64_db_id(key, num_dbs, KeyEncoding.U64BE)
+def test_canonical_bytes_int_is_8_bytes_signed_le(key: int) -> None:
+    """Integer keys produce exactly 8 bytes in signed little-endian format."""
+    result = canonical_bytes(key)
+    assert len(result) == 8
+    # Round-trip: unpack as signed LE int64
+    assert struct.unpack("<q", result)[0] == key
+
+
+@given(key=str_keys)
+@settings(max_examples=500)
+def test_canonical_bytes_str_is_utf8(key: str) -> None:
+    """String keys produce their UTF-8 encoding."""
+    result = canonical_bytes(key)
+    assert result == key.encode("utf-8")
+
+
+@given(key=bytes_keys)
+@settings(max_examples=500)
+def test_canonical_bytes_bytes_is_passthrough(key: bytes) -> None:
+    """Bytes keys are returned as-is."""
+    assert canonical_bytes(key) is key
+
+
+def test_canonical_bytes_int_boundary_values() -> None:
+    """Boundary values for signed int64 are accepted."""
+    assert len(canonical_bytes(_INT64_SIGNED_MIN)) == 8
+    assert len(canonical_bytes(_INT64_SIGNED_MAX)) == 8
+    assert len(canonical_bytes(0)) == 8
+
+
+def test_canonical_bytes_int_out_of_range() -> None:
+    """Integers outside signed int64 range raise ValueError."""
+    import pytest
+
+    with pytest.raises(ValueError, match="out of range"):
+        canonical_bytes(_INT64_SIGNED_MAX + 1)
+    with pytest.raises(ValueError, match="out of range"):
+        canonical_bytes(_INT64_SIGNED_MIN - 1)
+
+
+# ---------------------------------------------------------------------------
+# xxh3_db_id tests — integer keys
+# ---------------------------------------------------------------------------
+
+
+@given(key=int_keys, num_dbs=num_dbs_st)
+@settings(max_examples=500)
+def test_hash_routing_deterministic_int(key: int, num_dbs: int) -> None:
+    """Same integer key + num_dbs always produces the same db_id."""
+    a = xxh3_db_id(key, num_dbs)
+    b = xxh3_db_id(key, num_dbs)
     assert a == b
 
 
-@given(key=u64be_keys, num_dbs=num_dbs_st)
+@given(key=int_keys, num_dbs=num_dbs_st)
 @settings(max_examples=500)
-def test_hash_routing_in_valid_range(key: int, num_dbs: int) -> None:
-    """Result is always in [0, num_dbs)."""
-    result = xxhash64_db_id(key, num_dbs, KeyEncoding.U64BE)
+def test_hash_routing_in_valid_range_int(key: int, num_dbs: int) -> None:
+    """Result is always in [0, num_dbs) for integer keys."""
+    result = xxh3_db_id(key, num_dbs)
     assert 0 <= result < num_dbs
 
 
-@given(payload=st.binary(min_size=1, max_size=64))
+# ---------------------------------------------------------------------------
+# xxh3_db_id tests — string keys
+# ---------------------------------------------------------------------------
+
+
+@given(key=str_keys, num_dbs=num_dbs_st)
 @settings(max_examples=500)
-def testxxhash64_signed_in_int64_range(payload: bytes) -> None:
-    """Signed conversion always stays within signed int64 range."""
-    result = xxhash64_signed(payload)
-    assert _INT64_MIN <= result <= _INT64_MAX
+def test_hash_routing_deterministic_str(key: str, num_dbs: int) -> None:
+    """Same string key + num_dbs always produces the same db_id."""
+    a = xxh3_db_id(key, num_dbs)
+    b = xxh3_db_id(key, num_dbs)
+    assert a == b
 
 
-@given(payload=st.binary(min_size=8, max_size=8), num_dbs=num_dbs_st)
+@given(key=str_keys, num_dbs=num_dbs_st)
 @settings(max_examples=500)
-def test_signed_digest_mod_non_negative(payload: bytes, num_dbs: int) -> None:
-    """Python % with positive num_dbs always returns non-negative (matches pmod)."""
-    digest = xxhash64_signed(payload)
-    assert digest % num_dbs >= 0
+def test_hash_routing_in_valid_range_str(key: str, num_dbs: int) -> None:
+    """Result is always in [0, num_dbs) for string keys."""
+    result = xxh3_db_id(key, num_dbs)
+    assert 0 <= result < num_dbs
 
 
-@given(key=u32be_keys, num_dbs=num_dbs_st)
+# ---------------------------------------------------------------------------
+# xxh3_db_id tests — bytes keys
+# ---------------------------------------------------------------------------
+
+
+@given(key=bytes_keys, num_dbs=num_dbs_st)
 @settings(max_examples=500)
-def test_u32be_u64be_hash_equivalence(key: int, num_dbs: int) -> None:
-    """Both encodings produce identical routes for keys in [0, 2^32-1]."""
-    u32 = xxhash64_db_id(key, num_dbs, KeyEncoding.U32BE)
-    u64 = xxhash64_db_id(key, num_dbs, KeyEncoding.U64BE)
-    assert u32 == u64, f"key={key}, num_dbs={num_dbs}"
+def test_hash_routing_deterministic_bytes(key: bytes, num_dbs: int) -> None:
+    """Same bytes key + num_dbs always produces the same db_id."""
+    a = xxh3_db_id(key, num_dbs)
+    b = xxh3_db_id(key, num_dbs)
+    assert a == b
 
 
-@given(key=u64be_keys)
+@given(key=bytes_keys, num_dbs=num_dbs_st)
 @settings(max_examples=500)
-def test_payload_length_u64be(key: int) -> None:
-    """xxhash64_payload returns exactly 8 bytes for u64be integer keys."""
-    assert len(xxhash64_payload(key, KeyEncoding.U64BE)) == 8
+def test_hash_routing_in_valid_range_bytes(key: bytes, num_dbs: int) -> None:
+    """Result is always in [0, num_dbs) for bytes keys."""
+    result = xxh3_db_id(key, num_dbs)
+    assert 0 <= result < num_dbs
 
 
-@given(key=u32be_keys)
+# ---------------------------------------------------------------------------
+# xxh3_db_id — encoding independence
+# ---------------------------------------------------------------------------
+
+
+@given(key=int_keys, num_dbs=num_dbs_st)
 @settings(max_examples=500)
-def test_payload_length_u32be(key: int) -> None:
-    """xxhash64_payload returns exactly 8 bytes for u32be integer keys."""
-    assert len(xxhash64_payload(key, KeyEncoding.U32BE)) == 8
+def test_hash_routing_encoding_independent(key: int, num_dbs: int) -> None:
+    """xxh3_db_id does not take an encoding parameter — same key always maps to
+    the same shard regardless of how the key will be stored."""
+    result_a = xxh3_db_id(key, num_dbs)
+    result_b = xxh3_db_id(key, num_dbs)
+    assert result_a == result_b
 
 
-@given(key=u64be_keys)
+# ---------------------------------------------------------------------------
+# xxh3_db_id — single-shard collapse
+# ---------------------------------------------------------------------------
+
+
+def test_single_shard_always_zero() -> None:
+    """With num_dbs=1, every key routes to shard 0."""
+    assert xxh3_db_id(0, 1) == 0
+    assert xxh3_db_id(42, 1) == 0
+    assert xxh3_db_id(-1, 1) == 0
+    assert xxh3_db_id("hello", 1) == 0
+    assert xxh3_db_id(b"\x00\xff", 1) == 0
+
+
+# ---------------------------------------------------------------------------
+# Writer-reader identity — integer keys
+# ---------------------------------------------------------------------------
+
+
+@given(key=int_keys, num_dbs=num_dbs_st)
 @settings(max_examples=500)
-def test_bytes_key_matches_int_key_u64be(key: int) -> None:
-    """Routing via int or big-endian bytes gives the same payload."""
-    key_bytes = key.to_bytes(8, byteorder="big")
-    assert xxhash64_payload(key_bytes, KeyEncoding.U64BE) == xxhash64_payload(
-        key, KeyEncoding.U64BE
-    )
-
-
-@given(key=u32be_keys)
-@settings(max_examples=500)
-def test_bytes_key_matches_int_key_u32be(key: int) -> None:
-    """Routing via int or big-endian bytes gives the same payload for u32be."""
-    key_bytes = key.to_bytes(4, byteorder="big")
-    assert xxhash64_payload(key_bytes, KeyEncoding.U32BE) == xxhash64_payload(
-        key, KeyEncoding.U32BE
-    )
-
-
-@given(key=u64be_keys, num_dbs=num_dbs_st)
-@settings(max_examples=500)
-def test_python_writer_reader_routing_identity(key: int, num_dbs: int) -> None:
-    """route_key (writer) and SnapshotRouter.route_one (reader) must agree."""
+def test_writer_reader_routing_identity_int(key: int, num_dbs: int) -> None:
+    """route_key (writer) and SnapshotRouter.route_one (reader) must agree for int keys."""
     writer_result = route_key(
         key,
         num_dbs=num_dbs,
@@ -179,7 +252,47 @@ def test_python_writer_reader_routing_identity(key: int, num_dbs: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Shared edge-case key sets (used by spark and dask routing contract tests)
+# Writer-reader identity — string keys
+# ---------------------------------------------------------------------------
+
+
+@given(key=str_keys, num_dbs=num_dbs_st)
+@settings(max_examples=500)
+def test_writer_reader_routing_identity_str(key: str, num_dbs: int) -> None:
+    """route_key (writer) and SnapshotRouter.route_one (reader) must agree for str keys."""
+    writer_result = route_key(
+        key,
+        num_dbs=num_dbs,
+        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
+        key_encoding=KeyEncoding.UTF8,
+    )
+    router = _build_router(num_dbs=num_dbs, encoding=KeyEncoding.UTF8)
+    reader_result = router.route_one(key)
+    assert writer_result == reader_result, f"key={key!r}, num_dbs={num_dbs}"
+
+
+# ---------------------------------------------------------------------------
+# Writer-reader identity — bytes keys
+# ---------------------------------------------------------------------------
+
+
+@given(key=bytes_keys, num_dbs=num_dbs_st)
+@settings(max_examples=500)
+def test_writer_reader_routing_identity_bytes(key: bytes, num_dbs: int) -> None:
+    """route_key (writer) and SnapshotRouter.route_one (reader) must agree for bytes keys."""
+    writer_result = route_key(
+        key,
+        num_dbs=num_dbs,
+        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
+        key_encoding=KeyEncoding.RAW,
+    )
+    router = _build_router(num_dbs=num_dbs, encoding=KeyEncoding.RAW)
+    reader_result = router.route_one(key)
+    assert writer_result == reader_result, f"key={key!r}, num_dbs={num_dbs}"
+
+
+# ---------------------------------------------------------------------------
+# Shared edge-case key sets (used by spark, dask, and ray routing contract tests)
 # ---------------------------------------------------------------------------
 
 _rng = random.Random(12345)

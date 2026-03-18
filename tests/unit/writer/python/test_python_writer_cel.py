@@ -4,7 +4,7 @@ Tests both **unified** mode (CEL output = DB key) and **split** mode
 (CEL routes, separate key_fn stores).  Exercises the full pipeline:
 write → manifest → router → read-back verification.
 
-Requires the ``cel`` extra (``cel-expr-python``, ``fastdigest``).
+Requires the ``cel`` extra (``cel-expr-python``).
 """
 
 from __future__ import annotations
@@ -15,10 +15,9 @@ from pathlib import Path
 import pytest
 
 cel_expr_python = pytest.importorskip("cel_expr_python")  # noqa: F841
-fastdigest = pytest.importorskip("fastdigest")  # noqa: F841
 
 from shardyfusion._writer_core import route_key
-from shardyfusion.cel import compile_cel, compute_boundaries_tdigest, route_cel
+from shardyfusion.cel import compile_cel, route_cel
 from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
 from shardyfusion.manifest import BuildResult
 from shardyfusion.manifest_store import InMemoryManifestStore
@@ -42,7 +41,6 @@ pytestmark = pytest.mark.cel
 def _make_cel_config(
     tmp_path: Path,
     *,
-    num_dbs: int,
     cel_expr: str,
     cel_columns: dict[str, str],
     boundaries: list[int | float | str],
@@ -53,7 +51,7 @@ def _make_cel_config(
     root_dir = str(tmp_path / "file_backed")
     store = InMemoryManifestStore()
     config = WriteConfig(
-        num_dbs=num_dbs,
+        num_dbs=0,
         s3_prefix="s3://bucket/prefix",
         key_encoding=key_encoding,
         batch_size=batch_size,
@@ -84,7 +82,6 @@ class TestCelUnifiedMode:
         # Precompute boundaries for key%4 → values 0,1,2,3 → boundaries [1,2,3]
         config, root_dir = _make_cel_config(
             tmp_path,
-            num_dbs=4,
             cel_expr="key % 4",
             cel_columns={"key": "int"},
             boundaries=[1, 2, 3],
@@ -121,7 +118,6 @@ class TestCelUnifiedMode:
         store = InMemoryManifestStore()
         config, _ = _make_cel_config(
             tmp_path,
-            num_dbs=2,
             cel_expr="key % 2",
             cel_columns={"key": "int"},
             boundaries=[1],
@@ -148,7 +144,6 @@ class TestCelUnifiedMode:
         store = InMemoryManifestStore()
         config, _ = _make_cel_config(
             tmp_path,
-            num_dbs=3,
             cel_expr="key % 3",
             cel_columns={"key": "int"},
             boundaries=[1, 2],
@@ -183,7 +178,7 @@ class TestCelUnifiedMode:
         store = InMemoryManifestStore()
         root_dir = str(tmp_path / "file_backed")
         config = WriteConfig(
-            num_dbs=1,
+            num_dbs=0,
             s3_prefix="s3://bucket/prefix",
             key_encoding=KeyEncoding.U64BE,
             adapter_factory=file_backed_adapter_factory(root_dir),
@@ -211,7 +206,6 @@ class TestCelUnifiedMode:
     def test_empty_input(self, tmp_path: Path) -> None:
         config, _ = _make_cel_config(
             tmp_path,
-            num_dbs=4,
             cel_expr="key % 4",
             cel_columns={"key": "int"},
             boundaries=[1, 2, 3],
@@ -231,7 +225,6 @@ class TestCelUnifiedMode:
         """Every written record can be read back from the correct shard."""
         config, root_dir = _make_cel_config(
             tmp_path,
-            num_dbs=4,
             cel_expr="key % 4",
             cel_columns={"key": "int"},
             boundaries=[1, 2, 3],
@@ -276,7 +269,7 @@ class TestCelSplitMode:
         store = InMemoryManifestStore()
         root_dir = str(tmp_path / "file_backed")
         config = WriteConfig(
-            num_dbs=3,
+            num_dbs=0,
             s3_prefix="s3://bucket/prefix",
             key_encoding=KeyEncoding.UTF8,
             adapter_factory=file_backed_adapter_factory(root_dir),
@@ -330,7 +323,7 @@ class TestCelSplitMode:
         store = InMemoryManifestStore()
         root_dir = str(tmp_path / "file_backed")
         config = WriteConfig(
-            num_dbs=3,
+            num_dbs=0,
             s3_prefix="s3://bucket/prefix",
             key_encoding=KeyEncoding.UTF8,
             adapter_factory=file_backed_adapter_factory(root_dir),
@@ -371,7 +364,7 @@ class TestCelSplitMode:
         store = InMemoryManifestStore()
         root_dir = str(tmp_path / "file_backed")
         config = WriteConfig(
-            num_dbs=3,
+            num_dbs=0,
             s3_prefix="s3://bucket/prefix",
             key_encoding=KeyEncoding.UTF8,
             adapter_factory=file_backed_adapter_factory(root_dir),
@@ -404,40 +397,3 @@ class TestCelSplitMode:
         # Find the "us" shard (db_id=2) — should have 8 rows
         us_shard = next(w for w in result.winners if w.db_id == 2)
         assert us_shard.row_count == 8
-
-
-# ---------------------------------------------------------------------------
-# Boundary computation integration
-# ---------------------------------------------------------------------------
-
-
-class TestCelBoundaryComputation:
-    """Test that compute_boundaries_tdigest produces usable boundaries."""
-
-    def test_tdigest_boundaries_produce_even_shards(self, tmp_path: Path) -> None:
-        """t-digest boundaries from uniform data create roughly even shards."""
-        # Compute boundaries from key % 100 for 4 shards
-        routing_keys = [k % 100 for k in range(1000)]
-        boundaries = compute_boundaries_tdigest(routing_keys, 4)
-        assert len(boundaries) == 3
-
-        # Use computed boundaries for writing
-        config, root_dir = _make_cel_config(
-            tmp_path,
-            num_dbs=4,
-            cel_expr="key % 100",
-            cel_columns={"key": "int"},
-            boundaries=boundaries,
-        )
-
-        result = write_sharded(
-            list(range(1000)),
-            config,
-            key_fn=lambda r: r,
-            value_fn=lambda r: b"v",
-        )
-
-        assert result.stats.rows_written == 1000
-        # With uniform data and t-digest, shards should be roughly even
-        for w in result.winners:
-            assert w.row_count > 100, f"shard {w.db_id} has only {w.row_count} rows"

@@ -6,7 +6,6 @@ import pytest
 import yaml
 
 cel_expr_python = pytest.importorskip("cel_expr_python")  # noqa: F841
-fastdigest = pytest.importorskip("fastdigest")  # noqa: F841
 
 import ray.data
 
@@ -30,7 +29,7 @@ def test_ray_cel_unified_publishes_manifest(local_s3_service, tmp_path):
     root = str(tmp_path / "file-backed")
 
     config = WriteConfig(
-        num_dbs=4,
+        num_dbs=0,
         s3_prefix=s3_prefix,
         adapter_factory=file_backed_adapter_factory(root),
         sharding=ShardingSpec(

@@ -1,8 +1,11 @@
 """Spark-vs-Python cross-checks for the sharding invariant.
 
-These tests run with a local Spark session and compare Spark SQL results
-against the Python routing functions, verifying that both compute identical
-shard IDs for ~200 edge-case keys.
+Since the sharding rework, ALL writers (including Spark) use Python-based
+``mapInArrow`` for hashing via ``xxh3_db_id()``.  There is no longer a
+Spark SQL xxhash64 path to cross-check, but these tests verify that the
+full ``add_db_id_column()`` pipeline (Arrow serialisation round-trip,
+partition assignment, etc.) produces db_ids identical to calling
+``xxh3_db_id()`` directly.
 
 The Python-only property tests (hypothesis) live in the parent
 ``tests/unit/writer/test_routing_contract.py``.
@@ -10,161 +13,82 @@ The Python-only property tests (hypothesis) live in the parent
 
 from __future__ import annotations
 
-from bisect import bisect_right
-
 import pytest
 
-from shardyfusion.routing import xxhash64_db_id
-from shardyfusion.sharding_types import KeyEncoding
-from tests.unit.writer.test_routing_contract import EDGE_CASE_KEYS, U32_EDGE_CASE_KEYS
+from shardyfusion.routing import xxh3_db_id
+from shardyfusion.sharding_types import (
+    DB_ID_COL,
+    ShardingSpec,
+    ShardingStrategy,
+)
+from shardyfusion.writer.spark.sharding import add_db_id_column
+from tests.unit.writer.test_routing_contract import EDGE_CASE_KEYS
+
+# String keys for cross-checking add_db_id_column with string columns.
+_STRING_EDGE_CASE_KEYS: list[str] = [
+    "",
+    "a",
+    "z",
+    "hello",
+    "Hello",
+    "HELLO",
+    "key with spaces",
+    "key\twith\ttabs",
+    "\x00null_byte",
+    "emoji\U0001f600face",
+    "\u00e9\u00e8\u00ea",
+    "a" * 256,
+    "0",
+    "42",
+    "9999999999",
+    "/slashes/in/path",
+    "key=value&foo=bar",
+]
 
 
 @pytest.mark.spark
 @pytest.mark.parametrize("num_dbs", [1, 2, 3, 5, 7, 8, 16, 64, 128])
-def test_spark_python_hash_agreement_u64be(spark, num_dbs: int) -> None:
-    """Verify Spark and Python compute identical hash db_id for ~200 keys."""
-    from pyspark.sql import functions as F
+def test_spark_hash_agreement_int_keys(spark, num_dbs: int) -> None:
+    """Spark add_db_id_column matches xxh3_db_id for integer edge-case keys."""
 
     df = spark.createDataFrame([(k,) for k in EDGE_CASE_KEYS], ["id"])
-    spark_results = {
-        row["id"]: row["db_id"]
-        for row in df.select(
-            "id",
-            F.pmod(F.xxhash64(F.col("id").cast("long")), F.lit(num_dbs)).alias("db_id"),
-        ).collect()
-    }
+    sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
 
-    for key in EDGE_CASE_KEYS:
-        python_db_id = xxhash64_db_id(key, num_dbs, KeyEncoding.U64BE)
-        assert python_db_id == spark_results[key], (
-            f"key={key}, num_dbs={num_dbs}: Python={python_db_id}, "
-            f"Spark={spark_results[key]}"
+    result_df, _ = add_db_id_column(
+        df,
+        key_col="id",
+        num_dbs=num_dbs,
+        sharding=sharding,
+    )
+
+    for row in result_df.collect():
+        key = row["id"]
+        spark_db_id = row[DB_ID_COL]
+        python_db_id = xxh3_db_id(key, num_dbs)
+        assert spark_db_id == python_db_id, (
+            f"key={key}, num_dbs={num_dbs}: Spark={spark_db_id}, Python={python_db_id}"
         )
 
 
 @pytest.mark.spark
-@pytest.mark.parametrize("num_dbs", [1, 2, 3, 5, 8, 16, 64])
-def test_spark_python_hash_agreement_u32be(spark, num_dbs: int) -> None:
-    """Verify Spark and Python compute identical hash db_id for u32be keys."""
-    from pyspark.sql import functions as F
+@pytest.mark.parametrize("num_dbs", [1, 2, 3, 5, 7, 8, 16, 64, 128])
+def test_spark_hash_agreement_string_keys(spark, num_dbs: int) -> None:
+    """Spark add_db_id_column matches xxh3_db_id for string edge-case keys."""
 
-    df = spark.createDataFrame([(k,) for k in U32_EDGE_CASE_KEYS], ["id"])
-    spark_results = {
-        row["id"]: row["db_id"]
-        for row in df.select(
-            "id",
-            F.pmod(F.xxhash64(F.col("id").cast("long")), F.lit(num_dbs)).alias("db_id"),
-        ).collect()
-    }
+    df = spark.createDataFrame([(k,) for k in _STRING_EDGE_CASE_KEYS], ["id"])
+    sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
 
-    for key in U32_EDGE_CASE_KEYS:
-        python_db_id = xxhash64_db_id(key, num_dbs, KeyEncoding.U32BE)
-        assert python_db_id == spark_results[key], (
-            f"key={key}, num_dbs={num_dbs}: Python(u32be)={python_db_id}, "
-            f"Spark={spark_results[key]}"
-        )
-
-
-@pytest.mark.spark
-@pytest.mark.parametrize(
-    "boundaries",
-    [
-        [10],
-        [10, 20],
-        [10, 20, 35, 50],
-        [0, 100, 200, 300, 400, 500, 600, 700, 800, 900],
-        [1],
-        [(1 << 31) - 1, (1 << 31)],
-    ],
-)
-def test_spark_range_expr_matches_python_bisect(spark, boundaries: list[int]) -> None:
-    """Spark _range_bucket_expr output == bisect_right for integer keys."""
-    from shardyfusion.writer.spark.sharding import (
-        DB_ID_COL,
-        _range_bucket_expr,
+    result_df, _ = add_db_id_column(
+        df,
+        key_col="id",
+        num_dbs=num_dbs,
+        sharding=sharding,
     )
 
-    keys = sorted(
-        set(
-            [-1, 0, 1, 5, 9, 10, 11, 15, 19, 20, 21, 35, 50, 51, 100, 500, 1000]
-            + [(1 << 31) - 1, (1 << 31), (1 << 31) + 1]
-            + boundaries
-            + [b - 1 for b in boundaries]
-            + [b + 1 for b in boundaries]
-        )
-    )
-    df = spark.createDataFrame([(k,) for k in keys], ["id"])
-    spark_df = df.withColumn(
-        DB_ID_COL, _range_bucket_expr("id", boundaries).cast("int")
-    )
-    spark_results = {row["id"]: row[DB_ID_COL] for row in spark_df.collect()}
-
-    for key in keys:
-        python_result = bisect_right(boundaries, key)
-        assert python_result == spark_results[key], (
-            f"key={key}, boundaries={boundaries}: "
-            f"Python={python_result}, Spark={spark_results[key]}"
-        )
-
-
-@pytest.mark.spark
-@pytest.mark.parametrize(
-    "boundaries",
-    [
-        [10.0, 20.0],
-        [10, 20, 35, 50],
-        [0, 100, 200],
-    ],
-)
-def test_spark_bucketizer_matches_python_bisect(
-    spark, boundaries: list[int | float]
-) -> None:
-    """Spark Bucketizer output == bisect_right for numeric boundaries."""
-    from shardyfusion.writer.spark.sharding import (
-        DB_ID_COL,
-        _range_bucketize_df,
-    )
-
-    keys = sorted(
-        set(
-            [-1, 0, 1, 5, 9, 10, 11, 15, 19, 20, 21, 35, 50, 51, 100, 500, 1000]
-            + [int(b) for b in boundaries]
-            + [int(b) - 1 for b in boundaries]
-            + [int(b) + 1 for b in boundaries]
-        )
-    )
-    df = spark.createDataFrame([(k,) for k in keys], ["id"])
-    bucketizer_df = _range_bucketize_df(df, "id", boundaries)
-    spark_results = {row["id"]: row[DB_ID_COL] for row in bucketizer_df.collect()}
-
-    for key in keys:
-        python_result = bisect_right(boundaries, key)
-        assert python_result == spark_results[key], (
-            f"key={key}, boundaries={boundaries}: "
-            f"Python={python_result}, Spark={spark_results[key]}"
-        )
-
-
-@pytest.mark.spark
-def test_spark_string_range_expr_matches_python_bisect(spark) -> None:
-    """String boundaries: Spark SQL range expression vs Python bisect_right."""
-    from shardyfusion.writer.spark.sharding import (
-        DB_ID_COL,
-        _range_bucket_expr,
-    )
-
-    boundaries = ["c", "f", "m", "t"]
-    keys = ["a", "b", "c", "d", "e", "f", "g", "m", "n", "t", "u", "z", "zz"]
-
-    df = spark.createDataFrame([(k,) for k in keys], ["id"])
-    spark_df = df.withColumn(
-        DB_ID_COL, _range_bucket_expr("id", boundaries).cast("int")
-    )
-    spark_results = {row["id"]: row[DB_ID_COL] for row in spark_df.collect()}
-
-    for key in keys:
-        python_result = bisect_right(boundaries, key)
-        assert python_result == spark_results[key], (
-            f"key={key!r}, boundaries={boundaries}: "
-            f"Python={python_result}, Spark={spark_results[key]}"
+    for row in result_df.collect():
+        key = row["id"]
+        spark_db_id = row[DB_ID_COL]
+        python_db_id = xxh3_db_id(key, num_dbs)
+        assert spark_db_id == python_db_id, (
+            f"key={key!r}, num_dbs={num_dbs}: Spark={spark_db_id}, Python={python_db_id}"
         )

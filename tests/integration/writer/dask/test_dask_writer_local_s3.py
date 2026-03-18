@@ -44,10 +44,7 @@ def test_dask_writer_publishes_manifest_and_current_to_local_s3(
         num_dbs=4,
         s3_prefix=s3_prefix,
         adapter_factory=file_backed_adapter_factory(file_backed_root),
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=[6, 12, 18],
-        ),
+        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
         output=OutputOptions(
             run_id="dask-writer-local-s3",
             local_root=str(tmp_path / "local"),

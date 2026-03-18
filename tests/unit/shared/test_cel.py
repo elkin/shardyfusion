@@ -1,17 +1,14 @@
-"""Tests for CEL compilation, evaluation, and boundary computation.
+"""Tests for CEL compilation, evaluation, and routing.
 
-These tests require the ``cel`` extra (cel-expr-python, fastdigest).
+These tests require the ``cel`` extra (cel-expr-python).
 """
 
 import pytest
 
 cel_expr_python = pytest.importorskip("cel_expr_python")
-fastdigest = pytest.importorskip("fastdigest")
 
 from shardyfusion.cel import (
     compile_cel,
-    compute_boundaries_distinct,
-    compute_boundaries_tdigest,
     evaluate_cel_arrow_batch,
     route_cel,
 )
@@ -58,41 +55,32 @@ class TestRouteCel:
         assert route_cel(compiled, {"key": 60}, boundaries) == 2  # 50 <= 60 < 75
         assert route_cel(compiled, {"key": 80}, boundaries) == 3  # 80 >= 75
 
+    def test_route_direct_mode(self) -> None:
+        compiled = compile_cel("shard_hash(key) % 4u", {"key": "int"})
 
-class TestComputeBoundariesDistinct:
-    def test_distinct_boundaries(self) -> None:
-        routing_keys = [1, 2, 3, 4, 5, 1, 2, 3]
-        num_dbs, boundaries = compute_boundaries_distinct(routing_keys)
-        assert num_dbs == 5
-        assert boundaries == [2, 3, 4, 5]
-
-    def test_single_value(self) -> None:
-        num_dbs, boundaries = compute_boundaries_distinct([42, 42, 42])
-        assert num_dbs == 1
-        assert boundaries == []
-
-    def test_empty(self) -> None:
-        num_dbs, boundaries = compute_boundaries_distinct([])
-        assert num_dbs == 1
-        assert boundaries == []
+        shard_id = route_cel(compiled, {"key": 42}, None)
+        assert isinstance(shard_id, int)
+        assert 0 <= shard_id < 4
 
 
-class TestComputeBoundariesTdigest:
-    def test_basic_boundaries(self) -> None:
-        keys = list(range(1000))
-        boundaries = compute_boundaries_tdigest(keys, 4)
-        assert len(boundaries) == 3
-        # Boundaries should be roughly at 250, 500, 750
-        assert all(isinstance(b, int) for b in boundaries)
+class TestShardHash:
+    def test_int_key(self) -> None:
+        compiled = compile_cel("shard_hash(key) % 100u", {"key": "int"})
+        result = compiled.evaluate({"key": 42})
+        assert isinstance(result, int)
+        assert 0 <= result < 100
 
-    def test_single_shard(self) -> None:
-        boundaries = compute_boundaries_tdigest([1, 2, 3], 1)
-        assert boundaries == []
+    def test_string_key(self) -> None:
+        compiled = compile_cel("shard_hash(key) % 100u", {"key": "string"})
+        result = compiled.evaluate({"key": "hello"})
+        assert isinstance(result, int)
+        assert 0 <= result < 100
 
-    def test_string_keys_hashed(self) -> None:
-        keys = [f"key_{i}" for i in range(100)]
-        boundaries = compute_boundaries_tdigest(keys, 4)
-        assert len(boundaries) == 3
+    def test_deterministic(self) -> None:
+        compiled = compile_cel("shard_hash(key) % 100u", {"key": "int"})
+        first = compiled.evaluate({"key": 99})
+        second = compiled.evaluate({"key": 99})
+        assert first == second
 
 
 class TestEvaluateCelArrowBatch:
