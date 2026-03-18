@@ -2,9 +2,8 @@
 
 import logging
 import time
-from bisect import bisect_right
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -29,7 +28,7 @@ from .manifest import (
 from .manifest_store import S3ManifestStore
 from .metrics import MetricEvent, MetricsCollector
 from .ordering import compare_ordered
-from .routing import xxhash64_db_id  # SHARDING INVARIANT: direct import, not reimpl.
+from .routing import xxh3_db_id
 from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
 from .storage import create_s3_client, delete_prefix, join_s3, list_prefixes
 from .type_defs import KeyLike, RetryConfig
@@ -96,21 +95,13 @@ def route_key(
     key_encoding: KeyEncoding,
     routing_context: dict[str, object] | None = None,
 ) -> int:
-    """Route a key to a shard db_id (non-Spark path)."""
+    """Route a key to a shard db_id (shared by all writer paths)."""
 
     if sharding.strategy == ShardingStrategy.HASH:
-        return xxhash64_db_id(key, num_dbs, key_encoding)
-    if sharding.strategy == ShardingStrategy.RANGE:
-        if sharding.boundaries is None:
-            raise ConfigValidationError(
-                "Range sharding without explicit boundaries requires a framework writer (Spark or Dask)."
-            )
-        return bisect_right(sharding.boundaries, key)
+        return xxh3_db_id(key, num_dbs)
     if sharding.strategy == ShardingStrategy.CEL:
         CompiledCel, compile_cel, route_cel = _get_cel_imports()
         assert sharding.cel_expr is not None and sharding.cel_columns is not None
-        if sharding.boundaries is None:
-            raise ConfigValidationError("CEL sharding requires precomputed boundaries.")
         cached = _CEL_CACHE.get(sharding.cel_expr)
         if not isinstance(cached, CompiledCel):
             cached = compile_cel(sharding.cel_expr, sharding.cel_columns)
@@ -118,8 +109,66 @@ def route_key(
         ctx = routing_context if routing_context is not None else {"key": key}
         return route_cel(cached, ctx, sharding.boundaries)
     raise ConfigValidationError(
-        f"Sharding strategy {sharding.strategy!r} not supported in non-Spark writers."
+        f"Sharding strategy {sharding.strategy!r} not supported."
     )
+
+
+def resolve_num_dbs(config: WriteConfig, count_fn: Callable[[], int]) -> int:
+    """Resolve num_dbs from config or max_keys_per_shard.
+
+    Returns 0 for CEL (discovered after sharding from data).
+
+    Args:
+        config: Write configuration.
+        count_fn: Framework-specific callable returning the row count
+            (only called if max_keys_per_shard is set).
+    """
+    import math
+
+    if config.num_dbs > 0:
+        return config.num_dbs
+
+    if config.sharding.max_keys_per_shard is not None:
+        count = count_fn()
+        if count == 0:
+            return 1
+        return max(1, math.ceil(count / config.sharding.max_keys_per_shard))
+
+    # CEL: will discover after add_db_id_column
+    return 0
+
+
+def discover_cel_num_dbs(
+    distinct_db_ids: set[int],
+) -> int:
+    """Discover num_dbs from CEL-assigned db_ids and validate they are consecutive.
+
+    CEL expressions must produce consecutive 0-based shard IDs (e.g. via
+    ``shard_hash(key) % N`` or ``bisect_right``).
+
+    Returns:
+        num_dbs (= max(db_id) + 1 = len(distinct_db_ids) for consecutive IDs).
+
+    Raises:
+        ShardAssignmentError: If db_ids are not consecutive starting from 0.
+    """
+    from .errors import ShardAssignmentError
+
+    if not distinct_db_ids:
+        return 1
+
+    max_id = max(distinct_db_ids)
+    expected = max_id + 1
+
+    if len(distinct_db_ids) != expected:
+        raise ShardAssignmentError(
+            f"CEL expression produced non-consecutive shard IDs: "
+            f"distinct count={len(distinct_db_ids)}, max+1={expected}. "
+            f"CEL expressions must produce consecutive 0-based IDs "
+            f"(e.g. shard_hash(key) % N)."
+        )
+
+    return expected
 
 
 def select_winners(
@@ -201,13 +250,21 @@ def publish_to_store(
     winners: list[RequiredShardMeta],
     key_col: str = "_key",
     started: float = 0.0,
+    num_dbs: int = 0,
 ) -> str:
-    """Build required metadata and publish via the configured ManifestStore."""
+    """Build required metadata and publish via the configured ManifestStore.
 
+    Args:
+        num_dbs: Resolved shard count (must be > 0). Writers must always
+            pass the resolved value since ``config.num_dbs`` may be 0
+            for CEL or max_keys_per_shard modes.
+    """
+
+    resolved_num_dbs = num_dbs if num_dbs > 0 else config.num_dbs
     required_build = RequiredBuildMeta(
         run_id=run_id,
         created_at=_utc_now(),
-        num_dbs=config.num_dbs,
+        num_dbs=resolved_num_dbs,
         s3_prefix=config.s3_prefix,
         key_col=key_col,
         sharding=manifest_safe_sharding(resolved_sharding),
@@ -513,7 +570,6 @@ def manifest_safe_sharding(sharding: ShardingSpec) -> ManifestShardingSpec:
         boundaries=list(sharding.boundaries)
         if sharding.boundaries is not None
         else None,
-        approx_quantile_rel_error=sharding.approx_quantile_rel_error,
         cel_expr=sharding.cel_expr,
         cel_columns=dict(sharding.cel_columns)
         if sharding.cel_columns is not None

@@ -31,9 +31,9 @@ class ManifestShardingSpec(BaseModel):
 
     strategy: ShardingStrategy = ShardingStrategy.HASH
     boundaries: list[BoundaryValue] | None = None
-    approx_quantile_rel_error: float = Field(default=0.01, gt=0, lt=1)
     cel_expr: str | None = None
     cel_columns: dict[str, str] | None = None
+    hash_algorithm: str = "xxh3_64"
 
 
 class RequiredBuildMeta(BaseModel):
@@ -49,7 +49,7 @@ class RequiredBuildMeta(BaseModel):
     sharding: ManifestShardingSpec
     db_path_template: str
     shard_prefix: str
-    format_version: int = 1
+    format_version: int = 2
     key_encoding: KeyEncoding = KeyEncoding.U64BE
 
 

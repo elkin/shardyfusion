@@ -12,7 +12,7 @@ from .credentials import CredentialProvider
 from .errors import ConfigValidationError
 from .manifest import ManifestBuilder
 from .metrics import MetricsCollector
-from .sharding_types import KeyEncoding, ShardingSpec
+from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
 from .slatedb_adapter import DbAdapterFactory
 from .type_defs import JsonObject, S3ConnectionOptions
 
@@ -103,8 +103,15 @@ class WriteConfig:
             except ValueError as exc:
                 raise ConfigValidationError(str(exc)) from exc
 
-        # max_keys_per_shard means num_dbs is computed at write time; allow 0 or unset
-        if self.sharding.max_keys_per_shard is not None:
+        if self.sharding.strategy == ShardingStrategy.CEL:
+            # CEL: num_dbs is always discovered from data or boundaries
+            if self.num_dbs != 0:
+                raise ConfigValidationError(
+                    "num_dbs must be 0 for CEL strategy "
+                    "(shard count is determined by the CEL expression)"
+                )
+        elif self.sharding.max_keys_per_shard is not None:
+            # HASH + max_keys_per_shard: num_dbs computed at write time
             if self.num_dbs != 0:
                 raise ConfigValidationError(
                     "num_dbs must be 0 when max_keys_per_shard is set "

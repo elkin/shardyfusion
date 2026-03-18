@@ -36,7 +36,6 @@ class ShardingStrategy(str, Enum):
     """Supported sharding strategies."""
 
     HASH = "hash"
-    RANGE = "range"
     CEL = "cel"
 
     @classmethod
@@ -56,11 +55,23 @@ class ShardingStrategy(str, Enum):
 
 @dataclass(slots=True)
 class ShardingSpec:
-    """Configuration for mapping rows to shard database ids."""
+    """Configuration for mapping rows to shard database ids.
+
+    Two strategies are supported:
+
+    **HASH** (default): Uniform distribution via ``xxh3_64(canonical_bytes(key)) % num_dbs``.
+    Supports int, str, and bytes keys. Requires ``num_dbs > 0`` (explicit or computed
+    from ``max_keys_per_shard``).
+
+    **CEL**: Flexible shard assignment via a CEL expression. The expression must produce
+    **consecutive 0-based integer shard IDs** (e.g., ``shard_hash(key) % 100u`` yields
+    IDs 0–99). A built-in ``shard_hash()`` function (wrapping xxh3_64) is available in
+    CEL expressions. ``num_dbs`` is always discovered from data; it must not be provided
+    explicitly. Optional ``boundaries`` enable ``bisect_right``-based routing.
+    """
 
     strategy: ShardingStrategy = ShardingStrategy.HASH
     boundaries: list[BoundaryValue] | None = None
-    approx_quantile_rel_error: float = 0.01
     cel_expr: str | None = None
     cel_columns: dict[str, str] | None = None
     max_keys_per_shard: int | None = None
@@ -75,6 +86,13 @@ class ShardingSpec:
                 raise ValueError("CEL strategy requires cel_columns")
         elif self.cel_expr is not None:
             raise ValueError("cel_expr is only valid with CEL strategy")
+        if self.boundaries is not None and self.strategy != ShardingStrategy.CEL:
+            raise ValueError("boundaries are only valid with CEL strategy")
+        if (
+            self.max_keys_per_shard is not None
+            and self.strategy != ShardingStrategy.HASH
+        ):
+            raise ValueError("max_keys_per_shard is only valid with HASH strategy")
         if self.max_keys_per_shard is not None and self.max_keys_per_shard <= 0:
             raise ValueError("max_keys_per_shard must be > 0")
 
@@ -84,7 +102,6 @@ class ShardingSpec:
         d: dict[str, object] = {
             "strategy": self.strategy.value,
             "boundaries": self.boundaries,
-            "approx_quantile_rel_error": self.approx_quantile_rel_error,
         }
         if self.cel_expr is not None:
             d["cel_expr"] = self.cel_expr

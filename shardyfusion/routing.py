@@ -1,29 +1,63 @@
 """Snapshot routing helpers for sharded SlateDB manifests."""
 
-from bisect import bisect_right
 from collections.abc import Callable
-from dataclasses import dataclass
 
 import xxhash
 
 from .manifest import RequiredBuildMeta, RequiredShardMeta
-from .ordering import compare_ordered
 from .serde import make_key_encoder
 from .sharding_types import KeyEncoding, ShardingStrategy
 from .type_defs import KeyInput
 
-RangeValue = int | float | str | bytes
-_RANGE_INTERVAL_MISMATCH = (
-    "Range shard intervals use mixed bound types and are not routable"
-)
-_RANGE_KEY_MISMATCH = "Range key type does not match shard bound type in manifest"
+# ---------------------------------------------------------------------------
+# Universal hash: xxh3_64 with seed=0
+# ---------------------------------------------------------------------------
+
+_XXH3_SEED = 0
+_INT64_SIGNED_MIN = -(1 << 63)
+_INT64_SIGNED_MAX = (1 << 63) - 1
 
 
-@dataclass(slots=True)
-class _RangeInterval:
-    db_id: int
-    lower: RangeValue | None
-    upper: RangeValue | None
+def canonical_bytes(key: KeyInput) -> bytes:
+    """Convert a key to its canonical byte representation for hashing.
+
+    - ``int`` → 8-byte signed little-endian (range [-2^63, 2^63-1])
+    - ``str`` → UTF-8 encoded bytes
+    - ``bytes`` → passed through as-is
+    """
+    if isinstance(key, int):
+        if key < _INT64_SIGNED_MIN or key > _INT64_SIGNED_MAX:
+            raise ValueError(
+                f"Integer key {key} out of range [{_INT64_SIGNED_MIN}, {_INT64_SIGNED_MAX}]"
+            )
+        return key.to_bytes(8, "little", signed=True)
+    if isinstance(key, str):
+        return key.encode("utf-8")
+    if isinstance(key, bytes):
+        return key
+    raise ValueError(f"Unsupported key type for hashing: {type(key)!r}")
+
+
+def xxh3_digest(key: KeyInput) -> int:
+    """Compute the xxh3_64 digest of a key's canonical bytes.
+
+    This is the single authoritative hash step used by both HASH routing
+    (``xxh3_db_id``) and the CEL ``shard_hash()`` function.
+    """
+    return xxhash.xxh3_64_intdigest(canonical_bytes(key), seed=_XXH3_SEED)
+
+
+def xxh3_db_id(key: KeyInput, num_dbs: int) -> int:
+    """Route a key to a shard db_id using xxh3_64.
+
+    ``xxh3_digest(key) % num_dbs``
+    """
+    return xxh3_digest(key) % num_dbs
+
+
+# ---------------------------------------------------------------------------
+# SnapshotRouter
+# ---------------------------------------------------------------------------
 
 
 class SnapshotRouter:
@@ -51,12 +85,6 @@ class SnapshotRouter:
         self.key_encoding = required_build.key_encoding
 
         self._boundaries = list(required_build.sharding.boundaries or [])
-        # Range intervals are only for RANGE strategy — CEL uses boundaries + bisect_right
-        self._range_intervals = (
-            self._build_range_intervals(self.shards)
-            if self.strategy == ShardingStrategy.RANGE
-            else []
-        )
         self._cel_compiled: object | None = None
         self._cel_expr = required_build.sharding.cel_expr
         self._cel_columns = required_build.sharding.cel_columns
@@ -66,7 +94,7 @@ class SnapshotRouter:
     def route(
         self, key: KeyInput, *, routing_context: dict[str, object] | None = None
     ) -> int:
-        """Route a key, using routing_context for CEL split mode if provided."""
+        """Route a key, using routing_context for CEL multi-column mode if provided."""
         if routing_context is not None:
             return self.route_with_context(routing_context)
         return self.route_one(key)
@@ -133,31 +161,10 @@ class SnapshotRouter:
 
         return _encode_fallback
 
-    def _route_range(self, key: KeyInput) -> int:
-        key_value = self._normalize_range_key(key)
-
-        # Prefer explicit boundaries when available — they cover all shards
-        # including empty ones, unlike intervals which exclude empty shards.
-        if self._boundaries:
-            return bisect_right(self._boundaries, key_value)
-
-        if self._range_intervals:
-            db_id = _search_intervals(self._range_intervals, key_value)
-            if db_id is not None:
-                return db_id
-
-        raise ValueError(
-            "Range routing requires shard min/max ranges or sharding boundaries in manifest."
-        )
-
     def _build_route_one(self) -> Callable[[KeyInput], int]:
         if self.strategy == ShardingStrategy.HASH:
-            payload_fn = _makexxhash64_payload(self.key_encoding)
             num_dbs = self.num_dbs
-            return lambda key: xxhash64_signed(payload_fn(key)) % num_dbs
-
-        if self.strategy == ShardingStrategy.RANGE:
-            return self._route_range
+            return lambda key: xxh3_db_id(key, num_dbs)
 
         if self.strategy == ShardingStrategy.CEL:
             from .cel import compile_cel, route_cel
@@ -165,15 +172,29 @@ class SnapshotRouter:
             assert self._cel_expr is not None and self._cel_columns is not None
             compiled = compile_cel(self._cel_expr, self._cel_columns)
             boundaries = self._boundaries
-            # Tight closure like HASH — no per-call lazy checks.
-            return lambda key: route_cel(compiled, {"key": key}, boundaries)
+
+            # Key-only mode: cel_columns has only "key" — auto-wrap key value
+            cel_col_keys = set(self._cel_columns.keys())
+            if cel_col_keys == {"key"}:
+                if boundaries:
+                    return lambda key: route_cel(compiled, {"key": key}, boundaries)
+                return lambda key: route_cel(compiled, {"key": key}, None)
+
+            # Multi-column mode: route_one cannot work without routing_context
+            def _route_multi_column_error(key: KeyInput) -> int:
+                raise ValueError(
+                    "Multi-column CEL sharding requires routing_context; "
+                    "use route(key, routing_context=...) instead of route_one(key)"
+                )
+
+            return _route_multi_column_error
 
         raise ValueError(f"Unsupported sharding strategy for routing: {self.strategy}")
 
     def route_with_context(self, routing_context: dict[str, object]) -> int:
-        """Route using CEL with explicit routing context (split mode).
+        """Route using CEL with explicit routing context.
 
-        In split mode, the CEL expression evaluates over multiple columns
+        In multi-column mode, the CEL expression evaluates over multiple columns
         from the routing context, not just the key.
         """
         from .cel import route_cel
@@ -183,212 +204,4 @@ class SnapshotRouter:
 
             assert self._cel_expr is not None and self._cel_columns is not None
             self._cel_compiled = compile_cel(self._cel_expr, self._cel_columns)
-        return route_cel(self._cel_compiled, routing_context, self._boundaries)  # type: ignore[arg-type]
-
-    def _normalize_range_key(self, key: KeyInput) -> RangeValue:
-        if isinstance(key, (int, float, str)):
-            return key
-
-        if isinstance(key, bytes):
-            if self.key_encoding == KeyEncoding.U64BE:
-                if len(key) != 8:
-                    raise ValueError("u64be key bytes must have length 8")
-                return int.from_bytes(key, byteorder="big", signed=False)
-            if self.key_encoding == KeyEncoding.U32BE:
-                if len(key) != 4:
-                    raise ValueError("u32be key bytes must have length 4")
-                return int.from_bytes(key, byteorder="big", signed=False)
-            try:
-                return key.decode("utf-8")
-            except UnicodeDecodeError as exc:
-                raise ValueError(
-                    "Range routing cannot decode bytes key as UTF-8"
-                ) from exc
-
-        raise ValueError(f"Unsupported range key type: {type(key)!r}")
-
-    @staticmethod
-    def _build_range_intervals(shards: list[RequiredShardMeta]) -> list[_RangeInterval]:
-        # Exclude fully unbounded (None, None) intervals — empty shards
-        # should not participate in interval-based routing.
-        intervals = [
-            _RangeInterval(db_id=shard.db_id, lower=shard.min_key, upper=shard.max_key)
-            for shard in shards
-            if shard.min_key is not None or shard.max_key is not None
-        ]
-
-        if not intervals:
-            return []
-
-        _validate_interval_bound_types(intervals)
-
-        sorted_intervals = sorted(intervals, key=_interval_sort_key)
-
-        prev_upper: RangeValue | None = None
-        for current in sorted_intervals:
-            if prev_upper is not None and current.lower is not None:
-                if (
-                    compare_ordered(
-                        current.lower,
-                        prev_upper,
-                        mismatch_message=_RANGE_INTERVAL_MISMATCH,
-                    )
-                    <= 0
-                ):
-                    raise ValueError(
-                        "Range shard intervals overlap and are not routable"
-                    )
-            if current.upper is not None:
-                prev_upper = current.upper
-
-        return sorted_intervals
-
-
-# SHARDING INVARIANT: This seed MUST match Spark's xxhash64 default seed (42).
-# See: org.apache.spark.sql.catalyst.expressions.XxHash64, default seed = 42.
-# Cross-checked by: tests/unit/writer/test_routing_contract.py
-_XXHASH64_SEED = 42
-_UINT32_MAX = (1 << 32) - 1
-_UINT64_MAX = (1 << 64) - 1
-_INT64_MAX = (1 << 63) - 1
-_INT64_MOD = 1 << 64
-
-
-def _xxhash64_payload_u64be(key: KeyInput) -> bytes:
-    """Build xxhash64 payload for u64be encoding (8-byte LE)."""
-
-    if isinstance(key, bytes):
-        if len(key) != 8:
-            raise ValueError("u64be key bytes must have length 8")
-        numeric_key = int.from_bytes(key, byteorder="big", signed=False)
-        return numeric_key.to_bytes(8, byteorder="little", signed=False)
-
-    if not isinstance(key, int):
-        raise ValueError("u64be hash routing requires integer lookup keys")
-    if key < 0 or key > _UINT64_MAX:
-        raise ValueError("u64be hash routing requires key in [0, 2^64-1]")
-    return key.to_bytes(8, byteorder="little", signed=False)
-
-
-def _xxhash64_payload_u32be(key: KeyInput) -> bytes:
-    """Build xxhash64 payload for u32be encoding (zero-extended to 8-byte LE)."""
-
-    # Zero-extend to 8-byte little-endian to match Spark's xxhash64(cast(key as long))
-    if isinstance(key, bytes):
-        if len(key) != 4:
-            raise ValueError("u32be key bytes must have length 4")
-        numeric_key = int.from_bytes(key, byteorder="big", signed=False)
-        return numeric_key.to_bytes(8, byteorder="little", signed=False)
-
-    if not isinstance(key, int):
-        raise ValueError("u32be hash routing requires integer lookup keys")
-    if key < 0 or key > _UINT32_MAX:
-        raise ValueError("u32be hash routing requires key in [0, 2^32-1]")
-    return key.to_bytes(8, byteorder="little", signed=False)
-
-
-def _xxhash64_payload_fallback(key: KeyInput) -> bytes:
-    """Build xxhash64 payload for generic key types (bytes/str/int)."""
-
-    if isinstance(key, bytes):
-        return key
-    if isinstance(key, str):
-        return key.encode("utf-8")
-    if isinstance(key, int):
-        return str(key).encode("utf-8")
-    raise ValueError(f"Unsupported key type for hash routing: {type(key)!r}")
-
-
-def _makexxhash64_payload(
-    key_encoding: KeyEncoding,
-) -> Callable[[KeyInput], bytes]:
-    """Return the payload builder for the given key encoding."""
-
-    if key_encoding == KeyEncoding.U64BE:
-        return _xxhash64_payload_u64be
-    if key_encoding == KeyEncoding.U32BE:
-        return _xxhash64_payload_u32be
-    return _xxhash64_payload_fallback
-
-
-def xxhash64_payload(key: KeyInput, key_encoding: KeyEncoding) -> bytes:
-    """Build xxhash64 payload — dispatch wrapper kept for test compatibility."""
-
-    return _makexxhash64_payload(key_encoding)(key)
-
-
-def xxhash64_db_id(key: KeyInput, num_dbs: int, key_encoding: KeyEncoding) -> int:
-    """Route key with ``pmod(xxhash64(...), num_dbs)`` semantics.
-
-    SHARDING INVARIANT: This function replicates Spark's
-    ``pmod(xxhash64(cast(key as long)), num_dbs)``.  The payload is
-    8-byte little-endian (matching JVM Long.reverseBytes), the digest
-    is converted to signed int64 (matching JVM's signed long), and
-    Python ``%`` with positive ``num_dbs`` equals Spark ``pmod``.
-    Verified at runtime by ``writer.spark.writer.verify_routing_agreement``
-    and cross-checked by ``tests/unit/writer/test_routing_contract.py``.
-    """
-
-    digest = xxhash64_signed(xxhash64_payload(key, key_encoding))
-    return digest % num_dbs
-
-
-def xxhash64_signed(payload: bytes) -> int:
-    digest = xxhash.xxh64_intdigest(payload, seed=_XXHASH64_SEED)
-    return digest if digest <= _INT64_MAX else digest - _INT64_MOD
-
-
-def _interval_sort_key(interval: _RangeInterval) -> tuple[int, RangeValue]:
-    if interval.lower is None:
-        return (0, 0)
-    return (1, interval.lower)
-
-
-def _search_intervals(intervals: list[_RangeInterval], key: RangeValue) -> int | None:
-    lo = 0
-    hi = len(intervals) - 1
-
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        interval = intervals[mid]
-
-        if (
-            interval.upper is not None
-            and compare_ordered(
-                key,
-                interval.upper,
-                mismatch_message=_RANGE_KEY_MISMATCH,
-            )
-            > 0
-        ):
-            lo = mid + 1
-            continue
-
-        if (
-            interval.lower is not None
-            and compare_ordered(
-                key,
-                interval.lower,
-                mismatch_message=_RANGE_KEY_MISMATCH,
-            )
-            < 0
-        ):
-            hi = mid - 1
-            continue
-
-        return interval.db_id
-
-    return None
-
-
-def _validate_interval_bound_types(intervals: list[_RangeInterval]) -> None:
-    expected_kind: bool | None = None
-    for interval in intervals:
-        for bound in (interval.lower, interval.upper):
-            if bound is None:
-                continue
-            is_str = isinstance(bound, str)
-            if expected_kind is None:
-                expected_kind = is_str
-            elif expected_kind != is_str:
-                raise ValueError(_RANGE_INTERVAL_MISMATCH)
+        return route_cel(self._cel_compiled, routing_context, self._boundaries or None)  # type: ignore[arg-type]
