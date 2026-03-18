@@ -5,6 +5,7 @@ default (single-threaded) implementation.
 """
 
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from typing import Protocol
@@ -163,4 +164,79 @@ class TokenBucket:
             await asyncio.sleep(result.deficit)
 
 
-# Future: ThreadSafeTokenBucket(TokenBucket) can override acquire() with a lock when needed.
+class ThreadSafeTokenBucket(TokenBucket):
+    """Thread-safe token bucket for concurrent readers.
+
+    Wraps ``try_acquire()`` with ``threading.Lock``.  ``acquire()`` and
+    ``acquire_async()`` loop over ``try_acquire()`` + sleep *outside* the
+    lock so that sleeping threads don't block other callers.
+
+    Use this when the same limiter instance is shared across threads
+    (e.g. when passing ``rate_limiter`` to ``ConcurrentShardedReader``).
+    """
+
+    def __init__(
+        self,
+        rate: float,
+        metrics_collector: MetricsCollector | None = None,
+        limiter_type: str = "ops",
+    ) -> None:
+        super().__init__(
+            rate, metrics_collector=metrics_collector, limiter_type=limiter_type
+        )
+        self._lock = threading.Lock()
+
+    def try_acquire(self, tokens: int = 1) -> AcquireResult:
+        """Thread-safe non-blocking acquire."""
+        with self._lock:
+            return super().try_acquire(tokens)
+
+    def acquire(self, tokens: int = 1) -> None:
+        """Block until *tokens* are available (thread-safe)."""
+        while True:
+            result = self.try_acquire(tokens)
+            if result:
+                return
+            log_event(
+                "rate_limiter_throttled",
+                level=logging.DEBUG,
+                logger=_logger,
+                wait_seconds=result.deficit,
+                tokens_requested=tokens,
+                limiter_type=self._limiter_type,
+            )
+            if self._metrics is not None:
+                self._metrics.emit(
+                    MetricEvent.RATE_LIMITER_THROTTLED,
+                    {
+                        "wait_seconds": result.deficit,
+                        "limiter_type": self._limiter_type,
+                    },
+                )
+            time.sleep(result.deficit)
+
+    async def acquire_async(self, tokens: int = 1) -> None:
+        """Async version of ``acquire()`` (thread-safe)."""
+        import asyncio
+
+        while True:
+            result = self.try_acquire(tokens)
+            if result:
+                return
+            log_event(
+                "rate_limiter_throttled",
+                level=logging.DEBUG,
+                logger=_logger,
+                wait_seconds=result.deficit,
+                tokens_requested=tokens,
+                limiter_type=self._limiter_type,
+            )
+            if self._metrics is not None:
+                self._metrics.emit(
+                    MetricEvent.RATE_LIMITER_THROTTLED,
+                    {
+                        "wait_seconds": result.deficit,
+                        "limiter_type": self._limiter_type,
+                    },
+                )
+            await asyncio.sleep(result.deficit)

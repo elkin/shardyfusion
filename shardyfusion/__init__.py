@@ -1,6 +1,11 @@
 """Public API for shardyfusion."""
 
-from ._rate_limiter import AcquireResult, RateLimiter, TokenBucket
+from ._rate_limiter import (
+    AcquireResult,
+    RateLimiter,
+    ThreadSafeTokenBucket,
+    TokenBucket,
+)
 from .async_manifest_store import (
     AsyncManifestStore,
     AsyncS3ManifestStore,
@@ -154,6 +159,7 @@ __all__ = [
     "SnapshotInfo",
     "SnapshotRouter",
     "StaticCredentialProvider",
+    "ThreadSafeTokenBucket",
     "TokenBucket",
     "ValueSpec",
     "WriteConfig",
