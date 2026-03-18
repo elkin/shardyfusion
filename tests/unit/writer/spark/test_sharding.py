@@ -4,12 +4,11 @@ import pytest
 from pyspark.sql import functions as F
 
 from shardyfusion.errors import ShardAssignmentError
-from shardyfusion.sharding_types import KeyEncoding
+from shardyfusion.sharding_types import KeyEncoding, validate_boundaries
 from shardyfusion.writer.spark.sharding import (
     DB_ID_COL,
     ShardingSpec,
     ShardingStrategy,
-    _validate_boundaries,
     add_db_id_column,
 )
 from shardyfusion.writer.spark.writer import verify_routing_agreement
@@ -66,32 +65,32 @@ def test_sharding_strategy_rejects_unknown_value() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _validate_boundaries tests
+# validate_boundaries tests (now in sharding_types, tested here for Spark compat)
 # ---------------------------------------------------------------------------
 
 
 def test_validate_boundaries_rejects_unsorted() -> None:
-    with pytest.raises(ShardAssignmentError, match="strictly increasing"):
-        _validate_boundaries([20, 10])
+    with pytest.raises(ValueError, match="strictly increasing"):
+        validate_boundaries([20, 10])
 
 
 def test_validate_boundaries_rejects_duplicates() -> None:
-    with pytest.raises(ShardAssignmentError, match="strictly increasing"):
-        _validate_boundaries([10, 10])
+    with pytest.raises(ValueError, match="strictly increasing"):
+        validate_boundaries([10, 10])
 
 
 def test_validate_boundaries_rejects_nulls() -> None:
-    with pytest.raises(ShardAssignmentError, match="must not contain null"):
-        _validate_boundaries([10, None])  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="null"):
+        validate_boundaries([10, None])  # type: ignore[list-item]
 
 
 def test_validate_boundaries_rejects_booleans() -> None:
-    with pytest.raises(ShardAssignmentError, match="must not be boolean"):
-        _validate_boundaries([True])
+    with pytest.raises(ValueError, match="boolean"):
+        validate_boundaries([True])
 
 
 def test_validate_boundaries_accepts_valid_sequence() -> None:
-    _validate_boundaries([10, 20, 30])  # should not raise
+    validate_boundaries([10, 20, 30])  # should not raise
 
 
 # ---------------------------------------------------------------------------

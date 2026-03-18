@@ -1,6 +1,5 @@
 """Sharding specs and Spark sharding helpers."""
 
-from collections.abc import Sequence
 from typing import cast
 
 from pyspark import RDD
@@ -9,10 +8,8 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import IntegerType, StructField, StructType
 
 from shardyfusion.errors import ShardAssignmentError
-from shardyfusion.ordering import compare_ordered
 from shardyfusion.sharding_types import (
     DB_ID_COL,
-    BoundaryValue,
     ShardingSpec,
     ShardingStrategy,
 )
@@ -127,41 +124,3 @@ def prepare_partitioned_rdd(
 
     pair_rdd = cast(RDD[Row], prepared.rdd).map(lambda row: (int(row[DB_ID_COL]), row))
     return pair_rdd.partitionBy(num_dbs, lambda key: int(key))
-
-
-def _validate_boundaries(boundaries: Sequence[BoundaryValue]) -> None:
-    """Validate boundaries are non-null and strictly increasing."""
-
-    if any(boundary is None for boundary in boundaries):
-        raise ShardAssignmentError("Boundaries must not contain null values")
-    if any(isinstance(boundary, bool) for boundary in boundaries):
-        raise ShardAssignmentError("Boundaries must not be boolean values")
-
-    for idx in range(1, len(boundaries)):
-        left = boundaries[idx - 1]
-        right = boundaries[idx]
-        if type(left) is not type(right):
-            raise ShardAssignmentError(
-                "Boundaries must all share one type; "
-                f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
-            )
-        mismatch_message = (
-            "Boundaries contain non-comparable values; "
-            f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
-        )
-        try:
-            is_increasing = (
-                compare_ordered(
-                    left,
-                    right,
-                    mismatch_message=mismatch_message,
-                )
-                < 0
-            )
-        except ValueError as exc:
-            raise ShardAssignmentError(str(exc)) from exc
-        if not is_increasing:
-            raise ShardAssignmentError(
-                "Boundaries must be strictly increasing; "
-                f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
-            )
