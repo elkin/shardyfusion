@@ -1,8 +1,13 @@
 """CEL (Common Expression Language) integration for flexible sharding.
 
-Provides compile/evaluate/boundary functions shared by all writer backends
+Provides compile/evaluate/routing functions shared by all writer backends
 and the reader routing layer.  Requires the ``cel`` extra:
 ``pip install shardyfusion[cel]``.
+
+CEL expressions must produce **consecutive 0-based integer shard IDs**
+(e.g., ``shard_hash(key) % 100u`` yields IDs 0–99).  A built-in
+``shard_hash()`` function wrapping xxh3_64 is registered automatically.
+The number of shards is discovered from data (``max(db_id) + 1``).
 
 Uses ``cel-expr-python`` (Google's C++ CEL wrapper) via:
     ``from cel_expr_python.cel import NewEnv, Type``
@@ -11,12 +16,9 @@ Uses ``cel-expr-python`` (Google's C++ CEL wrapper) via:
 from __future__ import annotations
 
 from bisect import bisect_right
-from collections.abc import Iterable
 from typing import Any
 
 from .errors import ConfigValidationError
-from .routing import _XXHASH64_SEED
-from .sharding_types import BoundaryValue, ShardingSpec, ShardingStrategy
 
 # ---------------------------------------------------------------------------
 # Lazy imports — fail fast with a clear message
@@ -37,18 +39,6 @@ def _import_cel_module() -> Any:
         raise ImportError(_CEL_IMPORT_ERROR) from exc
 
 
-def _import_fastdigest() -> Any:
-    try:
-        import fastdigest  # type: ignore[import-not-found]
-
-        return fastdigest
-    except ImportError as exc:
-        raise ImportError(
-            "CEL boundary computation requires the 'cel' extra. "
-            "Install it with: pip install shardyfusion[cel]"
-        ) from exc
-
-
 # ---------------------------------------------------------------------------
 # CEL type mapping
 # ---------------------------------------------------------------------------
@@ -62,6 +52,76 @@ CEL_TYPE_MAP: dict[str, str] = {
     "bool": "BOOL",
     "uint": "UINT",
 }
+
+
+# ---------------------------------------------------------------------------
+# shard_hash() custom function
+# ---------------------------------------------------------------------------
+
+_SHARD_HASH_EXTENSION: Any = None
+
+
+def _shard_hash_impl(x: Any) -> int:
+    """Compute xxh3_64 hash of a value — used as CEL custom function."""
+    return _xxh3_digest(x)
+
+
+# Lazy-bound reference to routing.xxh3_digest — avoids per-call import overhead.
+_xxh3_digest: Any = None
+
+
+def _ensure_xxh3_digest() -> None:
+    global _xxh3_digest
+    if _xxh3_digest is None:
+        from .routing import xxh3_digest
+
+        _xxh3_digest = xxh3_digest
+
+
+def _get_shard_hash_extension() -> Any:
+    """Lazily build and cache the CelExtension with shard_hash() overloads."""
+    global _SHARD_HASH_EXTENSION
+    if _SHARD_HASH_EXTENSION is not None:
+        return _SHARD_HASH_EXTENSION
+
+    _ensure_xxh3_digest()
+
+    cel = _import_cel_module()
+    _SHARD_HASH_EXTENSION = cel.CelExtension(
+        "shardyfusion",
+        [
+            cel.FunctionDecl(
+                "shard_hash",
+                [
+                    cel.Overload(
+                        "shard_hash_int",
+                        cel.Type.UINT,
+                        [cel.Type.INT],
+                        impl=_shard_hash_impl,
+                    ),
+                    cel.Overload(
+                        "shard_hash_uint",
+                        cel.Type.UINT,
+                        [cel.Type.UINT],
+                        impl=_shard_hash_impl,
+                    ),
+                    cel.Overload(
+                        "shard_hash_string",
+                        cel.Type.UINT,
+                        [cel.Type.STRING],
+                        impl=_shard_hash_impl,
+                    ),
+                    cel.Overload(
+                        "shard_hash_bytes",
+                        cel.Type.UINT,
+                        [cel.Type.BYTES],
+                        impl=_shard_hash_impl,
+                    ),
+                ],
+            )
+        ],
+    )
+    return _SHARD_HASH_EXTENSION
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +149,7 @@ class CompiledCel:
         Uses ``cel_expr_python``'s ``Expression.eval(data=...)`` method
         (a sandboxed CEL evaluator, NOT Python's built-in eval).
         """
+        # S307: This is cel_expr_python's sandboxed evaluator, not Python's eval()
         cel_result = self._expr.eval(data=context)  # noqa: S307
         value = cel_result.plain_value()
         if not isinstance(value, (int, str, bytes)):
@@ -101,8 +162,11 @@ class CompiledCel:
 def compile_cel(expr: str, columns: dict[str, str]) -> CompiledCel:
     """Compile a CEL expression with declared column types.
 
+    The ``shard_hash()`` custom function is automatically registered,
+    providing overloads for int, uint, string, and bytes arguments.
+
     Args:
-        expr: CEL expression string (e.g., ``"key % 1000"``).
+        expr: CEL expression string (e.g., ``"shard_hash(key) % 100u"``).
         columns: Map of variable name -> type string
             (e.g., ``{"key": "int", "region": "string"}``).
 
@@ -126,7 +190,8 @@ def compile_cel(expr: str, columns: dict[str, str]) -> CompiledCel:
         variables[name] = getattr(cel.Type, cel_type_attr)
 
     try:
-        env = cel.NewEnv(variables=variables)
+        ext = _get_shard_hash_extension()
+        env = cel.NewEnv(variables=variables, extensions=[ext])
         compiled_expr = env.compile(expr)
     except Exception as exc:
         raise ConfigValidationError(
@@ -147,9 +212,9 @@ def evaluate_cel_arrow_batch(
 ) -> list[int | str | bytes]:
     """Evaluate CEL on each row of a PyArrow RecordBatch/Table.
 
-    Used by the Spark writer via ``route_cel_batch`` (``mapInArrow``
-    naturally delivers Arrow batches).  Dask and Ray writers route
-    through ``route_key()`` → ``route_cel()`` per row instead.
+    Used by the Spark writer via ``mapInArrow`` (Arrow batches are
+    the natural format).  Dask and Ray writers route through
+    ``route_key()`` → ``route_cel()`` per row instead.
 
     Args:
         compiled: Compiled CEL expression.
@@ -165,15 +230,17 @@ def evaluate_cel_arrow_batch(
 def route_cel_batch(
     compiled: CompiledCel,
     batch: Any,
-    boundaries: list[BoundaryValue],
+    boundaries: list[int | float | str | bytes] | None,
 ) -> list[int]:
-    """Evaluate CEL and route each row to a shard via bisect_right.
+    """Evaluate CEL and route each row to a shard.
 
-    Combines ``evaluate_cel_arrow_batch`` + ``bisect_right`` in one pass
-    to keep routing logic in one place.
+    If ``boundaries`` is provided, uses ``bisect_right`` for routing.
+    Otherwise, the CEL output is used directly as the shard ID.
     """
     routing_keys = evaluate_cel_arrow_batch(compiled, batch)
-    return [bisect_right(boundaries, rk) for rk in routing_keys]
+    if boundaries:
+        return [bisect_right(boundaries, rk) for rk in routing_keys]
+    return [int(rk) for rk in routing_keys]
 
 
 # ---------------------------------------------------------------------------
@@ -184,133 +251,29 @@ def route_cel_batch(
 def route_cel(
     compiled: CompiledCel,
     context: dict[str, Any],
-    boundaries: list[BoundaryValue],
+    boundaries: list[int | float | str | bytes] | None,
 ) -> int:
-    """Evaluate CEL expression and route to a shard via bisect_right.
+    """Evaluate CEL expression and route to a shard.
 
     Args:
         compiled: Compiled CEL expression.
         context: Variable bindings for the expression.
-        boundaries: Sorted boundary values.
+        boundaries: Optional sorted boundary values. If provided,
+            ``bisect_right(boundaries, result)`` gives the shard ID.
+            If None, the CEL result is used directly as the shard ID.
 
     Returns:
         Shard db_id (0-based).
     """
     routing_key = compiled.evaluate(context)
-    return bisect_right(boundaries, routing_key)
+    if boundaries:
+        return bisect_right(boundaries, routing_key)
+    return int(routing_key)
 
 
 # ---------------------------------------------------------------------------
-# Boundary computation
+# Helpers
 # ---------------------------------------------------------------------------
-
-
-def compute_boundaries_tdigest(
-    routing_keys: Iterable[int | str | bytes],
-    num_dbs: int,
-) -> list[BoundaryValue]:
-    """Compute quantile boundaries from routing keys using t-digest.
-
-    For non-numeric keys (str, bytes), keys are hashed to int before
-    feeding t-digest so the quantile structure works uniformly.
-
-    Args:
-        routing_keys: Iterable of routing key values.
-        num_dbs: Target number of shards.
-
-    Returns:
-        Sorted list of ``num_dbs - 1`` boundary values.
-    """
-    import xxhash
-
-    fd = _import_fastdigest()
-
-    expected = max(num_dbs - 1, 0)
-    if expected == 0:
-        return []
-
-    digest = fd.TDigest()
-
-    for key in routing_keys:
-        if isinstance(key, int):
-            digest.update(float(key))
-        elif isinstance(key, str):
-            digest.update(
-                float(xxhash.xxh64_intdigest(key.encode("utf-8"), seed=_XXHASH64_SEED))
-            )
-        elif isinstance(key, bytes):
-            digest.update(float(xxhash.xxh64_intdigest(key, seed=_XXHASH64_SEED)))
-        else:
-            raise ConfigValidationError(
-                f"Unsupported routing key type for t-digest: {type(key)!r}"
-            )
-
-    probabilities = [idx / num_dbs for idx in range(1, num_dbs)]
-    boundaries: list[BoundaryValue] = []
-    for p in probabilities:
-        q = digest.quantile(p)
-        boundaries.append(int(q))
-
-    return boundaries
-
-
-def compute_boundaries_distinct(
-    routing_keys: Iterable[int | str | bytes],
-) -> tuple[int, list[BoundaryValue]]:
-    """Compute boundaries from distinct values (data-driven mode).
-
-    One shard per distinct routing key value.
-
-    Args:
-        routing_keys: Iterable of routing key values.
-
-    Returns:
-        Tuple of (num_dbs, sorted boundary list).
-        num_dbs = number of distinct values.
-        boundaries has num_dbs - 1 elements.
-    """
-    distinct: set[int | str | bytes] = set()
-    for key in routing_keys:
-        distinct.add(key)
-
-    sorted_values = sorted(distinct, key=_boundary_sort_key)
-    num_dbs = len(sorted_values)
-
-    if num_dbs <= 1:
-        return max(num_dbs, 1), []
-
-    boundaries: list[BoundaryValue] = list(sorted_values[1:])
-    return num_dbs, boundaries
-
-
-def resolve_cel_boundaries(
-    compiled: CompiledCel,
-    routing_keys: Iterable[dict[str, Any]],
-    num_dbs: int,
-    sharding: ShardingSpec,
-) -> ShardingSpec:
-    """Evaluate CEL on sampled rows and compute t-digest boundaries.
-
-    Shared helper for Spark, Dask, and Ray writers. Each framework
-    samples rows in its own way and passes them as dicts here.
-
-    Args:
-        compiled: Pre-compiled CEL expression.
-        routing_keys: Iterable of column-value dicts (one per sampled row).
-        num_dbs: Target number of shards.
-        sharding: Original ShardingSpec (cel_expr/cel_columns carried over).
-
-    Returns:
-        New ShardingSpec with computed boundaries.
-    """
-    evaluated = [compiled.evaluate(ctx) for ctx in routing_keys]
-    boundaries = compute_boundaries_tdigest(evaluated, num_dbs)
-    return ShardingSpec(
-        strategy=ShardingStrategy.CEL,
-        boundaries=boundaries,
-        cel_expr=sharding.cel_expr,
-        cel_columns=sharding.cel_columns,
-    )
 
 
 def pandas_rows_to_contexts(
@@ -329,17 +292,6 @@ def pandas_rows_to_contexts(
                 ctx[col] = ctx[col].item()
         contexts.append(ctx)
     return contexts
-
-
-def _boundary_sort_key(value: int | str | bytes) -> tuple[int, Any]:
-    """Sort key that groups by type to avoid cross-type comparison."""
-    if isinstance(value, int):
-        return (0, value)
-    if isinstance(value, str):
-        return (1, value)
-    if isinstance(value, bytes):
-        return (2, value)
-    return (3, value)
 
 
 # ---------------------------------------------------------------------------
