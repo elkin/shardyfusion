@@ -115,7 +115,8 @@ def _execute_command(
             raise ValueError("'get' command requires a 'key' field")
         key = str(key)
         coerced = coerce_cli_key(key, reader.key_encoding)
-        value = reader.get(coerced)
+        routing_context = cmd.get("routing_context")
+        value = reader.get(coerced, routing_context=routing_context)
         return build_get_result(key, value, cfg)
 
     if op == "multiget":
@@ -124,7 +125,8 @@ def _execute_command(
             raise ValueError("'multiget' command requires a non-empty 'keys' list")
         keys = [str(k) for k in keys_raw]
         coerced = [coerce_cli_key(k, reader.key_encoding) for k in keys]
-        values = reader.multi_get(coerced)
+        routing_context = cmd.get("routing_context")
+        values = reader.multi_get(coerced, routing_context=routing_context)
         return build_multiget_result(keys, values, cfg, coerced_keys=coerced)
 
     if op == "refresh":
@@ -143,7 +145,8 @@ def _execute_command(
             raise ValueError("'route' command requires a 'key' field")
         key = str(key)
         coerced = coerce_cli_key(key, reader.key_encoding)
-        db_id = reader.route_key(coerced)
+        routing_context = cmd.get("routing_context")
+        db_id = reader.route_key(coerced, routing_context=routing_context)
         return build_route_result(key, db_id)
 
     raise ValueError(

@@ -21,15 +21,18 @@ _FAKE_CREATED_AT = datetime.fromisoformat("2026-01-01T00:00:00+00:00")
 class _FakeReader:
     def __init__(self, store: dict[Any, bytes] | None = None) -> None:
         self._store = store or {}
+        self.last_routing_context: dict[str, object] | None = None
 
     @property
     def key_encoding(self) -> str:
         return "u64be"
 
     def get(self, key: Any, **kwargs: Any) -> bytes | None:
+        self.last_routing_context = kwargs.get("routing_context")
         return self._store.get(key)
 
     def multi_get(self, keys: list[Any], **kwargs: Any) -> dict[Any, bytes | None]:
+        self.last_routing_context = kwargs.get("routing_context")
         return {k: self._store.get(k) for k in keys}
 
     def refresh(self) -> bool:
@@ -65,6 +68,7 @@ class _FakeReader:
         ]
 
     def route_key(self, key: Any, **kwargs: Any) -> int:
+        self.last_routing_context = kwargs.get("routing_context")
         return 0 if (isinstance(key, int) and key < 50) else 1
 
 
@@ -189,3 +193,52 @@ def test_run_script_route() -> None:
     parsed = json.loads(out.getvalue().strip())
     assert parsed["op"] == "route"
     assert parsed["db_id"] == 0
+
+
+def test_run_script_get_with_routing_context() -> None:
+    script = (
+        "commands:\n"
+        "  - op: get\n"
+        "    key: 42\n"
+        "    routing_context:\n"
+        "      region: us-east\n"
+        "      tier: premium\n"
+    )
+    path = _write_script(script)
+    reader = _FakeReader({42: b"hello"})
+    out = StringIO()
+    errors = run_script(reader, path, OutputConfig(), output_file=out)
+    assert errors == 0
+    assert reader.last_routing_context == {"region": "us-east", "tier": "premium"}
+
+
+def test_run_script_multiget_with_routing_context() -> None:
+    script = (
+        "commands:\n"
+        "  - op: multiget\n"
+        "    keys: [1, 2]\n"
+        "    routing_context:\n"
+        "      region: eu-west\n"
+    )
+    path = _write_script(script)
+    reader = _FakeReader({1: b"a", 2: b"b"})
+    out = StringIO()
+    errors = run_script(reader, path, OutputConfig(), output_file=out)
+    assert errors == 0
+    assert reader.last_routing_context == {"region": "eu-west"}
+
+
+def test_run_script_route_with_routing_context() -> None:
+    script = (
+        "commands:\n"
+        "  - op: route\n"
+        "    key: 10\n"
+        "    routing_context:\n"
+        "      region: ap-south\n"
+    )
+    path = _write_script(script)
+    reader = _FakeReader()
+    out = StringIO()
+    errors = run_script(reader, path, OutputConfig(), output_file=out)
+    assert errors == 0
+    assert reader.last_routing_context == {"region": "ap-south"}
