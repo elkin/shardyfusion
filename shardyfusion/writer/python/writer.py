@@ -32,7 +32,6 @@ from shardyfusion.logging import (
 from shardyfusion.manifest import BuildResult, WriterInfo
 from shardyfusion.metrics import MetricEvent
 from shardyfusion.serde import make_key_encoder
-from shardyfusion.sharding_types import ShardingStrategy
 from shardyfusion.slatedb_adapter import DbAdapterFactory, SlateDbFactory
 from shardyfusion.storage import join_s3
 from shardyfusion.type_defs import KeyLike
@@ -67,7 +66,7 @@ def write_sharded(
         records: Iterable of records to write. Each record is passed to
             ``key_fn`` and ``value_fn`` to extract the key and value bytes.
         config: Write configuration (num_dbs, s3_prefix, sharding strategy, etc.).
-            Only HASH and RANGE (with explicit boundaries) sharding are supported.
+            HASH and CEL sharding strategies are supported.
         key_fn: Callable that extracts the routing key from each record.
         value_fn: Callable that serializes each record to value bytes.
         parallel: If True, use one subprocess per shard (``multiprocessing.spawn``).
@@ -97,6 +96,7 @@ def write_sharded(
     from shardyfusion.logging import LogContext
 
     _validate_sharding(config)
+    num_dbs = _resolve_num_dbs_before_sharding(records, config)
     run_id = config.output.run_id or uuid4().hex
     started = time.perf_counter()
     mc = config.metrics_collector
@@ -119,9 +119,16 @@ def write_sharded(
         )
 
         if parallel:
+            if num_dbs == 0:
+                raise ConfigValidationError(
+                    "Parallel mode requires num_dbs > 0 to spawn workers. "
+                    "CEL direct mode (num_dbs discovered from data) "
+                    "is only supported in single-process mode."
+                )
             attempts = _write_parallel(
                 records=records,
                 config=config,
+                num_dbs=num_dbs,
                 run_id=run_id,
                 factory=factory,
                 key_fn=key_fn,
@@ -132,9 +139,10 @@ def write_sharded(
                 max_write_bytes_per_second=max_write_bytes_per_second,
             )
         else:
-            attempts = _write_single_process(
+            attempts, num_dbs = _write_single_process(
                 records=records,
                 config=config,
+                num_dbs=num_dbs,
                 run_id=run_id,
                 factory=factory,
                 key_fn=key_fn,
@@ -166,7 +174,7 @@ def write_sharded(
             )
 
         winners, num_attempts, all_attempt_urls = select_winners(
-            attempts, num_dbs=config.num_dbs
+            attempts, num_dbs=num_dbs
         )
 
         manifest_started = time.perf_counter()
@@ -177,6 +185,7 @@ def write_sharded(
             winners=winners,
             key_col="_key",
             started=started,
+            num_dbs=num_dbs,
         )
         manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
 
@@ -212,18 +221,36 @@ def write_sharded(
 
 
 def _validate_sharding(config: WriteConfig) -> None:
-    if (
-        config.sharding.strategy == ShardingStrategy.RANGE
-        and config.sharding.boundaries is None
+    # ShardingSpec.__post_init__ handles most validation.
+    # CEL without boundaries is valid (direct mode: CEL output IS the shard ID).
+    pass
+
+
+def _resolve_num_dbs_before_sharding(
+    records: Iterable[Any],
+    config: WriteConfig,
+) -> int:
+    """Resolve num_dbs that can be determined before writing.
+
+    Returns 0 for CEL (discovered during iteration from data).
+    """
+    from collections.abc import Sized
+
+    from shardyfusion._writer_core import resolve_num_dbs
+
+    if config.sharding.max_keys_per_shard is not None and not isinstance(
+        records, Sized
     ):
         raise ConfigValidationError(
-            "Range sharding without explicit boundaries requires Spark."
+            "max_keys_per_shard requires a Sized input (e.g. list) "
+            "so num_dbs can be computed from len(records). "
+            "Provide num_dbs explicitly for non-Sized iterables."
         )
-    if config.sharding.strategy == ShardingStrategy.CEL:
-        if config.sharding.boundaries is None:
-            raise ConfigValidationError(
-                "CEL sharding in Python writer requires precomputed boundaries."
-            )
+
+    return resolve_num_dbs(
+        config,
+        lambda: len(records) if isinstance(records, Sized) else 0,
+    )
 
 
 def _batch_bytes(batch: list[tuple[bytes, bytes]]) -> int:
@@ -273,6 +300,7 @@ def _write_single_process(
     *,
     records: Iterable[T],
     config: WriteConfig,
+    num_dbs: int,
     run_id: str,
     factory: DbAdapterFactory,
     key_fn: Callable[[T], KeyLike],
@@ -282,11 +310,15 @@ def _write_single_process(
     max_write_bytes_per_second: float | None,
     max_total_batched_items: int | None,
     max_total_batched_bytes: int | None,
-) -> list[ShardAttemptResult]:
-    """Single-process mode: all adapters open simultaneously, single pass."""
+) -> tuple[list[ShardAttemptResult], int]:
+    """Single-process mode: all adapters open simultaneously, single pass.
+
+    Returns (attempts, resolved_num_dbs) — num_dbs may be discovered from
+    data for CEL direct mode.
+    """
 
     attempt = 0
-    num_dbs = config.num_dbs
+    cel_mode = num_dbs == 0  # CEL: discover from data
     bucket: RateLimiter | None = None
     if max_writes_per_second is not None:
         bucket = TokenBucket(
@@ -300,24 +332,34 @@ def _write_single_process(
             limiter_type="bytes",
         )
 
-    # Open shard adapters lazily on first write to avoid S3 I/O for empty shards.
-    adapters: list[Any] = [None] * num_dbs
-    db_urls: list[str | None] = [None] * num_dbs
+    # Dict-based tracking supports both known num_dbs and CEL discovery mode.
+    adapters: dict[int, Any] = {}
+    db_urls: dict[int, str] = {}
+    batches: dict[int, list[tuple[bytes, bytes]]] = {}
+    batch_byte_sizes: dict[int, int] = {}
+    row_counts: dict[int, int] = {}
+    min_keys: dict[int, KeyLike | None] = {}
+    max_keys: dict[int, KeyLike | None] = {}
+    checkpoint_ids: dict[int, str | None] = {}
+
     with contextlib.ExitStack() as stack:
-        # Per-shard tracking
-        batches: list[list[tuple[bytes, bytes]]] = [[] for _ in range(num_dbs)]
-        batch_byte_sizes: list[int] = [0] * num_dbs
-        row_counts = [0] * num_dbs
-        min_keys: list[KeyLike | None] = [None] * num_dbs
-        max_keys: list[KeyLike | None] = [None] * num_dbs
         key_encoder = make_key_encoder(config.key_encoding)
 
         # Global batch tracking
         total_batched_items = 0
         total_batched_bytes = 0
 
+        def _ensure_shard(sid: int) -> None:
+            if sid in batches:
+                return
+            batches[sid] = []
+            batch_byte_sizes[sid] = 0
+            row_counts[sid] = 0
+            min_keys[sid] = None
+            max_keys[sid] = None
+
         def _ensure_adapter(sid: int) -> None:
-            if adapters[sid] is not None:
+            if sid in adapters:
                 return
             db_url = _make_db_url(config, run_id, sid, attempt)
             local_dir = _make_local_dir(config, run_id, sid, attempt)
@@ -346,6 +388,7 @@ def _write_single_process(
                 key_encoding=config.key_encoding,
                 routing_context=routing_context,
             )
+            _ensure_shard(db_id)
             key_bytes = key_encoder(key)
             value_bytes = value_fn(record)
 
@@ -365,21 +408,26 @@ def _write_single_process(
                         byte_bucket.acquire(batch_byte_sizes[db_id])
                     _flush_shard(db_id)
                 elif len(batches[db_id]) >= 2 * config.batch_size:
-                    # Cap deferred growth to avoid OOM; block until tokens available
                     bucket.acquire(len(batches[db_id]))
                     if byte_bucket is not None:
                         byte_bucket.acquire(batch_byte_sizes[db_id])
                     _flush_shard(db_id)
 
             # Global memory ceiling: flush the largest shard batch
-            while (
-                max_total_batched_items is not None
-                and total_batched_items > max_total_batched_items
-            ) or (
-                max_total_batched_bytes is not None
-                and total_batched_bytes > max_total_batched_bytes
+            while batches and (
+                (
+                    max_total_batched_items is not None
+                    and total_batched_items > max_total_batched_items
+                )
+                or (
+                    max_total_batched_bytes is not None
+                    and total_batched_bytes > max_total_batched_bytes
+                )
             ):
-                flush_id = _largest_batch_id(batches, batch_byte_sizes)
+                flush_id = max(
+                    batches,
+                    key=lambda k: (batch_byte_sizes[k], len(batches[k])),
+                )
                 if not batches[flush_id]:
                     break
                 if bucket is not None:
@@ -389,37 +437,43 @@ def _write_single_process(
                 _flush_shard(flush_id)
 
         # Flush remaining
-        for db_id in range(num_dbs):
-            if batches[db_id]:
+        for sid in list(batches.keys()):
+            if batches[sid]:
                 if bucket is not None:
-                    bucket.acquire(len(batches[db_id]))
+                    bucket.acquire(len(batches[sid]))
                 if byte_bucket is not None:
-                    byte_bucket.acquire(batch_byte_sizes[db_id])
-                _flush_shard(db_id)
+                    byte_bucket.acquire(batch_byte_sizes[sid])
+                _flush_shard(sid)
 
         # Finalize only opened adapters
-        checkpoint_ids: list[str | None] = [None] * num_dbs
-        for db_id in range(num_dbs):
-            if adapters[db_id] is not None:
-                adapters[db_id].flush()
-                checkpoint_ids[db_id] = adapters[db_id].checkpoint()
+        for sid in adapters:
+            adapters[sid].flush()
+            checkpoint_ids[sid] = adapters[sid].checkpoint()
 
+    # CEL mode: discover num_dbs from data
+    if cel_mode:
+        from shardyfusion._writer_core import discover_cel_num_dbs
+
+        num_dbs = discover_cel_num_dbs(set(row_counts.keys()))
+
+    # Build results for all known shard IDs
+    all_db_ids = set(row_counts.keys()) | set(range(num_dbs))
     results: list[ShardAttemptResult] = []
-    for db_id in range(num_dbs):
+    for db_id in sorted(all_db_ids):
         results.append(
             ShardAttemptResult(
                 db_id=db_id,
-                db_url=db_urls[db_id],
+                db_url=db_urls.get(db_id),
                 attempt=attempt,
-                row_count=row_counts[db_id],
-                min_key=min_keys[db_id],
-                max_key=max_keys[db_id],
-                checkpoint_id=checkpoint_ids[db_id],
+                row_count=row_counts.get(db_id, 0),
+                min_key=min_keys.get(db_id),
+                max_key=max_keys.get(db_id),
+                checkpoint_id=checkpoint_ids.get(db_id),
                 writer_info=WriterInfo(attempt=attempt),
             )
         )
 
-    return results
+    return results, num_dbs
 
 
 def _shard_worker(
@@ -515,6 +569,7 @@ def _write_parallel(
     *,
     records: Iterable[T],
     config: WriteConfig,
+    num_dbs: int,
     run_id: str,
     factory: DbAdapterFactory,
     key_fn: Callable[[T], KeyLike],
@@ -525,8 +580,6 @@ def _write_parallel(
     max_write_bytes_per_second: float | None,
 ) -> list[ShardAttemptResult]:
     """Multi-process mode: one worker per shard, main routes to queues."""
-
-    num_dbs = config.num_dbs
     chunk_size = max(1, config.batch_size // _CHUNK_DIVISOR)
     ctx = multiprocessing.get_context("spawn")
 

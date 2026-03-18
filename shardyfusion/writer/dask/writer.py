@@ -38,7 +38,6 @@ from shardyfusion.sharding_types import (
     DB_ID_COL,
     KeyEncoding,
     ShardingSpec,
-    ShardingStrategy,
 )
 from shardyfusion.slatedb_adapter import (
     DbAdapterFactory,
@@ -47,7 +46,7 @@ from shardyfusion.slatedb_adapter import (
 from shardyfusion.storage import join_s3
 from shardyfusion.type_defs import KeyLike
 
-from .sharding import add_db_id_column, compute_range_boundaries
+from .sharding import add_db_id_column
 
 _logger = get_logger(__name__)
 
@@ -117,7 +116,7 @@ def write_sharded(
     Args:
         ddf: Dask DataFrame containing at least the key column and value column(s).
         config: Write configuration (num_dbs, s3_prefix, sharding strategy, etc.).
-            Only HASH and RANGE sharding strategies are supported.
+            HASH and CEL sharding strategies are supported.
         key_col: Name of the key column used for shard routing.
         value_spec: Specifies how DataFrame rows are serialized to bytes
             (binary_col, json_cols, or a callable encoder).
@@ -160,21 +159,29 @@ def write_sharded(
 
         # --- Phase 1: Sharding ---
         shard_started = time.perf_counter()
-        resolved_sharding = _validate_and_resolve_sharding(config, ddf, key_col)
+        from shardyfusion._writer_core import discover_cel_num_dbs
+
+        resolved_sharding = config.sharding
+        num_dbs = _resolve_num_dbs_before_sharding(ddf, config)
 
         ddf_with_id = add_db_id_column(
             ddf,
             key_col=key_col,
-            num_dbs=config.num_dbs,
+            num_dbs=num_dbs,
             sharding=resolved_sharding,
             key_encoding=config.key_encoding,
         )
 
-        if verify_routing:
+        # CEL: discover num_dbs from data and validate consecutive IDs
+        if num_dbs == 0:
+            distinct_ids = set(ddf_with_id[DB_ID_COL].unique().compute().tolist())
+            num_dbs = discover_cel_num_dbs(distinct_ids)
+
+        if verify_routing and num_dbs > 0:
             _verify_routing_agreement(
                 ddf_with_id,
                 key_col=key_col,
-                num_dbs=config.num_dbs,
+                num_dbs=num_dbs,
                 resolved_sharding=resolved_sharding,
                 key_encoding=config.key_encoding,
             )
@@ -208,7 +215,7 @@ def write_sharded(
         )
 
         write_started = time.perf_counter()
-        ddf_shuffled = ddf_with_id.shuffle(on=DB_ID_COL, npartitions=config.num_dbs)
+        ddf_shuffled = ddf_with_id.shuffle(on=DB_ID_COL, npartitions=num_dbs)
         ddf_results = ddf_shuffled.map_partitions(
             _write_partition,
             runtime=runtime,
@@ -239,7 +246,7 @@ def write_sharded(
 
         # --- Phase 3: Publish ---
         winners, num_attempts, all_attempt_urls = select_winners(
-            attempts, num_dbs=config.num_dbs
+            attempts, num_dbs=num_dbs
         )
 
         manifest_started = time.perf_counter()
@@ -250,6 +257,7 @@ def write_sharded(
             winners=winners,
             key_col=key_col,
             started=started,
+            num_dbs=num_dbs,
         )
         manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
 
@@ -289,52 +297,11 @@ def write_sharded(
 # ---------------------------------------------------------------------------
 
 
-def _validate_and_resolve_sharding(
-    config: WriteConfig,
-    ddf: dd.DataFrame,
-    key_col: str,
-) -> ShardingSpec:
-    """Validate sharding config and resolve RANGE boundaries via Dask quantiles."""
+def _resolve_num_dbs_before_sharding(ddf: dd.DataFrame, config: WriteConfig) -> int:
+    """Resolve num_dbs that can be determined before add_db_id_column."""
+    from shardyfusion._writer_core import resolve_num_dbs
 
-    if (
-        config.sharding.strategy == ShardingStrategy.RANGE
-        and config.sharding.boundaries is None
-    ):
-        boundaries = compute_range_boundaries(
-            ddf,
-            key_col=key_col,
-            num_dbs=config.num_dbs,
-            rel_error=config.sharding.approx_quantile_rel_error,
-        )
-        return ShardingSpec(
-            strategy=ShardingStrategy.RANGE,
-            boundaries=boundaries,
-            approx_quantile_rel_error=config.sharding.approx_quantile_rel_error,
-        )
-
-    if config.sharding.strategy == ShardingStrategy.CEL:
-        if config.sharding.boundaries is not None:
-            return config.sharding
-        from shardyfusion.cel import (
-            compile_cel,
-            pandas_rows_to_contexts,
-            resolve_cel_boundaries,
-        )
-
-        assert (
-            config.sharding.cel_expr is not None
-            and config.sharding.cel_columns is not None
-        )
-        compiled = compile_cel(config.sharding.cel_expr, config.sharding.cel_columns)
-        sample_pdf = ddf[list(config.sharding.cel_columns.keys())].head(
-            10000, npartitions=-1
-        )
-        sampled = pandas_rows_to_contexts(sample_pdf, config.sharding.cel_columns)
-        return resolve_cel_boundaries(
-            compiled, sampled, config.num_dbs, config.sharding
-        )
-
-    return config.sharding
+    return resolve_num_dbs(config, lambda: len(ddf))
 
 
 def _verify_routing_agreement(

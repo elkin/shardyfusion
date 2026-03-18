@@ -74,6 +74,7 @@ class PartitionWriteConfig:
 class _PreparedPartitionRows:
     partitioned_rdd: RDD[tuple[int, Row]]
     resolved_sharding: ShardingSpec
+    resolved_num_dbs: int
     shard_duration_ms: int
 
 
@@ -203,10 +204,11 @@ def _write_sharded_impl(
             max_write_bytes_per_second=max_write_bytes_per_second,
             started=started,
         )
+        num_dbs = prepared_rows.resolved_num_dbs
         write_outcome = _run_partition_writes(
             partitioned_rdd=prepared_rows.partitioned_rdd,
             runtime=runtime,
-            num_dbs=config.num_dbs,
+            num_dbs=num_dbs,
         )
 
         rows_written = sum(w.row_count for w in write_outcome.winners)
@@ -235,6 +237,7 @@ def _write_sharded_impl(
             winners=write_outcome.winners,
             key_col=key_col,
             started=started,
+            num_dbs=num_dbs,
         )
         manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
 
@@ -284,13 +287,20 @@ def verify_routing_agreement(
 ) -> None:
     """Sample rows and verify Spark-computed db_id matches Python routing.
 
-    Raises ShardAssignmentError if any sampled row disagrees between the
-    Spark SQL expression and the equivalent Python routing function.
+    Since all strategies now use Python-based mapInArrow, this is a
+    safety net verifying the mapInArrow output against the reader's
+    route_key() function.
     """
-    from bisect import bisect_right
-
-    from shardyfusion.routing import xxhash64_db_id
+    from shardyfusion._writer_core import route_key
     from shardyfusion.sharding_types import ShardingStrategy
+
+    # CEL multi-column: can't verify without routing_context
+    if (
+        resolved_sharding.strategy == ShardingStrategy.CEL
+        and resolved_sharding.cel_columns
+        and set(resolved_sharding.cel_columns.keys()) != {"key"}
+    ):
+        return
 
     sampled = df_with_db_id.select(key_col, DB_ID_COL).limit(sample_size).collect()
     if not sampled:
@@ -301,17 +311,12 @@ def verify_routing_agreement(
         key = row[key_col]
         spark_db_id = int(row[DB_ID_COL])
 
-        if resolved_sharding.strategy == ShardingStrategy.HASH:
-            python_db_id = xxhash64_db_id(key, num_dbs, key_encoding)
-        elif (
-            resolved_sharding.strategy == ShardingStrategy.RANGE
-            and resolved_sharding.boundaries is not None
-        ):
-            python_db_id = bisect_right(resolved_sharding.boundaries, key)
-        elif resolved_sharding.strategy == ShardingStrategy.CEL:
-            return  # CEL routing is verified by construction
-        else:
-            return  # cannot verify range without boundaries
+        python_db_id = route_key(
+            key,
+            num_dbs=num_dbs,
+            sharding=resolved_sharding,
+            key_encoding=key_encoding,
+        )
 
         if python_db_id != spark_db_id:
             mismatches.append((key, spark_db_id, python_db_id))
@@ -326,6 +331,13 @@ def verify_routing_agreement(
         )
 
 
+def _resolve_num_dbs_before_sharding(df: DataFrame, config: WriteConfig) -> int:
+    """Resolve num_dbs that can be determined before add_db_id_column."""
+    from shardyfusion._writer_core import resolve_num_dbs
+
+    return resolve_num_dbs(config, df.count)
+
+
 def _prepare_partitioned_rows(
     *,
     df: DataFrame,
@@ -336,24 +348,48 @@ def _prepare_partitioned_rows(
 ) -> _PreparedPartitionRows:
     """Assign shard ids and build the one-writer-per-db partitioned RDD."""
 
+    from pyspark.sql import functions as F
+
+    from shardyfusion._writer_core import discover_cel_num_dbs
+
     shard_started = time.perf_counter()
+    num_dbs = _resolve_num_dbs_before_sharding(df, config)
+
     df_with_db_id, resolved_sharding = add_db_id_column(
         df,
         key_col=key_col,
-        num_dbs=config.num_dbs,
+        num_dbs=num_dbs,
         sharding=config.sharding,
     )
-    if verify_routing:
+
+    # CEL: discover num_dbs from data and validate consecutive IDs
+    if num_dbs == 0:
+        agg_row = df_with_db_id.agg(
+            F.max(DB_ID_COL).alias("max_id"),
+            F.countDistinct(DB_ID_COL).alias("n_distinct"),
+        ).collect()[0]
+        max_id = agg_row["max_id"]
+        n_distinct = agg_row["n_distinct"]
+        distinct_ids = (
+            set(range(n_distinct))
+            if n_distinct == (max_id + 1 if max_id is not None else 0)
+            else {
+                row[0] for row in df_with_db_id.select(DB_ID_COL).distinct().collect()
+            }
+        )
+        num_dbs = discover_cel_num_dbs(distinct_ids)
+
+    if verify_routing and num_dbs > 0:
         verify_routing_agreement(
             df_with_db_id,
             key_col=key_col,
-            num_dbs=config.num_dbs,
+            num_dbs=num_dbs,
             resolved_sharding=resolved_sharding,
             key_encoding=config.key_encoding,
         )
     partitioned_rdd = prepare_partitioned_rdd(
         df_with_db_id,
-        num_dbs=config.num_dbs,
+        num_dbs=num_dbs,
         key_col=key_col,
         sort_within_partitions=sort_within_partitions,
     )
@@ -361,6 +397,7 @@ def _prepare_partitioned_rows(
     return _PreparedPartitionRows(
         partitioned_rdd=partitioned_rdd,
         resolved_sharding=resolved_sharding,
+        resolved_num_dbs=num_dbs,
         shard_duration_ms=shard_duration_ms,
     )
 

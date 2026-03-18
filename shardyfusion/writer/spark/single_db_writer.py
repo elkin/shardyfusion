@@ -30,7 +30,6 @@ from shardyfusion.slatedb_adapter import (
 from shardyfusion.storage import join_s3
 from shardyfusion.type_defs import KeyLike
 
-from .sharding import validate_key_col_type
 from .util import DataFrameCacheContext, SparkConfOverrideContext
 
 
@@ -66,8 +65,6 @@ def write_single_db(
         raise ConfigValidationError(
             f"write_single_db requires num_dbs=1, got {config.num_dbs}"
         )
-
-    validate_key_col_type(df=df, key_col=key_col, strategy=ShardingStrategy.HASH)
 
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
