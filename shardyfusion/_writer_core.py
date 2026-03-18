@@ -21,6 +21,7 @@ from .manifest import (
     BuildResult,
     BuildStats,
     ManifestShardingSpec,
+    ParsedManifest,
     RequiredBuildMeta,
     RequiredShardMeta,
     WriterInfo,
@@ -74,16 +75,15 @@ class PartitionWriteOutcome:
     write_duration_ms: int
 
 
-_CEL_CACHE: dict[str, Any] = {}
 _cel_imports: tuple[Any, ...] | None = None
 
 
 def _get_cel_imports() -> tuple[Any, ...]:
     global _cel_imports
     if _cel_imports is None:
-        from .cel import CompiledCel, compile_cel, route_cel
+        from .cel import _compile_cel_cached, route_cel
 
-        _cel_imports = (CompiledCel, compile_cel, route_cel)
+        _cel_imports = (_compile_cel_cached, route_cel)
     return _cel_imports
 
 
@@ -100,12 +100,10 @@ def route_key(
     if sharding.strategy == ShardingStrategy.HASH:
         return xxh3_db_id(key, num_dbs)
     if sharding.strategy == ShardingStrategy.CEL:
-        CompiledCel, compile_cel, route_cel = _get_cel_imports()
+        _compile_cel_cached, route_cel = _get_cel_imports()
         assert sharding.cel_expr is not None and sharding.cel_columns is not None
-        cached = _CEL_CACHE.get(sharding.cel_expr)
-        if not isinstance(cached, CompiledCel):
-            cached = compile_cel(sharding.cel_expr, sharding.cel_columns)
-            _CEL_CACHE[sharding.cel_expr] = cached
+        columns_key = tuple(sorted(sharding.cel_columns.items()))
+        cached = _compile_cel_cached(sharding.cel_expr, columns_key)
         ctx = routing_context if routing_context is not None else {"key": key}
         return route_cel(cached, ctx, sharding.boundaries)
     raise ConfigValidationError(
@@ -447,7 +445,7 @@ class CleanupAction:
 
 
 def cleanup_stale_attempts(
-    manifest: Any,
+    manifest: ParsedManifest,
     *,
     s3_client: Any = None,
     dry_run: bool = False,

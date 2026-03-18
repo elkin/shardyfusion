@@ -1,7 +1,12 @@
 """Batch / script execution for the shardy CLI."""
 
+from __future__ import annotations
+
 import sys
-from typing import IO, Any
+from typing import IO, TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..reader import ConcurrentShardedReader, ShardedReader
 
 from .config import OutputConfig, coerce_cli_key
 from .output import (
@@ -42,7 +47,7 @@ def load_script(script_path: str) -> dict[str, Any]:
 
 
 def run_script(
-    reader: Any,
+    reader: ShardedReader | ConcurrentShardedReader,
     script_path: str,
     output_cfg: OutputConfig,
     output_file: IO[str] | None = None,
@@ -98,7 +103,7 @@ def run_script(
 
 
 def _execute_command(
-    reader: Any,
+    reader: ShardedReader | ConcurrentShardedReader,
     op: str | None,
     cmd: dict[str, Any],
     cfg: OutputConfig,

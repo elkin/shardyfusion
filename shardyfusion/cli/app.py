@@ -1,8 +1,15 @@
 """Click CLI application for shardy."""
 
+from __future__ import annotations
+
 import sys
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..manifest import ManifestRef, ParsedManifest
+    from ..manifest_store import ManifestStore
+    from ..reader import ConcurrentShardedReader
 
 import click
 
@@ -41,7 +48,7 @@ _CTX_INIT_PARAMS = "shardy_init_params"
 def _build_manifest_store(
     store_cfg: ManifestStoreConfig,
     params: dict[str, Any],
-) -> Any:
+) -> ManifestStore:
     """Create the manifest store for the configured backend."""
     if store_cfg.backend == "s3":
         from ..manifest_store import S3ManifestStore
@@ -76,7 +83,7 @@ def _build_manifest_store(
 
 
 def _resolve_manifest_ref(
-    store: Any,
+    store: ManifestStore,
     *,
     ref: str | None,
     offset: int | None,
@@ -99,11 +106,11 @@ def _resolve_manifest_ref(
 
 
 def _resolve_manifest_ref_obj(
-    store: Any,
+    store: ManifestStore,
     *,
     ref: str | None,
     offset: int | None,
-) -> Any | None:
+) -> ManifestRef | None:
     """Like _resolve_manifest_ref but returns the full ManifestRef when available.
 
     Used by _PinnedManifestStore to avoid a redundant list_manifests call.
@@ -141,17 +148,17 @@ class _PinnedManifestStore:
     that should mutate _CURRENT, and it operates on the real store directly.
     """
 
-    def __init__(self, inner: Any, pinned_manifest_ref: Any) -> None:
+    def __init__(self, inner: ManifestStore, pinned_manifest_ref: ManifestRef) -> None:
         self._inner = inner
         self._cached_ref = pinned_manifest_ref
 
-    def load_current(self) -> Any:
+    def load_current(self) -> ManifestRef | None:
         return self._cached_ref
 
-    def load_manifest(self, ref: str) -> Any:
+    def load_manifest(self, ref: str) -> ParsedManifest:
         return self._inner.load_manifest(ref)
 
-    def list_manifests(self, *, limit: int = 10) -> Any:
+    def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
         return self._inner.list_manifests(limit=limit)
 
     def set_current(self, ref: str) -> None:
@@ -161,7 +168,7 @@ class _PinnedManifestStore:
         return self._inner.publish(**kwargs)
 
 
-def _build_reader(ctx: click.Context) -> Any:
+def _build_reader(ctx: click.Context) -> ConcurrentShardedReader:
     """Construct a ConcurrentShardedReader from the parameters stored in ctx.obj."""
     params = ctx.obj[_CTX_INIT_PARAMS]
     reader_cfg: ReaderConfig = params["reader_cfg"]

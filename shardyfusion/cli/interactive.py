@@ -1,9 +1,14 @@
 """Interactive REPL for the shardy CLI, backed by ConcurrentShardedReader."""
 
+from __future__ import annotations
+
 import cmd
 import shlex
 import sys
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..reader import ConcurrentShardedReader, ShardedReader
 
 from .config import OutputConfig, coerce_cli_key
 from .output import (
@@ -24,7 +29,9 @@ class ShardyRepl(cmd.Cmd):
     intro = ""
     prompt = "shardy> "
 
-    def __init__(self, reader: Any, output_cfg: OutputConfig) -> None:
+    def __init__(
+        self, reader: ShardedReader | ConcurrentShardedReader, output_cfg: OutputConfig
+    ) -> None:
         super().__init__()
         self._reader = reader
         self._output_cfg = output_cfg

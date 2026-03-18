@@ -15,6 +15,7 @@ Uses ``cel-expr-python`` (Google's C++ CEL wrapper) via:
 
 from __future__ import annotations
 
+import functools
 from bisect import bisect_right
 from typing import Any
 
@@ -199,6 +200,14 @@ def compile_cel(expr: str, columns: dict[str, str]) -> CompiledCel:
         ) from exc
 
     return CompiledCel(env=env, expr=compiled_expr, columns=columns)
+
+
+@functools.lru_cache(maxsize=16)
+def _compile_cel_cached(
+    expr: str, columns_key: tuple[tuple[str, str], ...]
+) -> CompiledCel:
+    """Cached wrapper around compile_cel for hashable arguments."""
+    return compile_cel(expr, dict(columns_key))
 
 
 # ---------------------------------------------------------------------------

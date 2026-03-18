@@ -5,9 +5,12 @@ Requires the ``metrics-prometheus`` extra: ``pip install shardyfusion[metrics-pr
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ._events import MetricEvent
+
+if TYPE_CHECKING:
+    from prometheus_client import CollectorRegistry
 
 
 class PrometheusCollector:
@@ -21,7 +24,7 @@ class PrometheusCollector:
 
     def __init__(
         self,
-        registry: Any = None,
+        registry: CollectorRegistry | None = None,
         prefix: str = "shardyfusion_",
     ) -> None:
         from prometheus_client import REGISTRY, Counter, Histogram

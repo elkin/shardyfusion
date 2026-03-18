@@ -5,9 +5,12 @@ Requires the ``metrics-otel`` extra: ``pip install shardyfusion[metrics-otel]``
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ._events import MetricEvent
+
+if TYPE_CHECKING:
+    from opentelemetry.metrics import MeterProvider
 
 
 class OtelCollector:
@@ -19,7 +22,7 @@ class OtelCollector:
 
     def __init__(
         self,
-        meter_provider: Any = None,
+        meter_provider: MeterProvider | None = None,
         meter_name: str = "shardyfusion",
     ) -> None:
         from opentelemetry import metrics as otel_metrics

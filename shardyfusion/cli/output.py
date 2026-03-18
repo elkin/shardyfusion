@@ -12,6 +12,8 @@ from .config import OutputConfig
 
 if TYPE_CHECKING:
     from .._writer_core import CleanupAction
+    from ..manifest import ManifestRef
+    from ..reader import ConcurrentShardedReader, ShardDetail, ShardedReader
 
 # ---------------------------------------------------------------------------
 # Value encoding
@@ -83,7 +85,9 @@ def build_refresh_result(changed: bool) -> dict[str, Any]:
     return {"op": "refresh", "changed": changed}
 
 
-def build_info_result(reader: Any) -> dict[str, Any]:
+def build_info_result(
+    reader: ShardedReader | ConcurrentShardedReader,
+) -> dict[str, Any]:
     """Extract manifest metadata from a reader instance."""
     info = reader.snapshot_info()
     d = dataclasses.asdict(info)
@@ -93,7 +97,7 @@ def build_info_result(reader: Any) -> dict[str, Any]:
     return {"op": "info", **d}
 
 
-def build_shards_result(shards: list[Any]) -> dict[str, Any]:
+def build_shards_result(shards: list[ShardDetail]) -> dict[str, Any]:
     """Build a dict representing per-shard details."""
     return {"op": "shards", "shards": [dataclasses.asdict(s) for s in shards]}
 
@@ -103,7 +107,7 @@ def build_route_result(key: str, db_id: int) -> dict[str, Any]:
     return {"op": "route", "key": key, "db_id": db_id}
 
 
-def build_history_result(refs: list[Any]) -> dict[str, Any]:
+def build_history_result(refs: list[ManifestRef]) -> dict[str, Any]:
     """Build a dict representing manifest history listing."""
     entries = []
     for i, ref in enumerate(refs):
