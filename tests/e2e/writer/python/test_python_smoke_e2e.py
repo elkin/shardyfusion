@@ -11,8 +11,6 @@ from tests.helpers.smoke_scenarios import (
     run_smoke_write_then_read_scenario,
 )
 
-_creds = dict  # just a namespace alias for the two helpers below
-
 
 def _s3(svc):
     return {

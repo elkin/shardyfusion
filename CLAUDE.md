@@ -84,14 +84,14 @@ Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus ext
 
 **Dask writer** (`write_sharded`):
 1. Entry point in `writer/dask/writer.py`. Accepts `dd.DataFrame` with `key_col`/`value_spec`.
-2. `writer/dask/sharding.py` adds `_slatedb_db_id` column via Python routing function applied per partition.
+2. `writer/dask/sharding.py` adds `_slatedb_db_id` column via Python routing function applied per partition. For CEL sharding, uses `pandas_rows_to_contexts()` + `route_cel()` with full row context (supporting non-key columns).
 3. Shuffles by `_slatedb_db_id`, then `map_partitions` writes each shard. Empty shards (no rows in partition) are omitted from the manifest; `select_winners()` filters them out.
 4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `verify_routing_agreement()`.
 5. Uses the same `_writer_core.py` functions for winner selection, manifest building, and publishing.
 
 **Ray writer** (`write_sharded`):
 1. Entry point in `writer/ray/writer.py`. Accepts `ray.data.Dataset` with `key_col`/`value_spec`.
-2. `writer/ray/sharding.py` adds `_slatedb_db_id` column via Arrow batch format (`map_batches` with `batch_format="pyarrow"`, `zero_copy_batch=True`).
+2. `writer/ray/sharding.py` adds `_slatedb_db_id` column via Arrow batch format (`map_batches` with `batch_format="pyarrow"`, `zero_copy_batch=True`). For CEL sharding, uses `route_cel_batch()` directly on Arrow batches (same approach as Spark).
 3. Repartitions by `_slatedb_db_id` using hash shuffle (`DataContext.shuffle_strategy = "HASH_SHUFFLE"`; saved/restored). Then `map_batches` writes each shard with `batch_format="pandas"`. Empty shards (no rows in partition) are omitted from the manifest; `select_winners()` filters them out.
 4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `_verify_routing_agreement()`.
 5. Uses the same `_writer_core.py` functions for winner selection, manifest building, and publishing.
@@ -259,7 +259,7 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **Optional-dep test isolation** — Writer test directories (`tests/unit/writer/{dask,spark,ray}/`, `tests/integration/writer/{dask,ray}/`, `tests/e2e/writer/ray/`) use `conftest.py`-level `pytest.importorskip()` to skip entire suites when the framework extra is not installed. This allows `uv run pytest tests/` to work without all optional extras.
 - **`tests/integration/`** — S3 via `moto`; Spark writer tests require Spark + Java
 - **`tests/e2e/`** — Garage S3 via compose; `just d-e2e`
-- **`tests/helpers/`** — `s3_test_scenarios.py` (shared scenarios for moto/Garage), `tracking.py` (test doubles: `TrackingAdapter`, `TrackingFactory`, `RecordingTokenBucket`, `InMemoryPublisher`)
+- **`tests/helpers/`** — `s3_test_scenarios.py` (shared scenarios for moto/Garage), `smoke_scenarios.py` (shared smoke E2E data and scenarios for HASH/CEL sharding across all writer frameworks), `tracking.py` (test doubles: `TrackingAdapter`, `TrackingFactory`, `RecordingTokenBucket`, `InMemoryPublisher`)
 - Markers: `@pytest.mark.spark`, `@pytest.mark.dask`, `@pytest.mark.ray`, `@pytest.mark.cel`, `@pytest.mark.e2e`
 - **CEL tests**: require `cel` extra (`cel-expr-python`). Use `@pytest.mark.cel` marker. Skipped via `pytest.importorskip()` when the extra is not installed.
 - **Contract tests**: hypothesis property tests in `test_routing_contract.py`, framework cross-checks in `writer/spark/`, `writer/dask/`, and `writer/ray/`

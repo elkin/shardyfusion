@@ -71,7 +71,6 @@ def _add_db_id_cel(
     assert sharding.cel_expr is not None and sharding.cel_columns is not None
     _cel_expr = sharding.cel_expr
     _cel_cols = dict(sharding.cel_columns)
-    _col_names = list(_cel_cols)
     _boundaries = list(sharding.boundaries) if sharding.boundaries is not None else None
 
     def _apply_cel_routing(pdf: pd.DataFrame) -> pd.DataFrame:

@@ -16,9 +16,13 @@ from typing import TYPE_CHECKING, Any
 
 import slatedb
 
-from shardyfusion.credentials import CredentialProvider, StaticCredentialProvider
+from shardyfusion.credentials import CredentialProvider
 from shardyfusion.manifest_store import S3ManifestStore
 from shardyfusion.type_defs import S3ConnectionOptions
+from tests.helpers.s3_test_scenarios import (
+    _default_connection_options,
+    _default_credential_provider,
+)
 
 if TYPE_CHECKING:
     from shardyfusion.config import WriteConfig
@@ -53,35 +57,6 @@ WriteFn = Callable[["list[tuple[int, bytes, str]]", "WriteConfig"], "BuildResult
 
 # Type alias for a function that returns the routing_context for a given row.
 RoutingContextFn = Callable[["tuple[int, bytes, str]"], "dict[str, object] | None"]
-
-
-# ---------------------------------------------------------------------------
-# S3 credential/connection helpers (same as s3_test_scenarios.py)
-# ---------------------------------------------------------------------------
-
-
-def _default_credential_provider(
-    s3_service: LocalS3Service,
-    credential_provider: CredentialProvider | None,
-) -> CredentialProvider:
-    if credential_provider is not None:
-        return credential_provider
-    return StaticCredentialProvider(
-        access_key_id=s3_service["access_key_id"],
-        secret_access_key=s3_service["secret_access_key"],
-    )
-
-
-def _default_connection_options(
-    s3_service: LocalS3Service,
-    s3_connection_options: S3ConnectionOptions | None,
-) -> S3ConnectionOptions:
-    if s3_connection_options is not None:
-        return s3_connection_options
-    return S3ConnectionOptions(
-        endpoint_url=s3_service["endpoint_url"],
-        region_name=s3_service["region_name"],
-    )
 
 
 # ---------------------------------------------------------------------------

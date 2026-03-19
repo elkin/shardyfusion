@@ -324,9 +324,7 @@ def _verify_routing_agreement(
     )
     sample_cols = [key_col, DB_ID_COL]
     if cel_columns is not None:
-        sample_cols = [key_col, DB_ID_COL] + [
-            c for c in cel_columns if c not in (key_col, DB_ID_COL)
-        ]
+        sample_cols.extend(c for c in cel_columns if c not in (key_col, DB_ID_COL))
 
     sampled = ddf_with_id[sample_cols].head(sample_size, npartitions=-1)
     if sampled.empty:
