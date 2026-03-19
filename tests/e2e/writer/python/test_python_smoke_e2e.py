@@ -53,16 +53,24 @@ def _cel_context_write_fn(data, config):
 @pytest.mark.e2e
 def test_smoke_hash(garage_s3_service, tmp_path) -> None:
     run_smoke_write_then_read_scenario(
-        _hash_write_fn, garage_s3_service, tmp_path,
-        num_dbs=3, expected_num_shards=3, **_s3(garage_s3_service),
+        _hash_write_fn,
+        garage_s3_service,
+        tmp_path,
+        num_dbs=3,
+        expected_num_shards=3,
+        **_s3(garage_s3_service),
     )
 
 
 @pytest.mark.e2e
 def test_smoke_hash_num_dbs_2(garage_s3_service, tmp_path) -> None:
     run_smoke_write_then_read_scenario(
-        _hash_write_fn, garage_s3_service, tmp_path,
-        num_dbs=2, expected_num_shards=2, **_s3(garage_s3_service),
+        _hash_write_fn,
+        garage_s3_service,
+        tmp_path,
+        num_dbs=2,
+        expected_num_shards=2,
+        **_s3(garage_s3_service),
     )
 
 
@@ -70,8 +78,12 @@ def test_smoke_hash_num_dbs_2(garage_s3_service, tmp_path) -> None:
 def test_smoke_hash_max_keys_per_shard(garage_s3_service, tmp_path) -> None:
     # 10 rows / 5 per shard → ceil(10/5) = 2 shards
     run_smoke_write_then_read_scenario(
-        _hash_write_fn, garage_s3_service, tmp_path,
-        num_dbs=0, max_keys_per_shard=5, expected_num_shards=2,
+        _hash_write_fn,
+        garage_s3_service,
+        tmp_path,
+        num_dbs=0,
+        max_keys_per_shard=5,
+        expected_num_shards=2,
         **_s3(garage_s3_service),
     )
 
@@ -87,9 +99,14 @@ def test_smoke_cel_key_modulo(garage_s3_service, tmp_path) -> None:
     pytest.importorskip("cel_expr_python")
     # key % 3 with boundaries [1, 2] → 3 shards
     run_smoke_cel_scenario(
-        _hash_write_fn, garage_s3_service, tmp_path,
-        cel_expr="key % 3", cel_columns={"key": "int"}, boundaries=[1, 2],
-        expected_num_shards=3, **_s3(garage_s3_service),
+        _hash_write_fn,
+        garage_s3_service,
+        tmp_path,
+        cel_expr="key % 3",
+        cel_columns={"key": "int"},
+        boundaries=[1, 2],
+        expected_num_shards=3,
+        **_s3(garage_s3_service),
     )
 
 
@@ -99,9 +116,13 @@ def test_smoke_cel_shard_hash(garage_s3_service, tmp_path) -> None:
     pytest.importorskip("cel_expr_python")
     # shard_hash(key) % 3u → direct mode, 3 shards
     run_smoke_cel_scenario(
-        _hash_write_fn, garage_s3_service, tmp_path,
-        cel_expr="shard_hash(key) % 3u", cel_columns={"key": "int"},
-        expected_num_shards=3, **_s3(garage_s3_service),
+        _hash_write_fn,
+        garage_s3_service,
+        tmp_path,
+        cel_expr="shard_hash(key) % 3u",
+        cel_columns={"key": "int"},
+        expected_num_shards=3,
+        **_s3(garage_s3_service),
     )
 
 
@@ -111,9 +132,13 @@ def test_smoke_cel_key_identity(garage_s3_service, tmp_path) -> None:
     pytest.importorskip("cel_expr_python")
     # key itself as shard id (direct mode) → 10 shards (keys 0-9)
     run_smoke_cel_scenario(
-        _hash_write_fn, garage_s3_service, tmp_path,
-        cel_expr="uint(key)", cel_columns={"key": "int"},
-        expected_num_shards=10, **_s3(garage_s3_service),
+        _hash_write_fn,
+        garage_s3_service,
+        tmp_path,
+        cel_expr="uint(key)",
+        cel_columns={"key": "int"},
+        expected_num_shards=10,
+        **_s3(garage_s3_service),
     )
 
 
@@ -123,8 +148,12 @@ def test_smoke_cel_routing_context(garage_s3_service, tmp_path) -> None:
     pytest.importorskip("cel_expr_python")
     # Route by "group" column: "a" → shard 0, "b" → shard 1
     run_smoke_cel_scenario(
-        _cel_context_write_fn, garage_s3_service, tmp_path,
-        cel_expr="group", cel_columns={"group": "string"}, boundaries=["b"],
+        _cel_context_write_fn,
+        garage_s3_service,
+        tmp_path,
+        cel_expr="group",
+        cel_columns={"group": "string"},
+        boundaries=["b"],
         expected_num_shards=2,
         routing_context_fn=lambda row: {"group": row[2]},
         **_s3(garage_s3_service),

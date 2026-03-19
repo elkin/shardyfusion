@@ -32,7 +32,13 @@ def add_db_id_column(
 
     if sharding.strategy == ShardingStrategy.CEL:
         return _add_db_id_cel(ds, sharding=sharding)
-    return _add_db_id_hash(ds, key_col=key_col, num_dbs=num_dbs, sharding=sharding, key_encoding=key_encoding)
+    return _add_db_id_hash(
+        ds,
+        key_col=key_col,
+        num_dbs=num_dbs,
+        sharding=sharding,
+        key_encoding=key_encoding,
+    )
 
 
 def _add_db_id_hash(
@@ -76,4 +82,6 @@ def _add_db_id_cel(
         db_ids = route_cel_batch(compiled, table, _boundaries)
         return table.append_column(DB_ID_COL, pa.array(db_ids, type=pa.int64()))
 
-    return ds.map_batches(_apply_cel_routing, batch_format="pyarrow", zero_copy_batch=True)
+    return ds.map_batches(
+        _apply_cel_routing, batch_format="pyarrow", zero_copy_batch=True
+    )

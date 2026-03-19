@@ -23,7 +23,6 @@ from shardyfusion.type_defs import S3ConnectionOptions
 if TYPE_CHECKING:
     from shardyfusion.config import WriteConfig
     from shardyfusion.manifest import BuildResult
-
     from tests.conftest import LocalS3Service
 
 # ---------------------------------------------------------------------------
@@ -152,9 +151,9 @@ def _verify_reads(
                     assert got[key] == expected_value, f"{reader_cls_name}: key={key}"
             else:
                 # Group keys by routing context and call multi_get per group.
-                groups: dict[tuple[tuple[str, object], ...], list[tuple[int, bytes, str]]] = (
-                    defaultdict(list)
-                )
+                groups: dict[
+                    tuple[tuple[str, object], ...], list[tuple[int, bytes, str]]
+                ] = defaultdict(list)
                 for row in SMOKE_DATA:
                     ctx = routing_context_fn(row)
                     ctx_key = tuple(sorted(ctx.items())) if ctx else ()
@@ -165,7 +164,9 @@ def _verify_reads(
                     keys = [r[0] for r in rows]
                     got = reader.multi_get(keys, routing_context=ctx)
                     for key, expected_value, _ in rows:
-                        assert got[key] == expected_value, f"{reader_cls_name}: key={key}"
+                        assert got[key] == expected_value, (
+                            f"{reader_cls_name}: key={key}"
+                        )
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +277,12 @@ def run_smoke_cel_scenario(
 
     bucket = s3_service["bucket"]
     # Include a short hash of the expression in the prefix to avoid collisions.
-    safe_suffix = cel_expr.replace(" ", "").replace("%", "mod").replace("(", "").replace(")", "")[:20]
+    safe_suffix = (
+        cel_expr.replace(" ", "")
+        .replace("%", "mod")
+        .replace("(", "")
+        .replace(")", "")[:20]
+    )
     s3_prefix = f"s3://{bucket}/smoke-cel-{safe_suffix}-{tmp_path.name}"
     local_root = str(tmp_path / "writer-local")
     object_store_root = str(tmp_path / "object-store")

@@ -31,7 +31,13 @@ def add_db_id_column(
 
     if sharding.strategy == ShardingStrategy.CEL:
         return _add_db_id_cel(ddf, sharding=sharding)
-    return _add_db_id_hash(ddf, key_col=key_col, num_dbs=num_dbs, sharding=sharding, key_encoding=key_encoding)
+    return _add_db_id_hash(
+        ddf,
+        key_col=key_col,
+        num_dbs=num_dbs,
+        sharding=sharding,
+        key_encoding=key_encoding,
+    )
 
 
 def _add_db_id_hash(
@@ -69,13 +75,11 @@ def _add_db_id_cel(
     _boundaries = list(sharding.boundaries) if sharding.boundaries is not None else None
 
     def _apply_cel_routing(pdf: pd.DataFrame) -> pd.DataFrame:
-        from shardyfusion.cel import compile_cel, route_cel
+        from shardyfusion.cel import compile_cel, pandas_rows_to_contexts, route_cel
 
         compiled = compile_cel(_cel_expr, _cel_cols)
-        db_ids = [
-            route_cel(compiled, row, _boundaries)
-            for row in pdf[_col_names].to_dict("records")
-        ]
+        contexts = pandas_rows_to_contexts(pdf, _cel_cols)
+        db_ids = [route_cel(compiled, ctx, _boundaries) for ctx in contexts]
         return pdf.assign(**{DB_ID_COL: db_ids})
 
     meta = ddf._meta.assign(**{DB_ID_COL: 0})
