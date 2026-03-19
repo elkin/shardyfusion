@@ -53,7 +53,7 @@ EXPECTED: dict[int, bytes] = {k: v for k, v, _ in SMOKE_DATA}
 WriteFn = Callable[["list[tuple[int, bytes, str]]", "WriteConfig"], "BuildResult"]
 
 # Type alias for a function that returns the routing_context for a given row.
-RoutingContextFn = Callable[["tuple[int, bytes, str]", dict[str, object] | None]]
+RoutingContextFn = Callable[["tuple[int, bytes, str]"], "dict[str, object] | None"]
 
 
 # ---------------------------------------------------------------------------
