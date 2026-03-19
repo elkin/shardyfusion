@@ -13,6 +13,7 @@ bodies so that the reader scenario can be collected without pyspark installed.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -101,7 +102,7 @@ def run_reader_loads_manifest_scenario(
     # Build manifest + CURRENT payloads
     required = RequiredBuildMeta(
         run_id="reader-local",
-        created_at="2026-01-01T00:00:00+00:00",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
         num_dbs=1,
         s3_prefix=s3_prefix,
         key_col="id",
@@ -137,7 +138,7 @@ def run_reader_loads_manifest_scenario(
             manifest_ref=manifest_ref,
             manifest_content_type="application/x-yaml",
             run_id="reader-local",
-            updated_at="2026-01-01T00:00:00+00:00",
+            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
         ).model_dump(mode="json"),
         sort_keys=True,
         separators=(",", ":"),

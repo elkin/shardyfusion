@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import socket
 from collections.abc import Generator
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 from uuid import uuid4
 
 import pytest
@@ -18,7 +18,7 @@ class LocalS3Service(TypedDict):
     access_key_id: str
     secret_access_key: str
     bucket: str
-    client: object
+    client: Any  # boto3 S3 client (dynamically generated, no static type)
 
 
 @pytest.fixture(scope="session")
