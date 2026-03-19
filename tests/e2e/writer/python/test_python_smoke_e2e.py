@@ -84,7 +84,7 @@ def test_smoke_hash_max_keys_per_shard(garage_s3_service, tmp_path) -> None:
 @pytest.mark.e2e
 @pytest.mark.cel
 def test_smoke_cel_key_modulo(garage_s3_service, tmp_path) -> None:
-    pytest.importorskip("cel_expr")
+    pytest.importorskip("cel_expr_python")
     # key % 3 with boundaries [1, 2] → 3 shards
     run_smoke_cel_scenario(
         _hash_write_fn, garage_s3_service, tmp_path,
@@ -96,7 +96,7 @@ def test_smoke_cel_key_modulo(garage_s3_service, tmp_path) -> None:
 @pytest.mark.e2e
 @pytest.mark.cel
 def test_smoke_cel_shard_hash(garage_s3_service, tmp_path) -> None:
-    pytest.importorskip("cel_expr")
+    pytest.importorskip("cel_expr_python")
     # shard_hash(key) % 3u → direct mode, 3 shards
     run_smoke_cel_scenario(
         _hash_write_fn, garage_s3_service, tmp_path,
@@ -108,7 +108,7 @@ def test_smoke_cel_shard_hash(garage_s3_service, tmp_path) -> None:
 @pytest.mark.e2e
 @pytest.mark.cel
 def test_smoke_cel_key_identity(garage_s3_service, tmp_path) -> None:
-    pytest.importorskip("cel_expr")
+    pytest.importorskip("cel_expr_python")
     # key itself as shard id (direct mode) → 10 shards (keys 0-9)
     run_smoke_cel_scenario(
         _hash_write_fn, garage_s3_service, tmp_path,
@@ -120,7 +120,7 @@ def test_smoke_cel_key_identity(garage_s3_service, tmp_path) -> None:
 @pytest.mark.e2e
 @pytest.mark.cel
 def test_smoke_cel_routing_context(garage_s3_service, tmp_path) -> None:
-    pytest.importorskip("cel_expr")
+    pytest.importorskip("cel_expr_python")
     # Route by "group" column: "a" → shard 0, "b" → shard 1
     run_smoke_cel_scenario(
         _cel_context_write_fn, garage_s3_service, tmp_path,

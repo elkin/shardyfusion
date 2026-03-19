@@ -72,7 +72,7 @@ def test_smoke_hash_max_keys_per_shard(garage_s3_service, tmp_path) -> None:
 @pytest.mark.ray
 @pytest.mark.cel
 def test_smoke_cel_key_modulo(garage_s3_service, tmp_path) -> None:
-    pytest.importorskip("cel_expr")
+    pytest.importorskip("cel_expr_python")
     run_smoke_cel_scenario(
         _write_fn, garage_s3_service, tmp_path,
         cel_expr="key % 3", cel_columns={"key": "int"}, boundaries=[1, 2],
@@ -84,7 +84,7 @@ def test_smoke_cel_key_modulo(garage_s3_service, tmp_path) -> None:
 @pytest.mark.ray
 @pytest.mark.cel
 def test_smoke_cel_shard_hash(garage_s3_service, tmp_path) -> None:
-    pytest.importorskip("cel_expr")
+    pytest.importorskip("cel_expr_python")
     run_smoke_cel_scenario(
         _write_fn, garage_s3_service, tmp_path,
         cel_expr="shard_hash(key) % 3u", cel_columns={"key": "int"},
@@ -96,7 +96,7 @@ def test_smoke_cel_shard_hash(garage_s3_service, tmp_path) -> None:
 @pytest.mark.ray
 @pytest.mark.cel
 def test_smoke_cel_key_identity(garage_s3_service, tmp_path) -> None:
-    pytest.importorskip("cel_expr")
+    pytest.importorskip("cel_expr_python")
     run_smoke_cel_scenario(
         _write_fn, garage_s3_service, tmp_path,
         cel_expr="uint(key)", cel_columns={"key": "int"},
@@ -108,7 +108,7 @@ def test_smoke_cel_key_identity(garage_s3_service, tmp_path) -> None:
 @pytest.mark.ray
 @pytest.mark.cel
 def test_smoke_cel_routing_context(garage_s3_service, tmp_path) -> None:
-    pytest.importorskip("cel_expr")
+    pytest.importorskip("cel_expr_python")
     run_smoke_cel_scenario(
         _write_fn, garage_s3_service, tmp_path,
         cel_expr="group", cel_columns={"group": "string"}, boundaries=["b"],

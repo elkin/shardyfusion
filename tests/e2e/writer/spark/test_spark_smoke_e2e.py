@@ -75,7 +75,7 @@ def test_smoke_hash_max_keys_per_shard(spark, garage_s3_service, tmp_path) -> No
 @pytest.mark.spark
 @pytest.mark.cel
 def test_smoke_cel_key_modulo(spark, garage_s3_service, tmp_path) -> None:
-    pytest.importorskip("cel_expr")
+    pytest.importorskip("cel_expr_python")
     run_smoke_cel_scenario(
         _make_write_fn(spark), garage_s3_service, tmp_path,
         cel_expr="key % 3", cel_columns={"key": "int"}, boundaries=[1, 2],
@@ -87,7 +87,7 @@ def test_smoke_cel_key_modulo(spark, garage_s3_service, tmp_path) -> None:
 @pytest.mark.spark
 @pytest.mark.cel
 def test_smoke_cel_shard_hash(spark, garage_s3_service, tmp_path) -> None:
-    pytest.importorskip("cel_expr")
+    pytest.importorskip("cel_expr_python")
     run_smoke_cel_scenario(
         _make_write_fn(spark), garage_s3_service, tmp_path,
         cel_expr="shard_hash(key) % 3u", cel_columns={"key": "int"},
@@ -99,7 +99,7 @@ def test_smoke_cel_shard_hash(spark, garage_s3_service, tmp_path) -> None:
 @pytest.mark.spark
 @pytest.mark.cel
 def test_smoke_cel_key_identity(spark, garage_s3_service, tmp_path) -> None:
-    pytest.importorskip("cel_expr")
+    pytest.importorskip("cel_expr_python")
     run_smoke_cel_scenario(
         _make_write_fn(spark), garage_s3_service, tmp_path,
         cel_expr="uint(key)", cel_columns={"key": "int"},
@@ -111,7 +111,7 @@ def test_smoke_cel_key_identity(spark, garage_s3_service, tmp_path) -> None:
 @pytest.mark.spark
 @pytest.mark.cel
 def test_smoke_cel_routing_context(spark, garage_s3_service, tmp_path) -> None:
-    pytest.importorskip("cel_expr")
+    pytest.importorskip("cel_expr_python")
     run_smoke_cel_scenario(
         _make_write_fn(spark), garage_s3_service, tmp_path,
         cel_expr="group", cel_columns={"group": "string"}, boundaries=["b"],
