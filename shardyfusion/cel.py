@@ -20,6 +20,7 @@ from bisect import bisect_right
 from typing import Any
 
 from .errors import ConfigValidationError
+from .sharding_types import ShardingSpec, ShardingStrategy
 
 # ---------------------------------------------------------------------------
 # Lazy imports — fail fast with a clear message
@@ -283,6 +284,88 @@ def route_cel(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+CelColumn = str | tuple[str, str]
+"""Column specification: bare name (defaults to ``"string"``) or ``(name, cel_type)`` tuple."""
+
+
+def cel_sharding_by_columns(
+    *columns: CelColumn,
+    num_shards: int,
+    separator: str = ":",
+) -> ShardingSpec:
+    """Build a :class:`ShardingSpec` for CEL-based partitioning by column values.
+
+    Each column is either a bare name (``str``, defaults to type ``"string"``)
+    or a ``(name, cel_type)`` tuple.  The generated CEL expression hashes the
+    column value(s) and takes modulo ``num_shards`` to produce a 0-based shard ID.
+
+    Single column example::
+
+        cel_sharding_by_columns("region", num_shards=10)
+        # → cel_expr="shard_hash(region) % 10u"
+        #   cel_columns={"region": "string"}
+
+    Multiple columns example::
+
+        cel_sharding_by_columns("region", ("tier", "int"), num_shards=8)
+        # → cel_expr='shard_hash(region + ":" + string(tier)) % 8u'
+        #   cel_columns={"region": "string", "tier": "int"}
+
+    Args:
+        *columns: One or more column specifications.
+        num_shards: Target number of shards (embedded as ``% <N>u``).
+        separator: Delimiter for multi-column concatenation (default ``":"``).
+
+    Returns:
+        A :class:`ShardingSpec` with strategy CEL.
+
+    Raises:
+        ConfigValidationError: If no columns given, invalid type, or ``num_shards < 1``.
+    """
+    if not columns:
+        raise ConfigValidationError("cel_sharding_by_columns requires at least one column")
+    if num_shards < 1:
+        raise ConfigValidationError(f"num_shards must be >= 1; got {num_shards}")
+
+    cel_columns: dict[str, str] = {}
+    for col in columns:
+        if isinstance(col, str):
+            name, cel_type = col, "string"
+        elif isinstance(col, tuple) and len(col) == 2:
+            name, cel_type = col
+        else:
+            raise ConfigValidationError(
+                f"Column must be a str or (name, cel_type) tuple; got {col!r}"
+            )
+        if cel_type not in CEL_TYPE_MAP:
+            raise ConfigValidationError(
+                f"Unsupported CEL column type: {cel_type!r} for column {name!r}. "
+                f"Allowed: {sorted(CEL_TYPE_MAP)}"
+            )
+        cel_columns[name] = cel_type
+
+    # Build the inner expression (what gets hashed).
+    if len(cel_columns) == 1:
+        col_name = next(iter(cel_columns))
+        inner = col_name
+    else:
+        parts: list[str] = []
+        for col_name, cel_type in cel_columns.items():
+            if cel_type == "string":
+                parts.append(col_name)
+            else:
+                parts.append(f"string({col_name})")
+        inner = f' + "{separator}" + '.join(parts)
+
+    cel_expr = f"shard_hash({inner}) % {num_shards}u"
+
+    return ShardingSpec(
+        strategy=ShardingStrategy.CEL,
+        cel_expr=cel_expr,
+        cel_columns=cel_columns,
+    )
 
 
 def pandas_rows_to_contexts(

@@ -8,10 +8,13 @@ import pytest
 cel_expr_python = pytest.importorskip("cel_expr_python")
 
 from shardyfusion.cel import (
+    cel_sharding_by_columns,
     compile_cel,
     evaluate_cel_arrow_batch,
     route_cel,
 )
+from shardyfusion.errors import ConfigValidationError
+from shardyfusion.sharding_types import ShardingStrategy
 
 pytestmark = pytest.mark.cel
 
@@ -97,3 +100,55 @@ class TestEvaluateCelArrowBatch:
         table = pa.table({"key": [10, 25, 30, 42]})
         results = evaluate_cel_arrow_batch(compiled, table)
         assert results == [0, 5, 0, 2]
+
+
+class TestCelShardingByColumns:
+    def test_single_string_column(self) -> None:
+        spec = cel_sharding_by_columns("region", num_shards=10)
+        assert spec.strategy == ShardingStrategy.CEL
+        assert spec.cel_expr == "shard_hash(region) % 10u"
+        assert spec.cel_columns == {"region": "string"}
+        assert spec.boundaries is None
+
+    def test_single_column_with_explicit_type(self) -> None:
+        spec = cel_sharding_by_columns(("user_id", "int"), num_shards=4)
+        assert spec.cel_expr == "shard_hash(user_id) % 4u"
+        assert spec.cel_columns == {"user_id": "int"}
+
+    def test_multiple_string_columns(self) -> None:
+        spec = cel_sharding_by_columns("region", "env", num_shards=8)
+        assert spec.cel_expr == 'shard_hash(region + ":" + env) % 8u'
+        assert spec.cel_columns == {"region": "string", "env": "string"}
+
+    def test_mixed_types(self) -> None:
+        spec = cel_sharding_by_columns("region", ("tier", "int"), num_shards=8)
+        assert spec.cel_expr == 'shard_hash(region + ":" + string(tier)) % 8u'
+        assert spec.cel_columns == {"region": "string", "tier": "int"}
+
+    def test_custom_separator(self) -> None:
+        spec = cel_sharding_by_columns("a", "b", num_shards=4, separator="/")
+        assert spec.cel_expr == 'shard_hash(a + "/" + b) % 4u'
+
+    def test_error_no_columns(self) -> None:
+        with pytest.raises(ConfigValidationError, match="at least one column"):
+            cel_sharding_by_columns(num_shards=4)
+
+    def test_error_invalid_type(self) -> None:
+        with pytest.raises(ConfigValidationError, match="Unsupported CEL column type"):
+            cel_sharding_by_columns(("key", "badtype"), num_shards=4)
+
+    def test_error_num_shards_zero(self) -> None:
+        with pytest.raises(ConfigValidationError, match="num_shards must be >= 1"):
+            cel_sharding_by_columns("key", num_shards=0)
+
+    def test_error_malformed_column_spec(self) -> None:
+        with pytest.raises(ConfigValidationError, match="must be a str or"):
+            cel_sharding_by_columns(("a", "b", "c"), num_shards=4)  # type: ignore[arg-type]
+
+    def test_roundtrip_compiles_and_routes(self) -> None:
+        """Generated spec compiles and produces valid shard IDs."""
+        spec = cel_sharding_by_columns("region", ("tier", "int"), num_shards=6)
+        compiled = compile_cel(spec.cel_expr, spec.cel_columns)  # type: ignore[arg-type]
+        shard_id = route_cel(compiled, {"region": "us-west", "tier": 3}, spec.boundaries)
+        assert isinstance(shard_id, int)
+        assert 0 <= shard_id < 6
