@@ -21,7 +21,7 @@ compose=("${engine}" compose -f "$compose_file")
 
 # Start stack in background, follow test logs, then inspect the actual
 # test container exit code (immune to podman cleanup errors).
-"${compose[@]}" up -d
+"${compose[@]}" up -d --force-recreate
 
 # Stream test output to the terminal.  "logs -f" exits once the
 # container stops, so we don't need a separate wait.
