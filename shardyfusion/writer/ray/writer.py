@@ -41,6 +41,7 @@ from shardyfusion.sharding_types import (
     DB_ID_COL,
     KeyEncoding,
     ShardingSpec,
+    ShardingStrategy,
 )
 from shardyfusion.slatedb_adapter import (
     DbAdapterFactory,
@@ -340,6 +341,13 @@ def _verify_routing_agreement(
     if not sampled:
         return
 
+    # For CEL with non-key columns, build routing_context from row data.
+    cel_columns = (
+        resolved_sharding.cel_columns
+        if resolved_sharding.strategy == ShardingStrategy.CEL
+        else None
+    )
+
     mismatches: list[tuple[object, int, int]] = []
     for row in sampled:
         key = row[key_col]
@@ -348,11 +356,19 @@ def _verify_routing_agreement(
             key = key.item()
         computed_db_id = int(row[DB_ID_COL])
 
+        routing_context: dict[str, object] | None = None
+        if cel_columns is not None:
+            routing_context = {
+                col: row[col].item() if hasattr(row[col], "item") else row[col]
+                for col in cel_columns
+            }
+
         expected_db_id = route_key(
             key,
             num_dbs=num_dbs,
             sharding=resolved_sharding,
             key_encoding=key_encoding,
+            routing_context=routing_context,
         )
 
         if expected_db_id != computed_db_id:
