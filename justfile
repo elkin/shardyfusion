@@ -5,6 +5,7 @@ image := env_var_or_default("CONTAINER_IMAGE", "shardyfusion-ci")
 workspace := "/workspace"
 uv_cache_volume := "shardyfusion-uv-cache"
 uv_venv_volume := "shardyfusion-uv-venv"
+tox_cache_volume := "shardyfusion-tox-cache"
 uv_project_env := "/opt/shardyfusion-venv"
 
 _default:
@@ -195,6 +196,7 @@ d-shell:
       -v "{{invocation_directory()}}:{{workspace}}" \
       -v "{{uv_cache_volume}}:/root/.cache/uv" \
       -v "{{uv_venv_volume}}:{{uv_project_env}}" \
+      -v "{{tox_cache_volume}}:{{workspace}}/.tox" \
       -w {{workspace}} \
       -e UV_PROJECT_ENVIRONMENT={{uv_project_env}} \
       {{image}} \
@@ -207,6 +209,7 @@ d +cmd:
       -v "{{invocation_directory()}}:{{workspace}}" \
       -v "{{uv_cache_volume}}:/root/.cache/uv" \
       -v "{{uv_venv_volume}}:{{uv_project_env}}" \
+      -v "{{tox_cache_volume}}:{{workspace}}/.tox" \
       -w {{workspace}} \
       -e UV_PROJECT_ENVIRONMENT={{uv_project_env}} \
       {{image}} \
@@ -245,6 +248,6 @@ d-ci n="4" p="2":
 
 # Remove container cache volumes
 [group('container')]
-[confirm("This will remove uv cache and venv volumes. Continue?")]
+[confirm("This will remove uv cache, venv, and tox volumes. Continue?")]
 d-clean:
-    {{engine}} volume rm -f {{uv_cache_volume}} {{uv_venv_volume}}
+    {{engine}} volume rm -f {{uv_cache_volume}} {{uv_venv_volume}} {{tox_cache_volume}}
