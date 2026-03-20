@@ -644,7 +644,10 @@ class SqliteRangeShardReader:
         )
 
     def get(self, key: bytes) -> bytes | None:
-        cursor = self._conn.cursor()
+        conn = self._conn
+        if conn is None:
+            raise SqliteAdapterError("Reader is closed")
+        cursor = conn.cursor()
         cursor.execute("SELECT v FROM kv WHERE k = ?", (key,))
         row = cursor.fetchone()
         return row[0] if row else None
@@ -657,7 +660,10 @@ class SqliteRangeShardReader:
     def query(
         self, sql: str, params: tuple[Any, ...] = ()
     ) -> list[tuple[Any, ...]]:
-        cursor = self._conn.cursor()
+        conn = self._conn
+        if conn is None:
+            raise SqliteAdapterError("Reader is closed")
+        cursor = conn.cursor()
         return list(cursor.execute(sql, params))
 
 
