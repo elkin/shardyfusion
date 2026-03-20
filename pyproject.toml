@@ -61,6 +61,9 @@ cli = [
 cel = [
   "cel-expr-python>=0.1; python_version<'3.14'",
 ]
+backend-sqlite = ["boto3>=1.28"]
+backend-sqlite-range = ["apsw>=3.44", "boto3>=1.28"]
+backend-sqlite-async = ["shardyfusion[backend-sqlite]", "aiobotocore>=2.12"]
 metrics-prometheus = ["prometheus-client>=0.20"]
 metrics-otel = ["opentelemetry-api>=1.28"]
 all = [
