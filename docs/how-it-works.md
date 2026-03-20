@@ -6,7 +6,7 @@
 
 Core behavior:
 
-- One logical snapshot write creates exactly `num_dbs` shard outputs.
+- One logical snapshot write produces up to `num_dbs` shards. The shard count can be set explicitly, computed from `max_keys_per_shard`, or determined by the CEL expression (`num_dbs` must be 0). Only shards that receive data are written to storage and appear in the manifest.
 - Writes are retry/speculation-safe with attempt-isolated paths.
 - A deterministic winner is selected per shard (`db_id`) on the driver.
 - Reader side loads CURRENT -> manifest -> opens per-shard readers -> routes lookups.
@@ -19,60 +19,136 @@ All four backends follow the same three-phase pipeline:
 2. **Write** — partition data by `db_id`, write each shard to S3
 3. **Publish** — build manifest, publish manifest, publish `_CURRENT` pointer
 
-The backends differ in how they distribute work, but share all core logic from
-`_writer_core.py` (routing, winner selection, manifest building, publishing).
+The backends differ in how they distribute work, but share all core logic for routing, winner selection, manifest building, and publishing.
+
+### Sharding Strategies
+
+shardyfusion supports two sharding strategies that control how rows are assigned to shard IDs at write time and how keys are routed to shards at read time.
+
+#### HASH (default)
+
+Uniform distribution using xxHash:
+
+```
+xxh3_64(canonical_bytes(key), seed=0) % num_dbs
+```
+
+- Supports int, str, and bytes keys uniformly via `canonical_bytes()` (int → 8-byte signed LE, str → UTF-8, bytes → passthrough)
+- All four writer backends use the same Python implementation — no JVM-side hashing
+- `num_dbs` can be set explicitly or computed from `max_keys_per_shard` (= `ceil(count / max_keys_per_shard)`)
+
+```python
+from shardyfusion import WriteConfig, ShardingSpec
+
+# Explicit shard count
+config = WriteConfig(num_dbs=8, s3_prefix="s3://bucket/prefix")
+
+# Auto-computed from target shard size
+config = WriteConfig(
+    num_dbs=0,
+    s3_prefix="s3://bucket/prefix",
+    sharding=ShardingSpec(max_keys_per_shard=50_000),
+)
+```
+
+#### CEL (Common Expression Language)
+
+User-provided CEL expression evaluated at write time (shard assignment) and read time (routing). Requires the `cel` extra (`pip install shardyfusion[cel]`). Does not run on Python 3.14.
+
+Key properties:
+
+- Expression must produce **consecutive 0-based integer shard IDs** (e.g., `shard_hash(key) % 100u` produces IDs 0–99)
+- Built-in `shard_hash()` function wraps xxh3_64 for use within CEL expressions
+- `num_dbs` is always **discovered from data** (`max(db_id) + 1`) — it must not be provided explicitly
+- Optional `boundaries` field enables `bisect_right`-based routing for range-like patterns
+- Supports multi-column routing via `cel_columns` — non-key columns are available in the expression
+
+**Two routing modes:**
+
+1. **Direct** — expression returns the shard ID directly:
+
+    ```python
+    # Simple modulo
+    ShardingSpec(cel_expr="key % 4", cel_columns={"key": "int"})
+
+    # Hash-based with controlled shard count
+    ShardingSpec(cel_expr="shard_hash(key) % 100u", cel_columns={"key": "int"})
+    ```
+
+2. **Boundary** — expression returns a routing key, `bisect_right(boundaries, key)` determines the shard:
+
+    ```python
+    # Range sharding: 3 shards (key < 10, 10 <= key < 20, key >= 20)
+    ShardingSpec(cel_expr="key", cel_columns={"key": "int"}, boundaries=[10, 20])
+
+    # Multi-column: route by region
+    ShardingSpec(
+        cel_expr="region",
+        cel_columns={"region": "string"},
+        boundaries=["eu", "us"],
+    )
+    ```
+
+#### Comparison
+
+| | HASH | CEL |
+|---|---|---|
+| Shard assignment | `xxh3_64(key) % num_dbs` | User-defined expression |
+| `num_dbs` | Explicit or auto-computed | Discovered from data |
+| Multi-column routing | No | Yes (via `routing_context`) |
+| Range-based sharding | No | Yes (via `boundaries`) |
+| Extra dependency | None | `cel` extra |
 
 ### Spark write pipeline
 
 Entrypoint: `shardyfusion.writer.spark.write_sharded`
 
 1. Optional Spark conf overrides are applied during the call.
-2. Optional input persistence (`persist`) is applied if `cache_input=True`.
-3. `add_db_id_column` computes shard assignment using `ShardingSpec` via `mapInArrow`:
-   - `hash`: `xxh3_64(canonical_bytes(key), seed=0) % num_dbs`
-   - `cel`: CEL expression evaluated per row (with `shard_hash()` available)
-4. `prepare_partitioned_rdd` enforces `num_dbs` writer partitions:
-   - data is converted to pair RDD `(db_id, row)`
-   - `partitionBy(num_dbs, ...)`
-   - then `mapPartitionsWithIndex` where partition index is shard `db_id`
+2. Optional input persistence is applied if `cache_input=True`.
+3. Shard IDs are assigned via Arrow-native processing on executors — hash or CEL (see [Sharding Strategies](#sharding-strategies)).
+4. Data is converted to a pair RDD partitioned so that partition index equals `db_id`, enforcing exactly `num_dbs` partitions.
 5. Each partition writes one attempt-isolated shard location on S3-compatible storage.
 6. Driver collects partition results (attempt metadata), picks deterministic winners per `db_id`.
 7. Manifest artifact is built, published, then CURRENT pointer is published.
 8. `BuildResult` is returned with winners, artifact, refs, and typed stats.
 
+See [Spark Writer Deep Dive](writers/spark.md) for data flow diagrams and Spark-specific behavior.
+
 ### Dask write pipeline
 
 Entrypoint: `shardyfusion.writer.dask.write_sharded`
 
-1. `add_db_id_column` computes shard assignment via Python `route_key()` per partition.
-2. Dask DataFrame is shuffled by `_slatedb_db_id`, then `map_partitions` writes each shard.
+1. Shard IDs are assigned per partition via the routing function — hash or CEL (see [Sharding Strategies](#sharding-strategies)).
+2. Dask DataFrame is shuffled by shard ID, then each partition writes its shards.
 3. Empty shards (partitions with no rows) are omitted from the manifest — no S3 I/O is performed.
 4. Optional rate limiting and routing verification.
-5. Same `_writer_core.py` functions for winner selection, manifest building, and publishing.
+5. Same core logic for winner selection, manifest building, and publishing.
+
+See [Dask Writer Deep Dive](writers/dask.md) for data flow diagrams and Dask-specific behavior.
 
 ### Ray write pipeline
 
 Entrypoint: `shardyfusion.writer.ray.write_sharded`
 
-1. `add_db_id_column` computes shard assignment via `map_batches` with Arrow batch format
-   (`batch_format="pyarrow"`, `zero_copy_batch=True`) to avoid Arrow→pandas→Arrow overhead.
-2. Dataset is repartitioned by `_slatedb_db_id` using hash shuffle
-   (`repartition(num_dbs, shuffle=True, keys=[DB_ID_COL])`).
-   `DataContext.shuffle_strategy` is saved/restored in a `try/finally` block.
-3. `map_batches` with `batch_format="pandas"` writes each shard.
-   Empty shards (partitions with no rows) are omitted from the manifest — no S3 I/O is performed.
+1. Shard IDs are assigned via Arrow-native batch processing — hash or CEL (see [Sharding Strategies](#sharding-strategies)). Zero-copy Arrow batches avoid the Arrow→pandas→Arrow overhead.
+2. Dataset is repartitioned by shard ID using hash shuffle. The shuffle strategy is saved/restored in a lock-guarded block to handle concurrent calls.
+3. Each partition writes its shards. Empty shards (no rows) are omitted from the manifest — no S3 I/O is performed.
 4. Optional rate limiting and routing verification.
-5. Same `_writer_core.py` functions for winner selection, manifest building, and publishing.
+5. Same core logic for winner selection, manifest building, and publishing.
+
+See [Ray Writer Deep Dive](writers/ray.md) for data flow diagrams and Ray-specific behavior.
 
 ### Python write pipeline
 
 Entrypoint: `shardyfusion.writer.python.write_sharded`
 
 1. Accepts `Iterable[T]` with `key_fn`/`value_fn` callables.
-2. Routes each item via `route_key()`, writes to the appropriate shard adapter.
+2. Routes each item to a shard ID — hash or CEL (see [Sharding Strategies](#sharding-strategies)).
 3. Supports single-process (all adapters open simultaneously) or multi-process
    (`parallel=True`, one worker per shard via `multiprocessing.spawn`).
-4. Same `_writer_core.py` functions for winner selection, manifest building, and publishing.
+4. Same core logic for winner selection, manifest building, and publishing.
+
+See [Python Writer Deep Dive](writers/python.md) for data flow diagrams and Python-specific behavior.
 
 ### Retry/speculation safety
 
@@ -237,8 +313,25 @@ Primary classes: `ShardedReader`, `ConcurrentShardedReader`, `AsyncShardedReader
 
 ### Routing semantics
 
-- `hash`: `xxh3_64(canonical_bytes(key), seed=0) % num_dbs` — all writers and the reader use the same Python implementation via `routing.xxh3_db_id()`. Supports int, str, and bytes keys.
-- `cel`: CEL expression evaluated with the same `compile_cel()` + `route_cel()` in both writer and reader. Must produce consecutive 0-based shard IDs. Optional `boundaries` for `bisect_right`-based routing.
+- **HASH**: `xxh3_64(canonical_bytes(key), seed=0) % num_dbs` — all writers and the reader use the same Python implementation. Supports int, str, and bytes keys.
+- **CEL**: The same CEL expression is evaluated at both write time and read time. Must produce consecutive 0-based shard IDs. Optional `boundaries` for `bisect_right`-based routing.
+
+For CEL routing that uses non-key columns, pass a `routing_context` at read time:
+
+```python
+# Write-time: rows have both "user_id" and "region" columns
+# CEL expr uses region for shard assignment
+
+# Read-time: provide the routing context explicitly
+value = reader.get(user_id, routing_context={"region": "eu"})
+
+values = reader.multi_get(
+    [user_id_1, user_id_2],
+    routing_context={"region": "eu"},
+)
+```
+
+See [Sharding Strategies](#sharding-strategies) for full configuration details.
 
 ### Refresh and concurrency model
 
@@ -253,7 +346,7 @@ Primary classes: `ShardedReader`, `ConcurrentShardedReader`, `AsyncShardedReader
 
 ```mermaid
 flowchart TD
-    A["Input data<br/>(DataFrame / Dataset / Iterable)"] --> B[add_db_id_column<br/>route_key per row]
+    A["Input data<br/>(DataFrame / Dataset / Iterable)"] --> B["Assign shard IDs<br/>(hash or CEL per row)"]
     B --> C["Partition by db_id<br/>(RDD / shuffle / repartition)"]
     C --> D["Write each shard<br/>shards/run_id/db/attempt"]
     D --> E[Collect attempt results]
@@ -273,10 +366,10 @@ flowchart TD
     B --> C{cache_input?}
     C -->|yes| D[DataFrameCacheContext.persist]
     C -->|no| E[Use input DataFrame]
-    D --> F[add_db_id_column]
+    D --> F["Assign shard IDs<br/>(hash or CEL)"]
     E --> F
-    F --> G["prepare_partitioned_rdd<br/>partitionBy num_dbs"]
-    G --> H[mapPartitionsWithIndex]
+    F --> G["Partition by shard ID<br/>(num_dbs partitions)"]
+    G --> H["Write one shard per task"]
     H --> I["Write shard attempt<br/>shards/run_id/db/attempt"]
     I --> J[Collect attempt results]
     J --> K[Deterministic winner per db_id]

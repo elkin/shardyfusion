@@ -26,8 +26,13 @@ nav:
   - Home: index.md
   - Getting Started: getting-started.md
   - Architecture: how-it-works.md
-  - Writer Side: writer.md
-  - Reader Side: reader.md
+  - Writers:
+    - Overview: writer.md
+    - Spark: writers/spark.md
+    - Dask: writers/dask.md
+    - Ray: writers/ray.md
+    - Python: writers/python.md
+  - Reader: reader.md
   - Manifest Stores: manifest-stores.md
   - CLI (shardy): cli.md
   - Observability: observability.md

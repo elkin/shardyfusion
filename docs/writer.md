@@ -11,6 +11,13 @@ Four writer backends are available, all producing the same manifest format:
 
 Each backend also has a `write_single_db` variant for single-shard writes (Spark, Dask, Ray).
 
+**Deep dives:** For data flow diagrams and framework-specific behavior, see the per-writer docs:
+
+- [Spark Writer](writers/spark.md) — PySpark DataFrame, `mapInArrow` sharding, speculative execution support
+- [Dask Writer](writers/dask.md) — Dask DataFrame, lazy execution model, pandas-based sharding
+- [Ray Writer](writers/ray.md) — Ray Data, Arrow-native sharding, lock-guarded shuffle
+- [Python Writer](writers/python.md) — Pure-Python iterator, single-process or parallel modes
+
 Key guarantees (all backends):
 
 - one-writer-per-db partitioning contract (`num_dbs` partitions)
