@@ -1,0 +1,4 @@
+shardyfusion[read-async,metrics-prometheus]
+fastapi
+uvicorn[standard]
+prometheus-client

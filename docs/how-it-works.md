@@ -11,6 +11,22 @@ Core behavior:
 - A deterministic winner is selected per shard (`db_id`) on the driver.
 - Reader side loads CURRENT -> manifest -> opens per-shard readers -> routes lookups.
 
+## Why Sharding Matters Beyond Data Partitioning
+
+Each shard is an independent SlateDB database on its own S3 prefix. This design has infrastructure-level benefits beyond simple data partitioning:
+
+**S3 throughput multiplication** — S3 rate limits are per-prefix (~3,500 PUT/sec and ~5,500 GET/sec per prefix). Each shard sits at its own prefix (`shards/run_id=.../db=XXXXX/`), so N shards effectively multiply aggregate S3 throughput by N. A 64-shard snapshot can sustain ~350K GET/sec instead of ~5.5K for a single database.
+
+**Tenant and team isolation** — With CEL sharding, the shard expression can route by a tenant column (e.g., `shard_hash(company_id) % 100u`). Each tenant's data lands in its own shard, giving you:
+
+- **Independent failure domains** — a corrupted shard only affects one tenant. Other shards continue serving normally.
+- **Selective loading** — a service that only serves one tenant can open just that shard via `reader_for_key()`, reducing memory footprint and startup time.
+- **Independent compaction** — SlateDB compaction happens per-shard, so one hot tenant's write activity doesn't block others.
+
+**Parallel I/O** — `multi_get()` fans out reads across shards in parallel (via thread pool or `asyncio.TaskGroup`). More shards = more parallelism for batch lookups, since each shard read is an independent I/O operation.
+
+**Atomic refresh** — When a new snapshot is published, `refresh()` opens new shard readers and atomically swaps state. The shard readers are independent — there's no global index or cross-shard coordination to rebuild.
+
 ## Write Side (Snapshot Build)
 
 All four backends follow the same three-phase pipeline:

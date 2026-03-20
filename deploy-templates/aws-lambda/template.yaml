@@ -1,0 +1,58 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: shardyfusion lookup Lambda — serves key-value lookups from a sharded snapshot on S3.
+
+Parameters:
+  S3Prefix:
+    Type: String
+    Description: "S3 prefix of the shardyfusion snapshot (e.g. s3://my-bucket/snapshots/features)"
+
+  S3BucketArn:
+    Type: String
+    Description: "ARN of the S3 bucket (e.g. arn:aws:s3:::my-bucket)"
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    Runtime: python3.11
+
+Resources:
+  LookupFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handler.lambda_handler
+      CodeUri: .
+      Environment:
+        Variables:
+          S3_PREFIX: !Ref S3Prefix
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:ListBucket
+              Resource:
+                - !Ref S3BucketArn
+                - !Sub "${S3BucketArn}/*"
+      Events:
+        GetKey:
+          Type: Api
+          Properties:
+            Path: /get
+            Method: post
+        MultiGet:
+          Type: Api
+          Properties:
+            Path: /multi-get
+            Method: post
+        Info:
+          Type: Api
+          Properties:
+            Path: /info
+            Method: get
+
+Outputs:
+  ApiUrl:
+    Description: "API Gateway endpoint URL"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"

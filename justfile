@@ -251,3 +251,22 @@ d-ci n="4" p="2":
 [confirm("This will remove uv cache, venv, and tox volumes. Continue?")]
 d-clean:
     {{engine}} volume rm -f {{uv_cache_volume}} {{uv_venv_volume}} {{tox_cache_volume}}
+
+# ── Playground ──────────────────────────────────────────────────────────────
+
+# Launch the interactive playground (MinIO + sample data + shardy REPL)
+[group('playground')]
+playground: _check-venv
+    #!/usr/bin/env bash
+    set -euo pipefail
+    engine="${CONTAINER_ENGINE:-{{engine}}}"
+    "$engine" compose -f playground/compose.yaml up -d --wait
+    uv run python playground/run.py
+
+# Stop and remove playground containers
+[group('playground')]
+playground-down:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    engine="${CONTAINER_ENGINE:-{{engine}}}"
+    "$engine" compose -f playground/compose.yaml down

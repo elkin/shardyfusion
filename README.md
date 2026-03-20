@@ -124,6 +124,8 @@ See the [Writer docs](https://elkin.github.io/shardyfusion/writer/) and [Reader 
 - **Routing parity** — All writers and readers share the same routing implementation — never reimplemented per framework. The default is `xxh3_64` hash-based, but sharding is configurable with expression-based strategies for custom partitioning schemes.
 - **Sparse manifests** — Only shards with data appear in the manifest. The router pads missing IDs with null readers that return `None` instantly.
 - **Atomic refresh** — `refresh()` loads the new manifest, opens new shard handles, and swaps state atomically. In-flight reads complete against the old state.
+- **S3 throughput multiplication** — Each shard sits on a separate S3 prefix. S3 rate limits are per-prefix, so N shards effectively multiply aggregate throughput by N.
+- **Independent failure domains** — A corrupted shard only affects the keys it contains. Other shards continue serving normally, and tenant-based sharding provides natural blast-radius isolation.
 
 ## CLI
 
