@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Playground script — writes sample data, reads it back, launches the shardy REPL.
 
+Uses a local Garage instance (S3-compatible) started by playground/compose.yaml.
+
 Run via: just playground
 """
 
@@ -9,6 +11,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import urllib.request
+from typing import Any
 
 # ── Colour helpers ───────────────────────────────────────────────────────────
 
@@ -39,11 +43,12 @@ def heading(t: str) -> str:
     return bold(cyan(t))
 
 
-# ── MinIO / S3 config ───────────────────────────────────────────────────────
+# ── Garage config ────────────────────────────────────────────────────────────
 
-ENDPOINT = os.environ.get("PLAYGROUND_ENDPOINT", "http://localhost:9000")
-ACCESS_KEY = "minioadmin"
-SECRET_KEY = "minioadmin"
+ENDPOINT = os.environ.get("PLAYGROUND_ENDPOINT", "http://localhost:3900")
+ADMIN_URL = os.environ.get("PLAYGROUND_ADMIN_URL", "http://localhost:3903")
+ADMIN_TOKEN = "playground-admin-token"
+REGION = "garage"
 BUCKET = "playground"
 S3_PREFIX = f"s3://{BUCKET}/demo"
 NUM_SHARDS = 4
@@ -52,25 +57,65 @@ NUM_RECORDS = 10_000
 PLANS = ["free", "starter", "pro", "enterprise"]
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Garage admin helpers ─────────────────────────────────────────────────────
 
 
-def _create_bucket() -> None:
-    """Create the playground bucket if it doesn't already exist."""
-    import boto3
-    from botocore.exceptions import ClientError
+def _admin_request(
+    path: str,
+    *,
+    method: str = "GET",
+    body: dict[str, Any] | None = None,
+) -> Any:
+    """Make an HTTP request to the Garage Admin API."""
+    url = f"{ADMIN_URL}/v2{path}"
+    data = json.dumps(body).encode("utf-8") if body else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Bearer {ADMIN_TOKEN}")
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        raw = resp.read()
+        return json.loads(raw) if raw else None
 
-    client = boto3.client(
-        "s3",
-        endpoint_url=ENDPOINT,
-        aws_access_key_id=ACCESS_KEY,
-        aws_secret_access_key=SECRET_KEY,
-        region_name="us-east-1",
+
+def _setup_garage() -> tuple[str, str]:
+    """Create an API key and bucket on the local Garage instance.
+
+    Returns (access_key_id, secret_access_key).
+    """
+    # Create API key
+    key_resp = _admin_request(
+        "/CreateKey",
+        method="POST",
+        body={"name": "playground-key"},
     )
-    try:
-        client.head_bucket(Bucket=BUCKET)
-    except ClientError:
-        client.create_bucket(Bucket=BUCKET)
+    access_key_id: str = key_resp["accessKeyId"]
+    secret_access_key: str = key_resp["secretAccessKey"]
+
+    # Create bucket
+    _admin_request(
+        "/CreateBucket",
+        method="POST",
+        body={"globalAlias": BUCKET},
+    )
+
+    # Get bucket ID and grant permissions
+    bucket_info = _admin_request(f"/GetBucketInfo?globalAlias={BUCKET}")
+    bucket_id = bucket_info["id"]
+
+    _admin_request(
+        "/AllowBucketKey",
+        method="POST",
+        body={
+            "bucketId": bucket_id,
+            "accessKeyId": access_key_id,
+            "permissions": {"read": True, "write": True, "owner": True},
+        },
+    )
+
+    return access_key_id, secret_access_key
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 
 def _generate_records() -> list[dict[str, object]]:
@@ -105,21 +150,21 @@ def main() -> None:
     from shardyfusion.type_defs import S3ConnectionOptions
     from shardyfusion.writer.python import write_sharded
 
+    # ── Step 1: Setup Garage (API key + bucket) ──────────────────────────
+    print()
+    print(heading("  1. Preparing Garage"))
+    access_key, secret_key = _setup_garage()
+    print(f"     {green('ok')}  bucket '{BUCKET}' ready at {ENDPOINT}")
+
     creds = StaticCredentialProvider(
-        access_key_id=ACCESS_KEY,
-        secret_access_key=SECRET_KEY,
+        access_key_id=access_key,
+        secret_access_key=secret_key,
     )
     conn = S3ConnectionOptions(
         endpoint_url=ENDPOINT,
-        region_name="us-east-1",
+        region_name=REGION,
         addressing_style="path",
     )
-
-    # ── Step 1: Create bucket ────────────────────────────────────────────
-    print()
-    print(heading("  1. Preparing MinIO"))
-    _create_bucket()
-    print(f"     {green('ok')}  bucket '{BUCKET}' ready at {ENDPOINT}")
 
     # ── Step 2: Write snapshot ───────────────────────────────────────────
     print()
@@ -206,10 +251,10 @@ def main() -> None:
         sys.executable, "-m", "shardyfusion.cli.app",
         "--s3-prefix", S3_PREFIX,
         "--s3-option", f"endpoint_url={ENDPOINT}",
-        "--s3-option", "region=us-east-1",
+        "--s3-option", f"region={REGION}",
         "--s3-option", "addressing_style=path",
-        "--s3-option", f"access_key_id={ACCESS_KEY}",
-        "--s3-option", f"secret_access_key={SECRET_KEY}",
+        "--s3-option", f"access_key_id={access_key}",
+        "--s3-option", f"secret_access_key={secret_key}",
     ]
     os.execvp(sys.executable, shardy_args)
 

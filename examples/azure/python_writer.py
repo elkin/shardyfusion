@@ -1,24 +1,17 @@
-"""Write a sharded snapshot using MinIO Gateway on Azure.
+"""Write a sharded snapshot via an S3-compatible gateway on Azure.
 
 Azure Blob Storage does not natively expose an S3-compatible API.
-The recommended approach is to deploy MinIO as an S3 gateway in front
-of Azure Blob Storage:
+Deploy an S3-compatible server (e.g. Garage, SeaweedFS) on Azure
+Container Instances or AKS:
 
-    # Deploy MinIO gateway (Docker example)
-    docker run -p 9000:9000 \
-      -e MINIO_ROOT_USER=<azure-storage-account> \
-      -e MINIO_ROOT_PASSWORD=<azure-storage-key> \
-      minio/minio gateway azure
-
-    # Or use Azure Container Instances / AKS for production.
+    # Example: Garage on Azure Container Instances
+    # See https://garagehq.deuxfleurs.fr/documentation/quick-start/
 
 Once the gateway is running, shardyfusion connects to it like any
 S3-compatible endpoint.
 
 Prerequisites:
     pip install shardyfusion[writer-python]
-
-See: https://min.io/docs/minio/linux/integrations/azure.html
 """
 
 from shardyfusion import WriteConfig
@@ -31,27 +24,27 @@ from shardyfusion.writer.python import write_sharded
 
 records = [{"id": i, "payload": f"value-{i}".encode()} for i in range(10_000)]
 
-# --- MinIO gateway connection --------------------------------------------
+# --- S3-compatible gateway connection ------------------------------------
 
-MINIO_ENDPOINT = "http://localhost:9000"  # or your Azure-hosted MinIO URL
-AZURE_STORAGE_ACCOUNT = "myaccount"
-AZURE_STORAGE_KEY = "..."
+GATEWAY_ENDPOINT = "http://localhost:3900"  # your Azure-hosted S3 gateway
+ACCESS_KEY = "..."  # gateway access key
+SECRET_KEY = "..."  # gateway secret key
 
 azure_creds = StaticCredentialProvider(
-    access_key_id=AZURE_STORAGE_ACCOUNT,
-    secret_access_key=AZURE_STORAGE_KEY,
+    access_key_id=ACCESS_KEY,
+    secret_access_key=SECRET_KEY,
 )
 azure_conn = S3ConnectionOptions(
-    endpoint_url=MINIO_ENDPOINT,
-    region_name="us-east-1",  # MinIO default
-    addressing_style="path",  # required for MinIO
+    endpoint_url=GATEWAY_ENDPOINT,
+    region_name="garage",
+    addressing_style="path",  # required for most S3-compatible servers
 )
 
 # --- Write ---------------------------------------------------------------
 
 config = WriteConfig(
     num_dbs=4,
-    s3_prefix="s3://my-container/snapshots/features",
+    s3_prefix="s3://my-bucket/snapshots/features",
     credential_provider=azure_creds,
     s3_connection_options=azure_conn,
     manifest=ManifestOptions(

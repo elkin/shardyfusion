@@ -24,13 +24,15 @@ AWS credentials are resolved via the default boto3 chain (env vars, instance pro
 
 ## Run locally
 
-Against the playground (start it first with `just playground`):
+Against the playground (start it first with `just playground`).
+The playground creates dynamic credentials — check the script output for the access key and secret key.
 
 ```bash
 S3_PREFIX=s3://playground/demo \
-  SLATEDB_S3_ENDPOINT_URL=http://localhost:9000 \
-  AWS_ACCESS_KEY_ID=minioadmin \
-  AWS_SECRET_ACCESS_KEY=minioadmin \
+  SLATEDB_S3_ENDPOINT_URL=http://localhost:3900 \
+  AWS_ACCESS_KEY_ID=<from playground output> \
+  AWS_SECRET_ACCESS_KEY=<from playground output> \
+  AWS_REGION=garage \
   uvicorn app:app --reload
 ```
 

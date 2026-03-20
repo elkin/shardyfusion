@@ -10,7 +10,7 @@ just playground
 
 This single command:
 
-1. Starts a local MinIO instance (S3-compatible object store)
+1. Starts a local [Garage](https://garagehq.deuxfleurs.fr/) instance (S3-compatible object store)
 2. Writes 10,000 sample user profiles across 4 shards
 3. Reads them back, shows shard distribution, and launches the `shardy` interactive REPL
 
@@ -21,21 +21,18 @@ This single command:
 
 ## Manual exploration
 
-After the script runs, the MinIO instance stays running. You can:
+After the script runs, the Garage instance stays running. You can:
 
 ```bash
-# Use the shardy CLI directly
+# Use the shardy CLI directly (credentials are created dynamically — check script output)
 uv run shardy \
   --s3-prefix s3://playground/demo \
-  --s3-option endpoint_url=http://localhost:9000 \
-  --s3-option region=us-east-1 \
+  --s3-option endpoint_url=http://localhost:3900 \
+  --s3-option region=garage \
   --s3-option addressing_style=path \
-  --s3-option access_key_id=minioadmin \
-  --s3-option secret_access_key=minioadmin \
+  --s3-option access_key_id=<ACCESS_KEY> \
+  --s3-option secret_access_key=<SECRET_KEY> \
   get 42
-
-# Browse the MinIO console
-open http://localhost:9001  # login: minioadmin / minioadmin
 ```
 
 ## Cleanup
@@ -44,4 +41,4 @@ open http://localhost:9001  # login: minioadmin / minioadmin
 just playground-down
 ```
 
-This stops the MinIO container and removes it. The `shardyfusion-playground-data` volume persists across runs — remove it manually with `docker volume rm shardyfusion-playground-data` if needed.
+This stops the Garage container and removes it.

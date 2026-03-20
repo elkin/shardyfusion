@@ -36,26 +36,18 @@ gsutil hmac create SERVICE_ACCOUNT_EMAIL
 
 ## Azure Blob Storage
 
-Azure Blob Storage does not natively expose an S3-compatible API. These examples use [MinIO](https://min.io) as an S3 gateway in front of Azure Blob Storage.
+Azure Blob Storage does not natively expose an S3-compatible API. These examples use an S3-compatible server (e.g. [Garage](https://garagehq.deuxfleurs.fr/), [SeaweedFS](https://github.com/seaweedfs/seaweedfs)) deployed alongside your Azure infrastructure.
 
-```bash
-# Deploy MinIO gateway (Docker)
-docker run -p 9000:9000 \
-  -e MINIO_ROOT_USER=<azure-storage-account> \
-  -e MINIO_ROOT_PASSWORD=<azure-storage-key> \
-  minio/minio gateway azure
-```
-
-For production, deploy MinIO on Azure Container Instances or AKS.
+See [Garage quick start](https://garagehq.deuxfleurs.fr/documentation/quick-start/) for deployment on Azure Container Instances or AKS.
 
 | Example | Description |
 |---|---|
-| [azure/python_writer.py](azure/python_writer.py) | Python writer via MinIO gateway |
-| [azure/spark_writer.py](azure/spark_writer.py) | Spark writer via MinIO gateway |
-| [azure/dask_writer.py](azure/dask_writer.py) | Dask writer via MinIO gateway |
-| [azure/ray_writer.py](azure/ray_writer.py) | Ray writer via MinIO gateway |
-| [azure/reader.py](azure/reader.py) | Single-threaded reader via MinIO gateway |
-| [azure/async_reader.py](azure/async_reader.py) | Async reader via MinIO gateway |
+| [azure/python_writer.py](azure/python_writer.py) | Python writer via S3 gateway |
+| [azure/spark_writer.py](azure/spark_writer.py) | Spark writer via S3 gateway |
+| [azure/dask_writer.py](azure/dask_writer.py) | Dask writer via S3 gateway |
+| [azure/ray_writer.py](azure/ray_writer.py) | Ray writer via S3 gateway |
+| [azure/reader.py](azure/reader.py) | Single-threaded reader via S3 gateway |
+| [azure/async_reader.py](azure/async_reader.py) | Async reader via S3 gateway |
 
 ## Installation
 
