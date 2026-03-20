@@ -149,6 +149,8 @@ class TestCelShardingByColumns:
         """Generated spec compiles and produces valid shard IDs."""
         spec = cel_sharding_by_columns("region", ("tier", "int"), num_shards=6)
         compiled = compile_cel(spec.cel_expr, spec.cel_columns)  # type: ignore[arg-type]
-        shard_id = route_cel(compiled, {"region": "us-west", "tier": 3}, spec.boundaries)
+        shard_id = route_cel(
+            compiled, {"region": "us-west", "tier": 3}, spec.boundaries
+        )
         assert isinstance(shard_id, int)
         assert 0 <= shard_id < 6

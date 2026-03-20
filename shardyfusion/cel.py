@@ -325,7 +325,9 @@ def cel_sharding_by_columns(
         ConfigValidationError: If no columns given, invalid type, or ``num_shards < 1``.
     """
     if not columns:
-        raise ConfigValidationError("cel_sharding_by_columns requires at least one column")
+        raise ConfigValidationError(
+            "cel_sharding_by_columns requires at least one column"
+        )
     if num_shards < 1:
         raise ConfigValidationError(f"num_shards must be >= 1; got {num_shards}")
 
