@@ -616,7 +616,7 @@ class SqliteRangeShardReader:
         page_cache_pages: int = 1024,
     ) -> None:
         try:
-            import apsw
+            import apsw  # pyright: ignore[reportMissingImports]
         except ImportError as exc:
             raise SqliteAdapterError(
                 "apsw is required for the range-read VFS reader. "
@@ -671,7 +671,7 @@ class _ApswS3RangeVFS:
     """APSW VFS that proxies reads to :class:`_S3ReadOnlyFile`."""
 
     def __init__(self, vfs_name: str, s3_file: _S3ReadOnlyFile) -> None:
-        import apsw
+        import apsw  # pyright: ignore[reportMissingImports]
 
         self._s3_file = s3_file
         self._vfs_name = vfs_name
