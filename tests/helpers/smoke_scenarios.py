@@ -18,6 +18,8 @@ import slatedb
 
 from shardyfusion.credentials import CredentialProvider
 from shardyfusion.manifest_store import S3ManifestStore
+from shardyfusion.serde import make_key_encoder
+from shardyfusion.sharding_types import KeyEncoding
 from shardyfusion.type_defs import S3ConnectionOptions
 from tests.helpers.s3_test_scenarios import (
     _default_connection_options,
@@ -26,7 +28,7 @@ from tests.helpers.s3_test_scenarios import (
 
 if TYPE_CHECKING:
     from shardyfusion.config import WriteConfig
-    from shardyfusion.manifest import BuildResult
+    from shardyfusion.manifest import BuildResult, RequiredShardMeta
     from tests.conftest import LocalS3Service
 
 # ---------------------------------------------------------------------------
@@ -144,6 +146,65 @@ def _verify_reads(
                         )
 
 
+def _verify_shard_placement(
+    result: BuildResult,
+    *,
+    route_fn: Callable[[int], int],
+    object_store_root: str,
+    local_root: str,
+    key_encoding: KeyEncoding = KeyEncoding.U64BE,
+) -> None:
+    """Verify each SMOKE_DATA key landed in the shard predicted by route_fn.
+
+    Opens raw SlateDBReader instances per shard (bypassing ShardedReader),
+    providing independent diagnostics for shard mis-routing and duplicate keys.
+    """
+
+    from shardyfusion.testing import (
+        map_s3_db_url_to_file_url,
+        writer_local_dir_for_db_url,
+    )
+
+    encode_key = make_key_encoder(key_encoding)
+
+    winner_by_db_id: dict[int, RequiredShardMeta] = {w.db_id: w for w in result.winners}
+    readers: dict[int, slatedb.SlateDBReader] = {}
+    try:
+        for db_id, winner in winner_by_db_id.items():
+            assert winner.db_url is not None, f"shard {db_id} has no db_url"
+            readers[db_id] = slatedb.SlateDBReader(
+                writer_local_dir_for_db_url(winner.db_url, local_root),
+                url=map_s3_db_url_to_file_url(winner.db_url, object_store_root),
+                checkpoint_id=winner.checkpoint_id,
+            )
+
+        for key, _value, _group in SMOKE_DATA:
+            expected_db_id = route_fn(key)
+            key_bytes = encode_key(key)
+
+            assert expected_db_id in readers, (
+                f"key {key} routes to shard {expected_db_id} "
+                f"but no winner exists for that shard"
+            )
+            got = readers[expected_db_id].get(key_bytes)
+            assert got is not None, (
+                f"key {key} not found in expected shard {expected_db_id}"
+            )
+
+            # Verify key is NOT in any other shard (catches duplicates).
+            for other_db_id, other_reader in readers.items():
+                if other_db_id == expected_db_id:
+                    continue
+                dup = other_reader.get(key_bytes)
+                assert dup is None, (
+                    f"key {key} duplicated: found in shard {other_db_id} "
+                    f"(expected only in shard {expected_db_id})"
+                )
+    finally:
+        for reader in readers.values():
+            reader.close()
+
+
 # ---------------------------------------------------------------------------
 # Scenario: HASH sharding (configurable num_dbs / max_keys_per_shard)
 # ---------------------------------------------------------------------------
@@ -203,6 +264,17 @@ def run_smoke_write_then_read_scenario(
         assert len(result.winners) == expected_num_shards
     total_rows = sum(w.row_count for w in result.winners)
     assert total_rows == len(SMOKE_DATA)
+
+    # ---- Shard placement (independent of reader) ----
+    from shardyfusion.routing import xxh3_db_id
+
+    effective_num_dbs = max(w.db_id for w in result.winners) + 1
+    _verify_shard_placement(
+        result,
+        route_fn=lambda key: xxh3_db_id(key, effective_num_dbs),
+        object_store_root=object_store_root,
+        local_root=local_root,
+    )
 
     # ---- Read ----
     reader_kwargs = _build_reader_kwargs(
@@ -288,6 +360,32 @@ def run_smoke_cel_scenario(
     assert len(result.winners) == expected_num_shards
     total_rows = sum(w.row_count for w in result.winners)
     assert total_rows == len(SMOKE_DATA)
+
+    # ---- Shard placement (independent of reader) ----
+    from shardyfusion.cel import compile_cel, route_cel
+
+    compiled = compile_cel(cel_expr, cel_columns)
+    # Widen boundaries type for route_cel (list invariance).
+    cel_boundaries: Any = boundaries
+    if routing_context_fn is not None:
+        key_to_ctx: dict[int, dict[str, Any]] = {}
+        for row in SMOKE_DATA:
+            ctx = routing_context_fn(row)
+            assert ctx is not None, f"routing_context_fn returned None for key {row[0]}"
+            key_to_ctx[row[0]] = ctx
+        _verify_shard_placement(
+            result,
+            route_fn=lambda key: route_cel(compiled, key_to_ctx[key], cel_boundaries),
+            object_store_root=object_store_root,
+            local_root=local_root,
+        )
+    else:
+        _verify_shard_placement(
+            result,
+            route_fn=lambda key: route_cel(compiled, {"key": key}, cel_boundaries),
+            object_store_root=object_store_root,
+            local_root=local_root,
+        )
 
     # ---- Read ----
     reader_kwargs = _build_reader_kwargs(
