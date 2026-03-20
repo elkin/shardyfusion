@@ -10,6 +10,7 @@ from .async_manifest_store import (
     AsyncManifestStore,
     AsyncS3ManifestStore,
 )
+from .cel import CelColumn, cel_sharding_by_columns
 from .config import (
     ManifestOptions,
     OutputOptions,
@@ -78,7 +79,6 @@ from .reader import (
 )
 from .routing import SnapshotRouter
 from .serde import ValueSpec
-from .cel import CelColumn, cel_sharding_by_columns
 from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
 from .slatedb_adapter import (
     DbAdapter,
