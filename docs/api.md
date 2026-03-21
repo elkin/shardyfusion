@@ -24,6 +24,10 @@
 
 ::: shardyfusion.sharding_types
 
+## CEL Helpers
+
+::: shardyfusion.cel
+
 ## Sharding (Spark)
 
 ::: shardyfusion.writer.spark.sharding
