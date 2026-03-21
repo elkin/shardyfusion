@@ -98,3 +98,40 @@ class TestSqliteReaderFactory:
         )
         assert reader.get(b"k") == b"v"
         reader.close()
+
+
+class TestSqliteShardReaderCacheIdentity:
+    def test_same_local_dir_redownloads_new_snapshot(
+        self, tmp_path: Path, s3_env
+    ) -> None:
+        db_url_v1 = f"{_PREFIX}/shards/run_id=test-v1/db=00000/attempt=00"
+        db_url_v2 = f"{_PREFIX}/shards/run_id=test-v2/db=00000/attempt=00"
+        shared_read_dir = tmp_path / "reader-cache" / "shard=00000"
+
+        with SqliteAdapter(
+            db_url=db_url_v1, local_dir=tmp_path / "write-v1"
+        ) as adapter:
+            adapter.write_batch([(b"k", b"old")])
+            checkpoint_v1 = adapter.checkpoint()
+
+        with SqliteAdapter(
+            db_url=db_url_v2, local_dir=tmp_path / "write-v2"
+        ) as adapter:
+            adapter.write_batch([(b"k", b"new")])
+            checkpoint_v2 = adapter.checkpoint()
+
+        reader_v1 = SqliteShardReader(
+            db_url=db_url_v1,
+            local_dir=shared_read_dir,
+            checkpoint_id=checkpoint_v1,
+        )
+        assert reader_v1.get(b"k") == b"old"
+        reader_v1.close()
+
+        reader_v2 = SqliteShardReader(
+            db_url=db_url_v2,
+            local_dir=shared_read_dir,
+            checkpoint_id=checkpoint_v2,
+        )
+        assert reader_v2.get(b"k") == b"new"
+        reader_v2.close()

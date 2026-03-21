@@ -28,6 +28,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Set up Python 3.13 for type-check envs
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
       - name: Set up Java
         uses: actions/setup-java@v5
         with:

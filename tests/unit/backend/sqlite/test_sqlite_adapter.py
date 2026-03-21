@@ -1,6 +1,7 @@
 """Unit tests for the SQLite backend adapter."""
 
 import sqlite3
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,6 +16,16 @@ from shardyfusion.sqlite_adapter import (
 
 # Mock put_bytes globally for all adapter tests (unit tests don't have S3).
 _MOCK_PUT = patch("shardyfusion.sqlite_adapter.put_bytes")
+
+
+def _sqlite_bytes(tmp_path: Path, rows: list[tuple[bytes, bytes]]) -> bytes:
+    db_path = tmp_path / f"temp-{uuid.uuid4().hex}.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE kv (k BLOB PRIMARY KEY, v BLOB NOT NULL) WITHOUT ROWID")
+    conn.executemany("INSERT INTO kv (k, v) VALUES (?, ?)", rows)
+    conn.commit()
+    conn.close()
+    return db_path.read_bytes()
 
 
 # ---------------------------------------------------------------------------
@@ -185,3 +196,60 @@ class TestSqliteShardReaderLocal:
         reader.close()
         with pytest.raises(SqliteAdapterError, match="already closed"):
             reader.get(b"key1")
+
+
+class TestSqliteShardReaderDownloadCache:
+    def test_redownloads_when_snapshot_identity_changes(self, tmp_path: Path) -> None:
+        local_dir = tmp_path / "reader-cache" / "shard=00000"
+        db_v1 = _sqlite_bytes(tmp_path, [(b"key", b"old")])
+        db_v2 = _sqlite_bytes(tmp_path, [(b"key", b"new")])
+
+        with patch(
+            "shardyfusion.sqlite_adapter.get_bytes",
+            side_effect=[db_v1, db_v2],
+        ) as mock_get_bytes:
+            reader_v1 = SqliteShardReader(
+                db_url="s3://bucket/run-1/shard=00000/attempt=00",
+                local_dir=local_dir,
+                checkpoint_id="ckpt-1",
+            )
+            assert reader_v1.get(b"key") == b"old"
+            reader_v1.close()
+
+            reader_v2 = SqliteShardReader(
+                db_url="s3://bucket/run-2/shard=00000/attempt=00",
+                local_dir=local_dir,
+                checkpoint_id="ckpt-2",
+            )
+            assert reader_v2.get(b"key") == b"new"
+            reader_v2.close()
+
+        assert mock_get_bytes.call_count == 2
+
+    def test_reuses_download_when_snapshot_identity_matches(
+        self, tmp_path: Path
+    ) -> None:
+        local_dir = tmp_path / "reader-cache" / "shard=00000"
+        db_v1 = _sqlite_bytes(tmp_path, [(b"key", b"stable")])
+
+        with patch(
+            "shardyfusion.sqlite_adapter.get_bytes",
+            return_value=db_v1,
+        ) as mock_get_bytes:
+            reader_v1 = SqliteShardReader(
+                db_url="s3://bucket/run-1/shard=00000/attempt=00",
+                local_dir=local_dir,
+                checkpoint_id="ckpt-1",
+            )
+            assert reader_v1.get(b"key") == b"stable"
+            reader_v1.close()
+
+            reader_v2 = SqliteShardReader(
+                db_url="s3://bucket/run-1/shard=00000/attempt=00",
+                local_dir=local_dir,
+                checkpoint_id="ckpt-1",
+            )
+            assert reader_v2.get(b"key") == b"stable"
+            reader_v2.close()
+
+        assert mock_get_bytes.call_count == 1

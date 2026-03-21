@@ -72,3 +72,29 @@ class TestS3ReadOnlyFile:
         # Re-read first page — cache miss
         f.read(0, 10)
         assert s3_client.get_object.call_count == 4
+
+    def test_page_cache_hit_refreshes_recency(self, s3_client: MagicMock) -> None:
+        body = MagicMock()
+        body.read.return_value = b"\x00" * 10
+        s3_client.get_object.return_value = {"Body": body}
+
+        with patch("shardyfusion.storage.create_s3_client", return_value=s3_client):
+            f = _S3ReadOnlyFile(bucket="b", key="k", page_cache_pages=2)
+
+        f.read(0, 10)
+        f.read(10, 10)
+        assert s3_client.get_object.call_count == 2
+
+        # Touch the first page so it becomes most recently used.
+        f.read(0, 10)
+        assert s3_client.get_object.call_count == 2
+
+        # A third unique page should evict the second page, not the first one.
+        f.read(20, 10)
+        assert s3_client.get_object.call_count == 3
+
+        f.read(0, 10)
+        assert s3_client.get_object.call_count == 3
+
+        f.read(10, 10)
+        assert s3_client.get_object.call_count == 4

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import sqlite3
 import types
@@ -33,6 +34,7 @@ from .storage import get_bytes, put_bytes
 _logger = get_logger(__name__)
 
 _DB_FILENAME = "shard.db"
+_DB_IDENTITY_FILENAME = "shard.identity.json"
 
 
 # ---------------------------------------------------------------------------
@@ -229,11 +231,14 @@ class SqliteShardReader:
         self._db_url = db_url
         local_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = local_dir / _DB_FILENAME
+        self._identity_path = local_dir / _DB_IDENTITY_FILENAME
+        self._checkpoint_id = checkpoint_id
 
-        if not self._db_path.exists():
+        if not self._is_cached_snapshot_current():
             s3_key = f"{db_url.rstrip('/')}/{_DB_FILENAME}"
             data = get_bytes(s3_key)
             self._db_path.write_bytes(data)
+            self._write_cached_snapshot_identity()
 
         conn = sqlite3.connect(
             f"file:{self._db_path}?mode=ro", uri=True, check_same_thread=False
@@ -242,6 +247,28 @@ class SqliteShardReader:
         conn.execute(f"PRAGMA mmap_size = {mmap_size}")
         conn.execute("PRAGMA cache_size = -8000")
         self._conn: sqlite3.Connection | None = conn
+
+    def _expected_snapshot_identity(self) -> dict[str, str | None]:
+        return {
+            "db_url": self._db_url,
+            "checkpoint_id": self._checkpoint_id,
+        }
+
+    def _is_cached_snapshot_current(self) -> bool:
+        if not self._db_path.exists() or not self._identity_path.exists():
+            return False
+
+        try:
+            cached_identity = json.loads(self._identity_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return False
+
+        return cached_identity == self._expected_snapshot_identity()
+
+    def _write_cached_snapshot_identity(self) -> None:
+        self._identity_path.write_text(
+            json.dumps(self._expected_snapshot_identity(), sort_keys=True)
+        )
 
     # -- ShardReader protocol --
 
@@ -353,6 +380,8 @@ class _S3ReadOnlyFile:
         cache_key = (offset, amount)
         cached = self._page_cache.get(cache_key)
         if cached is not None:
+            self._page_order.remove(cache_key)
+            self._page_order.append(cache_key)
             return cached
 
         end = min(offset + amount - 1, self._size - 1)
