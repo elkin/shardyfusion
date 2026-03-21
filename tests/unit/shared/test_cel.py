@@ -3,6 +3,8 @@
 These tests require the ``cel`` extra (cel-expr-python).
 """
 
+import json
+
 import pytest
 
 cel_expr_python = pytest.importorskip("cel_expr_python")
@@ -143,6 +145,48 @@ class TestCelShardingByColumns:
     def test_custom_separator(self) -> None:
         spec = cel_sharding_by_columns("a", "b", num_shards=4, separator="/")
         assert spec.cel_expr == 'shard_hash(a + "/" + b) % 4u'
+
+    @pytest.mark.parametrize(
+        ("column", "context", "expected_expr"),
+        [
+            (
+                "flag",
+                {"flag": True},
+                'shard_hash(string(flag)) % 4u',
+            ),
+            (
+                "score",
+                {"score": 1.5},
+                'shard_hash(string(score)) % 4u',
+            ),
+        ],
+    )
+    def test_single_bool_and_double_columns_are_coerced(
+        self,
+        column: str,
+        context: dict[str, bool | float],
+        expected_expr: str,
+    ) -> None:
+        from shardyfusion.cel import CelColumn, CelType
+
+        col_type = CelType.BOOL if column == "flag" else CelType.DOUBLE
+        spec = cel_sharding_by_columns(CelColumn(column, col_type), num_shards=4)
+
+        assert spec.cel_expr == expected_expr
+        compiled = compile_cel(spec.cel_expr, spec.cel_columns)  # type: ignore[arg-type]
+        shard_id = route_cel(compiled, context, spec.boundaries)
+        assert 0 <= shard_id < 4
+
+    @pytest.mark.parametrize("separator", ['"', "\\", "\n"])
+    def test_separator_is_escaped_in_generated_expression(
+        self, separator: str
+    ) -> None:
+        spec = cel_sharding_by_columns("a", "b", num_shards=4, separator=separator)
+
+        assert spec.cel_expr == f"shard_hash(a + {json.dumps(separator)} + b) % 4u"
+        compiled = compile_cel(spec.cel_expr, spec.cel_columns)  # type: ignore[arg-type]
+        shard_id = route_cel(compiled, {"a": "left", "b": "right"}, spec.boundaries)
+        assert 0 <= shard_id < 4
 
     def test_error_no_columns(self) -> None:
         with pytest.raises(ConfigValidationError, match="at least one column"):

@@ -16,6 +16,7 @@ Uses ``cel-expr-python`` (Google's C++ CEL wrapper) via:
 from __future__ import annotations
 
 import functools
+import json
 from bisect import bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -431,15 +432,23 @@ def cel_sharding_by_columns(
 
     # Build the inner expression (what gets hashed).
     if len(parsed) == 1:
-        inner = parsed[0].name
+        column = parsed[0]
+        # shard_hash() has direct overloads for int/uint/string/bytes only.
+        inner = (
+            column.name
+            if column.type
+            in (CelType.INT, CelType.UINT, CelType.STRING, CelType.BYTES)
+            else f"string({column.name})"
+        )
     else:
+        separator_literal = json.dumps(separator)
         parts: list[str] = []
         for c in parsed:
             if c.type == CelType.STRING:
                 parts.append(c.name)
             else:
                 parts.append(f"string({c.name})")
-        inner = f' + "{separator}" + '.join(parts)
+        inner = f" + {separator_literal} + ".join(parts)
 
     cel_expr = f"shard_hash({inner}) % {num_shards}u"
 
