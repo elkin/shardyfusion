@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import functools
 from bisect import bisect_right
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -312,6 +313,61 @@ class CelColumn:
     type: CelType = CelType.STRING
 
 
+def cel_sharding(
+    expr: str,
+    columns: dict[str, str | CelType],
+    *,
+    boundaries: Sequence[int | float | str | bytes] | None = None,
+) -> ShardingSpec:
+    """Build a :class:`ShardingSpec` for an arbitrary CEL expression.
+
+    This is the general-purpose companion to :func:`cel_sharding_by_columns`.
+    Use it when you want raw CEL control but do not want to construct
+    ``ShardingSpec(strategy=ShardingStrategy.CEL, ...)`` manually.
+
+    Direct routing example::
+
+        cel_sharding("key % 4", {"key": "int"})
+
+    Boundary routing example::
+
+        cel_sharding("region", {"region": "string"}, boundaries=["eu", "us"])
+
+    Args:
+        expr: CEL expression to evaluate for routing.
+        columns: Mapping of column name to CEL type string or :class:`CelType`.
+        boundaries: Optional sorted routing boundaries for ``bisect_right`` mode.
+
+    Returns:
+        A :class:`ShardingSpec` with strategy CEL.
+
+    Raises:
+        ConfigValidationError: If no columns are given or an unsupported CEL type
+            is declared.
+    """
+    if not columns:
+        raise ConfigValidationError("cel_sharding requires at least one column")
+
+    normalized_columns: dict[str, str] = {}
+    for name, type_value in columns.items():
+        normalized_type = (
+            type_value.value if isinstance(type_value, CelType) else type_value
+        )
+        if normalized_type not in CEL_TYPE_MAP:
+            raise ConfigValidationError(
+                f"Unsupported CEL column type: {normalized_type!r} for column {name!r}. "
+                f"Allowed: {sorted(CEL_TYPE_MAP)}"
+            )
+        normalized_columns[name] = normalized_type
+
+    return ShardingSpec(
+        strategy=ShardingStrategy.CEL,
+        boundaries=list(boundaries) if boundaries is not None else None,
+        cel_expr=expr,
+        cel_columns=normalized_columns,
+    )
+
+
 def cel_sharding_by_columns(
     *columns: str | CelColumn,
     num_shards: int,
@@ -387,11 +443,7 @@ def cel_sharding_by_columns(
 
     cel_expr = f"shard_hash({inner}) % {num_shards}u"
 
-    return ShardingSpec(
-        strategy=ShardingStrategy.CEL,
-        cel_expr=cel_expr,
-        cel_columns=cel_columns,
-    )
+    return cel_sharding(cel_expr, cel_columns)
 
 
 def pandas_rows_to_contexts(

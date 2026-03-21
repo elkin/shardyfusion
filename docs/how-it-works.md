@@ -68,26 +68,43 @@ Key properties:
 1. **Direct** — expression returns the shard ID directly:
 
     ```python
+    from shardyfusion import cel_sharding
+
     # Simple modulo
-    ShardingSpec(cel_expr="key % 4", cel_columns={"key": "int"})
+    cel_sharding("key % 4", {"key": "int"})
 
     # Hash-based with controlled shard count
-    ShardingSpec(cel_expr="shard_hash(key) % 100u", cel_columns={"key": "int"})
+    cel_sharding("shard_hash(key) % 100u", {"key": "int"})
     ```
 
 2. **Boundary** — expression returns a routing key, `bisect_right(boundaries, key)` determines the shard:
 
     ```python
+    from shardyfusion import cel_sharding
+
     # Range sharding: 3 shards (key < 10, 10 <= key < 20, key >= 20)
-    ShardingSpec(cel_expr="key", cel_columns={"key": "int"}, boundaries=[10, 20])
+    cel_sharding("key", {"key": "int"}, boundaries=[10, 20])
 
     # Multi-column: route by region
-    ShardingSpec(
-        cel_expr="region",
-        cel_columns={"region": "string"},
-        boundaries=["eu", "us"],
-    )
+    cel_sharding("region", {"region": "string"}, boundaries=["eu", "us"])
     ```
+
+#### CEL helpers
+
+For arbitrary CEL expressions, `cel_sharding` builds a `ShardingSpec` without
+needing to spell out `strategy=ShardingStrategy.CEL`:
+
+```python
+from shardyfusion import CelType, cel_sharding
+
+spec = cel_sharding("key % 8", {"key": "int"})
+
+spec = cel_sharding(
+    "region",
+    {"region": CelType.STRING},
+    boundaries=["eu", "us"],
+)
+```
 
 #### Column-partitioning helper
 

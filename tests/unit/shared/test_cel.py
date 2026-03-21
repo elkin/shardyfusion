@@ -8,6 +8,7 @@ import pytest
 cel_expr_python = pytest.importorskip("cel_expr_python")
 
 from shardyfusion.cel import (
+    cel_sharding,
     cel_sharding_by_columns,
     compile_cel,
     evaluate_cel_arrow_batch,
@@ -178,3 +179,35 @@ class TestCelShardingByColumns:
         )
         assert isinstance(shard_id, int)
         assert 0 <= shard_id < 6
+
+
+class TestCelSharding:
+    def test_direct_mode_helper(self) -> None:
+        spec = cel_sharding("key % 4", {"key": "int"})
+
+        assert spec.strategy == ShardingStrategy.CEL
+        assert spec.cel_expr == "key % 4"
+        assert spec.cel_columns == {"key": "int"}
+        assert spec.boundaries is None
+
+    def test_boundary_mode_helper_accepts_enum_types(self) -> None:
+        from shardyfusion.cel import CelType
+
+        spec = cel_sharding(
+            "region",
+            {"region": CelType.STRING},
+            boundaries=["eu", "us"],
+        )
+
+        assert spec.strategy == ShardingStrategy.CEL
+        assert spec.cel_expr == "region"
+        assert spec.cel_columns == {"region": "string"}
+        assert spec.boundaries == ["eu", "us"]
+
+    def test_error_no_columns(self) -> None:
+        with pytest.raises(ConfigValidationError, match="at least one column"):
+            cel_sharding("key % 4", {})
+
+    def test_error_invalid_column_type(self) -> None:
+        with pytest.raises(ConfigValidationError, match="Unsupported CEL column type"):
+            cel_sharding("key", {"key": "nope"})
