@@ -94,15 +94,20 @@ Key properties:
 For common hash-based column partitioning, `cel_sharding_by_columns` builds a `ShardingSpec` without writing raw CEL:
 
 ```python
-from shardyfusion import cel_sharding_by_columns
+from shardyfusion import CelColumn, CelType, cel_sharding_by_columns
 
-# Single column (defaults to "string" type)
+# Single column (defaults to CelType.STRING)
 spec = cel_sharding_by_columns("region", num_shards=10)
 # → cel_expr="shard_hash(region) % 10u"
 #   cel_columns={"region": "string"}
 
-# Multiple columns with explicit types
-spec = cel_sharding_by_columns("region", ("tier", "int"), num_shards=8)
+# Typed column
+spec = cel_sharding_by_columns(CelColumn("user_id", CelType.INT), num_shards=4)
+# → cel_expr="shard_hash(user_id) % 4u"
+#   cel_columns={"user_id": "int"}
+
+# Multiple columns with mixed types
+spec = cel_sharding_by_columns("region", CelColumn("tier", CelType.INT), num_shards=8)
 # → cel_expr='shard_hash(region + ":" + string(tier)) % 8u'
 #   cel_columns={"region": "string", "tier": "int"}
 
@@ -111,7 +116,7 @@ spec = cel_sharding_by_columns("a", "b", num_shards=4, separator="/")
 # → cel_expr='shard_hash(a + "/" + b) % 4u'
 ```
 
-Columns are either bare strings (type defaults to `"string"`) or `(name, cel_type)` tuples. Supported types match the CEL type map: `"string"`, `"int"`, `"uint"`, `"double"`, `"bool"`, `"bytes"`.
+Columns are either bare strings (type defaults to `CelType.STRING`) or `CelColumn` instances with an explicit `CelType`. Supported types: `STRING`, `INT`, `UINT`, `DOUBLE`, `BOOL`, `BYTES`.
 
 #### Comparison
 

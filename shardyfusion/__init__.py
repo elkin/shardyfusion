@@ -10,7 +10,7 @@ from .async_manifest_store import (
     AsyncManifestStore,
     AsyncS3ManifestStore,
 )
-from .cel import CelColumn, cel_sharding_by_columns
+from .cel import CelColumn, CelType, cel_sharding_by_columns
 from .config import (
     ManifestOptions,
     OutputOptions,
@@ -107,6 +107,7 @@ __all__ = [
     "BuildResult",
     "BuildStats",
     "CelColumn",
+    "CelType",
     "cel_sharding_by_columns",
     "ConcurrentShardedReader",
     "ConfigValidationError",

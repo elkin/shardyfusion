@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import functools
 from bisect import bisect_right
+from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 from .errors import ConfigValidationError
@@ -286,20 +288,41 @@ def route_cel(
 # ---------------------------------------------------------------------------
 
 
-CelColumn = str | tuple[str, str]
-"""Column specification: bare name (defaults to ``"string"``) or ``(name, cel_type)`` tuple."""
+class CelType(str, Enum):
+    """Supported CEL column types for :func:`cel_sharding_by_columns`."""
+
+    INT = "int"
+    STRING = "string"
+    BYTES = "bytes"
+    DOUBLE = "double"
+    BOOL = "bool"
+    UINT = "uint"
+
+
+@dataclass(frozen=True, slots=True)
+class CelColumn:
+    """Column specification for :func:`cel_sharding_by_columns`.
+
+    Args:
+        name: Column name as it appears in the DataFrame / record.
+        type: CEL type of the column (default :attr:`CelType.STRING`).
+    """
+
+    name: str
+    type: CelType = CelType.STRING
 
 
 def cel_sharding_by_columns(
-    *columns: CelColumn,
+    *columns: str | CelColumn,
     num_shards: int,
     separator: str = ":",
 ) -> ShardingSpec:
     """Build a :class:`ShardingSpec` for CEL-based partitioning by column values.
 
-    Each column is either a bare name (``str``, defaults to type ``"string"``)
-    or a ``(name, cel_type)`` tuple.  The generated CEL expression hashes the
-    column value(s) and takes modulo ``num_shards`` to produce a 0-based shard ID.
+    Each column is either a bare name (``str``, defaults to
+    :attr:`CelType.STRING`) or a :class:`CelColumn` instance.  The generated
+    CEL expression hashes the column value(s) and takes modulo ``num_shards``
+    to produce a 0-based shard ID.
 
     Single column example::
 
@@ -307,9 +330,15 @@ def cel_sharding_by_columns(
         # → cel_expr="shard_hash(region) % 10u"
         #   cel_columns={"region": "string"}
 
+    Typed column example::
+
+        cel_sharding_by_columns(CelColumn("tier", CelType.INT), num_shards=4)
+        # → cel_expr="shard_hash(tier) % 4u"
+        #   cel_columns={"tier": "int"}
+
     Multiple columns example::
 
-        cel_sharding_by_columns("region", ("tier", "int"), num_shards=8)
+        cel_sharding_by_columns("region", CelColumn("tier", CelType.INT), num_shards=8)
         # → cel_expr='shard_hash(region + ":" + string(tier)) % 8u'
         #   cel_columns={"region": "string", "tier": "int"}
 
@@ -322,7 +351,7 @@ def cel_sharding_by_columns(
         A :class:`ShardingSpec` with strategy CEL.
 
     Raises:
-        ConfigValidationError: If no columns given, invalid type, or ``num_shards < 1``.
+        ConfigValidationError: If no columns given or ``num_shards < 1``.
     """
     if not columns:
         raise ConfigValidationError(
@@ -331,34 +360,29 @@ def cel_sharding_by_columns(
     if num_shards < 1:
         raise ConfigValidationError(f"num_shards must be >= 1; got {num_shards}")
 
-    cel_columns: dict[str, str] = {}
+    parsed: list[CelColumn] = []
     for col in columns:
         if isinstance(col, str):
-            name, cel_type = col, "string"
-        elif isinstance(col, tuple) and len(col) == 2:
-            name, cel_type = col
+            parsed.append(CelColumn(col))
+        elif isinstance(col, CelColumn):
+            parsed.append(col)
         else:
             raise ConfigValidationError(
-                f"Column must be a str or (name, cel_type) tuple; got {col!r}"
+                f"Column must be a str or CelColumn; got {col!r}"
             )
-        if cel_type not in CEL_TYPE_MAP:
-            raise ConfigValidationError(
-                f"Unsupported CEL column type: {cel_type!r} for column {name!r}. "
-                f"Allowed: {sorted(CEL_TYPE_MAP)}"
-            )
-        cel_columns[name] = cel_type
+
+    cel_columns: dict[str, str] = {c.name: c.type.value for c in parsed}
 
     # Build the inner expression (what gets hashed).
-    if len(cel_columns) == 1:
-        col_name = next(iter(cel_columns))
-        inner = col_name
+    if len(parsed) == 1:
+        inner = parsed[0].name
     else:
         parts: list[str] = []
-        for col_name, cel_type in cel_columns.items():
-            if cel_type == "string":
-                parts.append(col_name)
+        for c in parsed:
+            if c.type == CelType.STRING:
+                parts.append(c.name)
             else:
-                parts.append(f"string({col_name})")
+                parts.append(f"string({c.name})")
         inner = f' + "{separator}" + '.join(parts)
 
     cel_expr = f"shard_hash({inner}) % {num_shards}u"
