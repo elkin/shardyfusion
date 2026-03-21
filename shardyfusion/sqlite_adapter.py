@@ -1,15 +1,11 @@
 """SQLite shard adapter — write locally, upload once, read from S3.
 
-Provides two adapter flavours:
+KV adapter (``SqliteFactory`` / ``SqliteAdapter``): satisfies the
+``DbAdapter`` / ``ShardReader`` protocols.  Stores data in a
+``WITHOUT ROWID`` ``kv(k BLOB PK, v BLOB)`` table.
 
-* **KV adapter** (``SqliteFactory`` / ``SqliteAdapter``): satisfies the
-  existing ``DbAdapter`` / ``ShardReader`` protocols.  Stores data in a
-  ``WITHOUT ROWID`` ``kv(k BLOB PK, v BLOB)`` table.
-* **Columnar adapter** (``SqliteColumnarFactory`` / ``SqliteColumnarAdapter``):
-  stores rows with their original column schema for SQL queries.
-
-Both share the same lifecycle: build a local SQLite DB → upload the single
-``.db`` file to S3 on close → reader downloads (or range-reads) the file.
+Lifecycle: build a local SQLite DB → upload the single ``.db`` file to
+S3 on close → reader downloads (or range-reads) the file.
 
 Reader tiers:
 
@@ -32,7 +28,6 @@ from typing import Any, Self
 
 from .errors import ShardyfusionError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
-from .sqlite_schema import SqliteSchema
 from .storage import get_bytes, put_bytes
 
 _logger = get_logger(__name__)
@@ -196,191 +191,6 @@ class SqliteAdapter:
 
 
 # ---------------------------------------------------------------------------
-# Writer: Columnar adapter (Layer 2)
-# ---------------------------------------------------------------------------
-
-
-@dataclass(slots=True)
-class SqliteColumnarFactory:
-    """Picklable factory that builds local SQLite shards with full column schemas.
-
-    The resulting shard is SQL-queryable: readers can execute arbitrary
-    ``SELECT`` statements against the shard's table.
-    """
-
-    schema: SqliteSchema
-    page_size: int = 4096
-    cache_size_pages: int = -2000
-
-    def __call__(self, *, db_url: str, local_dir: Path) -> SqliteColumnarAdapter:
-        return SqliteColumnarAdapter(
-            db_url=db_url,
-            local_dir=local_dir,
-            schema=self.schema,
-            page_size=self.page_size,
-            cache_size_pages=self.cache_size_pages,
-        )
-
-
-class SqliteColumnarAdapter:
-    """Columnar write-path adapter: stores rows with their original schema.
-
-    Satisfies the :class:`~shardyfusion.slatedb_adapter.DbAdapter` protocol
-    by interpreting ``write_batch`` pairs as ``(key_bytes, row_json_bytes)``
-    and expanding the JSON into proper columns.  For direct row insertion,
-    use :meth:`write_rows` instead.
-
-    The adapter also works as a standalone writer for the SQL query path
-    (see :mod:`shardyfusion.sqlite_query`).
-    """
-
-    def __init__(
-        self,
-        *,
-        db_url: str,
-        local_dir: Path,
-        schema: SqliteSchema,
-        page_size: int = 4096,
-        cache_size_pages: int = -2000,
-    ) -> None:
-        self._db_url = db_url
-        self._local_dir = local_dir
-        self._db_path = local_dir / _DB_FILENAME
-        self._schema = schema
-        self._uploaded = False
-        self._closed = False
-
-        local_dir.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(self._db_path), isolation_level=None)
-        conn.execute(f"PRAGMA page_size = {page_size}")
-        conn.execute("PRAGMA journal_mode = OFF")
-        conn.execute("PRAGMA synchronous = OFF")
-        conn.execute(f"PRAGMA cache_size = {cache_size_pages}")
-        conn.execute("PRAGMA locking_mode = EXCLUSIVE")
-        conn.execute("PRAGMA temp_store = MEMORY")
-        conn.execute(schema.create_table_sql())
-        for idx_sql in schema.create_index_sqls():
-            conn.execute(idx_sql)
-        conn.execute("BEGIN")
-        self._conn: sqlite3.Connection | None = conn
-        self._insert_sql = schema.insert_sql()
-        self._col_names = [c.name for c in schema.columns]
-
-        log_event(
-            "sqlite_columnar_adapter_opened",
-            level=logging.DEBUG,
-            logger=_logger,
-            db_url=db_url,
-            table=schema.table_name,
-        )
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: types.TracebackType | None,
-    ) -> None:
-        self.close()
-
-    # -- DbAdapter protocol (KV-compatible) --
-
-    def write_batch(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
-        """Accept KV pairs where *value* is JSON-encoded row dict.
-
-        This allows the columnar adapter to be used as a drop-in for
-        ``DbAdapter`` with ``ValueSpec.json_cols()``.
-        """
-        import json
-
-        if self._conn is None:
-            raise SqliteAdapterError("Adapter already closed")
-
-        rows: list[tuple[Any, ...]] = []
-        for _key_bytes, value_bytes in pairs:
-            row_dict = json.loads(value_bytes)
-            rows.append(tuple(row_dict.get(name) for name in self._col_names))
-        if rows:
-            self._conn.executemany(self._insert_sql, rows)
-
-    # -- Direct row insertion (for SQL-aware writers) --
-
-    def write_rows(self, rows: Iterable[tuple[Any, ...]]) -> None:
-        """Insert rows as positional tuples matching the schema column order."""
-        if self._conn is None:
-            raise SqliteAdapterError("Adapter already closed")
-        self._conn.executemany(self._insert_sql, rows)
-
-    def write_dicts(self, rows: Iterable[dict[str, Any]]) -> None:
-        """Insert rows as dicts — column names are matched by key."""
-        if self._conn is None:
-            raise SqliteAdapterError("Adapter already closed")
-        tuples = (tuple(d.get(name) for name in self._col_names) for d in rows)
-        self._conn.executemany(self._insert_sql, tuples)
-
-    def flush(self) -> None:
-        pass
-
-    def checkpoint(self) -> str | None:
-        if self._conn is None:
-            raise SqliteAdapterError("Adapter already closed")
-        self._conn.execute("COMMIT")
-        self._conn.execute("PRAGMA optimize")
-        self._conn.execute("ANALYZE")
-        self._conn.close()
-        self._conn = None
-
-        file_hash = hashlib.sha256(self._db_path.read_bytes()).hexdigest()
-        log_event(
-            "sqlite_columnar_adapter_checkpointed",
-            level=logging.DEBUG,
-            logger=_logger,
-            db_url=self._db_url,
-            checkpoint_id=file_hash,
-        )
-        return file_hash
-
-    def close(self) -> None:
-        if self._closed:
-            return
-        try:
-            if self._conn is not None:
-                try:
-                    self._conn.execute("COMMIT")
-                except sqlite3.OperationalError:
-                    pass
-                self._conn.close()
-                self._conn = None
-
-            if self._db_path.exists() and not self._uploaded:
-                s3_key = f"{self._db_url.rstrip('/')}/{_DB_FILENAME}"
-                put_bytes(
-                    s3_key,
-                    self._db_path.read_bytes(),
-                    content_type="application/x-sqlite3",
-                )
-                self._uploaded = True
-                log_event(
-                    "sqlite_columnar_adapter_uploaded",
-                    level=logging.DEBUG,
-                    logger=_logger,
-                    db_url=self._db_url,
-                )
-        except Exception as exc:
-            log_failure(
-                "sqlite_columnar_adapter_close_failed",
-                severity=FailureSeverity.ERROR,
-                logger=_logger,
-                error=exc,
-            )
-            raise
-        finally:
-            self._closed = True
-
-
-# ---------------------------------------------------------------------------
 # Reader: download-and-cache (Tier 1)
 # ---------------------------------------------------------------------------
 
@@ -406,7 +216,6 @@ class SqliteShardReader:
     """Download-and-cache reader: one S3 GET, then pure local lookups.
 
     Satisfies the :class:`~shardyfusion.type_defs.ShardReader` protocol.
-    Also exposes :meth:`query` for direct SQL access.
     """
 
     def __init__(
@@ -446,27 +255,6 @@ class SqliteShardReader:
         if self._conn is not None:
             self._conn.close()
             self._conn = None
-
-    # -- SQL query API --
-
-    def query(self, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
-        """Execute arbitrary read-only SQL against this shard."""
-        if self._conn is None:
-            raise SqliteAdapterError("Reader already closed")
-        return self._conn.execute(sql, params).fetchall()
-
-    def query_iter(
-        self, sql: str, params: tuple[Any, ...] = (), *, batch_size: int = 1000
-    ) -> Iterable[sqlite3.Row]:
-        """Execute SQL and yield rows in batches (memory-efficient)."""
-        if self._conn is None:
-            raise SqliteAdapterError("Reader already closed")
-        cursor = self._conn.execute(sql, params)
-        while True:
-            rows = cursor.fetchmany(batch_size)
-            if not rows:
-                break
-            yield from rows
 
 
 # ---------------------------------------------------------------------------
@@ -508,9 +296,6 @@ class AsyncSqliteShardReader:
 
     async def close(self) -> None:
         await asyncio.to_thread(self._inner.close)
-
-    async def query(self, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
-        return await asyncio.to_thread(self._inner.query, sql, params)
 
 
 # ---------------------------------------------------------------------------
@@ -649,13 +434,6 @@ class SqliteRangeShardReader:
             self._conn.close()
             self._conn = None  # type: ignore[assignment]
 
-    def query(self, sql: str, params: tuple[Any, ...] = ()) -> list[tuple[Any, ...]]:
-        conn = self._conn
-        if conn is None:
-            raise SqliteAdapterError("Reader is closed")
-        cursor = conn.cursor()
-        return list(cursor.execute(sql, params))
-
 
 class _ApswS3RangeVFS:
     """APSW VFS that proxies reads to :class:`_S3ReadOnlyFile`."""
@@ -742,8 +520,3 @@ class AsyncSqliteRangeShardReader:
 
     async def close(self) -> None:
         await asyncio.to_thread(self._inner.close)
-
-    async def query(
-        self, sql: str, params: tuple[Any, ...] = ()
-    ) -> list[tuple[Any, ...]]:
-        return await asyncio.to_thread(self._inner.query, sql, params)
