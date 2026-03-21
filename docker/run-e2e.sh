@@ -9,34 +9,51 @@
 set -uo pipefail
 
 engine="${1:-podman}"
+project_name="shardyfusion-e2e"
 
 # Resolve paths relative to the repo root (where the justfile lives).
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 compose_file="$repo_root/docker/compose-e2e.yaml"
 
-compose=("${engine}" compose -f "$compose_file")
+compose=("${engine}" compose -p "$project_name" -f "$compose_file")
 
 "${compose[@]}" build
 
-# Start stack in background, follow test logs, then inspect the actual
-# test container exit code (immune to podman cleanup errors).
-"${compose[@]}" up -d --force-recreate
+# Clean up any stale stack first. Under podman-compose this avoids noisy
+# "no such container" messages during force-recreate.
+"${compose[@]}" down >/dev/null 2>&1 || true
 
-# Stream test output to the terminal.  "logs -f" exits once the
-# container stops, so we don't need a separate wait.
-"${compose[@]}" logs -f tests 2>&1 || true
+# Start stack in background, then follow the actual test container logs
+# directly. This avoids podman-compose service-name lookups like
+# "docker_tests_1", which can be flaky when the compose file lives under
+# docker/.
+"${compose[@]}" up -d
 
-# Retrieve the real exit code of the tests container.  Query the engine
-# directly (compose ps output varies between implementations).
-cid=$("${engine}" ps -aq --filter "label=com.docker.compose.service=tests" | head -1)
+# Retrieve the real test container ID via compose labels. Compose ps
+# output varies between implementations, so query the engine directly.
+cid=""
+for _ in {1..20}; do
+    cid=$(
+        "${engine}" ps -aq \
+            --filter "label=com.docker.compose.project=${project_name}" \
+            --filter "label=com.docker.compose.service=tests" \
+            | head -1
+    )
+    if [ -n "$cid" ]; then
+        break
+    fi
+    sleep 1
+done
+
 if [ -n "$cid" ]; then
-    rc=$("${engine}" inspect --format '{{.State.ExitCode}}' "$cid" 2>/dev/null || echo 1)
+    "${engine}" logs -f "$cid" 2>&1 || true
+    rc=$("${engine}" wait "$cid" 2>/dev/null | tail -1 || echo 1)
 else
     rc=1
 fi
 
 # Suppress stderr: podman rootless emits "kill network process: permission
 # denied" during teardown which is harmless but noisy.
-"${compose[@]}" down 2>/dev/null || true
+"${compose[@]}" down >/dev/null 2>&1 || true
 exit "$rc"
