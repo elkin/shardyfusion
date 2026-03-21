@@ -152,12 +152,12 @@ class TestCelShardingByColumns:
             (
                 "flag",
                 {"flag": True},
-                'shard_hash(string(flag)) % 4u',
+                "shard_hash(string(flag)) % 4u",
             ),
             (
                 "score",
                 {"score": 1.5},
-                'shard_hash(string(score)) % 4u',
+                "shard_hash(string(score)) % 4u",
             ),
         ],
     )
@@ -178,9 +178,7 @@ class TestCelShardingByColumns:
         assert 0 <= shard_id < 4
 
     @pytest.mark.parametrize("separator", ['"', "\\", "\n"])
-    def test_separator_is_escaped_in_generated_expression(
-        self, separator: str
-    ) -> None:
+    def test_separator_is_escaped_in_generated_expression(self, separator: str) -> None:
         spec = cel_sharding_by_columns("a", "b", num_shards=4, separator=separator)
 
         assert spec.cel_expr == f"shard_hash(a + {json.dumps(separator)} + b) % 4u"

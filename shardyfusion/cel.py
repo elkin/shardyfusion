@@ -436,8 +436,7 @@ def cel_sharding_by_columns(
         # shard_hash() has direct overloads for int/uint/string/bytes only.
         inner = (
             column.name
-            if column.type
-            in (CelType.INT, CelType.UINT, CelType.STRING, CelType.BYTES)
+            if column.type in (CelType.INT, CelType.UINT, CelType.STRING, CelType.BYTES)
             else f"string({column.name})"
         )
     else:
