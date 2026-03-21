@@ -45,11 +45,13 @@ class TestSqliteKvRoundTrip:
 
         # Write
         with SqliteAdapter(db_url=db_url, local_dir=write_dir) as adapter:
-            adapter.write_batch([
-                (b"key1", b"val1"),
-                (b"key2", b"val2"),
-                (b"key3", b"val3"),
-            ])
+            adapter.write_batch(
+                [
+                    (b"key1", b"val1"),
+                    (b"key2", b"val2"),
+                    (b"key3", b"val3"),
+                ]
+            )
             checkpoint_id = adapter.checkpoint()
 
         assert checkpoint_id is not None
@@ -112,18 +114,22 @@ class TestSqliteColumnarRoundTrip:
         with SqliteColumnarAdapter(
             db_url=db_url, local_dir=write_dir, schema=schema
         ) as adapter:
-            adapter.write_rows([
-                (1, "Alice", "alice@example.com", 30),
-                (2, "Bob", "bob@example.com", 25),
-                (3, "Charlie", "charlie@example.com", 35),
-            ])
+            adapter.write_rows(
+                [
+                    (1, "Alice", "alice@example.com", 30),
+                    (2, "Bob", "bob@example.com", 25),
+                    (3, "Charlie", "charlie@example.com", 35),
+                ]
+            )
             adapter.checkpoint()
 
         # Read via SQL
         reader = SqliteShardReader(
             db_url=db_url, local_dir=read_dir, checkpoint_id=None
         )
-        rows = reader.query("SELECT name, age FROM users WHERE age > ? ORDER BY name", (28,))
+        rows = reader.query(
+            "SELECT name, age FROM users WHERE age > ? ORDER BY name", (28,)
+        )
         assert len(rows) == 2
         assert dict(rows[0])["name"] == "Alice"
         assert dict(rows[1])["name"] == "Charlie"

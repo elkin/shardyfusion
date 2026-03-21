@@ -52,7 +52,9 @@ class TestSqliteAdapter:
     def test_multiple_batches(self, tmp_path: Path) -> None:
         local_dir = tmp_path / "shard"
         with _MOCK_PUT:
-            with SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir) as adapter:
+            with SqliteAdapter(
+                db_url="s3://test/shard", local_dir=local_dir
+            ) as adapter:
                 adapter.write_batch([(b"a", b"1"), (b"b", b"2")])
                 adapter.write_batch([(b"c", b"3"), (b"d", b"4")])
                 adapter.checkpoint()
@@ -65,7 +67,9 @@ class TestSqliteAdapter:
     def test_empty_batch_is_noop(self, tmp_path: Path) -> None:
         local_dir = tmp_path / "shard"
         with _MOCK_PUT:
-            with SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir) as adapter:
+            with SqliteAdapter(
+                db_url="s3://test/shard", local_dir=local_dir
+            ) as adapter:
                 adapter.write_batch([])
                 cp = adapter.checkpoint()
                 assert cp is not None  # still produces a valid hash
@@ -84,7 +88,9 @@ class TestSqliteAdapter:
     def test_upsert_on_duplicate_key(self, tmp_path: Path) -> None:
         local_dir = tmp_path / "shard"
         with _MOCK_PUT:
-            with SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir) as adapter:
+            with SqliteAdapter(
+                db_url="s3://test/shard", local_dir=local_dir
+            ) as adapter:
                 adapter.write_batch([(b"key1", b"old")])
                 adapter.write_batch([(b"key1", b"new")])
                 adapter.checkpoint()
@@ -97,7 +103,9 @@ class TestSqliteAdapter:
     def test_flush_is_noop(self, tmp_path: Path) -> None:
         local_dir = tmp_path / "shard"
         with _MOCK_PUT:
-            with SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir) as adapter:
+            with SqliteAdapter(
+                db_url="s3://test/shard", local_dir=local_dir
+            ) as adapter:
                 adapter.flush()  # should not raise
 
     def test_factory_creates_adapter(self, tmp_path: Path) -> None:
@@ -156,10 +164,12 @@ class TestSqliteColumnarAdapter:
             with SqliteColumnarAdapter(
                 db_url="s3://test/shard", local_dir=local_dir, schema=schema
             ) as adapter:
-                adapter.write_dicts([
-                    {"user_id": 1, "name": "Alice", "age": 30},
-                    {"user_id": 2, "name": "Bob", "age": 25},
-                ])
+                adapter.write_dicts(
+                    [
+                        {"user_id": 1, "name": "Alice", "age": 30},
+                        {"user_id": 2, "name": "Bob", "age": 25},
+                    ]
+                )
                 adapter.checkpoint()
 
         conn = sqlite3.connect(str(local_dir / "shard.db"))
@@ -173,7 +183,9 @@ class TestSqliteColumnarAdapter:
             with SqliteColumnarAdapter(
                 db_url="s3://test/shard", local_dir=local_dir, schema=schema
             ) as adapter:
-                row_json = json.dumps({"user_id": 1, "name": "Alice", "age": 30}).encode()
+                row_json = json.dumps(
+                    {"user_id": 1, "name": "Alice", "age": 30}
+                ).encode()
                 adapter.write_batch([(b"\x00\x01", row_json)])
                 adapter.checkpoint()
 
@@ -233,7 +245,9 @@ class TestSqliteShardReaderLocal:
         db_path = shard_dir / "shard.db"
 
         conn = sqlite3.connect(str(db_path))
-        conn.execute("CREATE TABLE kv (k BLOB PRIMARY KEY, v BLOB NOT NULL) WITHOUT ROWID")
+        conn.execute(
+            "CREATE TABLE kv (k BLOB PRIMARY KEY, v BLOB NOT NULL) WITHOUT ROWID"
+        )
         conn.executemany(
             "INSERT INTO kv (k, v) VALUES (?, ?)",
             [(b"key1", b"val1"), (b"key2", b"val2")],

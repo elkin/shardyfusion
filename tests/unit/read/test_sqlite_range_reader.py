@@ -20,9 +20,7 @@ class TestS3ReadOnlyFile:
         return client
 
     def test_size_from_head(self, s3_client: MagicMock) -> None:
-        with patch(
-            "shardyfusion.storage.create_s3_client", return_value=s3_client
-        ):
+        with patch("shardyfusion.storage.create_s3_client", return_value=s3_client):
             f = _S3ReadOnlyFile(bucket="b", key="k")
         assert f.size == 8192
 
@@ -31,9 +29,7 @@ class TestS3ReadOnlyFile:
         body.read.return_value = b"\x00" * 4096
         s3_client.get_object.return_value = {"Body": body}
 
-        with patch(
-            "shardyfusion.storage.create_s3_client", return_value=s3_client
-        ):
+        with patch("shardyfusion.storage.create_s3_client", return_value=s3_client):
             f = _S3ReadOnlyFile(bucket="b", key="k")
 
         data = f.read(0, 4096)
@@ -47,9 +43,7 @@ class TestS3ReadOnlyFile:
         body.read.return_value = b"\x01" * 100
         s3_client.get_object.return_value = {"Body": body}
 
-        with patch(
-            "shardyfusion.storage.create_s3_client", return_value=s3_client
-        ):
+        with patch("shardyfusion.storage.create_s3_client", return_value=s3_client):
             f = _S3ReadOnlyFile(bucket="b", key="k", page_cache_pages=10)
 
         # First read — cache miss
@@ -66,9 +60,7 @@ class TestS3ReadOnlyFile:
         body.read.return_value = b"\x00" * 10
         s3_client.get_object.return_value = {"Body": body}
 
-        with patch(
-            "shardyfusion.storage.create_s3_client", return_value=s3_client
-        ):
+        with patch("shardyfusion.storage.create_s3_client", return_value=s3_client):
             f = _S3ReadOnlyFile(bucket="b", key="k", page_cache_pages=2)
 
         # Fill cache: 2 pages

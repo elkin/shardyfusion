@@ -107,9 +107,7 @@ class ShardedSqlReader:
         self._conns: dict[int, sqlite3.Connection] = {}
         non_empty = [s for s in self._router.shards if s.db_url is not None]
         with ThreadPoolExecutor(max_workers=max_download_workers) as pool:
-            futures = {
-                pool.submit(self._open_shard, s): s.db_id for s in non_empty
-            }
+            futures = {pool.submit(self._open_shard, s): s.db_id for s in non_empty}
             for f in as_completed(futures):
                 db_id = futures[f]
                 self._conns[db_id] = f.result()
@@ -251,7 +249,7 @@ class ShardedSqlReader:
         limit: int | None = None,
     ) -> Any:
         """Fan-out SQL to all shards and return a pandas DataFrame."""
-        import pandas as pd
+        import pandas as pd  # pyright: ignore[reportMissingImports]
 
         rows = self.query_all(sql, params, limit=limit)
         return pd.DataFrame(rows)
@@ -263,7 +261,7 @@ class ShardedSqlReader:
         params: tuple[Any, ...] = (),
     ) -> Any:
         """Execute SQL on one shard and return a pandas DataFrame."""
-        import pandas as pd
+        import pandas as pd  # pyright: ignore[reportMissingImports]
 
         rows = self.query_shard(shard_id, sql, params)
         return pd.DataFrame(rows)
@@ -426,16 +424,12 @@ class AsyncShardedSqlReader:
     async def query_shard(
         self, shard_id: int, sql: str, params: tuple[Any, ...] = ()
     ) -> list[Row]:
-        return await asyncio.to_thread(
-            self._inner.query_shard, shard_id, sql, params
-        )
+        return await asyncio.to_thread(self._inner.query_shard, shard_id, sql, params)
 
     async def query_key(
         self, key: int | str | bytes, sql: str, params: tuple[Any, ...] = ()
     ) -> list[Row]:
-        return await asyncio.to_thread(
-            self._inner.query_key, key, sql, params
-        )
+        return await asyncio.to_thread(self._inner.query_key, key, sql, params)
 
     async def query_all(
         self,

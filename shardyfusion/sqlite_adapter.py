@@ -317,9 +317,7 @@ class SqliteColumnarAdapter:
         """Insert rows as dicts — column names are matched by key."""
         if self._conn is None:
             raise SqliteAdapterError("Adapter already closed")
-        tuples = (
-            tuple(d.get(name) for name in self._col_names) for d in rows
-        )
+        tuples = (tuple(d.get(name) for name in self._col_names) for d in rows)
         self._conn.executemany(self._insert_sql, tuples)
 
     def flush(self) -> None:
@@ -441,9 +439,7 @@ class SqliteShardReader:
     def get(self, key: bytes) -> bytes | None:
         if self._conn is None:
             raise SqliteAdapterError("Reader already closed")
-        row = self._conn.execute(
-            "SELECT v FROM kv WHERE k = ?", (key,)
-        ).fetchone()
+        row = self._conn.execute("SELECT v FROM kv WHERE k = ?", (key,)).fetchone()
         return row[0] if row else None
 
     def close(self) -> None:
@@ -453,9 +449,7 @@ class SqliteShardReader:
 
     # -- SQL query API --
 
-    def query(
-        self, sql: str, params: tuple[Any, ...] = ()
-    ) -> list[sqlite3.Row]:
+    def query(self, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
         """Execute arbitrary read-only SQL against this shard."""
         if self._conn is None:
             raise SqliteAdapterError("Reader already closed")
@@ -515,9 +509,7 @@ class AsyncSqliteShardReader:
     async def close(self) -> None:
         await asyncio.to_thread(self._inner.close)
 
-    async def query(
-        self, sql: str, params: tuple[Any, ...] = ()
-    ) -> list[sqlite3.Row]:
+    async def query(self, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
         return await asyncio.to_thread(self._inner.query, sql, params)
 
 
@@ -657,9 +649,7 @@ class SqliteRangeShardReader:
             self._conn.close()
             self._conn = None  # type: ignore[assignment]
 
-    def query(
-        self, sql: str, params: tuple[Any, ...] = ()
-    ) -> list[tuple[Any, ...]]:
+    def query(self, sql: str, params: tuple[Any, ...] = ()) -> list[tuple[Any, ...]]:
         conn = self._conn
         if conn is None:
             raise SqliteAdapterError("Reader is closed")
@@ -679,9 +669,7 @@ class _ApswS3RangeVFS:
         # Override the VFS methods
         self._vfs.xOpen = self._x_open  # type: ignore[attr-defined]
 
-    def _x_open(
-        self, name: Any, flags: list[int]
-    ) -> _ApswS3VFSFile:
+    def _x_open(self, name: Any, flags: list[int]) -> _ApswS3VFSFile:
         return _ApswS3VFSFile(self._s3_file)
 
 
