@@ -255,3 +255,12 @@ class TestCelSharding:
     def test_error_invalid_column_type(self) -> None:
         with pytest.raises(ConfigValidationError, match="Unsupported CEL column type"):
             cel_sharding("key", {"key": "nope"})
+
+
+def test_cel_helpers_are_exported_from_package_root() -> None:
+    from shardyfusion import CelColumn, CelType, cel_sharding, cel_sharding_by_columns
+
+    assert CelColumn.__name__ == "CelColumn"
+    assert CelType.STRING.value == "string"
+    assert callable(cel_sharding)
+    assert callable(cel_sharding_by_columns)
