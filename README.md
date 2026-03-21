@@ -74,14 +74,16 @@ graph TB
 ## Quick start
 
 ```bash
-pip install shardyfusion[writer-python]  # write
-pip install shardyfusion[read]           # read
+pip install "shardyfusion[writer-python]"         # write, default SlateDB backend
+pip install "shardyfusion[writer-python-sqlite]"  # write, SQLite backend
+pip install "shardyfusion[read]"                  # read, default SlateDB backend
+pip install "shardyfusion[read-sqlite-range]"     # read, SQLite range-read backend
 ```
 
 <details>
 <summary>All available extras</summary>
 
-`read`, `read-async`, `writer-spark`, `writer-dask`, `writer-ray`, `writer-python`, `cli`, `cel`, `metrics-prometheus`, `metrics-otel`
+`read`, `read-async`, `read-sqlite`, `read-sqlite-range`, `sqlite-async`, `writer-spark`, `writer-spark-sqlite`, `writer-dask`, `writer-dask-sqlite`, `writer-ray`, `writer-ray-sqlite`, `writer-python`, `writer-python-sqlite`, `cli`, `cel`, `metrics-prometheus`, `metrics-otel`
 
 See [Getting Started](https://elkin.github.io/shardyfusion/getting-started/) for full installation and dev setup.
 </details>
@@ -130,7 +132,7 @@ See the [Writer docs](https://elkin.github.io/shardyfusion/writer/) and [Reader 
 The `shardy` CLI provides interactive and batch access to published snapshots:
 
 ```bash
-pip install shardyfusion[cli]
+pip install "shardyfusion[cli]"
 
 shardy --s3-prefix s3://bucket/prefix get 42
 shardy --s3-prefix s3://bucket/prefix info

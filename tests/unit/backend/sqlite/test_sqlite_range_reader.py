@@ -1,13 +1,10 @@
-"""Unit tests for the S3 range-read VFS reader components."""
+"""Unit tests for the SQLite range-read backend."""
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from shardyfusion.sqlite_adapter import _S3ReadOnlyFile
-
-# apsw may not be installed — skip gracefully
-apsw = pytest.importorskip("apsw")
 
 
 class TestS3ReadOnlyFile:

@@ -19,16 +19,17 @@
 
 ```bash
 # Quality
-tox -e lint,format,type
+tox -m quality
 
 # Package check
 tox -e package
 
 # Unit matrix (parallel tox envs)
-tox p -p 2
+tox -m unit
+tox p -m unit -p 2
 
 # Integration subsets
-tox -e py311-read-integration,py311-writer-spark4-integration
+tox -e py311-read-slatedb-integration,py311-sparkwriter-spark4-slatedb-integration
 
 # Full CI equivalent
 just ci

@@ -1,3 +1,5 @@
+"""Unit tests for the async reader capability bucket."""
+
 from __future__ import annotations
 
 import asyncio

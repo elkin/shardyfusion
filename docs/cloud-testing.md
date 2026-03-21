@@ -66,7 +66,8 @@ reader.close()
 
 ### Prerequisites
 
-- Python 3.11+ environment with `pip install shardyfusion[writer-dask]`
+- Python 3.11+ environment with `pip install "shardyfusion[writer-dask]"`
+- Use `pip install "shardyfusion[writer-dask-sqlite]"` to exercise the SQLite backend instead
 - S3 credentials configured via env vars or `~/.aws/credentials`
 
 ### Test

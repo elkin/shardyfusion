@@ -25,58 +25,68 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-read = [
-  "slatedb",
-  "boto3>=1.28",
-]
-read-async = [
-  "shardyfusion[read]",
-  "aiobotocore>=2.12",
-]
+# Backend extras — storage engine deps only
+slatedb = ["slatedb", "boto3>=1.28"]
+sqlite = ["boto3>=1.28"]
+sqlite-range = ["apsw>=3.44", "boto3>=1.28"]
+
+# Convenience extras — default backend is SlateDB
+read = ["shardyfusion[slatedb]"]
+read-async = ["shardyfusion[read]", "aiobotocore>=2.12"]
+read-sqlite = ["shardyfusion[sqlite]"]
+read-sqlite-range = ["shardyfusion[sqlite-range]"]
+sqlite-async = ["shardyfusion[read-sqlite]", "aiobotocore>=2.12"]
 writer-spark = [
+  "shardyfusion[slatedb]",
   "pyspark>=3.3",
   "pandas>=2.2",
   "pyarrow>=15.0",
-  "slatedb",
-  "boto3>=1.28",
 ]
-writer-python = [
-  "slatedb",
-  "boto3>=1.28",
+writer-spark-sqlite = [
+  "shardyfusion[sqlite]",
+  "pyspark>=3.3",
+  "pandas>=2.2",
+  "pyarrow>=15.0",
 ]
+writer-python = ["shardyfusion[slatedb]"]
+writer-python-sqlite = ["shardyfusion[sqlite]"]
 writer-dask = [
+  "shardyfusion[slatedb]",
   "dask[dataframe]>=2024.1; python_version<'3.14'",
-  "slatedb",
-  "boto3>=1.28",
+]
+writer-dask-sqlite = [
+  "shardyfusion[sqlite]",
+  "dask[dataframe]>=2024.1; python_version<'3.14'",
 ]
 writer-ray = [
+  "shardyfusion[slatedb]",
   "ray[data]>=2.20; python_version<'3.14'",
-  "slatedb",
-  "boto3>=1.28",
 ]
-cli = [
-  "shardyfusion[read]",
-  "click>=8.0",
+writer-ray-sqlite = [
+  "shardyfusion[sqlite]",
+  "ray[data]>=2.20; python_version<'3.14'",
 ]
-cel = [
-  "cel-expr-python>=0.1; python_version<'3.14'",
-]
-backend-sqlite = ["boto3>=1.28"]
-backend-sqlite-range = ["apsw>=3.44", "boto3>=1.28"]
-backend-sqlite-async = ["shardyfusion[backend-sqlite]", "aiobotocore>=2.12"]
+cli = ["shardyfusion[read]", "click>=8.0"]
+cel = ["cel-expr-python>=0.1; python_version<'3.14'"]
 metrics-prometheus = ["prometheus-client>=0.20"]
 metrics-otel = ["opentelemetry-api>=1.28"]
 all = [
-  "pyspark>=3.3",
-  "dask[dataframe]>=2024.1; python_version<'3.14'",
-  "ray[data]>=2.20; python_version<'3.14'",
-  "slatedb",
-  "boto3>=1.28",
-  "aiobotocore>=2.12",
-  "click>=8.0",
-  "cel-expr-python>=0.1; python_version<'3.14'",
-  "prometheus-client>=0.20",
-  "opentelemetry-api>=1.28",
+  "shardyfusion[read-async]",
+  "shardyfusion[read-sqlite]",
+  "shardyfusion[sqlite-range]",
+  "shardyfusion[sqlite-async]",
+  "shardyfusion[writer-spark]",
+  "shardyfusion[writer-spark-sqlite]",
+  "shardyfusion[writer-python]",
+  "shardyfusion[writer-python-sqlite]",
+  "shardyfusion[writer-dask]",
+  "shardyfusion[writer-dask-sqlite]",
+  "shardyfusion[writer-ray]",
+  "shardyfusion[writer-ray-sqlite]",
+  "shardyfusion[cli]",
+  "shardyfusion[cel]",
+  "shardyfusion[metrics-prometheus]",
+  "shardyfusion[metrics-otel]",
 ]
 test = [
   "pytest>=7.4",
@@ -111,6 +121,45 @@ Changelog = "https://github.com/slatedb/shardyfusion/blob/main/CHANGELOG.md"
 shardy = "shardyfusion.cli.app:main"
 
 [dependency-groups]
+backend-slatedb = [
+  "slatedb",
+  "boto3>=1.28",
+]
+backend-sqlite = [
+  "boto3>=1.28",
+]
+backend-sqlite-range = [
+  "apsw>=3.44",
+  "boto3>=1.28",
+]
+cap-read = []
+cap-read-async = [
+  "aiobotocore>=2.12",
+]
+cap-writer-python = []
+cap-writer-spark = [
+  "pyspark>=3.3",
+  "pandas>=2.2",
+  "pyarrow>=15.0",
+]
+cap-writer-dask = [
+  "dask[dataframe]>=2024.1; python_version<'3.14'",
+]
+cap-writer-ray = [
+  "ray[data]>=2.20; python_version<'3.14'",
+]
+cap-cli = [
+  "click>=8.0",
+]
+mod-cel = [
+  "cel-expr-python>=0.1; python_version<'3.14'",
+]
+mod-metrics-prometheus = [
+  "prometheus-client>=0.20",
+]
+mod-metrics-otel = [
+  "opentelemetry-api>=1.28",
+]
 dev = [
   "tox>=4.11",
 ]

@@ -5,7 +5,6 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    # Weekly build on Mondays at 06:00 UTC.
     - cron: "0 6 * * 1"
 
 concurrency:
@@ -13,10 +12,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  quality:
-    name: Quality Gates
+  prepare-matrix:
+    name: Prepare Matrices
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
+    outputs:
+      unit: ${{ steps.matrices.outputs.unit }}
+      integration: ${{ steps.matrices.outputs.integration }}
+      smoke: ${{ steps.matrices.outputs.smoke }}
 
     steps:
       - name: Checkout
@@ -33,36 +36,72 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "**/pyproject.toml"
 
-      - name: Sync dependencies
-        run: uv sync --all-extras --dev
+      - name: Install tox
+        run: uv sync --group dev
 
-      - name: Lint
-        run: uv run ruff check .
+      - name: Build tox matrices
+        id: matrices
+        run: |
+          uv run tox -m unit -l > /tmp/tox-unit.txt
+          uv run tox -m integration -l > /tmp/tox-integration.txt
+          uv run tox -m smoke -l > /tmp/tox-smoke.txt
+          python <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import re
+          from pathlib import Path
 
-      - name: Format check
-        run: uv run ruff format --check .
+          def build_matrix(path: str) -> str:
+              include = []
+              for env_name in Path(path).read_text().splitlines():
+                  env_name = env_name.strip()
+                  if not env_name:
+                      continue
+                  match = re.match(r"py(\d)(\d{2})-", env_name)
+                  if match is None:
+                      raise SystemExit(f"Cannot infer Python version from {env_name}")
+                  py_minor = int(match.group(2))
+                  python_version = f"{match.group(1)}.{py_minor}"
+                  include.append(
+                      {
+                          "name": env_name.replace("-", " / "),
+                          "tox-env": env_name,
+                          "python-version": python_version,
+                          "needs-java": "sparkwriter" in env_name or "-all-" in env_name,
+                      }
+                  )
+              return json.dumps({"include": include})
 
-      - name: Type check (pyright — all code)
-        run: uv run pyright shardyfusion
+          print(f"unit={build_matrix('/tmp/tox-unit.txt')}")
+          print(f"integration={build_matrix('/tmp/tox-integration.txt')}")
+          print(f"smoke={build_matrix('/tmp/tox-smoke.txt')}")
+          PY
 
-      - name: Type check (pyright — reader)
-        run: uv run pyright -p pyright/read.json
+  quality:
+    name: Quality Gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: prepare-matrix
 
-      - name: Type check (pyright — async reader)
-        run: uv run pyright -p pyright/read-async.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
 
-      - name: Type check (pyright — Python writer)
-        run: uv run pyright -p pyright/pythonwriter.json
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
 
-      - name: Type check (pyright — Dask writer)
-        run: uv run pyright -p pyright/daskwriter.json
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/pyproject.toml"
 
-      - name: Type check (pyright — Ray writer)
-        run: uv run pyright -p pyright/raywriter.json
+      - name: Install tox
+        run: uv sync --group dev
 
-      - name: Type check (pyright — Spark writer)
-        run: uv run pyright -p pyright/sparkwriter.json
-
+      - name: Run quality label
+        run: uv run tox -m quality
 
   package:
     name: Package Build
@@ -85,8 +124,11 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "**/pyproject.toml"
 
+      - name: Install tox
+        run: uv sync --group dev
+
       - name: Build distributions
-        run: uv build
+        run: uv run tox -e package
 
       - name: Wheel install smoke test
         run: |
@@ -94,116 +136,14 @@ jobs:
           python -c "import shardyfusion; print('import ok')"
 
   unit:
+    if: ${{ github.event_name != 'schedule' }}
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: quality
+    needs: [prepare-matrix, quality]
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: "read unit / py3.11"
-            python-version: "3.11"
-            tox-env: "py311-read-unit"
-          - name: "read unit / py3.12"
-            python-version: "3.12"
-            tox-env: "py312-read-unit"
-          - name: "read unit / py3.13"
-            python-version: "3.13"
-            tox-env: "py313-read-unit"
-          - name: "read unit / py3.14"
-            python-version: "3.14"
-            tox-env: "py314-read-unit"
-          - name: "all unit / py3.11 / spark35"
-            python-version: "3.11"
-            tox-env: "py311-all-spark35-unit"
-            needs-java: true
-          - name: "all unit / py3.11 / spark4"
-            python-version: "3.11"
-            tox-env: "py311-all-spark4-unit"
-            needs-java: true
-          - name: "all unit / py3.12 / spark4"
-            python-version: "3.12"
-            tox-env: "py312-all-spark4-unit"
-            needs-java: true
-          - name: "all unit / py3.13 / spark4"
-            python-version: "3.13"
-            tox-env: "py313-all-spark4-unit"
-            needs-java: true
-          - name: "sparkwriter unit / py3.11 / spark35"
-            python-version: "3.11"
-            tox-env: "py311-sparkwriter-spark35-unit"
-            needs-java: true
-          - name: "sparkwriter unit / py3.11 / spark4"
-            python-version: "3.11"
-            tox-env: "py311-sparkwriter-spark4-unit"
-            needs-java: true
-          - name: "sparkwriter unit / py3.12 / spark4"
-            python-version: "3.12"
-            tox-env: "py312-sparkwriter-spark4-unit"
-            needs-java: true
-          - name: "sparkwriter unit / py3.13 / spark4"
-            python-version: "3.13"
-            tox-env: "py313-sparkwriter-spark4-unit"
-            needs-java: true
-          - name: "sparkwriter unit / py3.14 / spark4"
-            python-version: "3.14"
-            tox-env: "py314-sparkwriter-spark4-unit"
-            needs-java: true
-          - name: "pythonwriter unit / py3.11"
-            python-version: "3.11"
-            tox-env: "py311-pythonwriter-unit"
-          - name: "pythonwriter unit / py3.12"
-            python-version: "3.12"
-            tox-env: "py312-pythonwriter-unit"
-          - name: "pythonwriter unit / py3.13"
-            python-version: "3.13"
-            tox-env: "py313-pythonwriter-unit"
-          - name: "pythonwriter unit / py3.14"
-            python-version: "3.14"
-            tox-env: "py314-pythonwriter-unit"
-          - name: "daskwriter unit / py3.11"
-            python-version: "3.11"
-            tox-env: "py311-daskwriter-unit"
-          - name: "daskwriter unit / py3.12"
-            python-version: "3.12"
-            tox-env: "py312-daskwriter-unit"
-          - name: "daskwriter unit / py3.13"
-            python-version: "3.13"
-            tox-env: "py313-daskwriter-unit"
-          - name: "raywriter unit / py3.11"
-            python-version: "3.11"
-            tox-env: "py311-raywriter-unit"
-          - name: "raywriter unit / py3.12"
-            python-version: "3.12"
-            tox-env: "py312-raywriter-unit"
-          - name: "raywriter unit / py3.13"
-            python-version: "3.13"
-            tox-env: "py313-raywriter-unit"
-          - name: "prometheus unit / py3.11"
-            python-version: "3.11"
-            tox-env: "py311-prometheus-unit"
-          - name: "prometheus unit / py3.12"
-            python-version: "3.12"
-            tox-env: "py312-prometheus-unit"
-          - name: "prometheus unit / py3.13"
-            python-version: "3.13"
-            tox-env: "py313-prometheus-unit"
-          - name: "prometheus unit / py3.14"
-            python-version: "3.14"
-            tox-env: "py314-prometheus-unit"
-          - name: "otel unit / py3.11"
-            python-version: "3.11"
-            tox-env: "py311-otel-unit"
-          - name: "otel unit / py3.12"
-            python-version: "3.12"
-            tox-env: "py312-otel-unit"
-          - name: "otel unit / py3.13"
-            python-version: "3.13"
-            tox-env: "py313-otel-unit"
-          - name: "otel unit / py3.14"
-            python-version: "3.14"
-            tox-env: "py314-otel-unit"
+      matrix: ${{ fromJson(needs.prepare-matrix.outputs.unit) }}
 
     steps:
       - name: Checkout
@@ -212,7 +152,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "${{ matrix.python-version }}"
+          python-version: ${{ matrix.python-version }}
 
       - name: Set up Java
         if: ${{ matrix.needs-java }}
@@ -226,6 +166,9 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "**/pyproject.toml"
+
+      - name: Install tox
+        run: uv sync --group dev
 
       - name: Run tests
         run: uv run tox -e ${{ matrix.tox-env }}
@@ -241,76 +184,14 @@ jobs:
           if-no-files-found: ignore
 
   integration:
+    if: ${{ github.event_name != 'schedule' }}
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: quality
+    needs: [prepare-matrix, quality]
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: "read integration / py3.11"
-            python-version: "3.11"
-            tox-env: "py311-read-integration"
-          - name: "read integration / py3.12"
-            python-version: "3.12"
-            tox-env: "py312-read-integration"
-          - name: "read integration / py3.13"
-            python-version: "3.13"
-            tox-env: "py313-read-integration"
-          - name: "read integration / py3.14"
-            python-version: "3.14"
-            tox-env: "py314-read-integration"
-          - name: "sparkwriter integration / py3.11 / spark35"
-            python-version: "3.11"
-            tox-env: "py311-sparkwriter-spark35-integration"
-            needs-java: true
-          - name: "sparkwriter integration / py3.11 / spark4"
-            python-version: "3.11"
-            tox-env: "py311-sparkwriter-spark4-integration"
-            needs-java: true
-          - name: "sparkwriter integration / py3.12 / spark4"
-            python-version: "3.12"
-            tox-env: "py312-sparkwriter-spark4-integration"
-            needs-java: true
-          - name: "sparkwriter integration / py3.13 / spark4"
-            python-version: "3.13"
-            tox-env: "py313-sparkwriter-spark4-integration"
-            needs-java: true
-          - name: "sparkwriter integration / py3.14 / spark4"
-            python-version: "3.14"
-            tox-env: "py314-sparkwriter-spark4-integration"
-            needs-java: true
-          - name: "pythonwriter integration / py3.11"
-            python-version: "3.11"
-            tox-env: "py311-pythonwriter-integration"
-          - name: "pythonwriter integration / py3.12"
-            python-version: "3.12"
-            tox-env: "py312-pythonwriter-integration"
-          - name: "pythonwriter integration / py3.13"
-            python-version: "3.13"
-            tox-env: "py313-pythonwriter-integration"
-          - name: "pythonwriter integration / py3.14"
-            python-version: "3.14"
-            tox-env: "py314-pythonwriter-integration"
-          - name: "daskwriter integration / py3.11"
-            python-version: "3.11"
-            tox-env: "py311-daskwriter-integration"
-          - name: "daskwriter integration / py3.12"
-            python-version: "3.12"
-            tox-env: "py312-daskwriter-integration"
-          - name: "daskwriter integration / py3.13"
-            python-version: "3.13"
-            tox-env: "py313-daskwriter-integration"
-          - name: "raywriter integration / py3.11"
-            python-version: "3.11"
-            tox-env: "py311-raywriter-integration"
-          - name: "raywriter integration / py3.12"
-            python-version: "3.12"
-            tox-env: "py312-raywriter-integration"
-          - name: "raywriter integration / py3.13"
-            python-version: "3.13"
-            tox-env: "py313-raywriter-integration"
+      matrix: ${{ fromJson(needs.prepare-matrix.outputs.integration) }}
 
     steps:
       - name: Checkout
@@ -319,7 +200,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "${{ matrix.python-version }}"
+          python-version: ${{ matrix.python-version }}
 
       - name: Set up Java
         if: ${{ matrix.needs-java }}
@@ -334,5 +215,46 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "**/pyproject.toml"
 
+      - name: Install tox
+        run: uv sync --group dev
+
       - name: Run tests
+        run: uv run tox -e ${{ matrix.tox-env }}
+
+  smoke:
+    if: ${{ github.event_name == 'schedule' }}
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: [prepare-matrix, quality]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare-matrix.outputs.smoke) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up Java
+        if: ${{ matrix.needs-java }}
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/pyproject.toml"
+
+      - name: Install tox
+        run: uv sync --group dev
+
+      - name: Run smoke env
         run: uv run tox -e ${{ matrix.tox-env }}

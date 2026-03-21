@@ -1,22 +1,16 @@
-"""Integration tests for SQLite adapter with S3 (moto)."""
+"""Integration tests for the SQLite backend adapter with S3 (moto)."""
 
-import json
 from pathlib import Path
 
+import boto3
 import pytest
+from moto import mock_aws
 
-moto = pytest.importorskip("moto")
-boto3 = pytest.importorskip("boto3")
-
-from moto import mock_aws  # noqa: E402
-
-from shardyfusion.sqlite_adapter import (  # noqa: E402
+from shardyfusion.sqlite_adapter import (
     SqliteAdapter,
-    SqliteColumnarAdapter,
     SqliteReaderFactory,
     SqliteShardReader,
 )
-from shardyfusion.sqlite_schema import ColumnDef, SqliteSchema  # noqa: E402
 
 _BUCKET = "test-bucket"
 _PREFIX = f"s3://{_BUCKET}/test-prefix"
@@ -84,81 +78,6 @@ class TestSqliteKvRoundTrip:
         )
         assert reader.get((0).to_bytes(8, "big")) == b"value_0"
         assert reader.get((9999).to_bytes(8, "big")) == b"value_9999"
-        reader.close()
-
-
-class TestSqliteColumnarRoundTrip:
-    """Write via SqliteColumnarAdapter → S3 → read via SQL."""
-
-    @pytest.fixture()
-    def schema(self) -> SqliteSchema:
-        return SqliteSchema(
-            table_name="users",
-            columns=(
-                ColumnDef(name="user_id", type="INTEGER", primary_key=True),
-                ColumnDef(name="name", type="TEXT"),
-                ColumnDef(name="email", type="TEXT"),
-                ColumnDef(name="age", type="INTEGER"),
-            ),
-            indexes=(("email",),),
-        )
-
-    def test_columnar_write_and_sql_read(
-        self, tmp_path: Path, s3_env, schema: SqliteSchema
-    ) -> None:
-        db_url = f"{_PREFIX}/shards/run_id=test/db=00000/attempt=00"
-        write_dir = tmp_path / "write"
-        read_dir = tmp_path / "read"
-
-        # Write rows
-        with SqliteColumnarAdapter(
-            db_url=db_url, local_dir=write_dir, schema=schema
-        ) as adapter:
-            adapter.write_rows(
-                [
-                    (1, "Alice", "alice@example.com", 30),
-                    (2, "Bob", "bob@example.com", 25),
-                    (3, "Charlie", "charlie@example.com", 35),
-                ]
-            )
-            adapter.checkpoint()
-
-        # Read via SQL
-        reader = SqliteShardReader(
-            db_url=db_url, local_dir=read_dir, checkpoint_id=None
-        )
-        rows = reader.query(
-            "SELECT name, age FROM users WHERE age > ? ORDER BY name", (28,)
-        )
-        assert len(rows) == 2
-        assert dict(rows[0])["name"] == "Alice"
-        assert dict(rows[1])["name"] == "Charlie"
-        reader.close()
-
-    def test_columnar_with_write_batch_json(
-        self, tmp_path: Path, s3_env, schema: SqliteSchema
-    ) -> None:
-        """Test DbAdapter-compatible path: JSON-encoded values."""
-        db_url = f"{_PREFIX}/shards/run_id=test/db=00000/attempt=00"
-        write_dir = tmp_path / "write"
-        read_dir = tmp_path / "read"
-
-        row = {"user_id": 42, "name": "Test", "email": "t@t.com", "age": 20}
-        key_bytes = (42).to_bytes(8, "big")
-        value_bytes = json.dumps(row).encode()
-
-        with SqliteColumnarAdapter(
-            db_url=db_url, local_dir=write_dir, schema=schema
-        ) as adapter:
-            adapter.write_batch([(key_bytes, value_bytes)])
-            adapter.checkpoint()
-
-        reader = SqliteShardReader(
-            db_url=db_url, local_dir=read_dir, checkpoint_id=None
-        )
-        rows = reader.query("SELECT * FROM users WHERE user_id = 42")
-        assert len(rows) == 1
-        assert dict(rows[0])["name"] == "Test"
         reader.close()
 
 

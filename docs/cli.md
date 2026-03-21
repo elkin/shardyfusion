@@ -6,7 +6,7 @@ lookups, batch script execution, and manifest inspection — no Python code need
 ## Installation
 
 ```bash
-# CLI only (click + pyyaml, no Spark/Java required)
+# CLI only (default SlateDB reader stack, no Spark/Java required)
 uv sync --extra cli
 
 # Or as part of the full dev environment

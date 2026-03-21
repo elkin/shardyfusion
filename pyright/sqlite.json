@@ -1,0 +1,13 @@
+{
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "standard",
+  "include": [
+    "../shardyfusion/sqlite_adapter.py"
+  ],
+  "extraPaths": [
+    ".."
+  ],
+  "reportArgumentType": "error",
+  "reportMissingParameterType": "error",
+  "reportUnsupportedDunderAll": false
+}

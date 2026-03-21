@@ -9,25 +9,43 @@
 ## Install
 
 ```bash
-# Reader-side only
+# Reader-side only (default SlateDB backend)
 uv sync --extra read
 
-# Async reader (includes aiobotocore for native async S3)
+# Async reader (default SlateDB backend, includes aiobotocore)
 uv sync --extra read-async
 
-# Spark writer (includes PySpark, requires Java)
+# Reader-side only with the SQLite backend
+uv sync --extra read-sqlite
+
+# Reader-side with SQLite range reads (APSW-backed)
+uv sync --extra read-sqlite-range
+
+# Spark writer (default SlateDB backend, requires Java)
 uv sync --extra writer-spark
 
-# Python writer (no Spark/Java required)
+# Spark writer with the SQLite backend
+uv sync --extra writer-spark-sqlite
+
+# Python writer (default SlateDB backend, no Spark/Java required)
 uv sync --extra writer-python
 
-# Dask writer (no Spark/Java required)
+# Python writer with the SQLite backend
+uv sync --extra writer-python-sqlite
+
+# Dask writer (default SlateDB backend, no Spark/Java required)
 uv sync --extra writer-dask
 
-# Ray writer (no Spark/Java required)
+# Dask writer with the SQLite backend
+uv sync --extra writer-dask-sqlite
+
+# Ray writer (default SlateDB backend, no Spark/Java required)
 uv sync --extra writer-ray
 
-# CLI only (no Spark/Java required)
+# Ray writer with the SQLite backend
+uv sync --extra writer-ray-sqlite
+
+# CLI only (default SlateDB reader stack, no Spark/Java required)
 uv sync --extra cli
 
 # Full install
@@ -54,8 +72,10 @@ uv run pyright shardyfusion
 uv run pytest -q
 
 # Tox matrix
-tox -e py311-all-spark35-unit
-tox -e py311-read-integration
+tox -e py311-pythonwriter-slatedb-unit
+tox -e py311-read-slatedb-integration
+tox -m unit
+tox -m integration
 ```
 
 ## Build Package
