@@ -30,6 +30,10 @@ class MetricEvent(str, Enum):
     READER_REFRESHED = "reader.refreshed"
     READER_CLOSED = "reader.closed"
 
+    # Writer retry
+    SHARD_WRITE_RETRIED = "write.shard.retried"
+    SHARD_WRITE_RETRY_EXHAUSTED = "write.shard.retry_exhausted"
+
     # Infrastructure
     S3_RETRY = "s3.retry"
     S3_RETRY_EXHAUSTED = "s3.retry_exhausted"

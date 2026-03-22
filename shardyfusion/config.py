@@ -14,7 +14,7 @@ from .manifest import ManifestBuilder
 from .metrics import MetricsCollector
 from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
 from .slatedb_adapter import DbAdapterFactory
-from .type_defs import JsonObject, S3ConnectionOptions
+from .type_defs import JsonObject, RetryConfig, S3ConnectionOptions
 
 if TYPE_CHECKING:
     from .manifest_store import ManifestStore
@@ -85,6 +85,8 @@ class WriteConfig:
     manifest: ManifestOptions = field(default_factory=ManifestOptions)
 
     metrics_collector: MetricsCollector | None = None
+
+    shard_retry: RetryConfig | None = None
 
     credential_provider: CredentialProvider | None = None
     s3_connection_options: S3ConnectionOptions | None = None

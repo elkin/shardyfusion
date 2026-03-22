@@ -34,6 +34,7 @@ from .errors import (
     S3TransientError,
     ShardAssignmentError,
     ShardCoverageError,
+    ShardWriteError,
     ShardyfusionError,
     SlateDbApiError,
 )
@@ -147,6 +148,7 @@ __all__ = [
     "S3TransientError",
     "ShardAssignmentError",
     "ShardCoverageError",
+    "ShardWriteError",
     "ShardDetail",
     "ShardReader",
     "ShardReaderFactory",

@@ -142,6 +142,17 @@ class ManifestStoreError(ShardyfusionError):
     retryable = True
 
 
+class ShardWriteError(ShardyfusionError):
+    """Shard write operation failed with a potentially transient error.
+
+    Raised when adapter operations (write_batch, flush, checkpoint) fail
+    with errors that may succeed on retry (e.g. underlying S3 I/O failures
+    in the storage adapter).
+    """
+
+    retryable = True
+
+
 class S3TransientError(ShardyfusionError):
     """Transient S3 error that may succeed on retry (throttle, 500, 503, timeout).
 

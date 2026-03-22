@@ -49,6 +49,7 @@ class ShardAttemptResult:
     max_key: KeyLike | None
     checkpoint_id: str | None
     writer_info: WriterInfo
+    all_attempt_urls: tuple[str, ...] = ()
 
 
 def empty_shard_result(
@@ -64,6 +65,7 @@ def empty_shard_result(
         max_key=None,
         checkpoint_id=None,
         writer_info=writer_info or WriterInfo(),
+        all_attempt_urls=(),
     )
 
 
@@ -185,7 +187,9 @@ def select_winners(
     for item in attempts:
         grouped[item.db_id].append(item)
         num_attempts += 1
-        if item.db_url is not None:
+        if item.all_attempt_urls:
+            all_attempt_urls.extend(item.all_attempt_urls)
+        elif item.db_url is not None:
             all_attempt_urls.append(item.db_url)
 
     # Validate: no extra db_ids beyond expected range.
