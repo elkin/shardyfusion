@@ -114,10 +114,10 @@ docs = [
 ]
 
 [project.urls]
-Documentation = "https://slatedb.github.io/shardyfusion/"
-Repository = "https://github.com/slatedb/shardyfusion"
-Issues = "https://github.com/slatedb/shardyfusion/issues"
-Changelog = "https://github.com/slatedb/shardyfusion/blob/main/CHANGELOG.md"
+Documentation = "https://elkin.github.io/shardyfusion/"
+Repository = "https://github.com/elkin/shardyfusion"
+Issues = "https://github.com/elkin/shardyfusion/issues"
+Changelog = "https://github.com/elkin/shardyfusion/blob/main/CHANGELOG.md"
 
 [project.scripts]
 shardy = "shardyfusion.cli.app:main"
