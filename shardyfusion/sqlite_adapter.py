@@ -21,6 +21,7 @@ import hashlib
 import json
 import logging
 import sqlite3
+import threading
 import types
 from collections import OrderedDict
 from collections.abc import Iterable
@@ -207,8 +208,9 @@ class SqliteAdapter:
                 error=exc,
             )
             raise
-        finally:
+        else:
             self._closed = True
+        finally:
             log_event(
                 "sqlite_adapter_closed",
                 level=logging.DEBUG,
@@ -421,6 +423,7 @@ class _S3ReadOnlyFile:
         self._key = key
         self._page_cache: OrderedDict[tuple[int, int], bytes] = OrderedDict()
         self._page_cache_pages = page_cache_pages
+        self._lock = threading.Lock()
 
         head = self._client.head_object(Bucket=bucket, Key=key)
         self._size: int = head["ContentLength"]
@@ -430,11 +433,15 @@ class _S3ReadOnlyFile:
         return self._size
 
     def read(self, offset: int, amount: int) -> bytes:
-        cache_key = (offset, amount)
-        cached = self._page_cache.get(cache_key)
-        if cached is not None:
-            self._page_cache.move_to_end(cache_key)
-            return cached
+        if offset >= self._size:
+            return b""
+
+        with self._lock:
+            cache_key = (offset, amount)
+            cached = self._page_cache.get(cache_key)
+            if cached is not None:
+                self._page_cache.move_to_end(cache_key)
+                return cached
 
         end = min(offset + amount - 1, self._size - 1)
         resp = self._client.get_object(
@@ -444,10 +451,11 @@ class _S3ReadOnlyFile:
         )
         data = resp["Body"].read()
 
-        # LRU eviction
-        if len(self._page_cache) >= self._page_cache_pages:
-            self._page_cache.popitem(last=False)
-        self._page_cache[cache_key] = data
+        with self._lock:
+            # LRU eviction
+            if len(self._page_cache) >= self._page_cache_pages:
+                self._page_cache.popitem(last=False)
+            self._page_cache[cache_key] = data
 
         return data
 
@@ -484,6 +492,9 @@ class SqliteRangeShardReader:
         from .storage import parse_s3_url
 
         self._db_url = db_url
+        self._conn: Any | None = None
+        self._vfs: Any | None = None
+
         s3_key_full = f"{db_url.rstrip('/')}/{_DB_FILENAME}"
         bucket, key = parse_s3_url(s3_key_full)
         creds = credential_provider.resolve() if credential_provider else None
@@ -516,10 +527,10 @@ class SqliteRangeShardReader:
         return row[0] if row else None
 
     def close(self) -> None:
-        if hasattr(self, "_conn") and self._conn is not None:
+        if self._conn is not None:
             self._conn.close()
-            self._conn = None  # type: ignore[assignment]
-        if hasattr(self, "_vfs") and self._vfs is not None:
+            self._conn = None
+        if self._vfs is not None:
             self._vfs.unregister()
             self._vfs = None
 
@@ -536,12 +547,20 @@ def _create_apsw_vfs(vfs_name: str, s3_file: _S3ReadOnlyFile) -> Any:
 
     class S3RangeVFS(apsw.VFS):
         def __init__(self) -> None:
+            # Empty string = no parent VFS; all I/O handled by our methods.
             super().__init__(vfs_name, "")
 
         def xOpen(
             self, name: str | apsw.URIFilename | None, flags: list[int]
         ) -> S3RangeVFSFile:
             return S3RangeVFSFile("", flags)
+
+        def xAccess(self, pathname: str, flags: int) -> bool:
+            # No journal/WAL/SHM files exist on S3.
+            return False
+
+        def xFullPathname(self, name: str) -> str:
+            return name
 
     class S3RangeVFSFile(apsw.VFSFile):
         def __init__(self, _name: str, _flags: list[int]) -> None:
