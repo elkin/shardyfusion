@@ -7,7 +7,9 @@ name = "shardyfusion"
 version = "0.1.0"
 description = "Sharded SlateDB snapshot writer/reader library (Spark, Dask, Python, CLI)"
 readme = "README.md"
-requires-python = ">=3.11"
+# Python 3.14 support stays disabled until every reader, writer, and backend
+# dependency used by the project is supported and exercised consistently.
+requires-python = ">=3.11,<3.14"
 authors = [{name = "shardyfusion contributors"}]
 license = "Apache-2.0"
 classifiers = [
@@ -52,22 +54,22 @@ writer-python = ["shardyfusion[slatedb]"]
 writer-python-sqlite = ["shardyfusion[sqlite]"]
 writer-dask = [
   "shardyfusion[slatedb]",
-  "dask[dataframe]>=2024.1; python_version<'3.14'",
+  "dask[dataframe]>=2024.1",
 ]
 writer-dask-sqlite = [
   "shardyfusion[sqlite]",
-  "dask[dataframe]>=2024.1; python_version<'3.14'",
+  "dask[dataframe]>=2024.1",
 ]
 writer-ray = [
   "shardyfusion[slatedb]",
-  "ray[data]>=2.20; python_version<'3.14'",
+  "ray[data]>=2.20",
 ]
 writer-ray-sqlite = [
   "shardyfusion[sqlite]",
-  "ray[data]>=2.20; python_version<'3.14'",
+  "ray[data]>=2.20",
 ]
 cli = ["shardyfusion[read]", "click>=8.0"]
-cel = ["cel-expr-python>=0.1; python_version<'3.14'"]
+cel = ["cel-expr-python>=0.1"]
 metrics-prometheus = ["prometheus-client>=0.20"]
 metrics-otel = ["opentelemetry-api>=1.28"]
 all = [
@@ -146,16 +148,16 @@ cap-writer-spark = [
   "pyarrow>=15.0",
 ]
 cap-writer-dask = [
-  "dask[dataframe]>=2024.1; python_version<'3.14'",
+  "dask[dataframe]>=2024.1",
 ]
 cap-writer-ray = [
-  "ray[data]>=2.20; python_version<'3.14'",
+  "ray[data]>=2.20",
 ]
 cap-cli = [
   "click>=8.0",
 ]
 mod-cel = [
-  "cel-expr-python>=0.1; python_version<'3.14'",
+  "cel-expr-python>=0.1",
 ]
 mod-metrics-prometheus = [
   "prometheus-client>=0.20",

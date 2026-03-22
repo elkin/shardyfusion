@@ -20,12 +20,6 @@
         "needs-java": false
       },
       {
-        "name": "py314 / core / unit",
-        "tox-env": "py314-core-unit",
-        "python-version": "3.14",
-        "needs-java": false
-      },
-      {
         "name": "py311 / read / slatedb / unit",
         "tox-env": "py311-read-slatedb-unit",
         "python-version": "3.11",
@@ -41,12 +35,6 @@
         "name": "py313 / read / slatedb / unit",
         "tox-env": "py313-read-slatedb-unit",
         "python-version": "3.13",
-        "needs-java": false
-      },
-      {
-        "name": "py314 / read / slatedb / unit",
-        "tox-env": "py314-read-slatedb-unit",
-        "python-version": "3.14",
         "needs-java": false
       },
       {
@@ -68,12 +56,6 @@
         "needs-java": false
       },
       {
-        "name": "py314 / readasync / slatedb / unit",
-        "tox-env": "py314-readasync-slatedb-unit",
-        "python-version": "3.14",
-        "needs-java": false
-      },
-      {
         "name": "py311 / pythonwriter / slatedb / unit",
         "tox-env": "py311-pythonwriter-slatedb-unit",
         "python-version": "3.11",
@@ -89,12 +71,6 @@
         "name": "py313 / pythonwriter / slatedb / unit",
         "tox-env": "py313-pythonwriter-slatedb-unit",
         "python-version": "3.13",
-        "needs-java": false
-      },
-      {
-        "name": "py314 / pythonwriter / slatedb / unit",
-        "tox-env": "py314-pythonwriter-slatedb-unit",
-        "python-version": "3.14",
         "needs-java": false
       },
       {
@@ -119,12 +95,6 @@
         "name": "py313 / sparkwriter / spark4 / slatedb / unit",
         "tox-env": "py313-sparkwriter-spark4-slatedb-unit",
         "python-version": "3.13",
-        "needs-java": true
-      },
-      {
-        "name": "py314 / sparkwriter / spark4 / slatedb / unit",
-        "tox-env": "py314-sparkwriter-spark4-slatedb-unit",
-        "python-version": "3.14",
         "needs-java": true
       },
       {
@@ -179,12 +149,6 @@
         "name": "py313 / backendsqlite / unit",
         "tox-env": "py313-backendsqlite-unit",
         "python-version": "3.13",
-        "needs-java": false
-      },
-      {
-        "name": "py314 / backendsqlite / unit",
-        "tox-env": "py314-backendsqlite-unit",
-        "python-version": "3.14",
         "needs-java": false
       },
       {
@@ -258,12 +222,6 @@
         "needs-java": false
       },
       {
-        "name": "py314 / read / slatedb / integration",
-        "tox-env": "py314-read-slatedb-integration",
-        "python-version": "3.14",
-        "needs-java": false
-      },
-      {
         "name": "py311 / pythonwriter / slatedb / integration",
         "tox-env": "py311-pythonwriter-slatedb-integration",
         "python-version": "3.11",
@@ -279,12 +237,6 @@
         "name": "py313 / pythonwriter / slatedb / integration",
         "tox-env": "py313-pythonwriter-slatedb-integration",
         "python-version": "3.13",
-        "needs-java": false
-      },
-      {
-        "name": "py314 / pythonwriter / slatedb / integration",
-        "tox-env": "py314-pythonwriter-slatedb-integration",
-        "python-version": "3.14",
         "needs-java": false
       },
       {
@@ -309,12 +261,6 @@
         "name": "py313 / sparkwriter / spark4 / slatedb / integration",
         "tox-env": "py313-sparkwriter-spark4-slatedb-integration",
         "python-version": "3.13",
-        "needs-java": true
-      },
-      {
-        "name": "py314 / sparkwriter / spark4 / slatedb / integration",
-        "tox-env": "py314-sparkwriter-spark4-slatedb-integration",
-        "python-version": "3.14",
         "needs-java": true
       },
       {
@@ -369,12 +315,6 @@
         "name": "py313 / backendsqlite / integration",
         "tox-env": "py313-backendsqlite-integration",
         "python-version": "3.13",
-        "needs-java": false
-      },
-      {
-        "name": "py314 / backendsqlite / integration",
-        "tox-env": "py314-backendsqlite-integration",
-        "python-version": "3.14",
         "needs-java": false
       }
     ]
