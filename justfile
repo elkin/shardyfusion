@@ -127,7 +127,6 @@ clean:
 
 # Remove caches, .venv, and .tox (full reset)
 [group('setup')]
-[confirm("This will remove .venv and .tox (can be 50+ GB). Continue?")]
 clean-all: clean
     rm -rf .venv .tox
 
@@ -253,6 +252,5 @@ d-ci n="4" p="2":
 
 # Remove container cache volumes
 [group('container')]
-[confirm("This will remove uv cache, venv, and tox volumes. Continue?")]
 d-clean:
     {{engine}} volume rm -f {{uv_cache_volume}} {{uv_venv_volume}} {{tox_cache_volume}}
