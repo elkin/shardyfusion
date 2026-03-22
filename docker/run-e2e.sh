@@ -50,6 +50,7 @@ if [ -n "$cid" ]; then
     "${engine}" logs -f "$cid" 2>&1 || true
     rc=$("${engine}" wait "$cid" 2>/dev/null | tail -1 || echo 1)
 else
+    echo "ERROR: test container did not start within 20s" >&2
     rc=1
 fi
 

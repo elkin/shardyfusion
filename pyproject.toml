@@ -132,6 +132,9 @@ backend-sqlite-range = [
   "apsw>=3.44",
   "boto3>=1.28",
 ]
+# Capability groups carry no extra deps — the backend group (e.g.
+# backend-slatedb) supplies storage-engine deps separately.  These
+# exist as tox env-name fragments for composing dependency sets.
 cap-read = []
 cap-read-async = [
   "aiobotocore>=2.12",
