@@ -75,6 +75,15 @@ class TestS3ReadOnlyFile:
         f.read(0, 10)
         assert s3_client.get_object.call_count == 4
 
+    def test_read_past_eof_returns_empty(self, s3_client: MagicMock) -> None:
+        """Reads at or past the file size return empty bytes (no S3 call)."""
+        with patch("shardyfusion.storage.create_s3_client", return_value=s3_client):
+            f = _S3ReadOnlyFile(bucket="b", key="k")  # size=8192
+
+        assert f.read(8192, 100) == b""
+        assert f.read(9999, 50) == b""
+        s3_client.get_object.assert_not_called()
+
     def test_page_cache_hit_refreshes_recency(self, s3_client: MagicMock) -> None:
         body = MagicMock()
         body.read.return_value = b"\x00" * 10
