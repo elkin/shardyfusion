@@ -12,80 +12,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  prepare-matrix:
-    name: Prepare Matrices
+  load-matrix:
+    name: Load CI Matrix
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     outputs:
-      unit: ${{ steps.matrices.outputs.unit }}
-      integration: ${{ steps.matrices.outputs.integration }}
-      smoke: ${{ steps.matrices.outputs.smoke }}
+      unit: ${{ steps.matrix.outputs.unit }}
+      integration: ${{ steps.matrix.outputs.integration }}
+      smoke: ${{ steps.matrix.outputs.smoke }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-
-      - name: Set up Python 3.13 for type-check envs
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-          cache-dependency-glob: "**/pyproject.toml"
-
-      - name: Install tox
-        run: uv sync --group dev
-
-      - name: Build tox matrices
-        id: matrices
+      - name: Read committed matrix
+        id: matrix
         run: |
-          uv run tox -m unit -l > /tmp/tox-unit.txt
-          uv run tox -m integration -l > /tmp/tox-integration.txt
-          uv run tox -m smoke -l > /tmp/tox-smoke.txt
-          python <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          import re
-          from pathlib import Path
-
-          def build_matrix(path: str) -> str:
-              include = []
-              for env_name in Path(path).read_text().splitlines():
-                  env_name = env_name.strip()
-                  if not env_name:
-                      continue
-                  match = re.match(r"py(\d)(\d{2})-", env_name)
-                  if match is None:
-                      raise SystemExit(f"Cannot infer Python version from {env_name}")
-                  py_minor = int(match.group(2))
-                  python_version = f"{match.group(1)}.{py_minor}"
-                  include.append(
-                      {
-                          "name": env_name.replace("-", " / "),
-                          "tox-env": env_name,
-                          "python-version": python_version,
-                          "needs-java": "sparkwriter" in env_name or "-all-" in env_name,
-                      }
-                  )
-              return json.dumps({"include": include})
-
-          print(f"unit={build_matrix('/tmp/tox-unit.txt')}")
-          print(f"integration={build_matrix('/tmp/tox-integration.txt')}")
-          print(f"smoke={build_matrix('/tmp/tox-smoke.txt')}")
-          PY
+          echo "unit=$(jq -c .unit .github/ci-matrix.json)" >> "$GITHUB_OUTPUT"
+          echo "integration=$(jq -c .integration .github/ci-matrix.json)" >> "$GITHUB_OUTPUT"
+          echo "smoke=$(jq -c .smoke .github/ci-matrix.json)" >> "$GITHUB_OUTPUT"
 
   quality:
     name: Quality Gates
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: prepare-matrix
 
     steps:
       - name: Checkout
@@ -104,6 +54,9 @@ jobs:
 
       - name: Install tox
         run: uv sync --group dev
+
+      - name: Check CI matrix is up to date
+        run: uv run python scripts/generate_ci_matrix.py --check
 
       - name: Run quality label
         run: uv run tox -m quality
@@ -145,10 +98,10 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [prepare-matrix, quality]
+    needs: [load-matrix, quality]
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.prepare-matrix.outputs.unit) }}
+      matrix: ${{ fromJson(needs.load-matrix.outputs.unit) }}
 
     steps:
       - name: Checkout
@@ -193,10 +146,10 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [prepare-matrix, quality]
+    needs: [load-matrix, quality]
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.prepare-matrix.outputs.integration) }}
+      matrix: ${{ fromJson(needs.load-matrix.outputs.integration) }}
 
     steps:
       - name: Checkout
@@ -231,10 +184,10 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: [prepare-matrix, quality]
+    needs: [load-matrix, quality]
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.prepare-matrix.outputs.smoke) }}
+      matrix: ${{ fromJson(needs.load-matrix.outputs.smoke) }}
 
     steps:
       - name: Checkout

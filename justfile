@@ -154,6 +154,11 @@ docs: _check-venv
 docs-serve: _check-venv
     uv run mkdocs serve
 
+# Regenerate .github/ci-matrix.json from tox env lists
+[group('dev')]
+ci-matrix: _check-venv
+    uv run python scripts/generate_ci_matrix.py
+
 # ── Test ─────────────────────────────────────────────────────────────────────
 
 # Lint, format, type checks, package build, docs check
