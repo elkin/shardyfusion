@@ -9,6 +9,8 @@ Build and read sharded key-value snapshots on S3 with a default [SlateDB](https:
 
 Write millions of key-value pairs across N independent shard databases using Spark, Dask, Ray, or plain Python. Read them back from any Python service with consistent routing — the reader always finds the right shard.
 
+Current Python support is 3.11 through 3.13. Python 3.14 is intentionally not supported until every reader, writer, and backend dependency used by the project is compatible and covered by the test matrix.
+
 ## When to use shardyfusion
 
 **Daily feature store refresh** — A Spark job writes feature vectors overnight across 64 shards. Your serving fleet opens a `ShardedReader` and serves lookups all day. When the next snapshot lands, call `refresh()` for an atomic swap with zero downtime.

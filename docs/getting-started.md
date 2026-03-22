@@ -2,9 +2,11 @@
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.11-3.13
 - Java 17+ (for Spark integration tests)
 - `uv` installed
+
+Python 3.14 is intentionally unsupported until every reader, writer, and backend dependency in the project supports it and the full test matrix can run on it consistently.
 
 ## Install
 

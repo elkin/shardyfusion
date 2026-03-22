@@ -138,4 +138,4 @@ Same as all writers — retry CURRENT pointer up to 3 times, cleanup is best-eff
 | **Shuffle strategy import fallback** | A try/except handles older Ray versions without the shuffle strategy enum. Falls back to `None`. |
 | **Zero-copy batch modes** | Zero-copy for sharding (Arrow-to-Arrow, read-only), disabled for writing (pandas, data modification). Using zero-copy for the write phase would cause errors when modifying batches. |
 | **NaN handling** | Same as Dask — result conversion handles pandas NaN artifacts to None. |
-| **Ray does not run on py3.14** | Same limitation as Dask and CEL. |
+| **Project Python support stops at 3.13** | Python 3.14 is intentionally unsupported across shardyfusion until all readers, writers, and backends can be tested consistently on it. |

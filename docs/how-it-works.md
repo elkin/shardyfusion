@@ -53,7 +53,7 @@ config = WriteConfig(
 
 #### CEL (Common Expression Language)
 
-User-provided CEL expression evaluated at write time (shard assignment) and read time (routing). Requires the `cel` extra (`pip install shardyfusion[cel]`). Does not run on Python 3.14.
+User-provided CEL expression evaluated at write time (shard assignment) and read time (routing). Requires the `cel` extra (`pip install shardyfusion[cel]`). Project-wide Python support is currently limited to 3.11-3.13.
 
 Key properties:
 

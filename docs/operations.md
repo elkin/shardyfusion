@@ -7,7 +7,7 @@
   - package build smoke checks
   - unit and integration test jobs (parallel within each stage)
   - Java 17 (temurin) required for Spark jobs
-  - Dask and Ray do not run on py3.14
+  - Python support is currently capped at 3.11-3.13; py3.14 is excluded from tox and CI until all readers, writers, and backends support it
   - Weekly scheduled build on Mondays at 06:00 UTC
 - **`Docs`** workflow:
   - docs build on pull requests

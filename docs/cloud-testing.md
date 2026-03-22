@@ -8,7 +8,7 @@ This document provides a structured checklist for validating shardyfusion agains
 
 - AWS account with EMR and S3 permissions
 - S3 bucket provisioned (e.g. `s3://my-org-shardyfusion-test/`)
-- EMR cluster with Spark 3.5 or 4.x, Python 3.11+, Java 17
+- EMR cluster with Spark 3.5 or 4.x, Python 3.11-3.13, Java 17
 
 ### Write Test
 
@@ -66,7 +66,7 @@ reader.close()
 
 ### Prerequisites
 
-- Python 3.11+ environment with `pip install "shardyfusion[writer-dask]"`
+- Python 3.11-3.13 environment with `pip install "shardyfusion[writer-dask]"`
 - Use `pip install "shardyfusion[writer-dask-sqlite]"` to exercise the SQLite backend instead
 - S3 credentials configured via env vars or `~/.aws/credentials`
 
@@ -91,7 +91,7 @@ result = write_sharded(ddf, config, key_col="id", value_spec=ValueSpec.binary_co
 
 ### Prerequisites
 
-- Python 3.11+ environment with `pip install shardyfusion[writer-ray]`
+- Python 3.11-3.13 environment with `pip install shardyfusion[writer-ray]`
 - Ray cluster or local mode
 
 ### Test
