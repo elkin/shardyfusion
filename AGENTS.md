@@ -1,19 +1,20 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Source package: `shardyfusion/` (31 modules)
-  - Writer path (Spark): `writer/spark/writer.py`, `writer/spark/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
-  - Writer path (Dask): `writer/dask/writer.py`, `writer/dask/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
-  - Writer path (Ray): `writer/ray/writer.py`, `writer/ray/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
-  - Writer path (Python): `writer/python/writer.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
-  - Reader path (sync): `reader/reader.py`, `routing.py`, `manifest_store.py`, `db_manifest_store.py`
-  - Reader path (async): `reader/async_reader.py`, `routing.py`, `manifest_store.py` (`AsyncS3ManifestStore`)
+- Source package: `shardyfusion/`
+  - Writer path (Spark): `writer/spark/writer.py`, `writer/spark/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py` or `sqlite_adapter.py`
+  - Writer path (Dask): `writer/dask/writer.py`, `writer/dask/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py` or `sqlite_adapter.py`
+  - Writer path (Ray): `writer/ray/writer.py`, `writer/ray/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py` or `sqlite_adapter.py`
+  - Writer path (Python): `writer/python/writer.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py` or `sqlite_adapter.py`
+  - Reader path (sync): `reader/reader.py`, `reader/concurrent_reader.py`, `routing.py`, `manifest_store.py`, `db_manifest_store.py`
+  - Reader path (async): `reader/async_reader.py`, `routing.py`, `async_manifest_store.py` (`AsyncS3ManifestStore`)
   - CLI path: `cli/app.py`, `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
-  - Shared models/protocols: `config.py`, `manifest.py`, `manifest_store.py`, `storage.py`, `testing.py`
-  - Core utilities: `errors.py`, `type_defs.py`, `sharding_types.py`, `ordering.py`, `logging.py`, `serde.py`, `_rate_limiter.py`
+  - SQLite backend: `sqlite_adapter.py` (writer + download-and-cache reader + range-read VFS reader + async wrappers)
+  - Shared models/protocols: `config.py`, `credentials.py`, `manifest.py`, `manifest_store.py`, `async_manifest_store.py`, `storage.py`, `testing.py`
+  - Core utilities: `errors.py`, `type_defs.py`, `sharding_types.py`, `ordering.py`, `logging.py`, `serde.py`, `cel.py`, `_rate_limiter.py`, `metrics/`
 - Tests: `tests/`
-  - Unit: `tests/unit/shared`, `tests/unit/read`, `tests/unit/writer`, `tests/unit/cli`
-  - Integration: `tests/integration/read`, `tests/integration/writer`
+  - Unit: `tests/unit/shared`, `tests/unit/read`, `tests/unit/read_async`, `tests/unit/writer`, `tests/unit/backend/{slatedb,sqlite}`, `tests/unit/cel`, `tests/unit/metrics`, `tests/unit/cli`
+  - Integration: `tests/integration/read`, `tests/integration/writer`, `tests/integration/backend/sqlite`
   - E2E: `tests/e2e/read`, `tests/e2e/writer` (Garage S3 via compose)
   - Shared helpers: `tests/helpers/s3_test_scenarios.py` (backend-agnostic test scenarios)
 - Docs: `docs/` with MkDocs config in `mkdocs.yml`
@@ -21,13 +22,15 @@
 
 ## Build, Test, and Development Commands
 - Install dependencies:
-  - Reader-only: `uv sync --extra read`
-  - Async reader: `uv sync --extra read-async`
-  - Spark writer: `uv sync --extra writer-spark`
-  - Python writer: `uv sync --extra writer-python`
-  - Dask writer: `uv sync --extra writer-dask`
-  - Ray writer: `uv sync --extra writer-ray`
+  - Default reader (SlateDB): `uv sync --extra read`
+  - Async reader (SlateDB + aiobotocore): `uv sync --extra read-async`
+  - SQLite readers: `uv sync --extra read-sqlite`, `uv sync --extra read-sqlite-range`, `uv sync --extra sqlite-async`
+  - Spark writer: `uv sync --extra writer-spark` or `uv sync --extra writer-spark-sqlite`
+  - Python writer: `uv sync --extra writer-python` or `uv sync --extra writer-python-sqlite`
+  - Dask writer: `uv sync --extra writer-dask` or `uv sync --extra writer-dask-sqlite`
+  - Ray writer: `uv sync --extra writer-ray` or `uv sync --extra writer-ray-sqlite`
   - CLI-only: `uv sync --extra cli`
+  - Observability extras: `uv sync --extra metrics-prometheus`, `uv sync --extra metrics-otel`
   - Full dev: `uv sync --all-extras --dev`
 - Lint: `uv run ruff check .`
 - Format check: `uv run ruff format --check .`

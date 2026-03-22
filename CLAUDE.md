@@ -4,29 +4,39 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`shardyfusion` is a sharded snapshot writer/reader library for SlateDB. It provides:
-- Writer-side Spark APIs to build `num_dbs` independent SlateDB shard databases
+`shardyfusion` is a sharded snapshot writer/reader library. It provides:
+- Writer-side Spark APIs to build `num_dbs` independent shard databases
 - Dask DataFrame-based writer (no Spark/Java needed)
 - Ray Data-based writer (no Spark/Java needed)
 - Pure-Python iterator-based writer (no Spark/Java needed)
+- Pluggable storage backends: SlateDB (default) and SQLite-on-S3
 - Manifest + `_CURRENT` publishing protocol (default S3, pluggable interfaces)
 - Reader-side routing helpers for service-side `get` and `multi_get`
 - `shardy` CLI for interactive and batch lookups against published snapshots
-- Token-bucket rate limiter (`max_writes_per_second`) for all writer paths
+- Token-bucket rate limiting for all writer paths (`max_writes_per_second`, `max_write_bytes_per_second`)
 
 ## Tooling
 
-**Package manager**: uv. Extras: `read`, `read-async` (adds aiobotocore for native async S3), `writer-spark` (requires Java), `writer-python`, `writer-dask`, `writer-ray`, `cli`, `cel` (adds cel-expr-python). Core dependency: `pyyaml>=6.0`. Full dev: `uv sync --all-extras --dev`.
+**Package manager**: uv. Extras: `read`, `read-async` (adds aiobotocore for native async S3), `read-sqlite`, `read-sqlite-range` (adds apsw), `sqlite-async`, `writer-spark` (requires Java), `writer-spark-sqlite`, `writer-python`, `writer-python-sqlite`, `writer-dask`, `writer-dask-sqlite`, `writer-ray`, `writer-ray-sqlite`, `cli`, `cel` (adds cel-expr-python), `metrics-prometheus`, `metrics-otel`. Core dependency: `pyyaml>=6.0`. Full dev: `uv sync --all-extras --dev`.
 
 **Workflows**: Run `just --list` for all local and container (`d-*`) targets. Key entry points: `just setup` (bootstrap a fresh clone), `just doctor` (verify environment), `just fix` (auto-format), `just ci` (quality + unit + integration), `just clean` / `just clean-all` (remove caches/artifacts). Container default engine is Podman; override with `CONTAINER_ENGINE=docker`.
 
-**Test matrix**: tox labels — `quality`, `unit`, `integration`, `e2e`. Targeted pytest: `uv run pytest -q tests/unit/<area>` (areas: `cli`, `writer`, `read`, `shared`).
+**Test matrix**: tox labels — `quality`, `unit`, `integration`, `e2e`. Targeted pytest: `uv run pytest -q tests/unit/<area>` (areas: `shared`, `read`, `read_async`, `writer`, `backend/sqlite`, `metrics`, `cli`, `cel`).
 
 **Type checking**: `uv run pyright shardyfusion` (all code) or per-path configs in `pyright/` directory.
 
 **JSON schemas**: Available on demand via `shardy schema` (manifest) and `shardy schema --type current-pointer`. Generated at runtime from Pydantic models (`ParsedManifest.model_json_schema()` / `CurrentPointer.model_json_schema()`).
 
 Container venv is at `/opt/shardyfusion-venv`, not the host `.venv`.
+
+## Commands
+
+Common local commands:
+- `just setup`, `just doctor`, `just sync`, `just fix`, `just docs`, `just ci-matrix`
+- `just quality`, `just unit`, `just integration`, `just ci`, `just d-e2e`
+- `uv run ruff check .`, `uv run ruff format --check .`, `uv run pyright shardyfusion`, `uv build`
+- `uv run tox -m quality`, `uv run tox -m unit`, `uv run tox -m integration`, `uv run tox -m e2e`
+- `uv run pytest -q tests/unit/{shared,read,read_async,writer,backend/sqlite,metrics,cli,cel}`
 
 ## CI Pipeline (GitHub Actions)
 
@@ -37,20 +47,20 @@ On every push/PR: **quality → package → unit → integration** (parallel wit
 The library is split into six independent paths that share config, manifest models, and core logic:
 
 **Writer path (Spark)** (requires PySpark + Java):
-`writer/spark/writer.py` → `writer/spark/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
+`writer/spark/writer.py` → `writer/spark/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py` (or `sqlite_adapter.py`)
 `writer/spark/single_db_writer.py` (single-shard variant, distributed sorting)
 `writer/spark/util.py` (`DataFrameCacheContext`)
 
 **Writer path (Dask)** (no Spark/Java needed):
-`writer/dask/writer.py` → `writer/dask/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
+`writer/dask/writer.py` → `writer/dask/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py` (or `sqlite_adapter.py`)
 `writer/dask/single_db_writer.py` (single-shard variant, distributed sorting)
 
 **Writer path (Ray)** (no Spark/Java needed):
-`writer/ray/writer.py` → `writer/ray/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
+`writer/ray/writer.py` → `writer/ray/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py` (or `sqlite_adapter.py`)
 `writer/ray/single_db_writer.py` (single-shard variant, distributed sorting)
 
 **Writer path (Python)** (no Spark/Java needed):
-`writer/python/writer.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py`
+`writer/python/writer.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py` (or `sqlite_adapter.py`)
 
 **Reader path (sync)** (no Spark/Java needed):
 `reader/reader.py` (ShardedReader) / `reader/concurrent_reader.py` (ConcurrentShardedReader) → `reader/_base.py` → `reader/_types.py`, `reader/_state.py` → `routing.py` → `manifest_store.py`, `db_manifest_store.py`
@@ -69,7 +79,7 @@ Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py, cel.p
 Layer 2 — Storage, routing, manifest: storage.py (w/ RetryConfig, list_prefixes), manifest.py, routing.py, manifest_store.py (delegates to list_prefixes), async_manifest_store.py, db_manifest_store.py
 Layer 3 — Writer core: _writer_core.py (shared by all writers; empty_shard_result, cleanup: CleanupAction, cleanup_stale_attempts, cleanup_old_runs)
 Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/ (reader.py, concurrent_reader.py, _base.py, _types.py, _state.py), reader/async_reader.py, cli/app.py
-Layer 5 — Adapters & testing: slatedb_adapter.py, testing.py
+Layer 5 — Adapters & testing: slatedb_adapter.py, sqlite_adapter.py (optional apsw for range-read VFS), testing.py
 Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus extra), metrics/otel.py (metrics-otel extra)
 ```
 
@@ -164,6 +174,12 @@ These are all Protocols, allowing user-provided implementations:
 | `AsyncShardReaderFactory` | `AsyncSlateDbReaderFactory` | Async factory for opening shard readers |
 | `DbAdapterFactory` | `SlateDbFactory` | How to open shard databases |
 
+SQLite backend alternatives (imported from `shardyfusion.sqlite_adapter`):
+- **Writer**: `SqliteFactory` → `SqliteAdapter` (builds local SQLite DB, uploads to S3 on close)
+- **Reader (download-and-cache)**: `SqliteReaderFactory` → `SqliteShardReader` (one S3 GET, then local lookups)
+- **Reader (range-read VFS)**: `SqliteRangeReaderFactory` → `SqliteRangeShardReader` (S3 Range requests with LRU page cache; requires `apsw`)
+- **Async wrappers**: `AsyncSqliteReaderFactory`, `AsyncSqliteRangeReaderFactory` (delegate blocking I/O via `asyncio.to_thread`)
+
 `ManifestRef` (frozen dataclass in `manifest.py`) is the backend-agnostic pointer to a published manifest, carrying `ref`, `run_id`, and `published_at`. `ManifestStore.load_current()` returns `ManifestRef | None` (not `CurrentPointer`); the S3 implementation parses the `_CURRENT` JSON into a `ManifestRef` internally.
 
 `ValueSpec` controls how DataFrame rows are serialized to bytes: `binary_col`, `json_cols`, or a callable encoder.
@@ -240,11 +256,38 @@ The invariant: `xxhash.xxh3_64_intdigest(canonical_bytes(key), seed=0) % num_dbs
 
 ### Error Hierarchy
 
-All errors inherit from `ShardyfusionError` with `retryable: bool`. Non-retryable: config/programmer errors (`ConfigValidationError`, `ShardAssignmentError`, `ManifestParseError`, `ReaderStateError`, `SlateDbApiError`, etc.). Retryable: transient infra (`PublishManifestError`, `PublishCurrentError`, `PoolExhaustedError`, `S3TransientError`, `ManifestStoreError`). See `errors.py` for full catalog.
+All package-specific errors inherit from `ShardyfusionError` and expose `retryable: bool`.
+
+| Error | retryable | Source | Notes |
+|---|---|---|---|
+| `ShardyfusionError` | `False` | `errors.py` | Base class for package-specific exceptions |
+| `ConfigValidationError` | `False` | `errors.py` | Invalid config or unsupported parameter combination |
+| `ShardAssignmentError` | `False` | `errors.py` | Routing mismatch or invalid shard IDs |
+| `ShardCoverageError` | `False` | `errors.py` | Writer results did not cover expected shard IDs |
+| `SlateDbApiError` | `False` | `errors.py` | SlateDB binding unavailable/incompatible or shard reader failure |
+| `ManifestBuildError` | `False` | `errors.py` | Manifest builder failed during artifact creation |
+| `PublishManifestError` | `True` | `errors.py` | Manifest upload failed; safe to retry |
+| `PublishCurrentError` | `True` | `errors.py` | `_CURRENT` update failed after manifest publish |
+| `ManifestParseError` | `False` | `errors.py` | Manifest or pointer payload malformed/invalid |
+| `ReaderStateError` | `False` | `errors.py` | Reader used after close or before valid state exists |
+| `PoolExhaustedError` | `True` | `errors.py` | Concurrent reader pool checkout timed out |
+| `ManifestStoreError` | `True` | `errors.py` | Transient DB-backed manifest-store failure |
+| `S3TransientError` | `True` | `errors.py` | Retryable S3 throttle/5xx/timeout |
+| `SqliteAdapterError` | `False` | `sqlite_adapter.py` | SQLite adapter lifecycle or local DB misuse |
 
 ## Public API Summary
 
-Core types exported from `shardyfusion.__init__` (always available, no optional extras required). See `__init__.py` for the full list. Manifest types include `ManifestRef`, `ManifestStore`, `S3ManifestStore`, `InMemoryManifestStore`, `ManifestBuilder`, `YamlManifestBuilder`, `parse_manifest`, `WriterInfo`. Reader types include `ShardedReader`, `ConcurrentShardedReader`, `ShardReaderHandle`, `ShardDetail`, `SnapshotInfo`, `SlateDbReaderFactory`, `ReaderHealth`. Async reader types include `AsyncShardedReader`, `AsyncShardReaderHandle`, `AsyncSlateDbReaderFactory`, `AsyncShardReader`, `AsyncShardReaderFactory`, `AsyncManifestStore`, `AsyncS3ManifestStore`. Rate limiting: `AcquireResult`, `RateLimiter`, `TokenBucket`, `ThreadSafeTokenBucket`. Retry: `RetryConfig`. Logging: `LogContext`, `JsonFormatter`, `configure_logging`. CEL helpers: `CelColumn`, `CelType`, `cel_sharding_by_columns`. All are in `__all__`.
+Top-level exports from `shardyfusion.__init__` (`__all__`, grouped only for readability):
+
+- Config/build: `BuildDurations`, `BuildResult`, `BuildStats`, `CurrentPointer`, `ManifestOptions`, `OutputOptions`, `WriteConfig`, `WriterInfo`
+- Credentials/connectivity: `CredentialProvider`, `EnvCredentialProvider`, `RetryConfig`, `S3ConnectionOptions`, `S3Credentials`, `StaticCredentialProvider`
+- Errors: `ConfigValidationError`, `ManifestBuildError`, `ManifestParseError`, `ManifestStoreError`, `PoolExhaustedError`, `PublishCurrentError`, `PublishManifestError`, `ReaderStateError`, `S3TransientError`, `ShardAssignmentError`, `ShardCoverageError`, `ShardyfusionError`, `SlateDbApiError`
+- Manifest/store: `InMemoryManifestStore`, `ManifestArtifact`, `ManifestBuilder`, `ManifestRef`, `ManifestShardingSpec`, `ManifestStore`, `RequiredBuildMeta`, `RequiredShardMeta`, `S3ManifestStore`, `YamlManifestBuilder`, `parse_manifest`
+- Reader/routing: `AsyncManifestStore`, `AsyncS3ManifestStore`, `AsyncShardReader`, `AsyncShardReaderFactory`, `AsyncShardReaderHandle`, `AsyncShardedReader`, `AsyncSlateDbReaderFactory`, `ConcurrentShardedReader`, `ReaderHealth`, `ShardDetail`, `ShardReader`, `ShardReaderFactory`, `ShardReaderHandle`, `ShardedReader`, `SlateDbReaderFactory`, `SnapshotInfo`, `SnapshotRouter`
+- Adapters: `DbAdapter`, `DbAdapterFactory`, `SlateDbFactory`
+- Rate limiting: `AcquireResult`, `RateLimiter`, `ThreadSafeTokenBucket`, `TokenBucket`
+- Logging/metrics: `FailureSeverity`, `JsonFormatter`, `LogContext`, `MetricEvent`, `MetricsCollector`, `configure_logging`, `get_logger`
+- Sharding/serialization: `CelColumn`, `CelType`, `KeyEncoding`, `ShardingSpec`, `ShardingStrategy`, `ValueSpec`, `cel_sharding`, `cel_sharding_by_columns`
 
 Writer functions are imported from subpackages (not re-exported at top level):
 - **Spark:** `from shardyfusion.writer.spark import write_sharded, write_single_db, DataFrameCacheContext, SparkConfOverrideContext`
@@ -252,12 +295,17 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **Ray:** `from shardyfusion.writer.ray import write_sharded, write_single_db, RayCacheContext`
 - **Python:** `from shardyfusion.writer.python import write_sharded`
 
+SQLite backend adapters are imported from their module (not re-exported at top level):
+- `from shardyfusion.sqlite_adapter import SqliteFactory, SqliteReaderFactory, SqliteRangeReaderFactory`
+- `from shardyfusion.sqlite_adapter import AsyncSqliteReaderFactory, AsyncSqliteRangeReaderFactory`
+
 ## Testing Notes
 
-- **`tests/unit/`** — fast, no Spark; use pytest-xdist (`-n 2`). Areas: `shared/`, `read/`, `writer/` (+ `writer/spark/`, `writer/python/`, `writer/dask/`, `writer/ray/`), `metrics/`, `cli/`
+- **`tests/unit/`** — fast, no Spark; use pytest-xdist (`-n 2`). Areas: `shared/`, `read/`, `read_async/`, `writer/` (+ `writer/spark/`, `writer/python/`, `writer/dask/`, `writer/ray/`), `backend/sqlite/`, `metrics/`, `cli/`, `cel/`
 - **`tests/unit/metrics/`** — `PrometheusCollector` and `OtelCollector` tests. Run via dedicated tox envs (`prometheus-unit`, `otel-unit`) that install the `metrics-prometheus`/`metrics-otel` extras. OTel tests also need `opentelemetry-sdk` (provided via `test` extra). These tests require their respective extras and will fail with `ImportError` without them — run via tox or install the extras explicitly.
 - **Optional-dep test isolation** — Writer test directories (`tests/unit/writer/{dask,spark,ray}/`, `tests/integration/writer/{dask,ray}/`, `tests/e2e/writer/ray/`) use `conftest.py`-level `pytest.importorskip()` to skip entire suites when the framework extra is not installed. This allows `uv run pytest tests/` to work without all optional extras.
-- **`tests/integration/`** — S3 via `moto`; Spark writer tests require Spark + Java
+- **`tests/unit/backend/sqlite/`** — SQLite adapter unit tests (`test_sqlite_adapter.py`, `test_sqlite_range_reader.py`). Range-read tests require `apsw`.
+- **`tests/integration/`** — S3 via `moto`; Spark writer tests require Spark + Java. `backend/sqlite/` tests SQLite adapter against moto S3.
 - **`tests/e2e/`** — Garage S3 via compose; `just d-e2e`
 - **`tests/helpers/`** — `s3_test_scenarios.py` (shared scenarios for moto/Garage), `smoke_scenarios.py` (shared smoke E2E data and scenarios for HASH/CEL sharding across all writer frameworks), `tracking.py` (test doubles: `TrackingAdapter`, `TrackingFactory`, `RecordingTokenBucket`, `InMemoryPublisher`)
 - Markers: `@pytest.mark.spark`, `@pytest.mark.dask`, `@pytest.mark.ray`, `@pytest.mark.cel`, `@pytest.mark.e2e`
@@ -277,11 +325,14 @@ Writer functions are imported from subpackages (not re-exported at top level):
 ## Gotchas & Non-obvious Behavior
 
 - **SlateDB import is deferred**: `slatedb_adapter.py` imports the `slatedb` module inside `__init__`, not at module load. Tests monkeypatch `sys.modules["slatedb"]` to provide fakes.
+- **APSW import is deferred**: `sqlite_adapter.py` imports `apsw` inside `SqliteRangeShardReader.__init__` and `_create_apsw_vfs()`. Only the range-read VFS tier requires `apsw`; the download-and-cache tier uses stdlib `sqlite3`.
+- **SQLite adapter lifecycle**: `SqliteAdapter` builds a local SQLite DB during writes, then uploads the `.db` file to S3 on `close()`. The reader downloads (or range-reads) the file from S3. The `checkpoint()` method computes a SHA-256 hash of the DB file as the checkpoint ID.
+- **SQLite range-read VFS uses per-instance VFS names**: Each `SqliteRangeShardReader` registers a unique APSW VFS (via `uuid4`) to avoid name collisions when multiple readers are open simultaneously. The VFS is unregistered on `close()`.
 - **Python writer parallel mode uses `spawn`**: `multiprocessing.get_context("spawn")` is hardcoded. All objects passed to workers must be picklable. Min/max key tracking happens in the main process.
 - **Rate limiter thread safety**: `TokenBucket` has no internal lock. Use `ThreadSafeTokenBucket` when sharing a limiter across threads (e.g. `ConcurrentShardedReader`). `ThreadSafeTokenBucket` locks around `try_acquire()` and loops with sleep outside the lock. Writers and readers depend on the `RateLimiter` Protocol, not the concrete class. Writers support both `max_writes_per_second` (ops) and `max_write_bytes_per_second` (bytes) via independent `TokenBucket` instances. Readers accept a `rate_limiter` parameter for reads/sec limiting.
 - **Reader reference counting**: `refresh()` serialises I/O via `_refresh_lock`, atomically swaps `_ReaderState` with a compare-and-swap guard, and defers closing old handles until `refcount` drops to zero. Pool-mode checkout has a configurable timeout (default 30s) — raises `PoolExhaustedError` (retryable) when exhausted. Metadata methods (`key_encoding`, `snapshot_info`, `shard_details`, `route_key`) use `_use_state()` and raise `ReaderStateError` on a closed reader.
 - **Borrow handle safety nets**: `ShardReaderHandle` and `AsyncShardReaderHandle` implement `__del__()` that logs a warning and releases the borrow if the handle was not explicitly closed. Prefer explicit `close()` or `with`/`async with` context managers.
-- **Async reader uses `open()` classmethod**: `AsyncShardedReader.__init__` does no I/O. Use `await AsyncShardedReader.open(...)` or `async with AsyncShardedReader(...)`. Requires `aiobotocore` (the `read-async` extra).
+- **Async reader uses `open()` classmethod**: `AsyncShardedReader.__init__` does no I/O. Use `await AsyncShardedReader.open(...)` and then `await reader.close()`, or `async with await AsyncShardedReader.open(...) as reader`. The default `AsyncS3ManifestStore` requires `aiobotocore` (`read-async`, or another install path that brings it in).
 - **Async manifest store**: `AsyncShardedReader` accepts `AsyncManifestStore` only (not sync `ManifestStore`). When `manifest_store=None`, uses `AsyncS3ManifestStore` (native aiobotocore).
 - **Reader cold-start fallback**: When `load_manifest()` raises `ManifestParseError` during initialization, readers walk backward through `list_manifests()` to find a valid manifest (up to `max_fallback_attempts`, default 3). Set to 0 to disable fallback. During `refresh()`, a malformed manifest is silently skipped and the reader keeps its current good state (returns `False`).
 - **Garage requires path-style addressing**: E2E tests set `addressing_style: "path"` in `S3ClientConfig` because Garage doesn't support virtual-hosted-style.
