@@ -5,6 +5,7 @@
     "../shardyfusion"
   ],
   "exclude": [
+    "../shardyfusion/_shard_writer.py",
     "../shardyfusion/writer/spark",
     "../shardyfusion/writer/dask",
     "../shardyfusion/writer/ray",

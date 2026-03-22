@@ -47,17 +47,16 @@ On every push/PR: **quality → package → unit → integration** (parallel wit
 The library is split into six independent paths that share config, manifest models, and core logic:
 
 **Writer path (Spark)** (requires PySpark + Java):
-`writer/spark/writer.py` → `writer/spark/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py` (or `sqlite_adapter.py`)
-`writer/spark/single_db_writer.py` (single-shard variant, distributed sorting)
-`writer/spark/util.py` (`DataFrameCacheContext`)
+`writer/spark/writer.py` → `_shard_writer.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py` (or `sqlite_adapter.py`)
+`writer/spark/sharding.py` (shard assignment), `writer/spark/single_db_writer.py` (single-shard variant), `writer/spark/util.py` (`DataFrameCacheContext`)
 
 **Writer path (Dask)** (no Spark/Java needed):
-`writer/dask/writer.py` → `writer/dask/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py` (or `sqlite_adapter.py`)
-`writer/dask/single_db_writer.py` (single-shard variant, distributed sorting)
+`writer/dask/writer.py` → `_shard_writer.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py` (or `sqlite_adapter.py`)
+`writer/dask/sharding.py` (shard assignment), `writer/dask/single_db_writer.py` (single-shard variant)
 
 **Writer path (Ray)** (no Spark/Java needed):
-`writer/ray/writer.py` → `writer/ray/sharding.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py` (or `sqlite_adapter.py`)
-`writer/ray/single_db_writer.py` (single-shard variant, distributed sorting)
+`writer/ray/writer.py` → `_shard_writer.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py` (or `sqlite_adapter.py`)
+`writer/ray/sharding.py` (shard assignment), `writer/ray/single_db_writer.py` (single-shard variant)
 
 **Writer path (Python)** (no Spark/Java needed):
 `writer/python/writer.py` → `_writer_core.py` → `serde.py` → `slatedb_adapter.py` (or `sqlite_adapter.py`)
@@ -77,7 +76,7 @@ The library is split into six independent paths that share config, manifest mode
 Layer 0 — Core types & errors: errors.py, type_defs.py (incl. RetryConfig), sharding_types.py, ordering.py, logging.py (incl. LogContext/JsonFormatter), metrics/ (package: _events.py, _protocol.py)
 Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py, cel.py (CEL compile/evaluate/boundaries, optional cel extra)
 Layer 2 — Storage, routing, manifest: storage.py (w/ RetryConfig, list_prefixes), manifest.py, routing.py, manifest_store.py (delegates to list_prefixes), async_manifest_store.py, db_manifest_store.py
-Layer 3 — Writer core: _writer_core.py (shared by all writers; empty_shard_result, cleanup: CleanupAction, cleanup_stale_attempts, cleanup_old_runs)
+Layer 3 — Writer core: _writer_core.py (shared by all writers; empty_shard_result, cleanup: CleanupAction, cleanup_stale_attempts, cleanup_old_runs), _shard_writer.py (shared shard-write loop + retry: write_shard_core, write_shard_with_retry, ShardWriteParams)
 Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/ (reader.py, concurrent_reader.py, _base.py, _types.py, _state.py), reader/async_reader.py, cli/app.py
 Layer 5 — Adapters & testing: slatedb_adapter.py, sqlite_adapter.py (optional apsw for range-read VFS), testing.py
 Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus extra), metrics/otel.py (metrics-otel extra)
@@ -186,7 +185,7 @@ SQLite backend alternatives (imported from `shardyfusion.sqlite_adapter`):
 
 ### Metrics & Observability
 
-`MetricsCollector` (Protocol in `metrics/_protocol.py`) is an optional observer: set `WriteConfig.metrics_collector` or pass it to the reader. The `MetricEvent` enum (in `metrics/_events.py`) defines events across writer lifecycle (e.g., `WRITE_STARTED`, `SHARD_WRITE_COMPLETED`), reader lifecycle (`READER_GET`, `READER_REFRESHED`), and infrastructure (`S3_RETRY`, `RATE_LIMITER_THROTTLED`). Collectors receive `(event, payload_dict)` and should silently ignore unknown events for forward compatibility.
+`MetricsCollector` (Protocol in `metrics/_protocol.py`) is an optional observer: set `WriteConfig.metrics_collector` or pass it to the reader. The `MetricEvent` enum (in `metrics/_events.py`) defines events across writer lifecycle (e.g., `WRITE_STARTED`, `SHARD_WRITE_COMPLETED`), reader lifecycle (`READER_GET`, `READER_REFRESHED`), infrastructure (`S3_RETRY`, `RATE_LIMITER_THROTTLED`), and writer retry (`SHARD_WRITE_RETRIED`, `SHARD_WRITE_RETRY_EXHAUSTED`). Collectors receive `(event, payload_dict)` and should silently ignore unknown events for forward compatibility.
 
 The `metrics/` package (`_events.py`, `_protocol.py`) is always available. Optional publishers require extras:
 - **`PrometheusCollector`** (`metrics/prometheus.py`): requires `metrics-prometheus` extra. Uses isolated `CollectorRegistry` for test safety.
@@ -264,6 +263,7 @@ All package-specific errors inherit from `ShardyfusionError` and expose `retryab
 | `ConfigValidationError` | `False` | `errors.py` | Invalid config or unsupported parameter combination |
 | `ShardAssignmentError` | `False` | `errors.py` | Routing mismatch or invalid shard IDs |
 | `ShardCoverageError` | `False` | `errors.py` | Writer results did not cover expected shard IDs |
+| `ShardWriteError` | `True` | `errors.py` | Shard write failed with a potentially transient error; wraps unknown adapter exceptions |
 | `SlateDbApiError` | `False` | `errors.py` | SlateDB binding unavailable/incompatible or shard reader failure |
 | `ManifestBuildError` | `False` | `errors.py` | Manifest builder failed during artifact creation |
 | `PublishManifestError` | `True` | `errors.py` | Manifest upload failed; safe to retry |
@@ -281,7 +281,7 @@ Top-level exports from `shardyfusion.__init__` (`__all__`, grouped only for read
 
 - Config/build: `BuildDurations`, `BuildResult`, `BuildStats`, `CurrentPointer`, `ManifestOptions`, `OutputOptions`, `WriteConfig`, `WriterInfo`
 - Credentials/connectivity: `CredentialProvider`, `EnvCredentialProvider`, `RetryConfig`, `S3ConnectionOptions`, `S3Credentials`, `StaticCredentialProvider`
-- Errors: `ConfigValidationError`, `ManifestBuildError`, `ManifestParseError`, `ManifestStoreError`, `PoolExhaustedError`, `PublishCurrentError`, `PublishManifestError`, `ReaderStateError`, `S3TransientError`, `ShardAssignmentError`, `ShardCoverageError`, `ShardyfusionError`, `SlateDbApiError`
+- Errors: `ConfigValidationError`, `ManifestBuildError`, `ManifestParseError`, `ManifestStoreError`, `PoolExhaustedError`, `PublishCurrentError`, `PublishManifestError`, `ReaderStateError`, `S3TransientError`, `ShardAssignmentError`, `ShardCoverageError`, `ShardWriteError`, `ShardyfusionError`, `SlateDbApiError`
 - Manifest/store: `InMemoryManifestStore`, `ManifestArtifact`, `ManifestBuilder`, `ManifestRef`, `ManifestShardingSpec`, `ManifestStore`, `RequiredBuildMeta`, `RequiredShardMeta`, `S3ManifestStore`, `YamlManifestBuilder`, `parse_manifest`
 - Reader/routing: `AsyncManifestStore`, `AsyncS3ManifestStore`, `AsyncShardReader`, `AsyncShardReaderFactory`, `AsyncShardReaderHandle`, `AsyncShardedReader`, `AsyncSlateDbReaderFactory`, `ConcurrentShardedReader`, `ReaderHealth`, `ShardDetail`, `ShardReader`, `ShardReaderFactory`, `ShardReaderHandle`, `ShardedReader`, `SlateDbReaderFactory`, `SnapshotInfo`, `SnapshotRouter`
 - Adapters: `DbAdapter`, `DbAdapterFactory`, `SlateDbFactory`
@@ -342,7 +342,7 @@ SQLite backend adapters are imported from their module (not re-exported at top l
 - **Ray tests need `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0`**: Ray ≥ 2.47 auto-detects `uv run` in the process tree and overrides worker Python to create fresh venvs. The env var is set in `tox.ini` for raywriter envs. For direct pytest, either set the var or use `uv run --extra writer-ray pytest ...`.
 - **`acquire_async()` is part of the `RateLimiter` Protocol**: Uses `asyncio.sleep` — safe for event loops. The sync `acquire()` uses `time.sleep` and must not be called from async code.
 - **`try_acquire()` is pure arithmetic**: Guaranteed non-blocking (replenish + compare + deduct). Safe to call from async code directly without `to_thread()`.
-- **`RetryConfig` is S3-specific**: Lives on `S3ManifestStore` (and `AsyncS3ManifestStore`), not on reader/writer constructors. Controls exponential backoff for transient S3 errors.
+- **`RetryConfig` usage**: Used in two places: (1) `S3ManifestStore` / `AsyncS3ManifestStore` for transient S3 errors, and (2) `WriteConfig.shard_retry` for shard write retries (Dask/Ray only; Spark relies on speculative execution; Python writer deferred). When `shard_retry` is set, `write_shard_with_retry()` in `_shard_writer.py` retries failed shard writes with exponential backoff, each attempt writing to a new S3 path (`attempt=00`, `attempt=01`, ...).
 - **`cel-expr-python` does not support Python 3.14**: The `cel` extra depends on `cel-expr-python` which has no py3.14 wheels. CEL tests are skipped on py3.14 via `pytest.importorskip()`.
 
 ## Environment Notes
