@@ -208,7 +208,7 @@ def test_do_schema_manifest_default() -> None:
     with redirect_stdout(buf):
         repl.onecmd("schema")
     parsed = json.loads(buf.getvalue())
-    assert parsed["title"] == "SlateDB Sharded Manifest"
+    assert parsed["title"] == "SlateDB/SQLite Sharded Manifest"
     assert parsed["$schema"] == "https://json-schema.org/draft/2020-12/schema"
 
 
@@ -218,7 +218,7 @@ def test_do_schema_current_pointer() -> None:
     with redirect_stdout(buf):
         repl.onecmd("schema current-pointer")
     parsed = json.loads(buf.getvalue())
-    assert parsed["title"] == "SlateDB Sharded CURRENT Pointer"
+    assert parsed["title"] == "SlateDB/SQLite Sharded CURRENT Pointer"
     assert "manifest_ref" in parsed["properties"]
 
 

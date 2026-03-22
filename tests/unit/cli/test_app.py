@@ -448,7 +448,7 @@ class TestSchemaSubcommand:
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["$schema"] == "https://json-schema.org/draft/2020-12/schema"
-        assert parsed["title"] == "SlateDB Sharded Manifest"
+        assert parsed["title"] == "SlateDB/SQLite Sharded Manifest"
         assert "properties" in parsed
 
     def test_manifest_schema_explicit(self) -> None:
@@ -456,7 +456,7 @@ class TestSchemaSubcommand:
         result = runner.invoke(cli, ["schema", "--type", "manifest"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
-        assert parsed["title"] == "SlateDB Sharded Manifest"
+        assert parsed["title"] == "SlateDB/SQLite Sharded Manifest"
 
     def test_current_pointer_schema(self) -> None:
         runner = click.testing.CliRunner()
@@ -464,7 +464,7 @@ class TestSchemaSubcommand:
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["$schema"] == "https://json-schema.org/draft/2020-12/schema"
-        assert parsed["title"] == "SlateDB Sharded CURRENT Pointer"
+        assert parsed["title"] == "SlateDB/SQLite Sharded CURRENT Pointer"
         assert "manifest_ref" in parsed["properties"]
 
     def test_invalid_type_rejected(self) -> None:
