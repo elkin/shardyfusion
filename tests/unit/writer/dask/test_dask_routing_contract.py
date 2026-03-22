@@ -22,7 +22,7 @@ from shardyfusion.sharding_types import (
 from shardyfusion.writer.dask.sharding import add_db_id_column
 
 # Reuse edge-case keys from the main routing contract test suite.
-from tests.unit.writer.test_routing_contract import (
+from tests.unit.writer.core.test_routing_contract import (
     EDGE_CASE_KEYS,
     U32_EDGE_CASE_KEYS,
 )

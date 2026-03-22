@@ -5,7 +5,8 @@ the writer and the Python reader MUST compute the same
 shard ID. A violation means reads silently go to the wrong shard.
 
 This module contains Python-only property tests (hypothesis).
-Spark-vs-Python cross-checks live in ``tests/unit/writer/spark/test_routing_contract.py``.
+Spark-vs-Python cross-checks live in
+``tests/unit/writer/spark/test_routing_contract.py``.
 
 The ``EDGE_CASE_KEYS`` and ``U32_EDGE_CASE_KEYS`` constants are shared
 with the Spark and Dask routing contract tests.

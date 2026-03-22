@@ -7,8 +7,8 @@ full ``add_db_id_column()`` pipeline (Arrow serialisation round-trip,
 partition assignment, etc.) produces db_ids identical to calling
 ``xxh3_db_id()`` directly.
 
-The Python-only property tests (hypothesis) live in the parent
-``tests/unit/writer/test_routing_contract.py``.
+The Python-only property tests (hypothesis) live in
+``tests/unit/writer/core/test_routing_contract.py``.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from shardyfusion.sharding_types import (
     ShardingStrategy,
 )
 from shardyfusion.writer.spark.sharding import add_db_id_column
-from tests.unit.writer.test_routing_contract import EDGE_CASE_KEYS
+from tests.unit.writer.core.test_routing_contract import EDGE_CASE_KEYS
 
 # String keys for cross-checking add_db_id_column with string columns.
 _STRING_EDGE_CASE_KEYS: list[str] = [
