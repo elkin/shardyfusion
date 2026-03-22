@@ -231,6 +231,34 @@ reportArgumentType = "error"
 reportMissingParameterType = "error"
 reportUnsupportedDunderAll = false
 
+[tool.coverage.run]
+source = ["shardyfusion"]
+branch = true
+
+[tool.coverage.paths]
+source = [
+    "shardyfusion/",
+    ".tox/**/site-packages/shardyfusion/",
+]
+
+[tool.coverage.report]
+show_missing = true
+precision = 1
+skip_covered = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+    "\\.\\.\\.",
+]
+
+[tool.coverage.xml]
+output = "coverage.xml"
+
+[tool.coverage.html]
+directory = "htmlcov"
+
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-ra"

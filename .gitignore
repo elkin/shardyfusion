@@ -21,6 +21,7 @@ pip-wheel-metadata/
 .mypy_cache/
 .coverage
 .coverage.*
+coverage.xml
 htmlcov/
 
 # Tox/Nox

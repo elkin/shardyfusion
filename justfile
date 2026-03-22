@@ -123,6 +123,7 @@ clean:
     rm -rf .ruff_cache .pytest_cache .mypy_cache .hypothesis
     rm -rf dist site build
     rm -rf shardyfusion.egg-info
+    rm -rf htmlcov .coverage .coverage.* coverage.xml
     find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
 # Remove caches, .venv, and .tox (full reset)
@@ -185,6 +186,14 @@ integration p="2": _check-venv _check-java
 [arg('p', short='p', help='tox parallel envs')]
 ci n="4" p="2":
     just quality -p {{p}} && just unit -n {{n}} -p {{p}} && just integration -p {{p}}
+
+# Run unit tests with coverage and produce a report
+[group('test')]
+[arg('n', short='n', help='pytest-xdist workers')]
+coverage n="4": _check-venv _check-java
+    RAY_ENABLE_UV_RUN_RUNTIME_ENV=0 SPARK_LOCAL_IP=127.0.0.1 uv run pytest --cov -n {{n}} -q tests/unit
+    uv run coverage html
+    @echo "HTML report: htmlcov/index.html"
 
 # ── Container ────────────────────────────────────────────────────────────────
 
