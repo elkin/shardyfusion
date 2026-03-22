@@ -22,6 +22,7 @@ import json
 import logging
 import sqlite3
 import types
+from collections import OrderedDict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -88,6 +89,7 @@ class SqliteAdapter:
         self._db_path = local_dir / _DB_FILENAME
         self._uploaded = False
         self._closed = False
+        self._checkpointed = False
 
         local_dir.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self._db_path), isolation_level=None)
@@ -125,6 +127,8 @@ class SqliteAdapter:
     def write_batch(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
         if self._conn is None:
             raise SqliteAdapterError("Adapter already closed")
+        if self._checkpointed:
+            raise SqliteAdapterError("Cannot write after checkpoint")
         self._conn.executemany("INSERT OR REPLACE INTO kv (k, v) VALUES (?, ?)", pairs)
 
     def flush(self) -> None:
@@ -133,10 +137,13 @@ class SqliteAdapter:
     def checkpoint(self) -> str | None:
         if self._conn is None:
             raise SqliteAdapterError("Adapter already closed")
+        if self._checkpointed:
+            raise SqliteAdapterError("Adapter already checkpointed")
         self._conn.execute("COMMIT")
         self._conn.execute("PRAGMA optimize")
         self._conn.close()
         self._conn = None
+        self._checkpointed = True
 
         file_hash = hashlib.sha256(self._db_path.read_bytes()).hexdigest()
         log_event(
@@ -313,6 +320,13 @@ class AsyncSqliteShardReader:
 
     Delegates blocking ``sqlite3`` calls to a thread executor via
     :func:`asyncio.to_thread`.
+
+    This wrapper does not guard against concurrent ``close()`` and
+    ``get()`` calls.  Callers must ensure that ``close()`` is not
+    invoked while ``get()`` operations are still in flight.  When used
+    via :class:`~shardyfusion.reader.async_reader.AsyncShardedReader`,
+    the reader's borrow-count mechanism provides this guarantee
+    automatically.
     """
 
     def __init__(self, inner: SqliteShardReader) -> None:
@@ -365,9 +379,8 @@ class _S3ReadOnlyFile:
         self._client = create_s3_client()
         self._bucket = bucket
         self._key = key
-        self._page_cache: dict[tuple[int, int], bytes] = {}
+        self._page_cache: OrderedDict[tuple[int, int], bytes] = OrderedDict()
         self._page_cache_pages = page_cache_pages
-        self._page_order: list[tuple[int, int]] = []
 
         head = self._client.head_object(Bucket=bucket, Key=key)
         self._size: int = head["ContentLength"]
@@ -380,8 +393,7 @@ class _S3ReadOnlyFile:
         cache_key = (offset, amount)
         cached = self._page_cache.get(cache_key)
         if cached is not None:
-            self._page_order.remove(cache_key)
-            self._page_order.append(cache_key)
+            self._page_cache.move_to_end(cache_key)
             return cached
 
         end = min(offset + amount - 1, self._size - 1)
@@ -394,10 +406,8 @@ class _S3ReadOnlyFile:
 
         # LRU eviction
         if len(self._page_cache) >= self._page_cache_pages:
-            evict_key = self._page_order.pop(0)
-            self._page_cache.pop(evict_key, None)
+            self._page_cache.popitem(last=False)
         self._page_cache[cache_key] = data
-        self._page_order.append(cache_key)
 
         return data
 
@@ -442,7 +452,7 @@ class SqliteRangeShardReader:
         import uuid
 
         vfs_name = f"s3range_{uuid.uuid4().hex}"
-        self._vfs = _ApswS3RangeVFS(vfs_name, self._s3_file)
+        self._vfs = _create_apsw_vfs(vfs_name, self._s3_file)
         self._conn = apsw.Connection(
             f"file:{_DB_FILENAME}?mode=ro",
             flags=apsw.SQLITE_OPEN_READONLY | apsw.SQLITE_OPEN_URI,
@@ -462,56 +472,69 @@ class SqliteRangeShardReader:
         if hasattr(self, "_conn") and self._conn is not None:
             self._conn.close()
             self._conn = None  # type: ignore[assignment]
+        if hasattr(self, "_vfs") and self._vfs is not None:
+            self._vfs.unregister()
+            self._vfs = None
 
 
-class _ApswS3RangeVFS:
-    """APSW VFS that proxies reads to :class:`_S3ReadOnlyFile`."""
+def _create_apsw_vfs(vfs_name: str, s3_file: _S3ReadOnlyFile) -> Any:
+    """Create and register an APSW VFS backed by S3 range reads.
 
-    def __init__(self, vfs_name: str, s3_file: _S3ReadOnlyFile) -> None:
-        import apsw  # pyright: ignore[reportMissingImports]
+    Defines VFS and VFSFile subclasses at call time because ``apsw`` is
+    an optional dependency that may not be available at module load.
+    Returns the registered VFS instance (caller must keep it alive while
+    the connection is open, and call ``unregister()`` on close).
+    """
+    import apsw  # pyright: ignore[reportMissingImports]
 
-        self._s3_file = s3_file
-        self._vfs_name = vfs_name
-        self._vfs = apsw.VFS(vfs_name, base="")  # no base VFS
-        # Override the VFS methods
-        self._vfs.xOpen = self._x_open  # type: ignore[attr-defined]
+    class S3RangeVFS(apsw.VFS):
+        def __init__(self) -> None:
+            super().__init__(vfs_name, "")
 
-    def _x_open(self, name: Any, flags: list[int]) -> _ApswS3VFSFile:
-        return _ApswS3VFSFile(self._s3_file)
+        def xOpen(
+            self, name: str | apsw.URIFilename | None, flags: list[int]
+        ) -> S3RangeVFSFile:
+            return S3RangeVFSFile("", flags)
 
+    class S3RangeVFSFile(apsw.VFSFile):
+        def __init__(self, _name: str, _flags: list[int]) -> None:
+            # Do NOT call super().__init__() — there is no underlying
+            # base file to open; all I/O goes through S3 range reads.
+            pass
 
-class _ApswS3VFSFile:
-    """Virtual file that reads from S3 via range requests."""
+        def xRead(self, amount: int, offset: int) -> bytes:
+            data = s3_file.read(offset, amount)
+            # SQLite expects exactly ``amount`` bytes; pad with zeros
+            # if the read is short (e.g. at end of file).
+            if len(data) < amount:
+                data += b"\x00" * (amount - len(data))
+            return data
 
-    def __init__(self, s3_file: _S3ReadOnlyFile) -> None:
-        self._s3_file = s3_file
+        def xFileSize(self) -> int:
+            return s3_file.size
 
-    def xRead(self, amount: int, offset: int) -> bytes:
-        return self._s3_file.read(offset, amount)
+        def xClose(self) -> None:
+            pass
 
-    def xFileSize(self) -> int:
-        return self._s3_file.size
+        def xLock(self, level: int) -> None:
+            pass
 
-    def xClose(self) -> None:
-        pass
+        def xUnlock(self, level: int) -> None:
+            pass
 
-    def xLock(self, level: int) -> None:
-        pass
+        def xCheckReservedLock(self) -> bool:
+            return False
 
-    def xUnlock(self, level: int) -> None:
-        pass
+        def xFileControl(self, op: int, ptr: int) -> bool:
+            return False
 
-    def xCheckReservedLock(self) -> bool:
-        return False
+        def xSectorSize(self) -> int:
+            return 4096
 
-    def xFileControl(self, op: int, ptr: int) -> bool:
-        return False
+        def xDeviceCharacteristics(self) -> int:
+            return 0
 
-    def xSectorSize(self) -> int:
-        return 4096
-
-    def xDeviceCharacteristics(self) -> int:
-        return 0
+    return S3RangeVFS()
 
 
 # ---------------------------------------------------------------------------
@@ -539,7 +562,12 @@ class AsyncSqliteRangeReaderFactory:
 
 
 class AsyncSqliteRangeShardReader:
-    """Async wrapper around :class:`SqliteRangeShardReader`."""
+    """Async wrapper around :class:`SqliteRangeShardReader`.
+
+    This wrapper does not guard against concurrent ``close()`` and
+    ``get()`` calls.  Callers must ensure that ``close()`` is not
+    invoked while ``get()`` operations are still in flight.
+    """
 
     def __init__(self, inner: SqliteRangeShardReader) -> None:
         self._inner = inner
