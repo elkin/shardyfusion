@@ -93,6 +93,9 @@ class SqliteAdapter:
         s3_connection_options: S3ConnectionOptions | None = None,
         credential_provider: CredentialProvider | None = None,
     ) -> None:
+        page_size = int(page_size)
+        cache_size_pages = int(cache_size_pages)
+
         self._db_url = db_url
         self._local_dir = local_dir
         self._db_path = local_dir / _DB_FILENAME
@@ -158,7 +161,8 @@ class SqliteAdapter:
         self._conn = None
         self._checkpointed = True
 
-        file_hash = hashlib.sha256(self._db_path.read_bytes()).hexdigest()
+        with open(self._db_path, "rb") as f:
+            file_hash = hashlib.file_digest(f, "sha256").hexdigest()
         log_event(
             "sqlite_adapter_checkpointed",
             level=logging.DEBUG,
@@ -279,10 +283,10 @@ class SqliteShardReader:
             self._db_path.write_bytes(data)
             self._write_cached_snapshot_identity()
 
+        mmap_size = int(mmap_size)
         conn = sqlite3.connect(
             f"file:{self._db_path}?mode=ro", uri=True, check_same_thread=False
         )
-        conn.row_factory = sqlite3.Row
         conn.execute(f"PRAGMA mmap_size = {mmap_size}")
         conn.execute("PRAGMA cache_size = -8000")
         self._conn: sqlite3.Connection | None = conn
@@ -490,6 +494,8 @@ class SqliteRangeShardReader:
             ) from exc
 
         from .storage import parse_s3_url
+
+        page_cache_pages = int(page_cache_pages)
 
         self._db_url = db_url
         self._conn: Any | None = None
