@@ -28,9 +28,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Self
 
+from .credentials import CredentialProvider, S3Credentials
 from .errors import ShardyfusionError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
-from .storage import get_bytes, put_bytes
+from .storage import create_s3_client, get_bytes, put_bytes
+from .type_defs import S3ConnectionOptions
 
 _logger = get_logger(__name__)
 
@@ -60,6 +62,8 @@ class SqliteFactory:
 
     page_size: int = 4096
     cache_size_pages: int = -2000  # negative = KiB, so ~8 MB
+    s3_connection_options: S3ConnectionOptions | None = None
+    credential_provider: CredentialProvider | None = None
 
     def __call__(self, *, db_url: str, local_dir: Path) -> SqliteAdapter:
         return SqliteAdapter(
@@ -67,6 +71,8 @@ class SqliteFactory:
             local_dir=local_dir,
             page_size=self.page_size,
             cache_size_pages=self.cache_size_pages,
+            s3_connection_options=self.s3_connection_options,
+            credential_provider=self.credential_provider,
         )
 
 
@@ -83,6 +89,8 @@ class SqliteAdapter:
         local_dir: Path,
         page_size: int = 4096,
         cache_size_pages: int = -2000,
+        s3_connection_options: S3ConnectionOptions | None = None,
+        credential_provider: CredentialProvider | None = None,
     ) -> None:
         self._db_url = db_url
         self._local_dir = local_dir
@@ -90,6 +98,10 @@ class SqliteAdapter:
         self._uploaded = False
         self._closed = False
         self._checkpointed = False
+        self._s3_conn_opts = s3_connection_options
+        self._s3_creds: S3Credentials | None = (
+            credential_provider.resolve() if credential_provider else None
+        )
 
         local_dir.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self._db_path), isolation_level=None)
@@ -169,10 +181,16 @@ class SqliteAdapter:
 
             if self._db_path.exists() and not self._uploaded:
                 s3_key = f"{self._db_url.rstrip('/')}/{_DB_FILENAME}"
+                client = (
+                    create_s3_client(self._s3_creds, self._s3_conn_opts)
+                    if self._s3_creds or self._s3_conn_opts
+                    else None
+                )
                 put_bytes(
                     s3_key,
                     self._db_path.read_bytes(),
                     content_type="application/x-sqlite3",
+                    s3_client=client,
                 )
                 self._uploaded = True
                 log_event(
@@ -209,6 +227,8 @@ class SqliteReaderFactory:
     """Picklable factory for the download-and-cache SQLite shard reader."""
 
     mmap_size: int = 268435456  # 256 MB
+    s3_connection_options: S3ConnectionOptions | None = None
+    credential_provider: CredentialProvider | None = None
 
     def __call__(
         self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
@@ -218,6 +238,8 @@ class SqliteReaderFactory:
             local_dir=local_dir,
             checkpoint_id=checkpoint_id,
             mmap_size=self.mmap_size,
+            s3_connection_options=self.s3_connection_options,
+            credential_provider=self.credential_provider,
         )
 
 
@@ -234,6 +256,8 @@ class SqliteShardReader:
         local_dir: Path,
         checkpoint_id: str | None,
         mmap_size: int = 268435456,
+        s3_connection_options: S3ConnectionOptions | None = None,
+        credential_provider: CredentialProvider | None = None,
     ) -> None:
         self._db_url = db_url
         local_dir.mkdir(parents=True, exist_ok=True)
@@ -243,7 +267,13 @@ class SqliteShardReader:
 
         if not self._is_cached_snapshot_current():
             s3_key = f"{db_url.rstrip('/')}/{_DB_FILENAME}"
-            data = get_bytes(s3_key)
+            creds = credential_provider.resolve() if credential_provider else None
+            client = (
+                create_s3_client(creds, s3_connection_options)
+                if creds or s3_connection_options
+                else None
+            )
+            data = get_bytes(s3_key, s3_client=client)
             self._db_path.write_bytes(data)
             self._write_cached_snapshot_identity()
 
@@ -301,6 +331,8 @@ class AsyncSqliteReaderFactory:
     """Async factory for the download-and-cache SQLite shard reader."""
 
     mmap_size: int = 268435456
+    s3_connection_options: S3ConnectionOptions | None = None
+    credential_provider: CredentialProvider | None = None
 
     async def __call__(
         self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
@@ -311,6 +343,8 @@ class AsyncSqliteReaderFactory:
             local_dir=local_dir,
             checkpoint_id=checkpoint_id,
             mmap_size=self.mmap_size,
+            s3_connection_options=self.s3_connection_options,
+            credential_provider=self.credential_provider,
         )
         return AsyncSqliteShardReader(inner)
 
@@ -349,6 +383,8 @@ class SqliteRangeReaderFactory:
     """Picklable factory for the range-read VFS reader.  Requires ``apsw``."""
 
     page_cache_pages: int = 1024  # ~4 MB at 4 KB/page
+    s3_connection_options: S3ConnectionOptions | None = None
+    credential_provider: CredentialProvider | None = None
 
     def __call__(
         self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
@@ -358,6 +394,8 @@ class SqliteRangeReaderFactory:
             local_dir=local_dir,
             checkpoint_id=checkpoint_id,
             page_cache_pages=self.page_cache_pages,
+            s3_connection_options=self.s3_connection_options,
+            credential_provider=self.credential_provider,
         )
 
 
@@ -373,10 +411,12 @@ class _S3ReadOnlyFile:
         bucket: str,
         key: str,
         page_cache_pages: int = 1024,
+        s3_connection_options: S3ConnectionOptions | None = None,
+        s3_credentials: S3Credentials | None = None,
     ) -> None:
         from .storage import create_s3_client
 
-        self._client = create_s3_client()
+        self._client = create_s3_client(s3_credentials, s3_connection_options)
         self._bucket = bucket
         self._key = key
         self._page_cache: OrderedDict[tuple[int, int], bytes] = OrderedDict()
@@ -430,6 +470,8 @@ class SqliteRangeShardReader:
         local_dir: Path,
         checkpoint_id: str | None,
         page_cache_pages: int = 1024,
+        s3_connection_options: S3ConnectionOptions | None = None,
+        credential_provider: CredentialProvider | None = None,
     ) -> None:
         try:
             import apsw  # pyright: ignore[reportMissingImports]
@@ -444,8 +486,13 @@ class SqliteRangeShardReader:
         self._db_url = db_url
         s3_key_full = f"{db_url.rstrip('/')}/{_DB_FILENAME}"
         bucket, key = parse_s3_url(s3_key_full)
+        creds = credential_provider.resolve() if credential_provider else None
         self._s3_file = _S3ReadOnlyFile(
-            bucket=bucket, key=key, page_cache_pages=page_cache_pages
+            bucket=bucket,
+            key=key,
+            page_cache_pages=page_cache_pages,
+            s3_connection_options=s3_connection_options,
+            s3_credentials=creds,
         )
 
         # Register a unique VFS name for this reader instance
@@ -547,6 +594,8 @@ class AsyncSqliteRangeReaderFactory:
     """Async factory for the range-read VFS reader."""
 
     page_cache_pages: int = 1024
+    s3_connection_options: S3ConnectionOptions | None = None
+    credential_provider: CredentialProvider | None = None
 
     async def __call__(
         self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
@@ -557,6 +606,8 @@ class AsyncSqliteRangeReaderFactory:
             local_dir=local_dir,
             checkpoint_id=checkpoint_id,
             page_cache_pages=self.page_cache_pages,
+            s3_connection_options=self.s3_connection_options,
+            credential_provider=self.credential_provider,
         )
         return AsyncSqliteRangeShardReader(inner)
 
