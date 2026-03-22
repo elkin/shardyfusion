@@ -388,7 +388,7 @@ class AsyncSqliteShardReader:
 class SqliteRangeReaderFactory:
     """Picklable factory for the range-read VFS reader.  Requires ``apsw``."""
 
-    page_cache_pages: int = 1024  # ~4 MB at 4 KB/page
+    page_cache_pages: int = 1024  # ~4 MB at 4 KB/page; 0 disables caching
     s3_connection_options: S3ConnectionOptions | None = None
     credential_provider: CredentialProvider | None = None
 
@@ -422,6 +422,8 @@ class _S3ReadOnlyFile:
     ) -> None:
         from .storage import create_s3_client
 
+        page_cache_pages = _normalize_page_cache_pages(page_cache_pages)
+
         self._client = create_s3_client(s3_credentials, s3_connection_options)
         self._bucket = bucket
         self._key = key
@@ -440,12 +442,13 @@ class _S3ReadOnlyFile:
         if offset >= self._size:
             return b""
 
-        with self._lock:
-            cache_key = (offset, amount)
-            cached = self._page_cache.get(cache_key)
-            if cached is not None:
-                self._page_cache.move_to_end(cache_key)
-                return cached
+        cache_key = (offset, amount)
+        if self._page_cache_pages > 0:
+            with self._lock:
+                cached = self._page_cache.get(cache_key)
+                if cached is not None:
+                    self._page_cache.move_to_end(cache_key)
+                    return cached
 
         end = min(offset + amount - 1, self._size - 1)
         resp = self._client.get_object(
@@ -455,13 +458,21 @@ class _S3ReadOnlyFile:
         )
         data = resp["Body"].read()
 
-        with self._lock:
-            # LRU eviction
-            if len(self._page_cache) >= self._page_cache_pages:
-                self._page_cache.popitem(last=False)
-            self._page_cache[cache_key] = data
+        if self._page_cache_pages > 0:
+            with self._lock:
+                # LRU eviction
+                if len(self._page_cache) >= self._page_cache_pages:
+                    self._page_cache.popitem(last=False)
+                self._page_cache[cache_key] = data
 
         return data
+
+
+def _normalize_page_cache_pages(page_cache_pages: int) -> int:
+    pages = int(page_cache_pages)
+    if pages < 0:
+        raise SqliteAdapterError("page_cache_pages must be >= 0")
+    return pages
 
 
 class SqliteRangeShardReader:
@@ -495,7 +506,7 @@ class SqliteRangeShardReader:
 
         from .storage import parse_s3_url
 
-        page_cache_pages = int(page_cache_pages)
+        page_cache_pages = _normalize_page_cache_pages(page_cache_pages)
 
         self._db_url = db_url
         self._conn: Any | None = None
@@ -618,7 +629,7 @@ def _create_apsw_vfs(vfs_name: str, s3_file: _S3ReadOnlyFile) -> Any:
 class AsyncSqliteRangeReaderFactory:
     """Async factory for the range-read VFS reader."""
 
-    page_cache_pages: int = 1024
+    page_cache_pages: int = 1024  # 0 disables caching
     s3_connection_options: S3ConnectionOptions | None = None
     credential_provider: CredentialProvider | None = None
 

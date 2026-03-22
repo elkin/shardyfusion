@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from shardyfusion.sqlite_adapter import _S3ReadOnlyFile
+from shardyfusion.sqlite_adapter import SqliteAdapterError, _S3ReadOnlyFile
 
 
 class TestS3ReadOnlyFile:
@@ -109,6 +109,26 @@ class TestS3ReadOnlyFile:
 
         f.read(10, 10)
         assert s3_client.get_object.call_count == 4
+
+    def test_page_cache_zero_disables_caching(self, s3_client: MagicMock) -> None:
+        body = MagicMock()
+        body.read.return_value = b"\x00" * 10
+        s3_client.get_object.return_value = {"Body": body}
+
+        with patch("shardyfusion.storage.create_s3_client", return_value=s3_client):
+            f = _S3ReadOnlyFile(bucket="b", key="k", page_cache_pages=0)
+
+        f.read(0, 10)
+        f.read(0, 10)
+
+        assert s3_client.get_object.call_count == 2
+
+    def test_negative_page_cache_size_is_rejected(self, s3_client: MagicMock) -> None:
+        with patch("shardyfusion.storage.create_s3_client", return_value=s3_client):
+            with pytest.raises(
+                SqliteAdapterError, match="page_cache_pages must be >= 0"
+            ):
+                _S3ReadOnlyFile(bucket="b", key="k", page_cache_pages=-1)
 
 
 # ---------------------------------------------------------------------------
