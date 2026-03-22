@@ -4,13 +4,18 @@ import time
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from itertools import chain
-from pathlib import Path
 from uuid import uuid4
 
 from pyspark import RDD, StorageLevel, TaskContext
 from pyspark.sql import DataFrame, Row
 
 from shardyfusion._rate_limiter import RateLimiter, TokenBucket
+from shardyfusion._shard_writer import (
+    ShardWriteParams,
+    make_shard_local_dir,
+    make_shard_url,
+    write_shard_core,
+)
 from shardyfusion._writer_core import (
     PartitionWriteOutcome,
     ShardAttemptResult,
@@ -19,16 +24,13 @@ from shardyfusion._writer_core import (
     empty_shard_result,
     publish_to_store,
     select_winners,
-    update_min_max,
 )
 from shardyfusion.config import WriteConfig
 from shardyfusion.credentials import CredentialProvider
-from shardyfusion.errors import ShardAssignmentError, ShardyfusionError
+from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.logging import (
-    FailureSeverity,
     get_logger,
     log_event,
-    log_failure,
 )
 from shardyfusion.manifest import BuildResult, WriterInfo
 from shardyfusion.metrics import MetricEvent, MetricsCollector
@@ -38,8 +40,6 @@ from shardyfusion.slatedb_adapter import (
     DbAdapterFactory,
     SlateDbFactory,
 )
-from shardyfusion.storage import join_s3
-from shardyfusion.type_defs import KeyLike
 from shardyfusion.writer.spark.util import (
     DataFrameCacheContext,
     SparkConfOverrideContext,
@@ -490,167 +490,59 @@ def write_one_shard_partition(
 
     rows_iter = chain([first], it)
 
-    db_rel_path = runtime.db_path_template.format(db_id=db_id)
-    db_url = join_s3(
+    db_url = make_shard_url(
         runtime.s3_prefix,
         runtime.shard_prefix,
-        f"run_id={runtime.run_id}",
-        db_rel_path,
-        f"attempt={attempt:02d}",
+        runtime.run_id,
+        runtime.db_path_template,
+        db_id,
+        attempt,
     )
-    local_dir = (
-        Path(runtime.local_root)
-        / f"run_id={runtime.run_id}"
-        / f"db={db_id:05d}"
-        / f"attempt={attempt:02d}"
-    )
-    local_dir.mkdir(parents=True, exist_ok=True)
+    local_dir = make_shard_local_dir(runtime.local_root, runtime.run_id, db_id, attempt)
 
-    factory = runtime.adapter_factory or SlateDbFactory(
+    factory: DbAdapterFactory = runtime.adapter_factory or SlateDbFactory(
         credential_provider=runtime.credential_provider
     )
 
-    bucket: RateLimiter | None = None
+    ops_limiter: RateLimiter | None = None
     if runtime.max_writes_per_second is not None:
-        bucket = TokenBucket(
+        ops_limiter = TokenBucket(
             runtime.max_writes_per_second, metrics_collector=runtime.metrics_collector
         )
-    byte_bucket: RateLimiter | None = None
+    bytes_limiter: RateLimiter | None = None
     if runtime.max_write_bytes_per_second is not None:
-        byte_bucket = TokenBucket(
+        bytes_limiter = TokenBucket(
             runtime.max_write_bytes_per_second,
             metrics_collector=runtime.metrics_collector,
             limiter_type="bytes",
         )
 
-    mc = runtime.metrics_collector
-
-    log_event(
-        "shard_write_started",
-        logger=_logger,
-        run_id=runtime.run_id,
+    params = ShardWriteParams(
         db_id=db_id,
         attempt=attempt,
+        run_id=runtime.run_id,
         db_url=db_url,
+        local_dir=local_dir,
+        factory=factory,
+        key_encoder=runtime.key_encoder,
+        batch_size=runtime.batch_size,
+        ops_limiter=ops_limiter,
+        bytes_limiter=bytes_limiter,
+        metrics_collector=runtime.metrics_collector,
+        started=runtime.started,
     )
-    if mc is not None:
-        mc.emit(
-            MetricEvent.SHARD_WRITE_STARTED,
-            {
-                "elapsed_ms": int((time.perf_counter() - runtime.started) * 1000),
-            },
-        )
 
-    partition_started = time.perf_counter()
-    row_count = 0
-    min_key: KeyLike | None = None
-    max_key: KeyLike | None = None
-    checkpoint_id: str | None = None
-    batch: list[tuple[bytes, bytes]] = []
+    def _iter_spark_rows() -> Iterable[tuple[object, bytes]]:
+        for _, row in rows_iter:
+            yield row[runtime.key_col], runtime.value_spec.encode(row)
 
-    try:
-        with factory(
-            db_url=db_url,
-            local_dir=local_dir,
-        ) as adapter:
-            for _, row in rows_iter:
-                key_value = row[runtime.key_col]
-                key_bytes = runtime.key_encoder(key_value)
-                value_bytes = runtime.value_spec.encode(row)
-
-                batch.append((key_bytes, value_bytes))
-                row_count += 1
-                min_key, max_key = update_min_max(min_key, max_key, key_value)
-
-                if len(batch) >= runtime.batch_size:
-                    if bucket is not None:
-                        bucket.acquire(len(batch))
-                    if byte_bucket is not None:
-                        byte_bucket.acquire(sum(len(k) + len(v) for k, v in batch))
-                    adapter.write_batch(batch)
-                    if mc is not None:
-                        mc.emit(
-                            MetricEvent.BATCH_WRITTEN,
-                            {
-                                "elapsed_ms": int(
-                                    (time.perf_counter() - runtime.started) * 1000
-                                ),
-                                "batch_size": len(batch),
-                            },
-                        )
-                    batch.clear()
-
-            if batch:
-                if bucket is not None:
-                    bucket.acquire(len(batch))
-                if byte_bucket is not None:
-                    byte_bucket.acquire(sum(len(k) + len(v) for k, v in batch))
-                adapter.write_batch(batch)
-                if mc is not None:
-                    mc.emit(
-                        MetricEvent.BATCH_WRITTEN,
-                        {
-                            "elapsed_ms": int(
-                                (time.perf_counter() - runtime.started) * 1000
-                            ),
-                            "batch_size": len(batch),
-                        },
-                    )
-                batch.clear()
-
-            adapter.flush()
-            checkpoint_id = adapter.checkpoint()
-    except Exception as exc:  # pragma: no cover - worker runtime failure surface
-        log_failure(
-            "shard_write_failed",
-            severity=FailureSeverity.ERROR,
-            logger=_logger,
-            error=exc,
-            run_id=runtime.run_id,
-            db_id=db_id,
+    result = write_shard_core(
+        params,
+        _iter_spark_rows(),
+        writer_info_base=WriterInfo(
+            stage_id=stage_id,
+            task_attempt_id=task_attempt_id,
             attempt=attempt,
-            db_url=db_url,
-            rows_written=row_count,
-            include_traceback=True,
-        )
-        raise ShardyfusionError(
-            f"Shard write failed for db_id={db_id}, attempt={attempt}: {exc}"
-        ) from exc
-
-    duration_ms = int((time.perf_counter() - partition_started) * 1000)
-    log_event(
-        "shard_write_completed",
-        logger=_logger,
-        run_id=runtime.run_id,
-        db_id=db_id,
-        attempt=attempt,
-        row_count=row_count,
-        duration_ms=duration_ms,
+        ),
     )
-    if mc is not None:
-        mc.emit(
-            MetricEvent.SHARD_WRITE_COMPLETED,
-            {
-                "elapsed_ms": int((time.perf_counter() - runtime.started) * 1000),
-                "duration_ms": duration_ms,
-                "row_count": row_count,
-            },
-        )
-
-    writer_info = WriterInfo(
-        stage_id=stage_id,
-        task_attempt_id=task_attempt_id,
-        attempt=attempt,
-        duration_ms=duration_ms,
-    )
-
-    yield ShardAttemptResult(
-        db_id=db_id,
-        db_url=db_url,
-        attempt=attempt,
-        row_count=row_count,
-        min_key=min_key,
-        max_key=max_key,
-        checkpoint_id=checkpoint_id,
-        writer_info=writer_info,
-    )
+    yield result

@@ -2,36 +2,31 @@
 
 import time
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 import dask.dataframe as dd
 import pandas as pd
 
-from shardyfusion._rate_limiter import RateLimiter, TokenBucket
+from shardyfusion._shard_writer import (
+    iter_pandas_rows,
+    results_pdf_to_attempts,
+    write_shard_with_retry,
+)
 from shardyfusion._writer_core import (
-    ShardAttemptResult,
     assemble_build_result,
     cleanup_losers,
     publish_to_store,
     route_key,
     select_winners,
-    update_min_max,
 )
 from shardyfusion.config import WriteConfig
 from shardyfusion.credentials import CredentialProvider
-from shardyfusion.errors import (
-    ShardAssignmentError,
-    ShardyfusionError,
-)
+from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.logging import (
-    FailureSeverity,
     get_logger,
     log_event,
-    log_failure,
 )
-from shardyfusion.manifest import BuildResult, WriterInfo
+from shardyfusion.manifest import BuildResult
 from shardyfusion.metrics import MetricEvent, MetricsCollector
 from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import (
@@ -44,8 +39,7 @@ from shardyfusion.slatedb_adapter import (
     DbAdapterFactory,
     SlateDbFactory,
 )
-from shardyfusion.storage import join_s3
-from shardyfusion.type_defs import KeyLike
+from shardyfusion.type_defs import RetryConfig
 
 from .sharding import add_db_id_column
 
@@ -73,6 +67,7 @@ class _PartitionWriteRuntime:
     sort_within_partitions: bool = False
     metrics_collector: MetricsCollector | None = None  # must be picklable
     started: float = 0.0
+    shard_retry: RetryConfig | None = None
 
 
 # Meta schema for result DataFrames returned by partition writers.
@@ -86,6 +81,7 @@ _RESULT_META = pd.DataFrame(
         "max_key",
         "checkpoint_id",
         "writer_info",
+        "all_attempt_urls",
     ],
 ).astype(
     {
@@ -97,6 +93,7 @@ _RESULT_META = pd.DataFrame(
         "max_key": "object",
         "checkpoint_id": "object",
         "writer_info": "object",
+        "all_attempt_urls": "object",
     }
 )
 
@@ -224,7 +221,7 @@ def write_sharded(
         )
         results_pdf = ddf_results.compute()
 
-        attempts = _results_pdf_to_attempts(results_pdf)
+        attempts = results_pdf_to_attempts(results_pdf)
         write_duration_ms = int((time.perf_counter() - write_started) * 1000)
 
         rows_written = sum(a.row_count for a in attempts)
@@ -397,6 +394,7 @@ def _build_partition_write_runtime(
         sort_within_partitions=sort_within_partitions,
         metrics_collector=config.metrics_collector,
         started=started,
+        shard_retry=config.shard_retry,
     )
 
 
@@ -411,14 +409,32 @@ def _write_partition(
 
     results: list[dict[str, object]] = []
 
+    factory: DbAdapterFactory = runtime.adapter_factory or SlateDbFactory(
+        credential_provider=runtime.credential_provider
+    )
+
     for db_id, group_pdf in pdf.groupby(DB_ID_COL):
         if runtime.sort_within_partitions:
             group_pdf = group_pdf.sort_values(runtime.key_col)
 
-        attempt_result = _write_one_shard(
-            int(db_id),  # type: ignore[invalid-argument-type]  # pandas groupby key
-            group_pdf,
-            runtime,
+        attempt_result = write_shard_with_retry(
+            db_id=int(db_id),  # type: ignore[invalid-argument-type]  # pandas groupby key
+            rows_fn=lambda pdf=group_pdf: iter_pandas_rows(
+                pdf, runtime.key_col, runtime.value_spec
+            ),
+            run_id=runtime.run_id,
+            s3_prefix=runtime.s3_prefix,
+            shard_prefix=runtime.shard_prefix,
+            db_path_template=runtime.db_path_template,
+            local_root=runtime.local_root,
+            key_encoder=runtime.key_encoder,
+            batch_size=runtime.batch_size,
+            factory=factory,
+            max_writes_per_second=runtime.max_writes_per_second,
+            max_write_bytes_per_second=runtime.max_write_bytes_per_second,
+            metrics_collector=runtime.metrics_collector,
+            started=runtime.started,
+            retry_config=runtime.shard_retry,
         )
         results.append(
             {
@@ -430,6 +446,7 @@ def _write_partition(
                 "max_key": attempt_result.max_key,
                 "checkpoint_id": attempt_result.checkpoint_id,
                 "writer_info": attempt_result.writer_info,
+                "all_attempt_urls": attempt_result.all_attempt_urls,
             }
         )
 
@@ -437,217 +454,3 @@ def _write_partition(
         return _RESULT_META.iloc[:0].copy()
 
     return pd.DataFrame(results)
-
-
-def _write_one_shard(
-    db_id: int,
-    pdf: pd.DataFrame,
-    runtime: _PartitionWriteRuntime,
-) -> ShardAttemptResult:
-    """Write one shard from a pandas DataFrame group."""
-
-    attempt = 0
-    db_rel_path = runtime.db_path_template.format(db_id=db_id)
-    db_url = join_s3(
-        runtime.s3_prefix,
-        runtime.shard_prefix,
-        f"run_id={runtime.run_id}",
-        db_rel_path,
-        f"attempt={attempt:02d}",
-    )
-    local_dir = (
-        Path(runtime.local_root)
-        / f"run_id={runtime.run_id}"
-        / f"db={db_id:05d}"
-        / f"attempt={attempt:02d}"
-    )
-    local_dir.mkdir(parents=True, exist_ok=True)
-
-    mc = runtime.metrics_collector
-
-    log_event(
-        "shard_write_started",
-        logger=_logger,
-        run_id=runtime.run_id,
-        db_id=db_id,
-        attempt=attempt,
-        db_url=db_url,
-    )
-    if mc is not None:
-        mc.emit(
-            MetricEvent.SHARD_WRITE_STARTED,
-            {
-                "elapsed_ms": int((time.perf_counter() - runtime.started) * 1000),
-            },
-        )
-
-    factory: DbAdapterFactory = runtime.adapter_factory or SlateDbFactory(
-        credential_provider=runtime.credential_provider
-    )
-
-    bucket: RateLimiter | None = None
-    if runtime.max_writes_per_second is not None:
-        bucket = TokenBucket(runtime.max_writes_per_second, metrics_collector=mc)
-    byte_bucket: RateLimiter | None = None
-    if runtime.max_write_bytes_per_second is not None:
-        byte_bucket = TokenBucket(
-            runtime.max_write_bytes_per_second,
-            metrics_collector=mc,
-            limiter_type="bytes",
-        )
-
-    partition_started = time.perf_counter()
-    row_count = 0
-    min_key: KeyLike | None = None
-    max_key: KeyLike | None = None
-    checkpoint_id: str | None = None
-    batch: list[tuple[bytes, bytes]] = []
-
-    try:
-        with factory(db_url=db_url, local_dir=local_dir) as adapter:
-            for _, row in pdf.iterrows():
-                key_value: Any = row[runtime.key_col]
-                # Convert numpy scalars to Python types for downstream compatibility
-                if hasattr(key_value, "item"):
-                    key_value = key_value.item()
-
-                key_bytes = runtime.key_encoder(key_value)
-                value_bytes = runtime.value_spec.encode(row)
-
-                batch.append((key_bytes, value_bytes))
-                row_count += 1
-                min_key, max_key = update_min_max(min_key, max_key, key_value)
-
-                if len(batch) >= runtime.batch_size:
-                    if bucket is not None:
-                        bucket.acquire(len(batch))
-                    if byte_bucket is not None:
-                        byte_bucket.acquire(sum(len(k) + len(v) for k, v in batch))
-                    adapter.write_batch(batch)
-                    if mc is not None:
-                        mc.emit(
-                            MetricEvent.BATCH_WRITTEN,
-                            {
-                                "elapsed_ms": int(
-                                    (time.perf_counter() - runtime.started) * 1000
-                                ),
-                                "batch_size": len(batch),
-                            },
-                        )
-                    batch.clear()
-
-            if batch:
-                if bucket is not None:
-                    bucket.acquire(len(batch))
-                if byte_bucket is not None:
-                    byte_bucket.acquire(sum(len(k) + len(v) for k, v in batch))
-                adapter.write_batch(batch)
-                if mc is not None:
-                    mc.emit(
-                        MetricEvent.BATCH_WRITTEN,
-                        {
-                            "elapsed_ms": int(
-                                (time.perf_counter() - runtime.started) * 1000
-                            ),
-                            "batch_size": len(batch),
-                        },
-                    )
-                batch.clear()
-
-            adapter.flush()
-            checkpoint_id = adapter.checkpoint()
-    except ShardyfusionError:
-        raise
-    except Exception as exc:
-        log_failure(
-            "dask_shard_write_failed",
-            severity=FailureSeverity.ERROR,
-            logger=_logger,
-            error=exc,
-            run_id=runtime.run_id,
-            db_id=db_id,
-            attempt=attempt,
-            db_url=db_url,
-            rows_written=row_count,
-            include_traceback=True,
-        )
-        raise ShardyfusionError(
-            f"Shard write failed for db_id={db_id}, attempt={attempt}: {exc}"
-        ) from exc
-
-    duration_ms = int((time.perf_counter() - partition_started) * 1000)
-    log_event(
-        "shard_write_completed",
-        logger=_logger,
-        run_id=runtime.run_id,
-        db_id=db_id,
-        attempt=attempt,
-        row_count=row_count,
-        duration_ms=duration_ms,
-    )
-    if mc is not None:
-        mc.emit(
-            MetricEvent.SHARD_WRITE_COMPLETED,
-            {
-                "elapsed_ms": int((time.perf_counter() - runtime.started) * 1000),
-                "duration_ms": duration_ms,
-                "row_count": row_count,
-            },
-        )
-
-    writer_info = WriterInfo(attempt=attempt, duration_ms=duration_ms)
-
-    return ShardAttemptResult(
-        db_id=db_id,
-        db_url=db_url,
-        attempt=attempt,
-        row_count=row_count,
-        min_key=min_key,
-        max_key=max_key,
-        checkpoint_id=checkpoint_id,
-        writer_info=writer_info,
-    )
-
-
-def _results_pdf_to_attempts(
-    results_pdf: pd.DataFrame,
-) -> list[ShardAttemptResult]:
-    """Convert result pandas DataFrame to list of ShardAttemptResult."""
-
-    if results_pdf.empty:
-        return []
-
-    attempts: list[ShardAttemptResult] = []
-    for _, row in results_pdf.iterrows():
-        # Extract pandas row values as Any to satisfy both ty and pyright
-        r: Any = row
-        min_key = r["min_key"]
-        max_key = r["max_key"]
-        checkpoint_id = r["checkpoint_id"]
-
-        # Handle pandas NaN for None values (int + None columns become float64)
-        if isinstance(min_key, float) and pd.isna(min_key):
-            min_key = None
-        elif isinstance(min_key, float):
-            min_key = int(min_key)
-        if isinstance(max_key, float) and pd.isna(max_key):
-            max_key = None
-        elif isinstance(max_key, float):
-            max_key = int(max_key)
-        if isinstance(checkpoint_id, float) and pd.isna(checkpoint_id):
-            checkpoint_id = None
-
-        attempts.append(
-            ShardAttemptResult(
-                db_id=int(r["db_id"]),
-                db_url=str(r["db_url"]),
-                attempt=int(r["attempt"]),
-                row_count=int(r["row_count"]),
-                min_key=min_key,
-                max_key=max_key,
-                checkpoint_id=None if checkpoint_id is None else str(checkpoint_id),
-                writer_info=r["writer_info"],
-            )
-        )
-
-    return attempts
