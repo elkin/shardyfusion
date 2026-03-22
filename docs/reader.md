@@ -379,20 +379,17 @@ For asyncio-based services (FastAPI, aiohttp, etc.), `AsyncShardedReader` provid
 ### Installation
 
 ```bash
-# Minimal (default SlateDB backend, uses asyncio.to_thread for S3 calls)
-uv sync --extra read
-
-# With native async S3 (recommended, default SlateDB backend)
+# Default async reader (SlateDB backend + native async S3)
 uv sync --extra read-async
 
-# SQLite backend
-uv sync --extra read-sqlite
+# Async SQLite reader wrappers (use with AsyncSqliteReaderFactory)
+uv sync --extra sqlite-async
 
-# SQLite backend with APSW range reads
-uv sync --extra read-sqlite-range
+# Async SQLite range reads (adds APSW for AsyncSqliteRangeReaderFactory)
+uv sync --extra sqlite-async --extra read-sqlite-range
 ```
 
-When the `read-async` extra is installed, aiobotocore is available and `AsyncShardedReader` automatically uses `AsyncS3ManifestStore` for native async S3 I/O. Without it, S3 calls are delegated to threads via `asyncio.to_thread()`.
+`AsyncShardedReader` defaults to `AsyncS3ManifestStore`, so `aiobotocore` is required unless you pass a custom `AsyncManifestStore`. The `read-async` extra installs the default SlateDB async stack. The `sqlite-async` extra installs `AsyncSqliteReaderFactory`; add `read-sqlite-range` as well if you need the APSW-backed `AsyncSqliteRangeReaderFactory`.
 
 ### Basic Usage
 

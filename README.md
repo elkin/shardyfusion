@@ -5,7 +5,7 @@
 [![Docs](https://img.shields.io/badge/docs-elkin.github.io%2Fshardyfusion-blue)](https://elkin.github.io/shardyfusion/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-Build and read sharded key-value snapshots on S3, powered by [SlateDB](https://slatedb.io).
+Build and read sharded key-value snapshots on S3 with a default [SlateDB](https://slatedb.io) backend and an optional SQLite-on-S3 backend.
 
 Write millions of key-value pairs across N independent shard databases using Spark, Dask, Ray, or plain Python. Read them back from any Python service with consistent routing — the reader always finds the right shard.
 

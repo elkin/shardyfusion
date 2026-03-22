@@ -21,6 +21,12 @@ uv sync --extra read-sqlite
 # Reader-side with SQLite range reads (APSW-backed)
 uv sync --extra read-sqlite-range
 
+# Async SQLite reader wrappers (download-and-cache + aiobotocore)
+uv sync --extra sqlite-async
+
+# Async SQLite range reads (combine async wrappers + APSW)
+uv sync --extra sqlite-async --extra read-sqlite-range
+
 # Spark writer (default SlateDB backend, requires Java)
 uv sync --extra writer-spark
 
