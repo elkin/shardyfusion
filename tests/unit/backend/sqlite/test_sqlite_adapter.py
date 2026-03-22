@@ -36,17 +36,17 @@ def _sqlite_bytes(tmp_path: Path, rows: list[tuple[bytes, bytes]]) -> bytes:
 class TestSqliteAdapter:
     def test_write_batch_and_read_back(self, tmp_path: Path) -> None:
         local_dir = tmp_path / "shard"
-        adapter = SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir)
-        adapter.__enter__()
+        with _MOCK_PUT:
+            with SqliteAdapter(
+                db_url="s3://test/shard", local_dir=local_dir
+            ) as adapter:
+                pairs = [(b"key1", b"val1"), (b"key2", b"val2"), (b"key3", b"val3")]
+                adapter.write_batch(pairs)
 
-        pairs = [(b"key1", b"val1"), (b"key2", b"val2"), (b"key3", b"val3")]
-        adapter.write_batch(pairs)
+                checkpoint_id = adapter.checkpoint()
+                assert checkpoint_id is not None
+                assert len(checkpoint_id) == 64  # SHA-256 hex
 
-        checkpoint_id = adapter.checkpoint()
-        assert checkpoint_id is not None
-        assert len(checkpoint_id) == 64  # SHA-256 hex
-
-        # Verify data in SQLite file
         db_path = local_dir / "shard.db"
         assert db_path.exists()
 
@@ -158,41 +158,28 @@ class TestSqliteShardReaderLocal:
         conn.close()
         return shard_dir
 
-    def test_get_existing_key(self, shard_dir: Path) -> None:
-        reader = SqliteShardReader.__new__(SqliteShardReader)
-        reader._db_url = "s3://test/shard"
-        reader._db_path = shard_dir / "shard.db"
-        conn = sqlite3.connect(
-            f"file:{reader._db_path}?mode=ro", uri=True, check_same_thread=False
-        )
-        conn.row_factory = sqlite3.Row
-        reader._conn = conn
+    def _make_reader(self, shard_dir: Path) -> SqliteShardReader:
+        db_bytes = (shard_dir / "shard.db").read_bytes()
+        with patch("shardyfusion.sqlite_adapter.get_bytes", return_value=db_bytes):
+            return SqliteShardReader(
+                db_url="s3://test/shard",
+                local_dir=shard_dir,
+                checkpoint_id=None,
+            )
 
+    def test_get_existing_key(self, shard_dir: Path) -> None:
+        reader = self._make_reader(shard_dir)
         assert reader.get(b"key1") == b"val1"
         assert reader.get(b"key2") == b"val2"
+        reader.close()
 
     def test_get_missing_key(self, shard_dir: Path) -> None:
-        reader = SqliteShardReader.__new__(SqliteShardReader)
-        reader._db_url = "s3://test/shard"
-        reader._db_path = shard_dir / "shard.db"
-        conn = sqlite3.connect(
-            f"file:{reader._db_path}?mode=ro", uri=True, check_same_thread=False
-        )
-        conn.row_factory = sqlite3.Row
-        reader._conn = conn
-
+        reader = self._make_reader(shard_dir)
         assert reader.get(b"missing") is None
+        reader.close()
 
     def test_close_and_reuse_raises(self, shard_dir: Path) -> None:
-        reader = SqliteShardReader.__new__(SqliteShardReader)
-        reader._db_url = "s3://test/shard"
-        reader._db_path = shard_dir / "shard.db"
-        conn = sqlite3.connect(
-            f"file:{reader._db_path}?mode=ro", uri=True, check_same_thread=False
-        )
-        conn.row_factory = sqlite3.Row
-        reader._conn = conn
-
+        reader = self._make_reader(shard_dir)
         reader.close()
         with pytest.raises(SqliteAdapterError, match="already closed"):
             reader.get(b"key1")

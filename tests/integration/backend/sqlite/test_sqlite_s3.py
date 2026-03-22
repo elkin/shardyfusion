@@ -7,6 +7,7 @@ import pytest
 from moto import mock_aws
 
 from shardyfusion.sqlite_adapter import (
+    AsyncSqliteReaderFactory,
     SqliteAdapter,
     SqliteReaderFactory,
     SqliteShardReader,
@@ -135,3 +136,26 @@ class TestSqliteShardReaderCacheIdentity:
         )
         assert reader_v2.get(b"k") == b"new"
         reader_v2.close()
+
+
+class TestAsyncSqliteRoundTrip:
+    """Write via SqliteAdapter → upload to S3 → read via AsyncSqliteShardReader."""
+
+    @pytest.mark.asyncio
+    async def test_async_write_and_read(self, tmp_path: Path, s3_env) -> None:
+        db_url = f"{_PREFIX}/shards/run_id=test-async/db=00000/attempt=00"
+
+        with SqliteAdapter(db_url=db_url, local_dir=tmp_path / "write") as adapter:
+            adapter.write_batch([(b"k1", b"v1"), (b"k2", b"v2")])
+            adapter.checkpoint()
+
+        factory = AsyncSqliteReaderFactory()
+        reader = await factory(
+            db_url=db_url,
+            local_dir=tmp_path / "read",
+            checkpoint_id=None,
+        )
+        assert await reader.get(b"k1") == b"v1"
+        assert await reader.get(b"k2") == b"v2"
+        assert await reader.get(b"missing") is None
+        await reader.close()

@@ -1,5 +1,7 @@
 """Unit tests for the SQLite range-read backend."""
 
+import sqlite3
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -98,3 +100,68 @@ class TestS3ReadOnlyFile:
 
         f.read(10, 10)
         assert s3_client.get_object.call_count == 4
+
+
+# ---------------------------------------------------------------------------
+# APSW VFS integration (requires apsw)
+# ---------------------------------------------------------------------------
+
+apsw = pytest.importorskip("apsw")
+
+from shardyfusion.sqlite_adapter import SqliteRangeShardReader  # noqa: E402
+
+
+def _build_sqlite_db(tmp_path: Path, rows: list[tuple[bytes, bytes]]) -> bytes:
+    """Build a SQLite DB with kv table and return its raw bytes."""
+    db_path = tmp_path / "source.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA page_size = 4096")
+    conn.execute("CREATE TABLE kv (k BLOB PRIMARY KEY, v BLOB NOT NULL) WITHOUT ROWID")
+    conn.executemany("INSERT INTO kv (k, v) VALUES (?, ?)", rows)
+    conn.commit()
+    conn.close()
+    return db_path.read_bytes()
+
+
+class TestSqliteRangeShardReaderVFS:
+    """End-to-end test: SqliteRangeShardReader through the APSW VFS pipeline."""
+
+    @pytest.fixture()
+    def db_bytes(self, tmp_path: Path) -> bytes:
+        return _build_sqlite_db(tmp_path, [(b"key1", b"val1"), (b"key2", b"val2")])
+
+    def _mock_s3_file(self, db_bytes: bytes) -> MagicMock:
+        mock = MagicMock(spec=_S3ReadOnlyFile)
+        mock.size = len(db_bytes)
+        mock.read.side_effect = lambda offset, amount: db_bytes[
+            offset : offset + amount
+        ]
+        return mock
+
+    def test_get_through_vfs(self, tmp_path: Path, db_bytes: bytes) -> None:
+        mock = self._mock_s3_file(db_bytes)
+        with patch("shardyfusion.sqlite_adapter._S3ReadOnlyFile", return_value=mock):
+            reader = SqliteRangeShardReader(
+                db_url="s3://bucket/shard",
+                local_dir=tmp_path / "read",
+                checkpoint_id=None,
+            )
+
+        assert reader.get(b"key1") == b"val1"
+        assert reader.get(b"key2") == b"val2"
+        assert reader.get(b"missing") is None
+        reader.close()
+
+    def test_close_unregisters_vfs(self, tmp_path: Path, db_bytes: bytes) -> None:
+        mock = self._mock_s3_file(db_bytes)
+        with patch("shardyfusion.sqlite_adapter._S3ReadOnlyFile", return_value=mock):
+            reader = SqliteRangeShardReader(
+                db_url="s3://bucket/shard",
+                local_dir=tmp_path / "read",
+                checkpoint_id=None,
+            )
+
+        vfs_names_before = set(apsw.vfsnames())
+        reader.close()
+        vfs_names_after = set(apsw.vfsnames())
+        assert len(vfs_names_after) < len(vfs_names_before)
