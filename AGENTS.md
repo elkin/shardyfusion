@@ -70,7 +70,7 @@
   - `uv run pytest -q tests/integration/read`
 - Integration writer tests require Spark + Java and local S3 emulation (`moto`).
 - E2E tests require a container engine and run via `just d-e2e`.
-- Contract tests in `test_routing_contract.py` verify writer-reader sharding invariant with hypothesis property tests.
+- Contract tests in `tests/unit/writer/core/test_routing_contract.py` verify writer-reader sharding invariant with hypothesis property tests.
 - Shared test scenarios in `tests/helpers/s3_test_scenarios.py` are reused across moto and Garage backends.
 - Test adapters in `testing.py`: `FakeSlateDbAdapter`, `FileBackedSlateDbAdapter`, `RealSlateDbFileAdapter`.
 - For behavior changes, add/adjust unit tests first, then integration tests where routing/publishing or Spark behavior is affected.

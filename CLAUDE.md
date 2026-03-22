@@ -251,7 +251,7 @@ The invariant: `xxhash.xxh3_64_intdigest(canonical_bytes(key), seed=0) % num_dbs
 
 **Safety mechanisms:**
 1. `verify_routing_agreement()` in `writer/spark/writer.py`, `writer/dask/writer.py`, and `writer/ray/writer.py` — runtime spot-check comparing framework-assigned shard IDs vs Python routing on a sample of written rows. Controlled by `verify_routing=True` (default).
-2. `tests/unit/writer/test_routing_contract.py` — hypothesis property tests (Python-only) for int/str/bytes keys. `tests/unit/writer/spark/test_routing_contract.py` — Spark `add_db_id_column` vs Python cross-checks. `tests/unit/writer/dask/test_dask_routing_contract.py` — Dask-vs-Python cross-checks. `tests/unit/writer/ray/test_ray_routing_contract.py` — Ray-vs-Python cross-checks.
+2. `tests/unit/writer/core/test_routing_contract.py` — hypothesis property tests (Python-only) for int/str/bytes keys. `tests/unit/writer/spark/test_routing_contract.py` — Spark `add_db_id_column` vs Python cross-checks. `tests/unit/writer/dask/test_dask_routing_contract.py` — Dask-vs-Python cross-checks. `tests/unit/writer/ray/test_ray_routing_contract.py` — Ray-vs-Python cross-checks.
 3. Single implementation in `routing.py:xxh3_db_id()` imported by all writer paths (never reimplemented).
 
 ### Error Hierarchy
@@ -310,8 +310,8 @@ SQLite backend adapters are imported from their module (not re-exported at top l
 - **`tests/helpers/`** — `s3_test_scenarios.py` (shared scenarios for moto/Garage), `smoke_scenarios.py` (shared smoke E2E data and scenarios for HASH/CEL sharding across all writer frameworks), `tracking.py` (test doubles: `TrackingAdapter`, `TrackingFactory`, `RecordingTokenBucket`, `InMemoryPublisher`)
 - Markers: `@pytest.mark.spark`, `@pytest.mark.dask`, `@pytest.mark.ray`, `@pytest.mark.cel`, `@pytest.mark.e2e`
 - **CEL tests**: require `cel` extra (`cel-expr-python`). Use `@pytest.mark.cel` marker. Skipped via `pytest.importorskip()` when the extra is not installed.
-- **Contract tests**: hypothesis property tests in `test_routing_contract.py`, framework cross-checks in `writer/spark/`, `writer/dask/`, and `writer/ray/`
-- **Cleanup tests**: `tests/unit/cli/test_cleanup.py` tests the `cleanup` CLI command; `tests/unit/writer/test_cleanup_core.py` tests core cleanup functions (`cleanup_stale_attempts`, `cleanup_old_runs`)
+- **Contract tests**: hypothesis property tests in `tests/unit/writer/core/test_routing_contract.py`, framework cross-checks in `writer/spark/`, `writer/dask/`, and `writer/ray/`
+- **Cleanup tests**: `tests/unit/cli/test_cleanup.py` tests the `cleanup` CLI command; `tests/unit/writer/core/test_cleanup_core.py` tests core cleanup functions (`cleanup_stale_attempts`, `cleanup_old_runs`)
 - For behavior changes: add/adjust unit tests first, then integration tests where routing/publishing or framework behavior is affected
 
 ## Coding Conventions

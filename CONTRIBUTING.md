@@ -86,7 +86,7 @@ just d uv run tox -m unit
 - **Unit tests** (`tests/unit/`): Fast, no external dependencies. Use `pytest-xdist` for parallelism.
 - **Integration tests** (`tests/integration/`): Use moto for S3. Spark tests require Java.
 - **E2E tests** (`tests/e2e/`): Require Garage S3 via Docker Compose (`just d-e2e`).
-- **Contract tests**: Hypothesis property tests for routing invariants in `test_routing_contract.py`.
+- **Contract tests**: Hypothesis property tests for routing invariants in `tests/unit/writer/core/test_routing_contract.py`.
 - For behavior changes: add/adjust unit tests first, then integration tests where routing/publishing is affected.
 
 ### Test Markers
