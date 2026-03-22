@@ -9,13 +9,14 @@ from typing import Self
 import ray
 import ray.data
 
+from shardyfusion._shard_writer import results_pdf_to_attempts
 from shardyfusion._writer_core import route_key
 from shardyfusion.config import (
     ManifestOptions,
     OutputOptions,
     WriteConfig,
 )
-from shardyfusion.manifest import BuildResult
+from shardyfusion.manifest import BuildResult, WriterInfo
 from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.metrics import MetricEvent
 from shardyfusion.serde import ValueSpec, make_key_encoder
@@ -233,6 +234,37 @@ def test_rate_limited_write() -> None:
     )
 
     assert result.stats.rows_written == 5
+
+
+def testresults_pdf_to_attempts_preserves_all_attempt_urls() -> None:
+    import pandas as pd
+
+    results_pdf = pd.DataFrame(
+        [
+            {
+                "db_id": 0,
+                "db_url": "s3://bucket/prefix/db=00000/attempt=01",
+                "attempt": 1,
+                "row_count": 2,
+                "min_key": 1,
+                "max_key": 2,
+                "checkpoint_id": "ckpt",
+                "writer_info": WriterInfo(),
+                "all_attempt_urls": (
+                    "s3://bucket/prefix/db=00000/attempt=00",
+                    "s3://bucket/prefix/db=00000/attempt=01",
+                ),
+            }
+        ]
+    )
+
+    attempts = results_pdf_to_attempts(results_pdf)
+
+    assert len(attempts) == 1
+    assert attempts[0].all_attempt_urls == (
+        "s3://bucket/prefix/db=00000/attempt=00",
+        "s3://bucket/prefix/db=00000/attempt=01",
+    )
 
 
 # ---------------------------------------------------------------------------

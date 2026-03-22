@@ -71,6 +71,33 @@ class TestSelectWinnersIterable:
         winner_urls = {w.db_url for w in winners}
         assert winner_urls.issubset(set(urls))
 
+    def test_returns_embedded_attempt_urls_from_retry_result(self) -> None:
+        """Retry metadata carried on the winner contributes loser URLs."""
+        attempts = [
+            ShardAttemptResult(
+                db_id=0,
+                db_url="s3://b/p/db=00000/attempt=01",
+                attempt=1,
+                row_count=10,
+                min_key=1,
+                max_key=10,
+                checkpoint_id=None,
+                writer_info=WriterInfo(task_attempt_id=1),
+                all_attempt_urls=(
+                    "s3://b/p/db=00000/attempt=00",
+                    "s3://b/p/db=00000/attempt=01",
+                ),
+            )
+        ]
+
+        winners, num_attempts, urls = select_winners(attempts, num_dbs=1)
+        assert len(winners) == 1
+        assert num_attempts == 1
+        assert urls == [
+            "s3://b/p/db=00000/attempt=00",
+            "s3://b/p/db=00000/attempt=01",
+        ]
+
     def test_num_attempts_matches_count(self) -> None:
         """num_attempts accurately reflects total attempts processed."""
         attempts = [_attempt(i) for i in range(5)]
