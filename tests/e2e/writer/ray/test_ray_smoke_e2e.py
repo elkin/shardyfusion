@@ -39,33 +39,37 @@ def _write_fn(data, config):
 
 @pytest.mark.e2e
 @pytest.mark.ray
-def test_smoke_hash(garage_s3_service, tmp_path) -> None:
+def test_smoke_hash(garage_s3_service, tmp_path, backend) -> None:
     run_smoke_write_then_read_scenario(
         _write_fn,
         garage_s3_service,
         tmp_path,
         num_dbs=3,
         expected_num_shards=3,
+        adapter_factory=backend.adapter_factory,
+        reader_factory=backend.reader_factory,
         **_s3(garage_s3_service),
     )
 
 
 @pytest.mark.e2e
 @pytest.mark.ray
-def test_smoke_hash_num_dbs_2(garage_s3_service, tmp_path) -> None:
+def test_smoke_hash_num_dbs_2(garage_s3_service, tmp_path, backend) -> None:
     run_smoke_write_then_read_scenario(
         _write_fn,
         garage_s3_service,
         tmp_path,
         num_dbs=2,
         expected_num_shards=2,
+        adapter_factory=backend.adapter_factory,
+        reader_factory=backend.reader_factory,
         **_s3(garage_s3_service),
     )
 
 
 @pytest.mark.e2e
 @pytest.mark.ray
-def test_smoke_hash_max_keys_per_shard(garage_s3_service, tmp_path) -> None:
+def test_smoke_hash_max_keys_per_shard(garage_s3_service, tmp_path, backend) -> None:
     run_smoke_write_then_read_scenario(
         _write_fn,
         garage_s3_service,
@@ -73,6 +77,8 @@ def test_smoke_hash_max_keys_per_shard(garage_s3_service, tmp_path) -> None:
         num_dbs=0,
         max_keys_per_shard=5,
         expected_num_shards=2,
+        adapter_factory=backend.adapter_factory,
+        reader_factory=backend.reader_factory,
         **_s3(garage_s3_service),
     )
 
@@ -85,7 +91,7 @@ def test_smoke_hash_max_keys_per_shard(garage_s3_service, tmp_path) -> None:
 @pytest.mark.e2e
 @pytest.mark.ray
 @pytest.mark.cel
-def test_smoke_cel_key_modulo(garage_s3_service, tmp_path) -> None:
+def test_smoke_cel_key_modulo(garage_s3_service, tmp_path, backend) -> None:
     pytest.importorskip("cel_expr_python")
     run_smoke_cel_scenario(
         _write_fn,
@@ -95,6 +101,8 @@ def test_smoke_cel_key_modulo(garage_s3_service, tmp_path) -> None:
         cel_columns={"key": "int"},
         boundaries=[1, 2],
         expected_num_shards=3,
+        adapter_factory=backend.adapter_factory,
+        reader_factory=backend.reader_factory,
         **_s3(garage_s3_service),
     )
 
@@ -102,7 +110,7 @@ def test_smoke_cel_key_modulo(garage_s3_service, tmp_path) -> None:
 @pytest.mark.e2e
 @pytest.mark.ray
 @pytest.mark.cel
-def test_smoke_cel_shard_hash(garage_s3_service, tmp_path) -> None:
+def test_smoke_cel_shard_hash(garage_s3_service, tmp_path, backend) -> None:
     pytest.importorskip("cel_expr_python")
     run_smoke_cel_scenario(
         _write_fn,
@@ -111,6 +119,8 @@ def test_smoke_cel_shard_hash(garage_s3_service, tmp_path) -> None:
         cel_expr="shard_hash(key) % 3u",
         cel_columns={"key": "int"},
         expected_num_shards=3,
+        adapter_factory=backend.adapter_factory,
+        reader_factory=backend.reader_factory,
         **_s3(garage_s3_service),
     )
 
@@ -118,7 +128,7 @@ def test_smoke_cel_shard_hash(garage_s3_service, tmp_path) -> None:
 @pytest.mark.e2e
 @pytest.mark.ray
 @pytest.mark.cel
-def test_smoke_cel_key_identity(garage_s3_service, tmp_path) -> None:
+def test_smoke_cel_key_identity(garage_s3_service, tmp_path, backend) -> None:
     pytest.importorskip("cel_expr_python")
     run_smoke_cel_scenario(
         _write_fn,
@@ -127,6 +137,8 @@ def test_smoke_cel_key_identity(garage_s3_service, tmp_path) -> None:
         cel_expr="uint(key)",
         cel_columns={"key": "int"},
         expected_num_shards=10,
+        adapter_factory=backend.adapter_factory,
+        reader_factory=backend.reader_factory,
         **_s3(garage_s3_service),
     )
 
@@ -134,7 +146,7 @@ def test_smoke_cel_key_identity(garage_s3_service, tmp_path) -> None:
 @pytest.mark.e2e
 @pytest.mark.ray
 @pytest.mark.cel
-def test_smoke_cel_routing_context(garage_s3_service, tmp_path) -> None:
+def test_smoke_cel_routing_context(garage_s3_service, tmp_path, backend) -> None:
     pytest.importorskip("cel_expr_python")
     run_smoke_cel_scenario(
         _write_fn,
@@ -145,5 +157,7 @@ def test_smoke_cel_routing_context(garage_s3_service, tmp_path) -> None:
         boundaries=["b"],
         expected_num_shards=2,
         routing_context_fn=lambda row: {"group": row[2]},
+        adapter_factory=backend.adapter_factory,
+        reader_factory=backend.reader_factory,
         **_s3(garage_s3_service),
     )

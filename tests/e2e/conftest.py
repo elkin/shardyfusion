@@ -12,6 +12,8 @@ import json
 import os
 import urllib.request
 from collections.abc import Generator
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -19,12 +21,82 @@ import boto3
 import pytest
 
 from shardyfusion.credentials import StaticCredentialProvider
-from shardyfusion.type_defs import S3ConnectionOptions
+from shardyfusion.slatedb_adapter import DbAdapterFactory
+from shardyfusion.type_defs import S3ConnectionOptions, ShardReaderFactory
 
 if TYPE_CHECKING:
     from pyspark.sql import SparkSession
 
     from tests.conftest import LocalS3Service
+
+
+# ---------------------------------------------------------------------------
+# BackendFixture — bundles adapter + reader factories per storage backend
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BackendFixture:
+    """Backend-specific factories for a single test.
+
+    Tests receive this via the ``backend`` fixture.  Scenario helpers use
+    ``adapter_factory`` for writes and ``reader_factory`` for reads,
+    making them storage-backend-agnostic.
+    """
+
+    name: str
+    adapter_factory: DbAdapterFactory
+    reader_factory: ShardReaderFactory
+
+
+def _slatedb_backend(tmp_path: Path) -> BackendFixture:
+    slatedb = pytest.importorskip("slatedb")
+    from shardyfusion.testing import (
+        local_dir_for_file_shard,
+        map_s3_db_url_to_file_url,
+        real_file_adapter_factory,
+    )
+
+    object_store_root = str(tmp_path / "object-store")
+
+    def _reader(*, db_url: str, local_dir: Path, checkpoint_id: str | None):  # type: ignore[no-untyped-def]
+        return slatedb.SlateDBReader(
+            str(local_dir_for_file_shard(object_store_root, db_url)),
+            url=map_s3_db_url_to_file_url(db_url, object_store_root),
+            checkpoint_id=checkpoint_id,
+        )
+
+    return BackendFixture(
+        name="slatedb",
+        adapter_factory=real_file_adapter_factory(object_store_root),
+        reader_factory=_reader,
+    )
+
+
+def _sqlite_backend(service: LocalS3Service) -> BackendFixture:
+    from shardyfusion.sqlite_adapter import SqliteFactory, SqliteReaderFactory
+
+    opts = s3_connection_options_from_service(service)
+    creds = credential_provider_from_service(service)
+    return BackendFixture(
+        name="sqlite",
+        adapter_factory=SqliteFactory(
+            s3_connection_options=opts, credential_provider=creds
+        ),
+        reader_factory=SqliteReaderFactory(
+            s3_connection_options=opts, credential_provider=creds
+        ),
+    )
+
+
+@pytest.fixture(params=["slatedb", "sqlite"])
+def backend(
+    request: pytest.FixtureRequest, garage_s3_service: LocalS3Service, tmp_path: Path
+) -> BackendFixture:
+    """Yield a ``BackendFixture`` for each parameterised storage backend."""
+    if request.param == "slatedb":
+        return _slatedb_backend(tmp_path)
+    return _sqlite_backend(garage_s3_service)
 
 
 def _admin_request(

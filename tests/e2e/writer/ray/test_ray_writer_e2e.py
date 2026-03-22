@@ -11,10 +11,13 @@ from tests.helpers.s3_test_scenarios import run_ray_writer_publishes_manifest_sc
 
 @pytest.mark.e2e
 @pytest.mark.ray
-def test_ray_writer_publishes_manifest_to_garage(garage_s3_service, tmp_path) -> None:
+def test_ray_writer_publishes_manifest_to_garage(
+    garage_s3_service, tmp_path, backend
+) -> None:
     run_ray_writer_publishes_manifest_scenario(
         garage_s3_service,
         tmp_path,
+        adapter_factory=backend.adapter_factory,
         credential_provider=credential_provider_from_service(garage_s3_service),
         s3_connection_options=s3_connection_options_from_service(garage_s3_service),
     )
