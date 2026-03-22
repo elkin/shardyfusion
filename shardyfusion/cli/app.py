@@ -817,16 +817,16 @@ def schema_cmd(schema_type: str) -> None:
         schema = {
             **ParsedManifest.model_json_schema(mode="serialization"),
             "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$id": "https://github.com/slatedb/shardyfusion/schemas/manifest.schema.json",
-            "title": "SlateDB Sharded Manifest",
+            "$id": "https://github.com/elkin/shardyfusion/schemas/manifest.schema.json",
+            "title": "SlateDB/SQLite Sharded Manifest",
             "description": "JSON manifest published to S3 by the sharded writer.",
         }
     else:
         schema = {
             **CurrentPointer.model_json_schema(),
             "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$id": "https://github.com/slatedb/shardyfusion/schemas/current-pointer.schema.json",
-            "title": "SlateDB Sharded CURRENT Pointer",
+            "$id": "https://github.com/elkin/shardyfusion/schemas/current-pointer.schema.json",
+            "title": "SlateDB/SQLite Sharded CURRENT Pointer",
             "description": "JSON pointer published to S3 at _CURRENT.",
         }
 

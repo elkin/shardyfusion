@@ -1,8 +1,8 @@
 site_name: shardyfusion
-site_description: Sharded SlateDB snapshot writer/reader library
-site_url: https://slatedb.github.io/shardyfusion/
-repo_url: https://github.com/slatedb/shardyfusion
-repo_name: slatedb/shardyfusion
+site_description: Sharded SlateDB/SQLite snapshot writer/reader library
+site_url: https://elkin.github.io/shardyfusion/
+repo_url: https://github.com/elkin/shardyfusion
+repo_name: elkin/shardyfusion
 
 theme:
   name: material

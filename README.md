@@ -1,6 +1,6 @@
 # shardyfusion
 
-[![CI](https://github.com/slatedb/shardyfusion/actions/workflows/ci.yml/badge.svg)](https://github.com/slatedb/shardyfusion/actions/workflows/ci.yml)
+[![CI](https://github.com/elkin/shardyfusion/actions/workflows/ci.yml/badge.svg)](https://github.com/elkin/shardyfusion/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/shardyfusion)](https://pypi.org/project/shardyfusion/)
 [![Docs](https://img.shields.io/badge/docs-elkin.github.io%2Fshardyfusion-blue)](https://elkin.github.io/shardyfusion/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
