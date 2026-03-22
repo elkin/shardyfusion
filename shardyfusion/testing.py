@@ -188,20 +188,20 @@ def map_s3_db_url_to_file_url(db_url: str, object_store_root: str) -> str:
     return f"file://{object_path}"
 
 
-def writer_local_dir_for_db_url(db_url: str, local_root: str) -> str:
-    """Reconstruct writer local_dir from canonical db_url path segments."""
+def local_dir_for_file_shard(object_store_root: str, db_url: str) -> Path:
+    """Derive a deterministic SlateDB local-cache dir from a shard db_url.
 
-    _, key = parse_s3_url(db_url)
-    segments = [segment for segment in key.split("/") if segment]
-    if len(segments) < 3:
-        raise ValueError(
-            f"Unexpected db_url for writer local dir reconstruction: {db_url}"
-        )
+    SlateDB uses the local-path argument as a namespace prefix inside the
+    object store.  Writer and reader **must** use the same local path for a
+    given shard, otherwise the reader cannot find the writer's manifest.
 
-    run_segment = segments[-3]
-    db_segment = segments[-2]
-    attempt_segment = segments[-1]
-    return str(Path(local_root) / run_segment / db_segment / attempt_segment)
+    This helper derives the path from ``(object_store_root, db_url)`` so that
+    any code holding the same two values produces an identical directory.
+    """
+    bucket, key = parse_s3_url(db_url)
+    local_path = Path(object_store_root) / ".slatedb-local" / bucket / key
+    local_path.mkdir(parents=True, exist_ok=True)
+    return local_path
 
 
 class _SlateDbOpenKwargs(TypedDict, total=False):
@@ -221,12 +221,14 @@ class RealSlateDbFileAdapter:
         local_dir: Path,
     ) -> None:
         self._object_store_root = object_store_root
+        _ = local_dir  # ignored; SlateDB requires a deterministic path
 
         from slatedb import SlateDB
 
         mapped_url = map_s3_db_url_to_file_url(db_url, self._object_store_root)
+        shard_local = local_dir_for_file_shard(self._object_store_root, db_url)
         kwargs: _SlateDbOpenKwargs = {"url": mapped_url}
-        self._db = SlateDB(str(local_dir), **kwargs)
+        self._db = SlateDB(str(shard_local), **kwargs)
 
     @property
     def db(self) -> object:

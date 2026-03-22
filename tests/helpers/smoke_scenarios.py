@@ -14,13 +14,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import slatedb
-
 from shardyfusion.credentials import CredentialProvider
 from shardyfusion.manifest_store import S3ManifestStore
 from shardyfusion.serde import make_key_encoder
 from shardyfusion.sharding_types import KeyEncoding
-from shardyfusion.type_defs import S3ConnectionOptions
+from shardyfusion.slatedb_adapter import DbAdapterFactory
+from shardyfusion.type_defs import S3ConnectionOptions, ShardReaderFactory
 from tests.helpers.s3_test_scenarios import (
     _default_connection_options,
     _default_credential_provider,
@@ -70,31 +69,16 @@ def _build_reader_kwargs(
     *,
     s3_prefix: str,
     tmp_path: Path,
-    local_root: str,
-    object_store_root: str,
+    reader_factory: ShardReaderFactory,
     credential_provider: CredentialProvider | None,
     s3_connection_options: S3ConnectionOptions | None,
 ) -> dict[str, Any]:
     """Build kwargs dict for ShardedReader / ConcurrentShardedReader."""
 
-    from shardyfusion.testing import (
-        map_s3_db_url_to_file_url,
-        writer_local_dir_for_db_url,
-    )
-
-    def open_real_reader(
-        *, db_url: str, local_dir: Path, checkpoint_id: str | None
-    ) -> slatedb.SlateDBReader:
-        return slatedb.SlateDBReader(
-            writer_local_dir_for_db_url(db_url, local_root),
-            url=map_s3_db_url_to_file_url(db_url, object_store_root),
-            checkpoint_id=checkpoint_id,
-        )
-
     kwargs: dict[str, Any] = {
         "s3_prefix": s3_prefix,
         "local_root": str(tmp_path / "reader-cache"),
-        "reader_factory": open_real_reader,
+        "reader_factory": reader_factory,
     }
     if credential_provider is not None or s3_connection_options is not None:
         kwargs["manifest_store"] = S3ManifestStore(
@@ -150,31 +134,27 @@ def _verify_shard_placement(
     result: BuildResult,
     *,
     route_fn: Callable[[int], int],
-    object_store_root: str,
+    reader_factory: ShardReaderFactory,
     local_root: str,
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
 ) -> None:
     """Verify each SMOKE_DATA key landed in the shard predicted by route_fn.
 
-    Opens raw SlateDBReader instances per shard (bypassing ShardedReader),
-    providing independent diagnostics for shard mis-routing and duplicate keys.
+    Opens raw shard readers per shard via *reader_factory* (bypassing
+    ShardedReader), providing independent diagnostics for shard
+    mis-routing and duplicate keys.
     """
-
-    from shardyfusion.testing import (
-        map_s3_db_url_to_file_url,
-        writer_local_dir_for_db_url,
-    )
 
     encode_key = make_key_encoder(key_encoding)
 
     winner_by_db_id: dict[int, RequiredShardMeta] = {w.db_id: w for w in result.winners}
-    readers: dict[int, slatedb.SlateDBReader] = {}
+    readers: dict[int, Any] = {}
     try:
         for db_id, winner in winner_by_db_id.items():
             assert winner.db_url is not None, f"shard {db_id} has no db_url"
-            readers[db_id] = slatedb.SlateDBReader(
-                writer_local_dir_for_db_url(winner.db_url, local_root),
-                url=map_s3_db_url_to_file_url(winner.db_url, object_store_root),
+            readers[db_id] = reader_factory(
+                db_url=winner.db_url,
+                local_dir=Path(local_root) / f"verify-{db_id}",
                 checkpoint_id=winner.checkpoint_id,
             )
 
@@ -218,6 +198,8 @@ def run_smoke_write_then_read_scenario(
     num_dbs: int = 3,
     max_keys_per_shard: int | None = None,
     expected_num_shards: int | None = None,
+    adapter_factory: DbAdapterFactory,
+    reader_factory: ShardReaderFactory,
     credential_provider: CredentialProvider | None = None,
     s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
@@ -227,17 +209,16 @@ def run_smoke_write_then_read_scenario(
         num_dbs: Explicit shard count (set to 0 when using max_keys_per_shard).
         max_keys_per_shard: If set, num_dbs is computed as ceil(10 / max_keys_per_shard).
         expected_num_shards: Expected number of non-empty shards in the result.
-            Defaults to *num_dbs* when num_dbs > 0, or computed from max_keys_per_shard.
+        adapter_factory: Backend-specific factory for opening shard writers.
+        reader_factory: Backend-specific factory for opening shard readers.
     """
 
     from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
     from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
-    from shardyfusion.testing import real_file_adapter_factory
 
     bucket = s3_service["bucket"]
     s3_prefix = f"s3://{bucket}/smoke-hash-{tmp_path.name}"
     local_root = str(tmp_path / "writer-local")
-    object_store_root = str(tmp_path / "object-store")
 
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
@@ -249,7 +230,7 @@ def run_smoke_write_then_read_scenario(
             strategy=ShardingStrategy.HASH,
             max_keys_per_shard=max_keys_per_shard,
         ),
-        adapter_factory=real_file_adapter_factory(object_store_root),
+        adapter_factory=adapter_factory,
         manifest=ManifestOptions(
             credential_provider=cred_provider,
             s3_connection_options=conn_options,
@@ -272,7 +253,7 @@ def run_smoke_write_then_read_scenario(
     _verify_shard_placement(
         result,
         route_fn=lambda key: xxh3_db_id(key, effective_num_dbs),
-        object_store_root=object_store_root,
+        reader_factory=reader_factory,
         local_root=local_root,
     )
 
@@ -280,8 +261,7 @@ def run_smoke_write_then_read_scenario(
     reader_kwargs = _build_reader_kwargs(
         s3_prefix=s3_prefix,
         tmp_path=tmp_path,
-        local_root=local_root,
-        object_store_root=object_store_root,
+        reader_factory=reader_factory,
         credential_provider=credential_provider,
         s3_connection_options=s3_connection_options,
     )
@@ -302,6 +282,8 @@ def run_smoke_cel_scenario(
     cel_columns: dict[str, str],
     boundaries: list[int | str] | None = None,
     expected_num_shards: int,
+    adapter_factory: DbAdapterFactory,
+    reader_factory: ShardReaderFactory,
     routing_context_fn: RoutingContextFn | None = None,
     credential_provider: CredentialProvider | None = None,
     s3_connection_options: S3ConnectionOptions | None = None,
@@ -313,6 +295,8 @@ def run_smoke_cel_scenario(
         cel_columns: Column name → CEL type mapping (e.g. ``{"key": "int"}``).
         boundaries: Optional boundary list for bisect_right routing.
         expected_num_shards: How many non-empty shards the expression should produce.
+        adapter_factory: Backend-specific factory for opening shard writers.
+        reader_factory: Backend-specific factory for opening shard readers.
         routing_context_fn: If the CEL expression uses columns other than "key",
             provide a function ``(row) -> {"col": value}`` so the reader knows
             how to route each key.
@@ -320,7 +304,6 @@ def run_smoke_cel_scenario(
 
     from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
     from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
-    from shardyfusion.testing import real_file_adapter_factory
 
     bucket = s3_service["bucket"]
     # Include a short hash of the expression in the prefix to avoid collisions.
@@ -332,7 +315,6 @@ def run_smoke_cel_scenario(
     )
     s3_prefix = f"s3://{bucket}/smoke-cel-{safe_suffix}-{tmp_path.name}"
     local_root = str(tmp_path / "writer-local")
-    object_store_root = str(tmp_path / "object-store")
 
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
@@ -346,7 +328,7 @@ def run_smoke_cel_scenario(
             cel_columns=cel_columns,
             boundaries=boundaries,
         ),
-        adapter_factory=real_file_adapter_factory(object_store_root),
+        adapter_factory=adapter_factory,
         manifest=ManifestOptions(
             credential_provider=cred_provider,
             s3_connection_options=conn_options,
@@ -376,14 +358,14 @@ def run_smoke_cel_scenario(
         _verify_shard_placement(
             result,
             route_fn=lambda key: route_cel(compiled, key_to_ctx[key], cel_boundaries),
-            object_store_root=object_store_root,
+            reader_factory=reader_factory,
             local_root=local_root,
         )
     else:
         _verify_shard_placement(
             result,
             route_fn=lambda key: route_cel(compiled, {"key": key}, cel_boundaries),
-            object_store_root=object_store_root,
+            reader_factory=reader_factory,
             local_root=local_root,
         )
 
@@ -391,8 +373,7 @@ def run_smoke_cel_scenario(
     reader_kwargs = _build_reader_kwargs(
         s3_prefix=s3_prefix,
         tmp_path=tmp_path,
-        local_root=local_root,
-        object_store_root=object_store_root,
+        reader_factory=reader_factory,
         credential_provider=credential_provider,
         s3_connection_options=s3_connection_options,
     )

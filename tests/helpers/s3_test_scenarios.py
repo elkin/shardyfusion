@@ -17,7 +17,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import slatedb
 import yaml
 
 from shardyfusion.credentials import CredentialProvider, StaticCredentialProvider
@@ -30,7 +29,8 @@ from shardyfusion.manifest import (
 from shardyfusion.manifest_store import S3ManifestStore
 from shardyfusion.reader import ConcurrentShardedReader
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
-from shardyfusion.type_defs import S3ConnectionOptions
+from shardyfusion.slatedb_adapter import DbAdapterFactory
+from shardyfusion.type_defs import S3ConnectionOptions, ShardReaderFactory
 
 if TYPE_CHECKING:
     from ..conftest import LocalS3Service
@@ -71,6 +71,8 @@ def run_reader_loads_manifest_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
+    adapter_factory: DbAdapterFactory,
+    reader_factory: ShardReaderFactory,
     credential_provider: CredentialProvider | None = None,
     s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
@@ -81,23 +83,25 @@ def run_reader_loads_manifest_scenario(
     manifest_ref = f"{s3_prefix}/manifests/run_id=reader-local/manifest"
     current_ref = f"{s3_prefix}/_CURRENT"
     local_root = tmp_path / "reader-cache"
-    object_store_root = tmp_path / "object-store"
-    object_store_root.mkdir(parents=True, exist_ok=True)
 
     # Create a single SlateDB shard with all test data (num_dbs=1 so all keys
     # route to shard 0 regardless of hash distribution).
+    db0_url = f"s3://{bucket}/reader-only/shards/db0"
     db0_local = local_root / "shard=00000"
     db0_local.mkdir(parents=True, exist_ok=True)
-    db0_url = f"file://{(object_store_root / 'db0').as_posix()}"
 
-    db0 = slatedb.SlateDB(str(db0_local), url=db0_url)
-    db0.put((1).to_bytes(8, "big", signed=False), b"v1")
-    db0.put((8).to_bytes(8, "big", signed=False), b"v8")
-    db0.put((10).to_bytes(8, "big", signed=False), b"v10")
-    db0.put((15).to_bytes(8, "big", signed=False), b"v15")
-    db0.flush_with_options("wal")
-    db0_ckpt = db0.create_checkpoint(scope="durable")["id"]
-    db0.close()
+    adapter = adapter_factory(db_url=db0_url, local_dir=db0_local)
+    adapter.write_batch(
+        [
+            ((1).to_bytes(8, "big", signed=False), b"v1"),
+            ((8).to_bytes(8, "big", signed=False), b"v8"),
+            ((10).to_bytes(8, "big", signed=False), b"v10"),
+            ((15).to_bytes(8, "big", signed=False), b"v15"),
+        ]
+    )
+    adapter.flush()
+    db0_ckpt = adapter.checkpoint()
+    adapter.close()
 
     # Build manifest + CURRENT payloads
     required = RequiredBuildMeta(
@@ -163,6 +167,7 @@ def run_reader_loads_manifest_scenario(
     reader_kwargs: dict[str, Any] = {
         "s3_prefix": s3_prefix,
         "local_root": str(local_root),
+        "reader_factory": reader_factory,
     }
     if credential_provider is not None or s3_connection_options is not None:
         reader_kwargs["manifest_store"] = S3ManifestStore(
@@ -191,6 +196,7 @@ def run_writer_publishes_manifest_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
+    adapter_factory: DbAdapterFactory,
     credential_provider: CredentialProvider | None = None,
     s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
@@ -199,9 +205,6 @@ def run_writer_publishes_manifest_scenario(
     from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
     from shardyfusion.serde import ValueSpec
     from shardyfusion.sharding_types import ShardingSpec
-    from shardyfusion.testing import (
-        real_file_adapter_factory,
-    )
     from shardyfusion.writer.spark import write_sharded
 
     rows = [(i, f"v{i}".encode()) for i in range(24)]
@@ -210,7 +213,6 @@ def run_writer_publishes_manifest_scenario(
     bucket = s3_service["bucket"]
     s3_prefix = f"s3://{bucket}/writer-only"
     local_root = str(tmp_path / "writer-local")
-    object_store_root = str(tmp_path / "object-store")
 
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
@@ -219,7 +221,7 @@ def run_writer_publishes_manifest_scenario(
         num_dbs=4,
         s3_prefix=s3_prefix,
         sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
-        adapter_factory=real_file_adapter_factory(object_store_root),
+        adapter_factory=adapter_factory,
         manifest=ManifestOptions(
             credential_provider=cred_provider,
             s3_connection_options=conn_options,
@@ -274,6 +276,8 @@ def run_writer_reader_refresh_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
+    adapter_factory: DbAdapterFactory,
+    reader_factory: ShardReaderFactory,
     credential_provider: CredentialProvider | None = None,
     s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
@@ -282,17 +286,11 @@ def run_writer_reader_refresh_scenario(
     from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
     from shardyfusion.serde import ValueSpec
     from shardyfusion.sharding_types import ShardingSpec
-    from shardyfusion.testing import (
-        map_s3_db_url_to_file_url,
-        real_file_adapter_factory,
-        writer_local_dir_for_db_url,
-    )
     from shardyfusion.writer.spark import write_sharded
 
     bucket = s3_service["bucket"]
     s3_prefix = f"s3://{bucket}/writer-reader-refresh"
     local_root = str(tmp_path / "writer-local")
-    object_store_root = str(tmp_path / "object-store")
 
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
@@ -306,7 +304,7 @@ def run_writer_reader_refresh_scenario(
                 local_root=local_root,
             ),
             sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
-            adapter_factory=real_file_adapter_factory(object_store_root),
+            adapter_factory=adapter_factory,
             manifest=ManifestOptions(
                 credential_provider=cred_provider,
                 s3_connection_options=conn_options,
@@ -324,20 +322,11 @@ def run_writer_reader_refresh_scenario(
         value_spec=ValueSpec.binary_col("payload"),
     )
 
-    def open_real_reader(
-        *, db_url: str, local_dir: Path, checkpoint_id: str | None
-    ) -> slatedb.SlateDBReader:
-        return slatedb.SlateDBReader(
-            writer_local_dir_for_db_url(db_url, local_root),
-            url=map_s3_db_url_to_file_url(db_url, object_store_root),
-            checkpoint_id=checkpoint_id,
-        )
-
     # Build reader kwargs — inject manifest_store for custom connection/identity
     reader_kwargs: dict[str, Any] = {
         "s3_prefix": s3_prefix,
         "local_root": str(tmp_path / "reader-cache"),
-        "reader_factory": open_real_reader,
+        "reader_factory": reader_factory,
     }
     if credential_provider is not None or s3_connection_options is not None:
         reader_kwargs["manifest_store"] = S3ManifestStore(
@@ -379,6 +368,7 @@ def run_python_writer_publishes_manifest_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
+    adapter_factory: DbAdapterFactory,
     parallel: bool = False,
     credential_provider: CredentialProvider | None = None,
     s3_connection_options: S3ConnectionOptions | None = None,
@@ -387,9 +377,6 @@ def run_python_writer_publishes_manifest_scenario(
 
     from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
     from shardyfusion.sharding_types import ShardingSpec
-    from shardyfusion.testing import (
-        real_file_adapter_factory,
-    )
     from shardyfusion.writer.python import write_sharded
 
     mode_label = "parallel" if parallel else "sequential"
@@ -398,7 +385,6 @@ def run_python_writer_publishes_manifest_scenario(
     bucket = s3_service["bucket"]
     s3_prefix = f"s3://{bucket}/python-writer-{mode_label}"
     local_root = str(tmp_path / f"python-writer-local-{mode_label}")
-    object_store_root = str(tmp_path / f"python-object-store-{mode_label}")
 
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
@@ -407,7 +393,7 @@ def run_python_writer_publishes_manifest_scenario(
         num_dbs=4,
         s3_prefix=s3_prefix,
         sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
-        adapter_factory=real_file_adapter_factory(object_store_root),
+        adapter_factory=adapter_factory,
         manifest=ManifestOptions(
             credential_provider=cred_provider,
             s3_connection_options=conn_options,
@@ -464,6 +450,7 @@ def run_dask_writer_publishes_manifest_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
+    adapter_factory: DbAdapterFactory,
     credential_provider: CredentialProvider | None = None,
     s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
@@ -476,15 +463,11 @@ def run_dask_writer_publishes_manifest_scenario(
     from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
     from shardyfusion.serde import ValueSpec
     from shardyfusion.sharding_types import ShardingSpec
-    from shardyfusion.testing import (
-        real_file_adapter_factory,
-    )
     from shardyfusion.writer.dask import write_sharded
 
     bucket = s3_service["bucket"]
     s3_prefix = f"s3://{bucket}/dask-writer"
     local_root = str(tmp_path / "dask-writer-local")
-    object_store_root = str(tmp_path / "dask-object-store")
 
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
@@ -493,7 +476,7 @@ def run_dask_writer_publishes_manifest_scenario(
         num_dbs=4,
         s3_prefix=s3_prefix,
         sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
-        adapter_factory=real_file_adapter_factory(object_store_root),
+        adapter_factory=adapter_factory,
         manifest=ManifestOptions(
             credential_provider=cred_provider,
             s3_connection_options=conn_options,
@@ -552,6 +535,8 @@ def run_python_writer_reader_refresh_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
+    adapter_factory: DbAdapterFactory,
+    reader_factory: ShardReaderFactory,
     credential_provider: CredentialProvider | None = None,
     s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
@@ -559,17 +544,11 @@ def run_python_writer_reader_refresh_scenario(
 
     from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
     from shardyfusion.sharding_types import ShardingSpec
-    from shardyfusion.testing import (
-        map_s3_db_url_to_file_url,
-        real_file_adapter_factory,
-        writer_local_dir_for_db_url,
-    )
     from shardyfusion.writer.python import write_sharded
 
     bucket = s3_service["bucket"]
     s3_prefix = f"s3://{bucket}/python-writer-reader-refresh"
     local_root = str(tmp_path / "python-writer-local")
-    object_store_root = str(tmp_path / "python-object-store")
 
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
@@ -580,7 +559,7 @@ def run_python_writer_reader_refresh_scenario(
             s3_prefix=s3_prefix,
             output=OutputOptions(run_id=run_id, local_root=local_root),
             sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
-            adapter_factory=real_file_adapter_factory(object_store_root),
+            adapter_factory=adapter_factory,
             manifest=ManifestOptions(
                 credential_provider=cred_provider,
                 s3_connection_options=conn_options,
@@ -594,19 +573,10 @@ def run_python_writer_reader_refresh_scenario(
         value_fn=lambda r: f"old-{r}".encode(),
     )
 
-    def open_real_reader(
-        *, db_url: str, local_dir: Path, checkpoint_id: str | None
-    ) -> slatedb.SlateDBReader:
-        return slatedb.SlateDBReader(
-            writer_local_dir_for_db_url(db_url, local_root),
-            url=map_s3_db_url_to_file_url(db_url, object_store_root),
-            checkpoint_id=checkpoint_id,
-        )
-
     reader_kwargs: dict[str, Any] = {
         "s3_prefix": s3_prefix,
         "local_root": str(tmp_path / "reader-cache"),
-        "reader_factory": open_real_reader,
+        "reader_factory": reader_factory,
     }
     if credential_provider is not None or s3_connection_options is not None:
         reader_kwargs["manifest_store"] = S3ManifestStore(
@@ -645,6 +615,8 @@ def run_dask_writer_reader_refresh_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
+    adapter_factory: DbAdapterFactory,
+    reader_factory: ShardReaderFactory,
     credential_provider: CredentialProvider | None = None,
     s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
@@ -657,17 +629,11 @@ def run_dask_writer_reader_refresh_scenario(
     from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
     from shardyfusion.serde import ValueSpec
     from shardyfusion.sharding_types import ShardingSpec
-    from shardyfusion.testing import (
-        map_s3_db_url_to_file_url,
-        real_file_adapter_factory,
-        writer_local_dir_for_db_url,
-    )
     from shardyfusion.writer.dask import write_sharded
 
     bucket = s3_service["bucket"]
     s3_prefix = f"s3://{bucket}/dask-writer-reader-refresh"
     local_root = str(tmp_path / "dask-writer-local")
-    object_store_root = str(tmp_path / "dask-object-store")
 
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
@@ -678,7 +644,7 @@ def run_dask_writer_reader_refresh_scenario(
             s3_prefix=s3_prefix,
             output=OutputOptions(run_id=run_id, local_root=local_root),
             sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
-            adapter_factory=real_file_adapter_factory(object_store_root),
+            adapter_factory=adapter_factory,
             manifest=ManifestOptions(
                 credential_provider=cred_provider,
                 s3_connection_options=conn_options,
@@ -701,19 +667,10 @@ def run_dask_writer_reader_refresh_scenario(
             value_spec=value_spec,
         )
 
-    def open_real_reader(
-        *, db_url: str, local_dir: Path, checkpoint_id: str | None
-    ) -> slatedb.SlateDBReader:
-        return slatedb.SlateDBReader(
-            writer_local_dir_for_db_url(db_url, local_root),
-            url=map_s3_db_url_to_file_url(db_url, object_store_root),
-            checkpoint_id=checkpoint_id,
-        )
-
     reader_kwargs: dict[str, Any] = {
         "s3_prefix": s3_prefix,
         "local_root": str(tmp_path / "reader-cache"),
-        "reader_factory": open_real_reader,
+        "reader_factory": reader_factory,
     }
     if credential_provider is not None or s3_connection_options is not None:
         reader_kwargs["manifest_store"] = S3ManifestStore(
@@ -752,6 +709,7 @@ def run_ray_writer_publishes_manifest_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
+    adapter_factory: DbAdapterFactory,
     credential_provider: CredentialProvider | None = None,
     s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
@@ -762,15 +720,11 @@ def run_ray_writer_publishes_manifest_scenario(
     from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
     from shardyfusion.serde import ValueSpec
     from shardyfusion.sharding_types import ShardingSpec
-    from shardyfusion.testing import (
-        real_file_adapter_factory,
-    )
     from shardyfusion.writer.ray import write_sharded
 
     bucket = s3_service["bucket"]
     s3_prefix = f"s3://{bucket}/ray-writer"
     local_root = str(tmp_path / "ray-writer-local")
-    object_store_root = str(tmp_path / "ray-object-store")
 
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
@@ -779,7 +733,7 @@ def run_ray_writer_publishes_manifest_scenario(
         num_dbs=4,
         s3_prefix=s3_prefix,
         sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
-        adapter_factory=real_file_adapter_factory(object_store_root),
+        adapter_factory=adapter_factory,
         manifest=ManifestOptions(
             credential_provider=cred_provider,
             s3_connection_options=conn_options,
@@ -839,6 +793,8 @@ def run_ray_writer_reader_refresh_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
+    adapter_factory: DbAdapterFactory,
+    reader_factory: ShardReaderFactory,
     credential_provider: CredentialProvider | None = None,
     s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
@@ -849,17 +805,11 @@ def run_ray_writer_reader_refresh_scenario(
     from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
     from shardyfusion.serde import ValueSpec
     from shardyfusion.sharding_types import ShardingSpec
-    from shardyfusion.testing import (
-        map_s3_db_url_to_file_url,
-        real_file_adapter_factory,
-        writer_local_dir_for_db_url,
-    )
     from shardyfusion.writer.ray import write_sharded
 
     bucket = s3_service["bucket"]
     s3_prefix = f"s3://{bucket}/ray-writer-reader-refresh"
     local_root = str(tmp_path / "ray-writer-local")
-    object_store_root = str(tmp_path / "ray-object-store")
 
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
@@ -870,7 +820,7 @@ def run_ray_writer_reader_refresh_scenario(
             s3_prefix=s3_prefix,
             output=OutputOptions(run_id=run_id, local_root=local_root),
             sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
-            adapter_factory=real_file_adapter_factory(object_store_root),
+            adapter_factory=adapter_factory,
             manifest=ManifestOptions(
                 credential_provider=cred_provider,
                 s3_connection_options=conn_options,
@@ -892,19 +842,10 @@ def run_ray_writer_reader_refresh_scenario(
         value_spec=value_spec,
     )
 
-    def open_real_reader(
-        *, db_url: str, local_dir: str, checkpoint_id: str | None
-    ) -> slatedb.SlateDBReader:
-        return slatedb.SlateDBReader(
-            writer_local_dir_for_db_url(db_url, local_root),
-            url=map_s3_db_url_to_file_url(db_url, object_store_root),
-            checkpoint_id=checkpoint_id,
-        )
-
     reader_kwargs: dict[str, Any] = {
         "s3_prefix": s3_prefix,
         "local_root": str(tmp_path / "reader-cache"),
-        "reader_factory": open_real_reader,
+        "reader_factory": reader_factory,
     }
     if credential_provider is not None or s3_connection_options is not None:
         reader_kwargs["manifest_store"] = S3ManifestStore(
