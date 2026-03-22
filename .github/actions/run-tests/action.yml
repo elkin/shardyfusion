@@ -1,0 +1,37 @@
+name: Run tox tests with coverage
+description: Run a tox environment with coverage collection and artifact upload
+
+inputs:
+  tox-env:
+    description: Tox environment name to run
+    required: true
+  collect-coverage:
+    description: Whether to collect and upload coverage data
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Run tests
+      run: uv run tox -e "$TOX_ENV"
+      shell: bash
+      env:
+        TOX_ENV: ${{ inputs.tox-env }}
+        PYTEST_ADDOPTS: ${{ inputs.collect-coverage == 'true' && '--cov --cov-report=term-missing:skip-covered' || '' }}
+
+    - name: Rename coverage data
+      if: always() && inputs.collect-coverage == 'true'
+      run: mv .coverage ".coverage.$TOX_ENV" 2>/dev/null || true
+      shell: bash
+      env:
+        TOX_ENV: ${{ inputs.tox-env }}
+
+    - name: Upload coverage data
+      if: always() && inputs.collect-coverage == 'true'
+      uses: actions/upload-artifact@v7
+      with:
+        name: coverage-${{ inputs.tox-env }}
+        path: .coverage.*
+        include-hidden-files: true
+        if-no-files-found: ignore

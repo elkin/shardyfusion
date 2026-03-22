@@ -130,18 +130,9 @@ jobs:
       - name: Install tox
         run: uv sync --group dev
 
-      - name: Run tests
-        run: uv run tox -e ${{ matrix.tox-env }}
-        env:
-          PYTEST_ADDOPTS: "--cov=shardyfusion --cov-report=xml"
-
-      - name: Upload coverage
-        if: always()
-        uses: actions/upload-artifact@v7
+      - uses: ./.github/actions/run-tests
         with:
-          name: coverage-${{ matrix.tox-env }}
-          path: coverage.xml
-          if-no-files-found: ignore
+          tox-env: ${{ matrix.tox-env }}
 
   integration:
     if: ${{ github.event_name != 'schedule' }}
@@ -178,8 +169,9 @@ jobs:
       - name: Install tox
         run: uv sync --group dev
 
-      - name: Run tests
-        run: uv run tox -e ${{ matrix.tox-env }}
+      - uses: ./.github/actions/run-tests
+        with:
+          tox-env: ${{ matrix.tox-env }}
 
   smoke:
     if: ${{ github.event_name == 'schedule' }}
@@ -216,5 +208,55 @@ jobs:
       - name: Install tox
         run: uv sync --group dev
 
-      - name: Run smoke env
-        run: uv run tox -e ${{ matrix.tox-env }}
+      - uses: ./.github/actions/run-tests
+        with:
+          tox-env: ${{ matrix.tox-env }}
+          collect-coverage: "false"
+
+  coverage:
+    if: ${{ github.event_name != 'schedule' && !cancelled() }}
+    name: Coverage Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [unit, integration]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install coverage
+        run: pip install "coverage[toml]>=7.2"
+
+      - name: Download all coverage data
+        uses: actions/download-artifact@v7
+        with:
+          pattern: coverage-*
+          path: coverage-data
+          merge-multiple: true
+
+      - name: Combine and report
+        run: |
+          coverage combine coverage-data/
+          coverage report
+          coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
+          coverage xml
+          coverage html
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+
+      - name: Upload combined coverage report
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: |
+            coverage.xml
+            htmlcov/
