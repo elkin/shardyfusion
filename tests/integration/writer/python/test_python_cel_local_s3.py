@@ -25,7 +25,7 @@ def _cel_config(local_s3_service, tmp_path, *, run_id, s3_subpath, **overrides):
     s3_prefix = f"s3://{bucket}/{s3_subpath}"
     root = str(tmp_path / "file-backed")
     defaults = dict(
-        num_dbs=0,
+        num_dbs=None,
         s3_prefix=s3_prefix,
         key_encoding=KeyEncoding.U64BE,
         adapter_factory=file_backed_adapter_factory(root),
@@ -116,7 +116,7 @@ def test_cel_split_mode_routes_by_context(local_s3_service, tmp_path):
     root = str(tmp_path / "file-backed")
 
     config = WriteConfig(
-        num_dbs=0,
+        num_dbs=None,
         s3_prefix=s3_prefix,
         key_encoding=KeyEncoding.UTF8,
         adapter_factory=file_backed_adapter_factory(root),

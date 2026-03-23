@@ -51,7 +51,7 @@ def _make_cel_config(
     root_dir = str(tmp_path / "file_backed")
     store = InMemoryManifestStore()
     config = WriteConfig(
-        num_dbs=0,
+        num_dbs=None,
         s3_prefix="s3://bucket/prefix",
         key_encoding=key_encoding,
         batch_size=batch_size,
@@ -178,7 +178,7 @@ class TestCelUnifiedMode:
         store = InMemoryManifestStore()
         root_dir = str(tmp_path / "file_backed")
         config = WriteConfig(
-            num_dbs=0,
+            num_dbs=None,
             s3_prefix="s3://bucket/prefix",
             key_encoding=KeyEncoding.U64BE,
             adapter_factory=file_backed_adapter_factory(root_dir),
@@ -254,7 +254,7 @@ class TestCelUnifiedMode:
         store = InMemoryManifestStore()
         root_dir = str(tmp_path / "file_backed")
         config = WriteConfig(
-            num_dbs=0,
+            num_dbs=None,
             s3_prefix="s3://bucket/prefix",
             key_encoding=KeyEncoding.U64BE,
             adapter_factory=file_backed_adapter_factory(root_dir),
@@ -311,7 +311,7 @@ class TestCelSplitMode:
         store = InMemoryManifestStore()
         root_dir = str(tmp_path / "file_backed")
         config = WriteConfig(
-            num_dbs=0,
+            num_dbs=None,
             s3_prefix="s3://bucket/prefix",
             key_encoding=KeyEncoding.UTF8,
             adapter_factory=file_backed_adapter_factory(root_dir),
@@ -365,7 +365,7 @@ class TestCelSplitMode:
         store = InMemoryManifestStore()
         root_dir = str(tmp_path / "file_backed")
         config = WriteConfig(
-            num_dbs=0,
+            num_dbs=None,
             s3_prefix="s3://bucket/prefix",
             key_encoding=KeyEncoding.UTF8,
             adapter_factory=file_backed_adapter_factory(root_dir),
@@ -406,7 +406,7 @@ class TestCelSplitMode:
         store = InMemoryManifestStore()
         root_dir = str(tmp_path / "file_backed")
         config = WriteConfig(
-            num_dbs=0,
+            num_dbs=None,
             s3_prefix="s3://bucket/prefix",
             key_encoding=KeyEncoding.UTF8,
             adapter_factory=file_backed_adapter_factory(root_dir),
