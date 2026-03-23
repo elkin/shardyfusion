@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "shardyfusion"
 version = "0.1.0"
-description = "Sharded SlateDB snapshot writer/reader library (Spark, Dask, Python, CLI)"
+description = "Build and serve sharded key-value snapshots on S3 — write with Spark, Dask, Ray, or Python, read from anywhere"
 readme = "README.md"
 # Python 3.14 support stays disabled until every reader, writer, and backend
 # dependency used by the project is supported and exercised consistently.
