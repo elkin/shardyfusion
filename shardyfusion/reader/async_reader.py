@@ -18,7 +18,7 @@ from shardyfusion.credentials import (
     CredentialProvider,
     resolve_env_file,
 )
-from shardyfusion.errors import ManifestParseError, ReaderStateError, SlateDbApiError
+from shardyfusion.errors import DbAdapterError, ManifestParseError, ReaderStateError
 from shardyfusion.logging import (
     FailureSeverity,
     get_logger,
@@ -114,7 +114,7 @@ class _AsyncReaderState:
                     manifest_ref=self.manifest_ref,
                 )
         if errors:
-            raise SlateDbApiError(
+            raise DbAdapterError(
                 f"Failed to close {len(errors)} shard reader(s): "
                 f"db_ids={[db_id for db_id, _ in errors]}"
             ) from errors[0][1]
@@ -144,7 +144,7 @@ class AsyncSlateDbReaderFactory:
         try:
             from slatedb import SlateDBReader
         except ImportError as exc:  # pragma: no cover - runtime dependent
-            raise SlateDbApiError(
+            raise DbAdapterError(
                 "slatedb package is required for reading shards"
             ) from exc
 
@@ -223,7 +223,7 @@ class AsyncShardedReader:
         s3_prefix: str,
         local_root: str,
         manifest_store: AsyncManifestStore | None = None,
-        current_name: str = "_CURRENT",
+        current_pointer_key: str = "_CURRENT",
         reader_factory: AsyncShardReaderFactory | None = None,
         slate_env_file: str | None = None,
         credential_provider: CredentialProvider | None = None,
@@ -252,7 +252,7 @@ class AsyncShardedReader:
         else:
             self._manifest_store = AsyncS3ManifestStore(
                 s3_prefix,
-                current_name=current_name,
+                current_pointer_key=current_pointer_key,
                 credential_provider=credential_provider,
                 s3_connection_options=s3_connection_options,
                 metrics_collector=metrics_collector,
@@ -274,7 +274,7 @@ class AsyncShardedReader:
         s3_prefix: str,
         local_root: str,
         manifest_store: AsyncManifestStore | None = None,
-        current_name: str = "_CURRENT",
+        current_pointer_key: str = "_CURRENT",
         reader_factory: AsyncShardReaderFactory | None = None,
         slate_env_file: str | None = None,
         credential_provider: CredentialProvider | None = None,
@@ -289,7 +289,7 @@ class AsyncShardedReader:
             s3_prefix=s3_prefix,
             local_root=local_root,
             manifest_store=manifest_store,
-            current_name=current_name,
+            current_pointer_key=current_pointer_key,
             reader_factory=reader_factory,
             slate_env_file=slate_env_file,
             credential_provider=credential_provider,
@@ -371,12 +371,22 @@ class AsyncShardedReader:
             is_closed=False,
         )
 
-    def route_key(self, key: KeyInput) -> int:
-        return self._require_state().router.route_one(key)
+    def route_key(
+        self,
+        key: KeyInput,
+        *,
+        routing_context: dict[str, object] | None = None,
+    ) -> int:
+        return self._require_state().router.route(key, routing_context=routing_context)
 
-    def shard_for_key(self, key: KeyInput) -> RequiredShardMeta:
+    def shard_for_key(
+        self,
+        key: KeyInput,
+        *,
+        routing_context: dict[str, object] | None = None,
+    ) -> RequiredShardMeta:
         state = self._require_state()
-        db_id = state.router.route_one(key)
+        db_id = state.router.route(key, routing_context=routing_context)
         return state.router.shards[db_id]
 
     def shards_for_keys(

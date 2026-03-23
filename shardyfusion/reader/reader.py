@@ -1,4 +1,4 @@
-"""Service-side sharded SlateDB reader — non-thread-safe variant."""
+"""Service-side sharded reader — non-thread-safe variant."""
 
 from __future__ import annotations
 
@@ -9,10 +9,10 @@ from typing import Literal
 from shardyfusion._rate_limiter import RateLimiter
 from shardyfusion.credentials import CredentialProvider
 from shardyfusion.errors import (
+    DbAdapterError,
     ManifestParseError,
     ReaderStateError,
     ShardyfusionError,
-    SlateDbApiError,
 )
 from shardyfusion.logging import (
     FailureSeverity,
@@ -68,7 +68,7 @@ class ShardedReader(_BaseShardedReader):
         s3_prefix: str,
         local_root: str,
         manifest_store: ManifestStore | None = None,
-        current_name: str = "_CURRENT",
+        current_pointer_key: str = "_CURRENT",
         reader_factory: ShardReaderFactory | None = None,
         slate_env_file: str | None = None,
         credential_provider: CredentialProvider | None = None,
@@ -82,7 +82,7 @@ class ShardedReader(_BaseShardedReader):
             s3_prefix=s3_prefix,
             local_root=local_root,
             manifest_store=manifest_store,
-            current_name=current_name,
+            current_pointer_key=current_pointer_key,
             reader_factory=reader_factory,
             slate_env_file=slate_env_file,
             credential_provider=credential_provider,
@@ -155,9 +155,14 @@ class ShardedReader(_BaseShardedReader):
         """Return the shard db_id a key would route to."""
         return self._state.router.route(key, routing_context=routing_context)
 
-    def shard_for_key(self, key: KeyInput) -> RequiredShardMeta:
+    def shard_for_key(
+        self,
+        key: KeyInput,
+        *,
+        routing_context: dict[str, object] | None = None,
+    ) -> RequiredShardMeta:
         """Return shard metadata for the shard a key routes to."""
-        db_id = self._state.router.route_one(key)
+        db_id = self._state.router.route(key, routing_context=routing_context)
         return self._state.router.shards[db_id]
 
     def shards_for_keys(
@@ -260,7 +265,7 @@ class ShardedReader(_BaseShardedReader):
                 except ShardyfusionError:
                     raise
                 except Exception as exc:
-                    raise SlateDbApiError(
+                    raise DbAdapterError(
                         f"Read failed for shard db_id={db_id}"
                     ) from exc
         else:

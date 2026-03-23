@@ -8,11 +8,10 @@ JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
 
 KeyInput: TypeAlias = int | str | bytes
-KeyLike: TypeAlias = int | str | bytes
 
 
 class ShardReader(Protocol):
-    """Minimal SlateDB reader shape used by the sharded reader service."""
+    """Minimal shard reader shape used by the sharded reader service."""
 
     def get(self, key: bytes) -> bytes | None:
         """Return value bytes for key, or None when absent."""

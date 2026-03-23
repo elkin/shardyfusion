@@ -29,7 +29,7 @@ from shardyfusion.slatedb_adapter import (
     SlateDbFactory,
 )
 from shardyfusion.storage import join_s3
-from shardyfusion.type_defs import KeyLike
+from shardyfusion.type_defs import KeyInput
 
 
 class RayCacheContext:
@@ -69,11 +69,12 @@ def write_single_db(
     value_spec: ValueSpec,
     sort_keys: bool = True,
     max_writes_per_second: float | None = None,
+    max_write_bytes_per_second: float | None = None,
 ) -> BuildResult:
-    """Write a Ray Dataset into a single SlateDB database, optionally sorting by key first.
+    """Write a Ray Dataset into a single shard database, optionally sorting by key first.
 
     Uses Ray Data for the expensive global sort, then streams sorted batches to the
-    local process where they are written into one SlateDB instance.
+    local process where they are written into one database instance.
     """
 
     if config.num_dbs != 1:
@@ -93,6 +94,7 @@ def write_single_db(
         value_spec=value_spec,
         sort_keys=sort_keys,
         max_writes_per_second=max_writes_per_second,
+        max_write_bytes_per_second=max_write_bytes_per_second,
     )
 
 
@@ -106,6 +108,7 @@ def _write_single_db_impl(
     value_spec: ValueSpec,
     sort_keys: bool,
     max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
 ) -> BuildResult:
     """Implementation: sort, stream batches, write, publish."""
 
@@ -127,6 +130,7 @@ def _write_single_db_impl(
         key_col=key_col,
         value_spec=value_spec,
         max_writes_per_second=max_writes_per_second,
+        max_write_bytes_per_second=max_write_bytes_per_second,
     )
     write_duration_ms = int((time.perf_counter() - write_started) * 1000)
 
@@ -171,8 +175,9 @@ def _stream_to_single_db(
     key_col: str,
     value_spec: ValueSpec,
     max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
 ) -> ShardAttemptResult:
-    """Stream Ray Dataset batches to a single SlateDB adapter."""
+    """Stream Ray Dataset batches to a single shard adapter."""
 
     db_id = 0
     attempt = 0
@@ -201,10 +206,13 @@ def _stream_to_single_db(
     bucket: RateLimiter | None = None
     if max_writes_per_second is not None:
         bucket = TokenBucket(max_writes_per_second)
+    bytes_bucket: RateLimiter | None = None
+    if max_write_bytes_per_second is not None:
+        bytes_bucket = TokenBucket(max_write_bytes_per_second)
 
     row_count = 0
-    min_key: KeyLike | None = None
-    max_key: KeyLike | None = None
+    min_key: KeyInput | None = None
+    max_key: KeyInput | None = None
     checkpoint_id: str | None = None
 
     write_started = time.perf_counter()
@@ -231,12 +239,18 @@ def _stream_to_single_db(
                     if len(batch) >= config.batch_size:
                         if bucket is not None:
                             bucket.acquire(len(batch))
+                        if bytes_bucket is not None:
+                            batch_bytes = sum(len(k) + len(v) for k, v in batch)
+                            bytes_bucket.acquire(batch_bytes)
                         adapter.write_batch(batch)
                         batch.clear()
 
             if batch:
                 if bucket is not None:
                     bucket.acquire(len(batch))
+                if bytes_bucket is not None:
+                    batch_bytes = sum(len(k) + len(v) for k, v in batch)
+                    bytes_bucket.acquire(batch_bytes)
                 adapter.write_batch(batch)
 
             adapter.flush()

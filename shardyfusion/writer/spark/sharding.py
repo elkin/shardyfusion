@@ -19,7 +19,7 @@ def add_db_id_column(
     df: DataFrame,
     *,
     key_col: str,
-    num_dbs: int,
+    num_dbs: int | None,
     sharding: ShardingSpec,
 ) -> tuple[DataFrame, ShardingSpec]:
     """Add deterministic db id column and return resolved sharding spec."""
@@ -38,6 +38,7 @@ def add_db_id_column(
     df_with_db_id: DataFrame
     match sharding.strategy:
         case ShardingStrategy.HASH:
+            assert num_dbs is not None, "num_dbs required for HASH sharding"
             _key_col = key_col
             _num_dbs = num_dbs
 
@@ -92,8 +93,8 @@ def add_db_id_column(
                 f"Unsupported sharding strategy: {sharding.strategy!r}"
             )
 
-    # Validate db_id range (skip for CEL direct mode where num_dbs may be 0/unknown)
-    if num_dbs > 0:
+    # Validate db_id range (skip for CEL direct mode where num_dbs is None)
+    if num_dbs is not None:
         invalid_count = (
             df_with_db_id.where(
                 (F.col(DB_ID_COL).isNull())

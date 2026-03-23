@@ -55,7 +55,7 @@ def _build_manifest_store(
 
         return S3ManifestStore(
             params["s3_prefix"],
-            current_name=params["current_name"],
+            current_pointer_key=params["current_pointer_key"],
             credential_provider=params["credential_provider"],
             s3_connection_options=params["s3_connection_options"],
         )
@@ -193,7 +193,7 @@ def _build_reader(ctx: click.Context) -> ConcurrentShardedReader:
             s3_prefix=params["s3_prefix"],
             local_root=reader_cfg.local_root,
             manifest_store=manifest_store,
-            current_name=params.get("current_name", "_CURRENT"),
+            current_pointer_key=params.get("current_pointer_key", "_CURRENT"),
             slate_env_file=reader_cfg.slate_env_file,
             credential_provider=params["credential_provider"],
             s3_connection_options=params["s3_connection_options"],
@@ -335,7 +335,7 @@ def cli(
     # Resolve S3 prefix and CURRENT name based on backend
     if store_cfg.backend == "s3":
         resolved_url = resolve_current_url(current_url, reader_cfg)
-        s3_prefix, current_name = split_current_url(resolved_url)
+        s3_prefix, current_pointer_key = split_current_url(resolved_url)
     else:
         # DB backends: s3_prefix is required in config (shard DBs are still on S3)
         if current_url:
@@ -349,12 +349,12 @@ def cli(
                 f"'{store_cfg.backend}' manifest store."
             )
         s3_prefix = reader_cfg.s3_prefix
-        current_name = "_CURRENT"
+        current_pointer_key = "_CURRENT"
 
     # Store init parameters in context for lazy reader construction in subcommands
     ctx.obj[_CTX_INIT_PARAMS] = {
         "s3_prefix": s3_prefix,
-        "current_name": current_name,
+        "current_pointer_key": current_pointer_key,
         "reader_cfg": reader_cfg,
         "store_cfg": store_cfg,
         "output_cfg": output_cfg,

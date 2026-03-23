@@ -331,7 +331,7 @@ def verify_routing_agreement(
         )
 
 
-def _resolve_num_dbs_before_sharding(df: DataFrame, config: WriteConfig) -> int:
+def _resolve_num_dbs_before_sharding(df: DataFrame, config: WriteConfig) -> int | None:
     """Resolve num_dbs that can be determined before add_db_id_column."""
     from shardyfusion._writer_core import resolve_num_dbs
 
@@ -363,7 +363,7 @@ def _prepare_partitioned_rows(
     )
 
     # CEL: discover num_dbs from data and validate consecutive IDs
-    if num_dbs == 0:
+    if num_dbs is None:
         agg_row = df_with_db_id.agg(
             F.max(DB_ID_COL).alias("max_id"),
             F.countDistinct(DB_ID_COL).alias("n_distinct"),

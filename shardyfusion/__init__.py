@@ -24,6 +24,7 @@ from .credentials import (
 )
 from .errors import (
     ConfigValidationError,
+    DbAdapterError,
     ManifestBuildError,
     ManifestParseError,
     ManifestStoreError,
@@ -54,6 +55,7 @@ from .manifest import (
     ManifestBuilder,
     ManifestRef,
     ManifestShardingSpec,
+    ParsedManifest,
     RequiredBuildMeta,
     RequiredShardMeta,
     WriterInfo,
@@ -80,7 +82,7 @@ from .reader import (
 )
 from .routing import SnapshotRouter
 from .serde import ValueSpec
-from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
+from .sharding_types import BoundaryValue, KeyEncoding, ShardingSpec, ShardingStrategy
 from .slatedb_adapter import (
     DbAdapter,
     DbAdapterFactory,
@@ -104,6 +106,7 @@ __all__ = [
     "AsyncShardReaderHandle",
     "AsyncShardedReader",
     "AsyncSlateDbReaderFactory",
+    "BoundaryValue",
     "BuildDurations",
     "BuildResult",
     "BuildStats",
@@ -112,6 +115,7 @@ __all__ = [
     "ConcurrentShardedReader",
     "ConfigValidationError",
     "CredentialProvider",
+    "DbAdapterError",
     "CurrentPointer",
     "DbAdapter",
     "DbAdapterFactory",
@@ -133,6 +137,7 @@ __all__ = [
     "MetricEvent",
     "MetricsCollector",
     "OutputOptions",
+    "ParsedManifest",
     "PoolExhaustedError",
     "PublishCurrentError",
     "PublishManifestError",

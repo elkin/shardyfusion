@@ -260,7 +260,7 @@ def resolve_current_url(
 
 
 def split_current_url(current_url: str) -> tuple[str, str]:
-    """Return (s3_prefix, current_name) by splitting the last path segment."""
+    """Return (s3_prefix, current_pointer_key) by splitting the last path segment."""
     current_url = current_url.rstrip("/")
     idx = current_url.rfind("/")
     if idx < 0:

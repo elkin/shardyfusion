@@ -26,7 +26,7 @@ from .metrics import MetricEvent, MetricsCollector
 from .serde import KeyEncoder
 from .slatedb_adapter import DbAdapterFactory
 from .storage import join_s3
-from .type_defs import KeyLike, RetryConfig
+from .type_defs import KeyInput, RetryConfig
 
 _logger = get_logger(__name__)
 
@@ -183,8 +183,8 @@ def write_shard_core(
 
     partition_started = time.perf_counter()
     row_count = 0
-    min_key: KeyLike | None = None
-    max_key: KeyLike | None = None
+    min_key: KeyInput | None = None
+    max_key: KeyInput | None = None
     checkpoint_id: str | None = None
     batch: list[tuple[bytes, bytes]] = []
 
@@ -196,7 +196,7 @@ def write_shard_core(
                 key_bytes = params.key_encoder(key_value)
                 batch.append((key_bytes, value_bytes))
                 row_count += 1
-                min_key, max_key = update_min_max(min_key, max_key, key_value)  # type: ignore[arg-type]  # object is KeyLike at runtime
+                min_key, max_key = update_min_max(min_key, max_key, key_value)  # type: ignore[arg-type]  # object is KeyInput at runtime
 
                 if len(batch) >= params.batch_size:
                     _flush_batch(batch, adapter, params, mc)

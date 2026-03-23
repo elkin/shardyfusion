@@ -59,13 +59,17 @@ class ShardCoverageError(ShardyfusionError):
 # ---------------------------------------------------------------------------
 
 
-class SlateDbApiError(ShardyfusionError):
-    """SlateDB binding was unavailable or incompatible.
+class DbAdapterError(ShardyfusionError):
+    """Database adapter binding was unavailable or incompatible.
 
     Also raised when shard reader operations fail (e.g. during close).
     """
 
     retryable = False
+
+
+# Backward-compatible alias (deprecated; will be removed in a future version).
+SlateDbApiError = DbAdapterError
 
 
 class ManifestBuildError(ShardyfusionError):

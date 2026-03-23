@@ -12,9 +12,9 @@ from typing import Any
 import pytest
 
 from shardyfusion.errors import (
+    DbAdapterError,
     ManifestParseError,
     ReaderStateError,
-    SlateDbApiError,
 )
 from shardyfusion.manifest import (
     ManifestRef,
@@ -326,7 +326,7 @@ def test_multi_get_shard_failure_raises_slate_db_api_error(tmp_path) -> None:
         max_workers=2,
     ) as reader:
         # key=1 routes to shard 0, key=6 routes to shard 1 via xxh3 → both shards in executor
-        with pytest.raises(SlateDbApiError, match="db_id="):
+        with pytest.raises(DbAdapterError, match="db_id="):
             reader.multi_get([1, 6])
 
 
@@ -605,7 +605,7 @@ def test_sharded_reader_multi_get_shard_failure(tmp_path) -> None:
         reader_factory=lambda *, db_url, local_dir, checkpoint_id: _BrokenReader(),
         max_workers=2,
     ) as reader:
-        with pytest.raises(SlateDbApiError, match="db_id="):
+        with pytest.raises(DbAdapterError, match="db_id="):
             reader.multi_get([1, 6])
 
 

@@ -28,7 +28,7 @@ from shardyfusion.slatedb_adapter import (
     SlateDbFactory,
 )
 from shardyfusion.storage import join_s3
-from shardyfusion.type_defs import KeyLike
+from shardyfusion.type_defs import KeyInput
 
 from .util import DataFrameCacheContext, SparkConfOverrideContext
 
@@ -46,12 +46,13 @@ def write_single_db(
     storage_level: StorageLevel | None = None,
     spark_conf_overrides: dict[str, str] | None = None,
     max_writes_per_second: float | None = None,
+    max_write_bytes_per_second: float | None = None,
 ) -> BuildResult:
-    """Write a DataFrame into a single SlateDB database, optionally sorting by key first.
+    """Write a DataFrame into a single shard database, optionally sorting by key first.
 
     Uses Spark for the expensive global sort, then streams sorted partitions to the
-    driver where they are written into one SlateDB instance. This produces an optimal
-    write pattern for SlateDB's LSM tree (sorted keys → clean sorted runs → minimal
+    driver where they are written into one database instance. This produces an optimal
+    write pattern for the LSM tree (sorted keys → clean sorted runs → minimal
     compaction).
 
     ``num_partitions`` controls how many partitions the sorted data is split
@@ -85,6 +86,7 @@ def write_single_db(
                 num_partitions=num_partitions,
                 prefetch_partitions=prefetch_partitions,
                 max_writes_per_second=max_writes_per_second,
+                max_write_bytes_per_second=max_write_bytes_per_second,
             )
 
 
@@ -100,6 +102,7 @@ def _write_single_db_impl(
     num_partitions: int | None,
     prefetch_partitions: bool,
     max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
 ) -> BuildResult:
     """Implementation: sort, stream, write, publish."""
 
@@ -131,6 +134,7 @@ def _write_single_db_impl(
         value_spec=value_spec,
         prefetch_partitions=prefetch_partitions,
         max_writes_per_second=max_writes_per_second,
+        max_write_bytes_per_second=max_write_bytes_per_second,
     )
     write_duration_ms = int((time.perf_counter() - write_started) * 1000)
 
@@ -176,8 +180,9 @@ def _stream_to_single_db(
     value_spec: ValueSpec,
     prefetch_partitions: bool,
     max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
 ) -> ShardAttemptResult:
-    """Stream DataFrame rows to a single SlateDB adapter on the driver."""
+    """Stream DataFrame rows to a single shard adapter on the driver."""
 
     db_id = 0
     attempt = 0
@@ -206,10 +211,13 @@ def _stream_to_single_db(
     bucket: RateLimiter | None = None
     if max_writes_per_second is not None:
         bucket = TokenBucket(max_writes_per_second)
+    bytes_bucket: RateLimiter | None = None
+    if max_write_bytes_per_second is not None:
+        bytes_bucket = TokenBucket(max_write_bytes_per_second)
 
     row_count = 0
-    min_key: KeyLike | None = None
-    max_key: KeyLike | None = None
+    min_key: KeyInput | None = None
+    max_key: KeyInput | None = None
     checkpoint_id: str | None = None
     batch: list[tuple[bytes, bytes]] = []
 
@@ -229,12 +237,18 @@ def _stream_to_single_db(
                 if len(batch) >= config.batch_size:
                     if bucket is not None:
                         bucket.acquire(len(batch))
+                    if bytes_bucket is not None:
+                        batch_bytes = sum(len(k) + len(v) for k, v in batch)
+                        bytes_bucket.acquire(batch_bytes)
                     adapter.write_batch(batch)
                     batch.clear()
 
             if batch:
                 if bucket is not None:
                     bucket.acquire(len(batch))
+                if bytes_bucket is not None:
+                    batch_bytes = sum(len(k) + len(v) for k, v in batch)
+                    bytes_bucket.acquire(batch_bytes)
                 adapter.write_batch(batch)
                 batch.clear()
 

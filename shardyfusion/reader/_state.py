@@ -10,8 +10,8 @@ from queue import Empty, Queue
 from typing import Self
 
 from shardyfusion.errors import (
+    DbAdapterError,
     PoolExhaustedError,
-    SlateDbApiError,
 )
 from shardyfusion.logging import (
     FailureSeverity,
@@ -276,7 +276,7 @@ def _close_simple_state(state: _SimpleReaderState) -> None:
                 manifest_ref=state.manifest_ref,
             )
     if errors:
-        raise SlateDbApiError(
+        raise DbAdapterError(
             f"Failed to close {len(errors)} shard reader(s): "
             f"db_ids={[db_id for db_id, _ in errors]}"
         ) from errors[0][1]
@@ -306,7 +306,7 @@ def _close_state(state: _ReaderState) -> None:
             failed_db_ids=[db_id for db_id, _ in errors],
             total_handles=len(state.handles),
         )
-        raise SlateDbApiError(
+        raise DbAdapterError(
             f"Failed to close {len(errors)} shard handle(s): "
             f"db_ids={[db_id for db_id, _ in errors]}"
         ) from errors[0][1]

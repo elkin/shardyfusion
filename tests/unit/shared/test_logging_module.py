@@ -44,7 +44,7 @@ class TestLogEvent:
         record = caplog.records[0]
         assert record.message == "test_event"
         assert record.levelno == logging.INFO
-        assert record.slatedb == {"foo": "bar", "count": 42}  # type: ignore[attr-defined]
+        assert record.shardyfusion == {"foo": "bar", "count": 42}  # type: ignore[attr-defined]
 
     def test_emits_debug_level(self, caplog):
         with caplog.at_level(logging.DEBUG, logger="shardyfusion"):
@@ -58,7 +58,7 @@ class TestLogEvent:
             log_event("custom_event", logger=custom, key="val")
         assert len(caplog.records) == 1
         assert caplog.records[0].name == "shardyfusion.test_custom"
-        assert caplog.records[0].slatedb == {"key": "val"}  # type: ignore[attr-defined]
+        assert caplog.records[0].shardyfusion == {"key": "val"}  # type: ignore[attr-defined]
 
     def test_falls_back_to_root_logger_when_no_logger(self, caplog):
         with caplog.at_level(logging.INFO, logger="shardyfusion"):
@@ -83,8 +83,8 @@ class TestLogFailure:
         assert len(caplog.records) == 1
         record = caplog.records[0]
         assert record.levelno == logging.WARNING
-        assert record.slatedb["severity"] == "transient"  # type: ignore[attr-defined]
-        assert record.slatedb["url"] == "s3://bucket/key"  # type: ignore[attr-defined]
+        assert record.shardyfusion["severity"] == "transient"  # type: ignore[attr-defined]
+        assert record.shardyfusion["url"] == "s3://bucket/key"  # type: ignore[attr-defined]
 
     def test_error_logs_at_error(self, caplog):
         with caplog.at_level(logging.ERROR, logger="shardyfusion"):
@@ -103,8 +103,8 @@ class TestLogFailure:
         with caplog.at_level(logging.ERROR, logger="shardyfusion"):
             log_failure("fail", severity=FailureSeverity.ERROR, error=exc)
         record = caplog.records[0]
-        assert "ValueError" in record.slatedb["error"]  # type: ignore[attr-defined]
-        assert "bad input" in record.slatedb["error"]  # type: ignore[attr-defined]
+        assert "ValueError" in record.shardyfusion["error"]  # type: ignore[attr-defined]
+        assert "bad input" in record.shardyfusion["error"]  # type: ignore[attr-defined]
 
     def test_includes_traceback_when_requested(self, caplog):
         try:
@@ -118,7 +118,7 @@ class TestLogFailure:
                     include_traceback=True,
                 )
         record = caplog.records[0]
-        tb = record.slatedb["traceback"]  # type: ignore[attr-defined]
+        tb = record.shardyfusion["traceback"]  # type: ignore[attr-defined]
         assert isinstance(tb, list)
         assert any("RuntimeError" in line for line in tb)
 
@@ -143,7 +143,11 @@ class TestLogContext:
             with LogContext(run_id="abc", writer_type="spark"):
                 log_event("test_event", shard=0)
         record = caplog.records[0]
-        assert record.slatedb == {"run_id": "abc", "writer_type": "spark", "shard": 0}  # type: ignore[attr-defined]
+        assert record.shardyfusion == {
+            "run_id": "abc",
+            "writer_type": "spark",
+            "shard": 0,
+        }  # type: ignore[attr-defined]
 
     def test_nesting_inner_overrides_outer(self, caplog):
         from shardyfusion.logging import LogContext
@@ -154,8 +158,8 @@ class TestLogContext:
                     log_event("nested")
         record = caplog.records[0]
         # Inner overrides 'run_id', outer 'mode' is preserved
-        assert record.slatedb["run_id"] == "inner"  # type: ignore[attr-defined]
-        assert record.slatedb["mode"] == "batch"  # type: ignore[attr-defined]
+        assert record.shardyfusion["run_id"] == "inner"  # type: ignore[attr-defined]
+        assert record.shardyfusion["mode"] == "batch"  # type: ignore[attr-defined]
 
     def test_outer_restored_after_exit(self, caplog):
         from shardyfusion.logging import LogContext
@@ -166,7 +170,7 @@ class TestLogContext:
                     pass
                 log_event("after_inner")
         record = caplog.records[0]
-        assert record.slatedb["run_id"] == "outer"  # type: ignore[attr-defined]
+        assert record.shardyfusion["run_id"] == "outer"  # type: ignore[attr-defined]
 
 
 class TestJsonFormatter:
@@ -185,7 +189,7 @@ class TestJsonFormatter:
             args=(),
             exc_info=None,
         )
-        record.slatedb = {"run_id": "abc", "shard": 0}  # type: ignore[attr-defined]
+        record.shardyfusion = {"run_id": "abc", "shard": 0}  # type: ignore[attr-defined]
         output = formatter.format(record)
         parsed = json.loads(output)
 
@@ -196,7 +200,7 @@ class TestJsonFormatter:
         assert parsed["shard"] == 0
         assert "timestamp" in parsed
 
-    def test_no_slatedb_fields(self):
+    def test_no_shardyfusion_fields(self):
         import json
 
         from shardyfusion.logging import JsonFormatter

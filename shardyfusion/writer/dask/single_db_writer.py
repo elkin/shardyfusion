@@ -32,7 +32,7 @@ from shardyfusion.slatedb_adapter import (
     SlateDbFactory,
 )
 from shardyfusion.storage import join_s3
-from shardyfusion.type_defs import KeyLike
+from shardyfusion.type_defs import KeyInput
 
 
 class DaskCacheContext:
@@ -71,11 +71,12 @@ def write_single_db(
     prefetch_partitions: bool = True,
     cache_input: bool = True,
     max_writes_per_second: float | None = None,
+    max_write_bytes_per_second: float | None = None,
 ) -> BuildResult:
-    """Write a Dask DataFrame into a single SlateDB database, optionally sorting by key first.
+    """Write a Dask DataFrame into a single shard database, optionally sorting by key first.
 
     Uses Dask for the expensive global sort, then streams sorted partitions to the
-    local process where they are written into one SlateDB instance.
+    local process where they are written into one database instance.
 
     ``num_partitions`` controls how many partitions the sorted data is split
     into before streaming.  When *None* (the default) the function calls
@@ -109,6 +110,7 @@ def write_single_db(
             num_partitions=num_partitions,
             prefetch_partitions=prefetch_partitions,
             max_writes_per_second=max_writes_per_second,
+            max_write_bytes_per_second=max_write_bytes_per_second,
         )
 
 
@@ -124,6 +126,7 @@ def _write_single_db_impl(
     num_partitions: int | None,
     prefetch_partitions: bool,
     max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
 ) -> BuildResult:
     """Implementation: sort, stream partitions, write, publish."""
 
@@ -152,6 +155,7 @@ def _write_single_db_impl(
         value_spec=value_spec,
         prefetch_partitions=prefetch_partitions,
         max_writes_per_second=max_writes_per_second,
+        max_write_bytes_per_second=max_write_bytes_per_second,
     )
     write_duration_ms = int((time.perf_counter() - write_started) * 1000)
 
@@ -197,8 +201,9 @@ def _stream_to_single_db(
     value_spec: ValueSpec,
     prefetch_partitions: bool,
     max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
 ) -> ShardAttemptResult:
-    """Stream Dask partitions to a single SlateDB adapter."""
+    """Stream Dask partitions to a single shard adapter."""
 
     db_id = 0
     attempt = 0
@@ -227,10 +232,13 @@ def _stream_to_single_db(
     bucket: RateLimiter | None = None
     if max_writes_per_second is not None:
         bucket = TokenBucket(max_writes_per_second)
+    bytes_bucket: RateLimiter | None = None
+    if max_write_bytes_per_second is not None:
+        bytes_bucket = TokenBucket(max_write_bytes_per_second)
 
     row_count = 0
-    min_key: KeyLike | None = None
-    max_key: KeyLike | None = None
+    min_key: KeyInput | None = None
+    max_key: KeyInput | None = None
     checkpoint_id: str | None = None
 
     write_started = time.perf_counter()
@@ -248,6 +256,7 @@ def _stream_to_single_db(
                     value_spec=value_spec,
                     batch_size=config.batch_size,
                     bucket=bucket,
+                    bytes_bucket=bytes_bucket,
                 )
             else:
                 row_count, min_key, max_key = _write_sequential(
@@ -258,6 +267,7 @@ def _stream_to_single_db(
                     value_spec=value_spec,
                     batch_size=config.batch_size,
                     bucket=bucket,
+                    bytes_bucket=bytes_bucket,
                 )
 
             adapter.flush()
@@ -303,9 +313,10 @@ def _write_pdf_rows(
     batch_size: int,
     bucket: RateLimiter | None,
     row_count: int,
-    min_key: KeyLike | None,
-    max_key: KeyLike | None,
-) -> tuple[int, KeyLike | None, KeyLike | None]:
+    min_key: KeyInput | None,
+    max_key: KeyInput | None,
+    bytes_bucket: RateLimiter | None = None,
+) -> tuple[int, KeyInput | None, KeyInput | None]:
     """Write rows from a pandas DataFrame to the adapter."""
 
     batch: list[tuple[bytes, bytes]] = []
@@ -326,12 +337,18 @@ def _write_pdf_rows(
         if len(batch) >= batch_size:
             if bucket is not None:
                 bucket.acquire(len(batch))
+            if bytes_bucket is not None:
+                batch_bytes = sum(len(k) + len(v) for k, v in batch)
+                bytes_bucket.acquire(batch_bytes)
             adapter.write_batch(batch)
             batch.clear()
 
     if batch:
         if bucket is not None:
             bucket.acquire(len(batch))
+        if bytes_bucket is not None:
+            batch_bytes = sum(len(k) + len(v) for k, v in batch)
+            bytes_bucket.acquire(batch_bytes)
         adapter.write_batch(batch)
 
     return row_count, min_key, max_key
@@ -346,12 +363,13 @@ def _write_with_prefetch(
     value_spec: ValueSpec,
     batch_size: int,
     bucket: RateLimiter | None,
-) -> tuple[int, KeyLike | None, KeyLike | None]:
+    bytes_bucket: RateLimiter | None = None,
+) -> tuple[int, KeyInput | None, KeyInput | None]:
     """Write partitions with background prefetching of the next partition."""
 
     row_count = 0
-    min_key: KeyLike | None = None
-    max_key: KeyLike | None = None
+    min_key: KeyInput | None = None
+    max_key: KeyInput | None = None
 
     with ThreadPoolExecutor(max_workers=1) as prefetcher:
         next_future = prefetcher.submit(partitions[0].compute)
@@ -372,6 +390,7 @@ def _write_with_prefetch(
                     row_count,
                     min_key,
                     max_key,
+                    bytes_bucket=bytes_bucket,
                 )
 
     return row_count, min_key, max_key
@@ -386,12 +405,13 @@ def _write_sequential(
     value_spec: ValueSpec,
     batch_size: int,
     bucket: RateLimiter | None,
-) -> tuple[int, KeyLike | None, KeyLike | None]:
+    bytes_bucket: RateLimiter | None = None,
+) -> tuple[int, KeyInput | None, KeyInput | None]:
     """Write partitions sequentially without prefetching."""
 
     row_count = 0
-    min_key: KeyLike | None = None
-    max_key: KeyLike | None = None
+    min_key: KeyInput | None = None
+    max_key: KeyInput | None = None
 
     for partition in partitions:
         pdf: pd.DataFrame = partition.compute()
@@ -407,6 +427,7 @@ def _write_sequential(
                 row_count,
                 min_key,
                 max_key,
+                bytes_bucket=bytes_bucket,
             )
 
     return row_count, min_key, max_key

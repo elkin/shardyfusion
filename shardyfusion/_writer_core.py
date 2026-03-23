@@ -32,7 +32,7 @@ from .ordering import compare_ordered
 from .routing import xxh3_db_id
 from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
 from .storage import create_s3_client, delete_prefix, join_s3, list_prefixes
-from .type_defs import KeyLike, RetryConfig
+from .type_defs import KeyInput, RetryConfig
 
 _logger = get_logger(__name__)
 
@@ -45,8 +45,8 @@ class ShardAttemptResult:
     db_url: str | None
     attempt: int
     row_count: int
-    min_key: KeyLike | None
-    max_key: KeyLike | None
+    min_key: KeyInput | None
+    max_key: KeyInput | None
     checkpoint_id: str | None
     writer_info: WriterInfo
     all_attempt_urls: tuple[str, ...] = ()
@@ -90,9 +90,9 @@ def _get_cel_imports() -> tuple[Any, ...]:
 
 
 def route_key(
-    key: KeyLike,
+    key: KeyInput,
     *,
-    num_dbs: int,
+    num_dbs: int | None,
     sharding: ShardingSpec,
     key_encoding: KeyEncoding,
     routing_context: dict[str, object] | None = None,
@@ -100,6 +100,7 @@ def route_key(
     """Route a key to a shard db_id (shared by all writer paths)."""
 
     if sharding.strategy == ShardingStrategy.HASH:
+        assert num_dbs is not None, "num_dbs required for HASH routing"
         return xxh3_db_id(key, num_dbs)
     if sharding.strategy == ShardingStrategy.CEL:
         _compile_cel_cached, route_cel = _get_cel_imports()
@@ -113,10 +114,10 @@ def route_key(
     )
 
 
-def resolve_num_dbs(config: WriteConfig, count_fn: Callable[[], int]) -> int:
+def resolve_num_dbs(config: WriteConfig, count_fn: Callable[[], int]) -> int | None:
     """Resolve num_dbs from config or max_keys_per_shard.
 
-    Returns 0 for CEL (discovered after sharding from data).
+    Returns ``None`` for CEL (discovered after sharding from data).
 
     Args:
         config: Write configuration.
@@ -125,7 +126,7 @@ def resolve_num_dbs(config: WriteConfig, count_fn: Callable[[], int]) -> int:
     """
     import math
 
-    if config.num_dbs > 0:
+    if config.num_dbs is not None and config.num_dbs > 0:
         return config.num_dbs
 
     if config.sharding.max_keys_per_shard is not None:
@@ -135,7 +136,7 @@ def resolve_num_dbs(config: WriteConfig, count_fn: Callable[[], int]) -> int:
         return max(1, math.ceil(count / config.sharding.max_keys_per_shard))
 
     # CEL: will discover after add_db_id_column
-    return 0
+    return None
 
 
 def discover_cel_num_dbs(
@@ -258,11 +259,14 @@ def publish_to_store(
 
     Args:
         num_dbs: Resolved shard count (must be > 0). Writers must always
-            pass the resolved value since ``config.num_dbs`` may be 0
+            pass the resolved value since ``config.num_dbs`` may be ``None``
             for CEL or max_keys_per_shard modes.
     """
 
     resolved_num_dbs = num_dbs if num_dbs > 0 else config.num_dbs
+    assert resolved_num_dbs is not None and resolved_num_dbs > 0, (
+        "num_dbs must be resolved to a positive integer before publishing"
+    )
     required_build = RequiredBuildMeta(
         run_id=run_id,
         created_at=_utc_now(),
@@ -580,10 +584,10 @@ def manifest_safe_sharding(sharding: ShardingSpec) -> ManifestShardingSpec:
 
 
 def update_min_max(
-    min_key: KeyLike | None,
-    max_key: KeyLike | None,
-    key: KeyLike | None,
-) -> tuple[KeyLike | None, KeyLike | None]:
+    min_key: KeyInput | None,
+    max_key: KeyInput | None,
+    key: KeyInput | None,
+) -> tuple[KeyInput | None, KeyInput | None]:
     normalized_key = key
     if normalized_key is None:
         return min_key, max_key
