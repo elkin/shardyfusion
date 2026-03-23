@@ -292,6 +292,32 @@ orthogonal:
 - Larger `batch_size` → fewer but bigger acquire calls.
 - Neither setting affects the other; they can be tuned independently.
 
+## Shard-Level Retry (Dask & Ray)
+
+The Dask and Ray writers support optional per-shard retry on transient failures via `WriteConfig.shard_retry`:
+
+```python
+from shardyfusion import WriteConfig, RetryConfig
+
+config = WriteConfig(
+    num_dbs=8,
+    s3_prefix="s3://bucket/prefix",
+    shard_retry=RetryConfig(max_retries=2, initial_backoff_s=1.0, backoff_multiplier=2.0),
+)
+```
+
+When a shard write fails with a retryable error (`ShardWriteError`), the writer retries with exponential backoff. Each attempt writes to a new S3 path (`attempt=00`, `attempt=01`, ...) with fresh rate limiters. Non-retryable errors propagate immediately.
+
+| Setting | Default | Description |
+|---|---|---|
+| `max_retries` | `3` | Maximum number of retry attempts after the initial failure |
+| `initial_backoff_s` | `1.0` | Delay before the first retry (seconds) |
+| `backoff_multiplier` | `2.0` | Multiplier applied to the delay after each retry |
+
+**Spark** relies on speculative execution for fault tolerance and does not use `shard_retry`. **Python** writer support is deferred.
+
+When `shard_retry` is `None` (the default), all writers make a single attempt with no retry — preserving existing behavior.
+
 ## Structured Logging in Writers
 
 All writer pipelines integrate with shardyfusion's [structured logging](observability.md#structured-logging) system. Key fields (`run_id`, `db_id`, `attempt`) are automatically bound to log context during writes via `LogContext`.

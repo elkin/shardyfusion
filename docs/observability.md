@@ -81,6 +81,16 @@ reader = ShardedReader(
 | `READER_REFRESHED` | `changed` | Refresh attempt (`changed=True` if new snapshot loaded) |
 | `READER_CLOSED` | `num_handles` | Reader closed |
 
+### Writer Retry
+
+| Event | Payload | Description |
+|---|---|---|
+| `SHARD_WRITE_RETRIED` | `elapsed_ms`, `db_id`, `attempt`, `backoff_s` | Shard write failed with a retryable error; retrying after backoff |
+| `SHARD_WRITE_RETRY_EXHAUSTED` | `elapsed_ms`, `db_id`, `attempts` | All shard write retry attempts failed |
+
+!!! note
+    Writer retry events are only emitted when `WriteConfig.shard_retry` is configured (Dask and Ray writers). Spark relies on speculative execution for fault tolerance. The built-in Prometheus and OTel collectors do not yet instrument these events — custom collectors can handle them via the standard `emit()` protocol.
+
 ### Infrastructure
 
 | Event | Payload | Description |

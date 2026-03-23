@@ -112,17 +112,31 @@ The verification step samples rows eagerly before the write phase:
 
 ## Error Handling & Fault Tolerance
 
+### Shard-Level Retry
+
+When `WriteConfig.shard_retry` is set to a `RetryConfig`, individual shard writes are retried on transient failures (`ShardWriteError`, `retryable=True`). Each retry writes to a new S3 path (`attempt=00`, `attempt=01`, ...) with fresh rate limiters. Non-retryable errors propagate immediately without retry. When `shard_retry` is `None` (default), behavior is unchanged — a single attempt with no retry.
+
+```python
+from shardyfusion import WriteConfig, RetryConfig
+
+config = WriteConfig(
+    num_dbs=8,
+    s3_prefix="s3://bucket/prefix",
+    shard_retry=RetryConfig(max_retries=2, initial_backoff_s=1.0),
+)
+```
+
 ### No Speculative Execution
 
-Dask does not speculatively re-execute tasks. `attempt` is always 0. If a partition write fails, the entire `.compute()` call fails with no automatic retry.
+Dask does not speculatively re-execute tasks. Unlike Spark, fault tolerance comes from `shard_retry` (per-shard retry with backoff), not speculative execution. Without `shard_retry`, `attempt` is always 0.
 
 ### Exception Wrapping
 
-Non-shardyfusion exceptions are wrapped with context (run_id, db_id, attempt, db_url, rows_written, traceback) and re-raised. Shardyfusion error subclasses pass through unwrapped.
+Non-shardyfusion exceptions from adapter operations are wrapped as `ShardWriteError` (`retryable=True`) with context (run_id, db_id, attempt, db_url, rows_written, traceback). Shardyfusion error subclasses pass through unwrapped.
 
 ### Partition Failure = Full Write Failure
 
-A single partition failure during `.compute()` aborts all in-flight partitions and propagates the exception to the caller. There is no partial result recovery.
+If a shard write exhausts all retry attempts (or fails with a non-retryable error), the exception propagates and the `.compute()` call fails. There is no partial result recovery.
 
 ### Sharding Validation
 

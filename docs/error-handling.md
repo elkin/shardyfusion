@@ -11,6 +11,7 @@ graph TD
     SE --> CVE[ConfigValidationError<br/>retryable=False]
     SE --> SAE[ShardAssignmentError<br/>retryable=False]
     SE --> SCE[ShardCoverageError<br/>retryable=False]
+    SE --> SWE[ShardWriteError<br/>retryable=True]
     SE --> SDAE[SlateDbApiError<br/>retryable=False]
     SE --> MBE[ManifestBuildError<br/>retryable=False]
     SE --> PME[PublishManifestError<br/>retryable=True]
@@ -29,6 +30,7 @@ graph TD
 | `ConfigValidationError` | No | Invalid `WriteConfig` parameters (bad `s3_prefix`, `num_dbs <= 0`, unsupported sharding strategy) |
 | `ShardAssignmentError` | No | Routing verification detects mismatch between framework-assigned and Python-computed shard IDs |
 | `ShardCoverageError` | No | After shard writes, results don't cover all expected `range(num_dbs)` |
+| `ShardWriteError` | Yes | Adapter operations (write_batch, flush, checkpoint) failed with a potentially transient error |
 | `SlateDbApiError` | No | SlateDB package missing, reader close failures, API-level errors |
 | `ManifestBuildError` | No | `ManifestBuilder.build()` raises during manifest creation |
 | `PublishManifestError` | Yes | Manifest upload to S3 fails (transient) |

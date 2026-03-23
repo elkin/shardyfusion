@@ -108,17 +108,21 @@ The verification step samples rows before the write phase:
 
 ## Error Handling & Fault Tolerance
 
+### Shard-Level Retry
+
+Same as Dask — when `WriteConfig.shard_retry` is set, individual shard writes are retried on transient failures with exponential backoff. Each retry writes to a new S3 path. See [Dask Writer — Shard-Level Retry](dask.md#shard-level-retry) for configuration details.
+
 ### No Speculative Execution
 
-Like Dask, Ray does not speculatively re-execute tasks at the shardyfusion level. `attempt` is always 0. Ray Data may retry failed tasks internally, but shardyfusion does not rely on or expose this.
+Like Dask, Ray does not speculatively re-execute tasks at the shardyfusion level. Fault tolerance comes from `shard_retry` (per-shard retry with backoff), not speculative execution. Without `shard_retry`, `attempt` is always 0. Ray Data may retry failed tasks internally, but shardyfusion does not rely on or expose this.
 
 ### Exception Wrapping
 
-Same pattern as Dask — non-shardyfusion exceptions are wrapped with context and traceback.
+Same pattern as Dask — non-shardyfusion exceptions from adapter operations are wrapped as `ShardWriteError` (`retryable=True`) with context and traceback.
 
 ### Batch Failure = Full Write Failure
 
-A single batch failure during result collection aborts the pipeline. No partial result recovery.
+If a shard write exhausts all retry attempts (or fails with a non-retryable error), the exception propagates and aborts the pipeline. No partial result recovery.
 
 ### Shuffle Strategy Safety
 
