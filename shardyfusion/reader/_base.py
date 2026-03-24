@@ -133,5 +133,12 @@ class _BaseShardedReader:
     def __exit__(self, *args: object) -> None:
         self.close()
 
+    def __del__(self) -> None:
+        if not getattr(self, "_closed", True):
+            try:
+                self.close()
+            except Exception:
+                pass
+
     def close(self) -> None:
         raise NotImplementedError

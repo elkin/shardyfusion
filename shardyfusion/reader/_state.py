@@ -103,6 +103,16 @@ class _SimpleReaderState:
     readers: dict[int, ShardReader]
     borrow_count: int = 0
     retired: bool = False
+    _closed: bool = False
+
+    def __del__(self) -> None:
+        if not self._closed:
+            try:
+                # We can't log here because the logger might be destroyed
+                # during interpreter shutdown, but we should try to close.
+                _close_simple_state(self)
+            except Exception:
+                pass
 
 
 @dataclass(slots=True)
@@ -114,6 +124,14 @@ class _ReaderState:
     handles: dict[int, _ShardHandle]
     refcount: int = 0
     retired: bool = False
+    _closed: bool = False
+
+    def __del__(self) -> None:
+        if not self._closed:
+            try:
+                _close_state(self)
+            except Exception:
+                pass
 
 
 @dataclass(slots=True)
@@ -267,6 +285,9 @@ def _read_one(handle: _ShardHandle, key: bytes) -> bytes | None:
 
 
 def _close_simple_state(state: _SimpleReaderState) -> None:
+    if state._closed:
+        return
+    state._closed = True
     errors: list[tuple[int, BaseException]] = []
     for db_id, reader in state.readers.items():
         try:
@@ -289,6 +310,9 @@ def _close_simple_state(state: _SimpleReaderState) -> None:
 
 
 def _close_state(state: _ReaderState) -> None:
+    if state._closed:
+        return
+    state._closed = True
     errors: list[tuple[int, BaseException]] = []
     for db_id, handle in state.handles.items():
         try:

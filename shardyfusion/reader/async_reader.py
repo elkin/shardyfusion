@@ -82,7 +82,14 @@ class _SlateDbAsyncShardReader:
 class _AsyncReaderState:
     """Internal state for AsyncShardedReader with async cleanup support."""
 
-    __slots__ = ("manifest_ref", "router", "readers", "borrow_count", "retired")
+    __slots__ = (
+        "manifest_ref",
+        "router",
+        "readers",
+        "borrow_count",
+        "retired",
+        "_closed",
+    )
 
     def __init__(
         self,
@@ -97,9 +104,21 @@ class _AsyncReaderState:
         self.readers = readers
         self.borrow_count = borrow_count
         self.retired = retired
+        self._closed = False
+
+    def __del__(self) -> None:
+        if not getattr(self, "_closed", True):
+            # Cannot await aclose here, but we can log a warning
+            # if we had a logger, but it might be gone.
+            # ShardReaderHandle.__del__ and AsyncShardedReader.__del__
+            # are the primary cleanup paths that try to schedule aclose().
+            pass
 
     async def aclose(self) -> None:
         """Close all shard readers, logging per-reader errors."""
+        if self._closed:
+            return
+        self._closed = True
         errors: list[tuple[int, BaseException]] = []
         for db_id, reader in self.readers.items():
             try:
@@ -606,6 +625,22 @@ class AsyncShardedReader:
 
     async def __aexit__(self, *args: object) -> None:
         await self.close()
+
+    def __del__(self) -> None:
+        if not getattr(self, "_closed", True):
+            # Not closed explicitly. Mark state as retired and try to schedule
+            # cleanup if an event loop is running.
+            self._closed = True
+            state = self._state
+            if state is not None:
+                state.retired = True
+                if state.borrow_count == 0:
+                    try:
+                        loop = asyncio.get_running_loop()
+                        if not loop.is_closed():
+                            loop.create_task(state.aclose())
+                    except Exception:
+                        pass
 
     # -- Private helpers -------------------------------------------------
 
