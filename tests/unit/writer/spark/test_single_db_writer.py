@@ -363,6 +363,69 @@ def test_rate_limiter_exact_batch_boundary(
 
 
 @pytest.mark.spark
+def test_bytes_rate_limiter_bucket_created_with_correct_rate(
+    spark: SparkSession,
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    config = _make_config(batch_size=50_000)
+    df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
+
+    write_single_db(
+        df,
+        config,
+        key_col="key",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+        max_write_bytes_per_second=512.0,
+    )
+
+    assert len(_patch_token_bucket) == 1
+    assert _patch_token_bucket[0].rate == 512.0
+
+
+@pytest.mark.spark
+def test_bytes_rate_limiter_no_bucket_when_none(
+    spark: SparkSession,
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    config = _make_config(batch_size=50_000)
+    df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
+
+    write_single_db(
+        df,
+        config,
+        key_col="key",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+    )
+
+    assert len(_patch_token_bucket) == 0
+
+
+@pytest.mark.spark
+def test_bytes_rate_limiter_acquire_called_with_byte_counts(
+    spark: SparkSession,
+    _patch_token_bucket: list[RecordingTokenBucket],
+) -> None:
+    # 7 rows / batch_size 3 → 2 full batches + 1 trailing partial
+    config = _make_config(batch_size=3)
+    df = spark.createDataFrame([(k,) for k in range(7)], ["key"])
+
+    write_single_db(
+        df,
+        config,
+        key_col="key",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"val"),
+        max_write_bytes_per_second=10_000.0,
+    )
+
+    assert len(_patch_token_bucket) == 1
+    bucket = _patch_token_bucket[0]
+    # Each pair is 8 (u64be key) + 3 (b"val") = 11 bytes
+    # Batches: [3*11, 3*11, 1*11] = [33, 33, 11]
+    assert sum(bucket.acquire_calls) == 7 * 11
+    assert len(bucket.acquire_calls) == 3
+
+
+@pytest.mark.spark
 def test_empty_dataframe(spark: SparkSession) -> None:
     factory = TrackingFactory()
     config = _make_config(factory=factory)
