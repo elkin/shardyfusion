@@ -282,9 +282,7 @@ def test_run_script_health() -> None:
 
 
 def test_run_script_health_with_threshold() -> None:
-    path = _write_script(
-        "commands:\n  - op: health\n    staleness_threshold: 300\n"
-    )
+    path = _write_script("commands:\n  - op: health\n    staleness_threshold: 300\n")
     reader = _FakeReader()
     out = StringIO()
     errors = run_script(reader, path, OutputConfig(), output_file=out)
