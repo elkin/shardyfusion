@@ -18,7 +18,7 @@ _logger = get_logger(__name__)
 
 # Retry defaults for transient S3 errors.
 _DEFAULT_MAX_RETRIES = 3
-_DEFAULT_INITIAL_BACKOFF_S = 1.0
+_DEFAULT_INITIAL_BACKOFF = 1.0
 _DEFAULT_BACKOFF_MULTIPLIER = 2.0
 
 # S3 error codes considered transient and safe to retry.
@@ -75,10 +75,10 @@ def _resolve_retry_params(
     if retry_config is not None:
         return (
             retry_config.max_retries,
-            retry_config.initial_backoff_s,
+            retry_config.initial_backoff.total_seconds(),
             retry_config.backoff_multiplier,
         )
-    return _DEFAULT_MAX_RETRIES, _DEFAULT_INITIAL_BACKOFF_S, _DEFAULT_BACKOFF_MULTIPLIER
+    return _DEFAULT_MAX_RETRIES, _DEFAULT_INITIAL_BACKOFF, _DEFAULT_BACKOFF_MULTIPLIER
 
 
 def _retry_s3_operation(

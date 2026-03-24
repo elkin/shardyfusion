@@ -1,5 +1,7 @@
 """Shared type aliases and protocols used across the package."""
 
+from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Protocol, TypeAlias, TypedDict
 
@@ -70,8 +72,6 @@ class S3ConnectionOptions(TypedDict, total=False):
 # Retry configuration
 # ---------------------------------------------------------------------------
 
-from dataclasses import dataclass  # noqa: E402
-
 
 @dataclass(slots=True, frozen=True)
 class RetryConfig:
@@ -81,5 +81,5 @@ class RetryConfig:
     """
 
     max_retries: int = 3
-    initial_backoff_s: float = 1.0
+    initial_backoff: timedelta = timedelta(seconds=1.0)
     backoff_multiplier: float = 2.0

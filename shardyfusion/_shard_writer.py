@@ -332,7 +332,7 @@ def write_shard_with_retry(
         ShardyfusionError: Immediately on non-retryable errors.
     """
     max_attempts = 1 + (retry_config.max_retries if retry_config else 0)
-    delay = retry_config.initial_backoff_s if retry_config else 0.0
+    delay = retry_config.initial_backoff.total_seconds() if retry_config else 0.0
     multiplier = retry_config.backoff_multiplier if retry_config else 1.0
 
     last_exc: BaseException | None = None

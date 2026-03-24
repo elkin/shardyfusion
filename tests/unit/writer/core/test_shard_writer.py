@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -320,7 +321,9 @@ class TestWriteShardWithRetry:
         result = write_shard_with_retry(
             **self._common_kwargs(tmp_path, factory=FailOnceFactory()),
             rows_fn=lambda: iter(_simple_rows(2)),
-            retry_config=RetryConfig(max_retries=2, initial_backoff_s=0.5),
+            retry_config=RetryConfig(
+                max_retries=2, initial_backoff=timedelta(seconds=0.5)
+            ),
         )
 
         assert result.attempt == 1
@@ -370,7 +373,9 @@ class TestWriteShardWithRetry:
             write_shard_with_retry(
                 **self._common_kwargs(tmp_path, factory=AlwaysFailFactory()),
                 rows_fn=lambda: iter(_simple_rows(1)),
-                retry_config=RetryConfig(max_retries=2, initial_backoff_s=0.1),
+                retry_config=RetryConfig(
+                    max_retries=2, initial_backoff=timedelta(seconds=0.1)
+                ),
             )
 
         # 2 retries = 2 sleeps (attempt 0 fails -> sleep -> attempt 1 fails -> sleep -> attempt 2 fails -> raise)
@@ -497,7 +502,7 @@ class TestWriteShardWithRetry:
                 rows_fn=lambda: iter(_simple_rows(1)),
                 retry_config=RetryConfig(
                     max_retries=3,
-                    initial_backoff_s=1.0,
+                    initial_backoff=timedelta(seconds=1.0),
                     backoff_multiplier=2.0,
                 ),
             )
