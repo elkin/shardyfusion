@@ -134,7 +134,7 @@ class S3ManifestStore:
         s3_prefix: str,
         *,
         manifest_name: str = "manifest",
-        current_name: str = "_CURRENT",
+        current_pointer_key: str = "_CURRENT",
         manifest_builder: ManifestBuilder | None = None,
         credential_provider: CredentialProvider | None = None,
         s3_connection_options: S3ConnectionOptions | None = None,
@@ -145,7 +145,7 @@ class S3ManifestStore:
 
         self.s3_prefix = s3_prefix.rstrip("/")
         self.manifest_name = manifest_name
-        self.current_name = current_name
+        self.current_pointer_key = current_pointer_key
         self._builder = manifest_builder
         credentials = credential_provider.resolve() if credential_provider else None
         self._s3_client = create_s3_client(credentials, s3_connection_options)
@@ -189,7 +189,7 @@ class S3ManifestStore:
         return manifest_url
 
     def load_current(self) -> ManifestRef | None:
-        current_url = f"{self.s3_prefix}/{self.current_name}"
+        current_url = f"{self.s3_prefix}/{self.current_pointer_key}"
         payload = try_get_bytes(
             current_url,
             s3_client=self._s3_client,
@@ -251,7 +251,7 @@ class S3ManifestStore:
             manifest_content_type=content_type,
             run_id=run_id,
         )
-        current_url = join_s3(self.s3_prefix, self.current_name)
+        current_url = join_s3(self.s3_prefix, self.current_pointer_key)
         put_bytes(
             current_url,
             current_artifact.payload,

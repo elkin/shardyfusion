@@ -34,7 +34,7 @@ from shardyfusion.metrics import MetricEvent
 from shardyfusion.serde import make_key_encoder
 from shardyfusion.slatedb_adapter import DbAdapterFactory, SlateDbFactory
 from shardyfusion.storage import join_s3
-from shardyfusion.type_defs import KeyLike
+from shardyfusion.type_defs import KeyInput
 
 _logger = get_logger(__name__)
 
@@ -50,7 +50,7 @@ def write_sharded(
     records: Iterable[T],
     config: WriteConfig,
     *,
-    key_fn: Callable[[T], KeyLike],
+    key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
     columns_fn: Callable[[T], dict[str, Any]] | None = None,
     parallel: bool = False,
@@ -119,7 +119,7 @@ def write_sharded(
         )
 
         if parallel:
-            if num_dbs == 0:
+            if num_dbs is None:
                 raise ConfigValidationError(
                     "Parallel mode requires num_dbs > 0 to spawn workers. "
                     "CEL direct mode (num_dbs discovered from data) "
@@ -229,10 +229,10 @@ def _validate_sharding(config: WriteConfig) -> None:
 def _resolve_num_dbs_before_sharding(
     records: Iterable[Any],
     config: WriteConfig,
-) -> int:
+) -> int | None:
     """Resolve num_dbs that can be determined before writing.
 
-    Returns 0 for CEL (discovered during iteration from data).
+    Returns ``None`` for CEL (discovered during iteration from data).
     """
     from collections.abc import Sized
 
@@ -300,10 +300,10 @@ def _write_single_process(
     *,
     records: Iterable[T],
     config: WriteConfig,
-    num_dbs: int,
+    num_dbs: int | None,
     run_id: str,
     factory: DbAdapterFactory,
-    key_fn: Callable[[T], KeyLike],
+    key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
     columns_fn: Callable[[T], dict[str, Any]] | None = None,
     max_writes_per_second: float | None,
@@ -318,7 +318,7 @@ def _write_single_process(
     """
 
     attempt = 0
-    cel_mode = num_dbs == 0  # CEL: discover from data
+    cel_mode = num_dbs is None  # CEL: discover from data
     bucket: RateLimiter | None = None
     if max_writes_per_second is not None:
         bucket = TokenBucket(
@@ -338,8 +338,8 @@ def _write_single_process(
     batches: dict[int, list[tuple[bytes, bytes]]] = {}
     batch_byte_sizes: dict[int, int] = {}
     row_counts: dict[int, int] = {}
-    min_keys: dict[int, KeyLike | None] = {}
-    max_keys: dict[int, KeyLike | None] = {}
+    min_keys: dict[int, KeyInput | None] = {}
+    max_keys: dict[int, KeyInput | None] = {}
     checkpoint_ids: dict[int, str | None] = {}
 
     with contextlib.ExitStack() as stack:
@@ -507,8 +507,8 @@ def _shard_worker(
         )
 
     row_count = 0
-    min_key: KeyLike | None = None
-    max_key: KeyLike | None = None
+    min_key: KeyInput | None = None
+    max_key: KeyInput | None = None
     checkpoint_id: str | None = None
 
     try:
@@ -572,7 +572,7 @@ def _write_parallel(
     num_dbs: int,
     run_id: str,
     factory: DbAdapterFactory,
-    key_fn: Callable[[T], KeyLike],
+    key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
     columns_fn: Callable[[T], dict[str, Any]] | None = None,
     max_queue_size: int,
@@ -608,8 +608,8 @@ def _write_parallel(
 
     chunk_bufs: list[list[tuple[bytes, bytes]]] = [[] for _ in range(num_dbs)]
     # Track min/max in main process for parallel mode
-    min_keys: list[KeyLike | None] = [None] * num_dbs
-    max_keys: list[KeyLike | None] = [None] * num_dbs
+    min_keys: list[KeyInput | None] = [None] * num_dbs
+    max_keys: list[KeyInput | None] = [None] * num_dbs
     row_counts = [0] * num_dbs
     key_encoder = make_key_encoder(config.key_encoding)
 

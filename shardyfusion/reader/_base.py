@@ -38,7 +38,7 @@ class _BaseShardedReader:
         s3_prefix: str,
         local_root: str,
         manifest_store: ManifestStore | None = None,
-        current_name: str = "_CURRENT",
+        current_pointer_key: str = "_CURRENT",
         reader_factory: ShardReaderFactory | None = None,
         slate_env_file: str | None = None,
         credential_provider: CredentialProvider | None = None,
@@ -72,7 +72,7 @@ class _BaseShardedReader:
         else:
             self._manifest_store = S3ManifestStore(
                 s3_prefix,
-                current_name=current_name,
+                current_pointer_key=current_pointer_key,
                 credential_provider=credential_provider,
                 s3_connection_options=s3_connection_options,
                 metrics_collector=metrics_collector,

@@ -1,4 +1,4 @@
-"""Configuration models for sharded SlateDB writes."""
+"""Configuration models for sharded snapshot writes."""
 
 from __future__ import annotations
 
@@ -56,7 +56,10 @@ class WriteConfig:
     not here.
 
     Args:
-        num_dbs: Number of shard databases to create. Must be > 0.
+        num_dbs: Number of shard databases to create. Must be > 0 for
+            explicit HASH sharding. Set to ``None`` (default) when using
+            CEL sharding or ``max_keys_per_shard`` (auto-discovered at
+            write time).
         s3_prefix: S3 location for shard databases and manifests
             (e.g. ``s3://bucket/prefix``).
         key_encoding: How keys are serialized to bytes. Default ``u64be``
@@ -68,13 +71,18 @@ class WriteConfig:
         output: Output path/layout settings.
         manifest: Manifest build and publish settings.
         metrics_collector: Optional observer for write lifecycle events.
+        shard_retry: Retry configuration for shard writes (Dask/Ray only).
+        credential_provider: Credential provider for S3 access. When also
+            set on ``manifest``, the manifest-level provider takes precedence.
+        s3_connection_options: S3 transport/connection overrides. When also
+            set on ``manifest``, the manifest-level options take precedence.
 
     Raises:
         ConfigValidationError: If any parameter fails validation.
     """
 
-    num_dbs: int
-    s3_prefix: str
+    num_dbs: int | None = None
+    s3_prefix: str = ""
     key_encoding: KeyEncoding = KeyEncoding.U64BE
 
     batch_size: int = 50_000
@@ -107,19 +115,19 @@ class WriteConfig:
 
         if self.sharding.strategy == ShardingStrategy.CEL:
             # CEL: num_dbs is always discovered from data or boundaries
-            if self.num_dbs != 0:
+            if self.num_dbs is not None:
                 raise ConfigValidationError(
-                    "num_dbs must be 0 for CEL strategy "
+                    "num_dbs must be None for CEL strategy "
                     "(shard count is determined by the CEL expression)"
                 )
         elif self.sharding.max_keys_per_shard is not None:
             # HASH + max_keys_per_shard: num_dbs computed at write time
-            if self.num_dbs != 0:
+            if self.num_dbs is not None:
                 raise ConfigValidationError(
-                    "num_dbs must be 0 when max_keys_per_shard is set "
+                    "num_dbs must be None when max_keys_per_shard is set "
                     "(num_dbs will be computed at write time)"
                 )
-        elif self.num_dbs <= 0:
+        elif self.num_dbs is None or self.num_dbs <= 0:
             raise ConfigValidationError("num_dbs must be > 0")
 
         if self.batch_size <= 0:

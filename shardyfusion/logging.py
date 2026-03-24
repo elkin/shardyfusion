@@ -57,7 +57,7 @@ def log_event(
 ) -> None:
     """Emit a single structured log line.
 
-    Structured fields are attached via ``extra={"slatedb": fields}`` so
+    Structured fields are attached via ``extra={"shardyfusion": fields}`` so
     that handlers/formatters can access them without parsing the message
     string.  The default stdlib formatter simply shows the *event* name.
     """
@@ -65,7 +65,7 @@ def log_event(
     if not _log.isEnabledFor(level):
         return
     merged = {**_log_context.get({}), **fields}
-    _log.log(level, event, extra={"slatedb": merged})
+    _log.log(level, event, extra={"shardyfusion": merged})
 
 
 def log_failure(
@@ -92,7 +92,7 @@ def log_failure(
     logger:
         Explicit logger instance; falls back to the package root logger.
     **fields:
-        Arbitrary key/value context attached to the ``extra["slatedb"]`` dict.
+        Arbitrary key/value context attached to the ``extra["shardyfusion"]`` dict.
     """
     _log = logger or LOGGER
     level = _SEVERITY_TO_LEVEL[severity]
@@ -108,7 +108,7 @@ def log_failure(
         merged["error"] = repr(error)
         if include_traceback:
             merged["traceback"] = traceback.format_exception(error)
-    _log.log(level, event, extra={"slatedb": merged})
+    _log.log(level, event, extra={"shardyfusion": merged})
 
 
 class LogContext:
@@ -143,7 +143,7 @@ class LogContext:
 class JsonFormatter(logging.Formatter):
     """Formats log records as single-line JSON.
 
-    Flattens ``extra["slatedb"]`` fields into the top-level JSON object alongside
+    Flattens ``extra["shardyfusion"]`` fields into the top-level JSON object alongside
     standard fields (``timestamp``, ``level``, ``logger``, ``event``).
     """
 
@@ -154,9 +154,9 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "event": record.getMessage(),
         }
-        slatedb_fields = getattr(record, "slatedb", None)
-        if isinstance(slatedb_fields, dict):
-            entry.update(slatedb_fields)
+        sf_fields = getattr(record, "shardyfusion", None)
+        if isinstance(sf_fields, dict):
+            entry.update(sf_fields)
         return json.dumps(entry, default=str)
 
 

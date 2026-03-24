@@ -83,7 +83,7 @@ def test_smoke_hash_max_keys_per_shard(garage_s3_service, tmp_path, backend) -> 
         _hash_write_fn,
         garage_s3_service,
         tmp_path,
-        num_dbs=0,
+        num_dbs=None,
         max_keys_per_shard=5,
         expected_num_shards=2,
         adapter_factory=backend.adapter_factory,

@@ -320,7 +320,7 @@ def run_smoke_cel_scenario(
     conn_options = _default_connection_options(s3_service, s3_connection_options)
 
     config = WriteConfig(
-        num_dbs=0,  # CEL always discovers from data
+        num_dbs=None,  # CEL always discovers from data
         s3_prefix=s3_prefix,
         sharding=ShardingSpec(
             strategy=ShardingStrategy.CEL,

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from shardyfusion.errors import SlateDbApiError
+from shardyfusion.errors import DbAdapterError
 from shardyfusion.slatedb_adapter import DefaultSlateDbAdapter
 
 
@@ -49,7 +49,7 @@ def test_open_raises_when_binding_signature_is_not_official(monkeypatch) -> None
     monkeypatch.setitem(sys.modules, "slatedb", fake_module)
 
     with pytest.raises(
-        SlateDbApiError,
+        DbAdapterError,
         match="official Python binding signature",
     ):
         DefaultSlateDbAdapter(

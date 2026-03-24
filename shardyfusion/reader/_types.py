@@ -11,7 +11,7 @@ from shardyfusion.credentials import (
     CredentialProvider,
     resolve_env_file,
 )
-from shardyfusion.errors import SlateDbApiError
+from shardyfusion.errors import DbAdapterError
 from shardyfusion.logging import (
     get_logger,
 )
@@ -87,7 +87,7 @@ class SlateDbReaderFactory:
         try:
             from slatedb import SlateDBReader
         except ImportError as exc:  # pragma: no cover - runtime dependent
-            raise SlateDbApiError(
+            raise DbAdapterError(
                 "slatedb package is required for reading shards"
             ) from exc
 

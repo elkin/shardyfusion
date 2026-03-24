@@ -32,7 +32,6 @@ class TestResolveNumDbs:
 
     def test_max_keys_per_shard_basic(self) -> None:
         cfg = WriteConfig(
-            num_dbs=0,
             s3_prefix="s3://b/p",
             sharding=ShardingSpec(max_keys_per_shard=100),
         )
@@ -41,7 +40,6 @@ class TestResolveNumDbs:
 
     def test_max_keys_per_shard_rounds_up(self) -> None:
         cfg = WriteConfig(
-            num_dbs=0,
             s3_prefix="s3://b/p",
             sharding=ShardingSpec(max_keys_per_shard=3),
         )
@@ -50,16 +48,14 @@ class TestResolveNumDbs:
 
     def test_max_keys_per_shard_zero_count_returns_one(self) -> None:
         cfg = WriteConfig(
-            num_dbs=0,
             s3_prefix="s3://b/p",
             sharding=ShardingSpec(max_keys_per_shard=100),
         )
         result = resolve_num_dbs(cfg, count_fn=lambda: 0)
         assert result == 1
 
-    def test_cel_mode_returns_zero(self) -> None:
+    def test_cel_mode_returns_none(self) -> None:
         cfg = WriteConfig(
-            num_dbs=0,
             s3_prefix="s3://b/p",
             sharding=ShardingSpec(
                 strategy=ShardingStrategy.CEL,
@@ -68,7 +64,7 @@ class TestResolveNumDbs:
             ),
         )
         result = resolve_num_dbs(cfg, count_fn=lambda: 1000)
-        assert result == 0
+        assert result is None
 
 
 # ---------------------------------------------------------------------------

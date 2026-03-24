@@ -16,11 +16,11 @@ def add_db_id_column(
     ds: ray.data.Dataset,
     *,
     key_col: str,
-    num_dbs: int,
+    num_dbs: int | None,
     sharding: ShardingSpec,
     key_encoding: KeyEncoding,
 ) -> ray.data.Dataset:
-    """Add deterministic ``_slatedb_db_id`` column via Python routing function.
+    """Add deterministic ``_shard_id`` column via Python routing function.
 
     Uses the same ``route_key()`` as the reader, guaranteeing the
     sharding invariant without reimplementation.
@@ -32,6 +32,7 @@ def add_db_id_column(
 
     if sharding.strategy == ShardingStrategy.CEL:
         return _add_db_id_cel(ds, sharding=sharding)
+    assert num_dbs is not None, "num_dbs required for HASH sharding"
     return _add_db_id_hash(
         ds,
         key_col=key_col,

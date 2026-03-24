@@ -268,7 +268,7 @@ class TestBuildManifestStore:
         store_cfg = ManifestStoreConfig(backend="s3")
         params: dict[str, Any] = {
             "s3_prefix": "s3://bucket/prefix",
-            "current_name": "_CURRENT",
+            "current_pointer_key": "_CURRENT",
             "credential_provider": None,
             "s3_connection_options": {},
         }
@@ -279,7 +279,7 @@ class TestBuildManifestStore:
             store = _build_manifest_store(store_cfg, params)
             mock_cls.assert_called_once_with(
                 "s3://bucket/prefix",
-                current_name="_CURRENT",
+                current_pointer_key="_CURRENT",
                 credential_provider=None,
                 s3_connection_options={},
             )
@@ -291,7 +291,7 @@ class TestBuildManifestStore:
         )
         params: dict[str, Any] = {
             "s3_prefix": "s3://bucket/prefix",
-            "current_name": "_CURRENT",
+            "current_pointer_key": "_CURRENT",
             "credential_provider": None,
             "s3_connection_options": {},
         }
@@ -307,7 +307,7 @@ class TestBuildManifestStore:
         store_cfg = ManifestStoreConfig(backend="comdb2", dsn="mydb")
         params: dict[str, Any] = {
             "s3_prefix": "s3://bucket/prefix",
-            "current_name": "_CURRENT",
+            "current_pointer_key": "_CURRENT",
             "credential_provider": None,
             "s3_connection_options": {},
         }

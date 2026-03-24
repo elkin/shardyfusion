@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Protocol, Self
 
 from .credentials import CredentialProvider, resolve_env_file
-from .errors import SlateDbApiError
+from .errors import DbAdapterError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
 from .type_defs import JsonObject
 
@@ -94,7 +94,7 @@ class DefaultSlateDbAdapter:
         try:
             from slatedb import SlateDB
         except ImportError as exc:
-            raise SlateDbApiError("slatedb package is required at runtime") from exc
+            raise DbAdapterError("slatedb package is required at runtime") from exc
 
         settings_payload: str | None = None
         if settings is not None:
@@ -112,7 +112,7 @@ class DefaultSlateDbAdapter:
                 settings=settings_payload,
             )
         except TypeError as exc:
-            raise SlateDbApiError(
+            raise DbAdapterError(
                 "Unable to construct SlateDB using the official Python binding "
                 "signature `SlateDB(path, url=..., env_file=..., settings=...)`."
             ) from exc
@@ -147,7 +147,7 @@ class DefaultSlateDbAdapter:
         try:
             from slatedb import WriteBatch
         except ImportError as exc:
-            raise SlateDbApiError("slatedb package is required at runtime") from exc
+            raise DbAdapterError("slatedb package is required at runtime") from exc
 
         wb = WriteBatch()
         for key, value in batch:

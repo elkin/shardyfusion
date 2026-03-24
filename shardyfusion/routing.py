@@ -1,4 +1,4 @@
-"""Snapshot routing helpers for sharded SlateDB manifests."""
+"""Snapshot routing helpers for sharded manifests."""
 
 from collections.abc import Callable
 

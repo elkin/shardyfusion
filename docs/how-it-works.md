@@ -15,7 +15,7 @@ Core behavior:
 
 All four backends follow the same three-phase pipeline:
 
-1. **Sharding** — assign each row a `_slatedb_db_id` column
+1. **Sharding** — assign each row a `_shard_id` column
 2. **Write** — partition data by `db_id`, write each shard to S3
 3. **Publish** — build manifest, publish manifest, publish `_CURRENT` pointer
 

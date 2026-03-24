@@ -37,7 +37,7 @@ def test_dask_cel_unified_publishes_manifest(local_s3_service, tmp_path):
     root = str(tmp_path / "file-backed")
 
     config = WriteConfig(
-        num_dbs=0,
+        num_dbs=None,
         s3_prefix=s3_prefix,
         adapter_factory=file_backed_adapter_factory(root),
         sharding=ShardingSpec(

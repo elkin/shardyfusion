@@ -9,7 +9,7 @@ from typing import Self
 
 from .ordering import compare_ordered
 
-DB_ID_COL = "_slatedb_db_id"
+DB_ID_COL = "_shard_id"
 
 BoundaryValue = int | float | str | bytes
 

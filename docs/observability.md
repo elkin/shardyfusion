@@ -239,7 +239,7 @@ logging.getLogger("shardyfusion").setLevel(logging.DEBUG)
 
 ### Structured Event Emission
 
-Two functions emit structured log lines with contextual fields attached via `extra={"slatedb": fields}`:
+Two functions emit structured log lines with contextual fields attached via `extra={"shardyfusion": fields}`:
 
 ```python
 from shardyfusion.logging import log_event, log_failure, FailureSeverity
@@ -299,7 +299,7 @@ Output format:
 {"timestamp": "2026-03-14 10:30:00,000", "level": "INFO", "logger": "shardyfusion.writer", "event": "manifest_published", "run_id": "abc123", "num_shards": 8}
 ```
 
-The formatter flattens `extra["slatedb"]` fields into the top-level JSON object alongside standard fields (`timestamp`, `level`, `logger`, `event`).
+The formatter flattens `extra["shardyfusion"]` fields into the top-level JSON object alongside standard fields (`timestamp`, `level`, `logger`, `event`).
 
 ### configure_logging
 

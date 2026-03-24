@@ -42,7 +42,7 @@ class AsyncS3ManifestStore:
         s3_prefix: str,
         *,
         manifest_name: str = "manifest",
-        current_name: str = "_CURRENT",
+        current_pointer_key: str = "_CURRENT",
         credential_provider: CredentialProvider | None = None,
         s3_connection_options: S3ConnectionOptions | None = None,
         metrics_collector: MetricsCollector | None = None,
@@ -52,7 +52,7 @@ class AsyncS3ManifestStore:
 
         self.s3_prefix = s3_prefix.rstrip("/")
         self.manifest_name = manifest_name
-        self.current_name = current_name
+        self.current_pointer_key = current_pointer_key
         self._session = aiobotocore.session.get_session()
         credentials = credential_provider.resolve() if credential_provider else None
         self._resolved = _resolve_s3_config_for_aiobotocore(
@@ -64,7 +64,7 @@ class AsyncS3ManifestStore:
     async def load_current(self) -> ManifestRef | None:
         from .manifest_store import parse_current_pointer_to_ref
 
-        current_url = f"{self.s3_prefix}/{self.current_name}"
+        current_url = f"{self.s3_prefix}/{self.current_pointer_key}"
         payload = await self._try_get_bytes(current_url)
         if payload is None:
             return None

@@ -171,7 +171,7 @@ def write_sharded(
         )
 
         # CEL: discover num_dbs from data and validate consecutive IDs
-        if num_dbs == 0:
+        if num_dbs is None:
             distinct_ids = set(ddf_with_id[DB_ID_COL].unique().compute().tolist())
             num_dbs = discover_cel_num_dbs(distinct_ids)
 
@@ -295,7 +295,9 @@ def write_sharded(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_num_dbs_before_sharding(ddf: dd.DataFrame, config: WriteConfig) -> int:
+def _resolve_num_dbs_before_sharding(
+    ddf: dd.DataFrame, config: WriteConfig
+) -> int | None:
     """Resolve num_dbs that can be determined before add_db_id_column."""
     from shardyfusion._writer_core import resolve_num_dbs
 
