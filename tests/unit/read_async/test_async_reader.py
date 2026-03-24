@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -742,13 +742,15 @@ async def test_close_closes_shard_readers(tmp_path) -> None:
 
 
 class _SlowAsyncFakeReader:
-    def __init__(self, store: dict[bytes, bytes], delay: float = 0.1):
+    def __init__(
+        self, store: dict[bytes, bytes], delay: timedelta = timedelta(seconds=0.1)
+    ):
         self.store = store
         self.delay = delay
         self.closed = False
 
     async def get(self, key: bytes) -> bytes | None:
-        await asyncio.sleep(self.delay)
+        await asyncio.sleep(self.delay.total_seconds())
         return self.store.get(key)
 
     async def close(self) -> None:
@@ -756,7 +758,7 @@ class _SlowAsyncFakeReader:
 
 
 def _slow_async_fake_reader_factory(
-    stores: dict[str, dict[bytes, bytes]], delay: float = 0.1
+    stores: dict[str, dict[bytes, bytes]], delay: timedelta = timedelta(seconds=0.1)
 ):
     async def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
         _ = (local_dir, checkpoint_id)
@@ -777,7 +779,9 @@ async def test_get_increments_borrow_during_read(tmp_path) -> None:
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_store=store,
-        reader_factory=_slow_async_fake_reader_factory(stores, delay=0.1),
+        reader_factory=_slow_async_fake_reader_factory(
+            stores, delay=timedelta(seconds=0.1)
+        ),
     )
 
     assert reader._state.borrow_count == 0
@@ -812,7 +816,9 @@ async def test_refresh_waits_for_inflight_get(tmp_path) -> None:
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_store=store,
-        reader_factory=_slow_async_fake_reader_factory(stores, delay=0.15),
+        reader_factory=_slow_async_fake_reader_factory(
+            stores, delay=timedelta(seconds=0.15)
+        ),
     )
 
     old_state = reader._state
@@ -855,7 +861,9 @@ async def test_close_waits_for_inflight_get(tmp_path) -> None:
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_store=store,
-        reader_factory=_slow_async_fake_reader_factory(stores, delay=0.15),
+        reader_factory=_slow_async_fake_reader_factory(
+            stores, delay=timedelta(seconds=0.15)
+        ),
     )
 
     state = reader._state
