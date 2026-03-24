@@ -7,6 +7,7 @@ import threading
 import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from datetime import timedelta
 from typing import Literal
 
 from shardyfusion._rate_limiter import RateLimiter
@@ -75,7 +76,7 @@ class ConcurrentShardedReader(_BaseShardedReader):
         credential_provider: CredentialProvider | None = None,
         s3_connection_options: S3ConnectionOptions | None = None,
         thread_safety: Literal["lock", "pool"] = "lock",
-        pool_checkout_timeout: float = 30.0,
+        pool_checkout_timeout: timedelta = timedelta(seconds=30.0),
         max_workers: int | None = None,
         max_fallback_attempts: int = 3,
         metrics_collector: MetricsCollector | None = None,
@@ -84,9 +85,9 @@ class ConcurrentShardedReader(_BaseShardedReader):
         if thread_safety not in {"lock", "pool"}:
             raise ValueError("thread_safety must be 'lock' or 'pool'")
 
-        if pool_checkout_timeout <= 0:
+        if pool_checkout_timeout.total_seconds() <= 0:
             raise ValueError(
-                f"pool_checkout_timeout must be > 0, got {pool_checkout_timeout}"
+                f"pool_checkout_timeout must be > 0, got {pool_checkout_timeout.total_seconds()}"
             )
 
         super().__init__(
@@ -146,26 +147,29 @@ class ConcurrentShardedReader(_BaseShardedReader):
         with self._use_state() as state:
             return _shard_details_from_router(state.router)
 
-    def health(self, *, staleness_threshold_s: float | None = None) -> ReaderHealth:
+    def health(self, *, staleness_threshold: timedelta | None = None) -> ReaderHealth:
         """Return a diagnostic snapshot of reader state."""
         with self._state_lock:
             if self._closed:
                 return ReaderHealth(
                     status="unhealthy",
                     manifest_ref="",
-                    manifest_age_seconds=0.0,
+                    manifest_age=timedelta(0),
                     num_shards=0,
                     is_closed=True,
                 )
             state = self._state
         age = time.monotonic() - self._init_time
         status: Literal["healthy", "degraded", "unhealthy"] = "healthy"
-        if staleness_threshold_s is not None and age > staleness_threshold_s:
+        if (
+            staleness_threshold is not None
+            and age > staleness_threshold.total_seconds()
+        ):
             status = "degraded"
         return ReaderHealth(
             status=status,
             manifest_ref=state.manifest_ref,
-            manifest_age_seconds=round(age, 2),
+            manifest_age=timedelta(seconds=round(age, 2)),
             num_shards=len(state.handles),
             is_closed=False,
         )

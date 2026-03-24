@@ -6,7 +6,7 @@ All tests mock the reader construction to avoid real S3 / SlateDB dependencies.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -80,14 +80,14 @@ class _FakeReader:
     def route_key(self, key: Any, **kwargs: Any) -> int:
         return 0 if (isinstance(key, int) and key < 50) else 1
 
-    def health(self, *, staleness_threshold_s: float | None = None) -> ReaderHealth:
+    def health(self, *, staleness_threshold: timedelta | None = None) -> ReaderHealth:
         status = "healthy"
-        if staleness_threshold_s is not None and staleness_threshold_s < 1:
+        if staleness_threshold is not None and staleness_threshold.total_seconds() < 1:
             status = "degraded"
         return ReaderHealth(
             status=status,
             manifest_ref="manifest-001.json",
-            manifest_age_seconds=42.0,
+            manifest_age=timedelta(seconds=42.0),
             num_shards=2,
             is_closed=False,
         )
@@ -445,7 +445,7 @@ pool_checkout_timeout = 15.0
             result = runner.invoke(cli, ["--config", str(cfg_path), "info"])
 
         assert result.exit_code == 0
-        assert captured_kwargs.get("pool_checkout_timeout") == 15.0
+        assert captured_kwargs.get("pool_checkout_timeout") == timedelta(seconds=15.0)
 
 
 # ---------------------------------------------------------------------------

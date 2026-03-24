@@ -6,6 +6,7 @@ import threading
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import timedelta
 from queue import Empty, Queue
 from typing import Self
 
@@ -125,12 +126,17 @@ class _ShardHandle:
 
 class _ReaderPool:
     def __init__(
-        self, readers: list[ShardReader], *, checkout_timeout: float = 30.0
+        self,
+        readers: list[ShardReader],
+        *,
+        checkout_timeout: timedelta = timedelta(seconds=30.0),
     ) -> None:
         if not readers:
             raise ValueError("Reader pool requires at least one reader")
-        if checkout_timeout <= 0:
-            raise ValueError(f"checkout_timeout must be > 0, got {checkout_timeout}")
+        if checkout_timeout.total_seconds() <= 0:
+            raise ValueError(
+                f"checkout_timeout must be > 0, got {checkout_timeout.total_seconds()}"
+            )
         self._readers: tuple[ShardReader, ...] = tuple(readers)
         self._checkout_timeout = checkout_timeout
         self._indexes: Queue[int] = Queue(maxsize=len(readers))
@@ -140,10 +146,10 @@ class _ReaderPool:
     @contextmanager
     def checkout(self) -> Iterator[ShardReader]:
         try:
-            idx = self._indexes.get(timeout=self._checkout_timeout)
+            idx = self._indexes.get(timeout=self._checkout_timeout.total_seconds())
         except Empty:
             raise PoolExhaustedError(
-                f"Shard reader pool checkout timed out after {self._checkout_timeout}s"
+                f"Shard reader pool checkout timed out after {self._checkout_timeout.total_seconds()}s"
             ) from None
         try:
             yield self._readers[idx]

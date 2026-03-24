@@ -6,6 +6,7 @@ import sys
 import tempfile
 import tomllib
 from collections.abc import Callable
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -37,7 +38,9 @@ class ReaderConfig(BaseModel):
         default_factory=lambda: str(Path(tempfile.gettempdir()) / "shardyfusion")
     )
     thread_safety: Literal["lock", "pool"] = "lock"
-    pool_checkout_timeout: float = Field(default=30.0, gt=0)
+    pool_checkout_timeout: timedelta = Field(
+        default=timedelta(seconds=30.0), gt=timedelta(0)
+    )
     max_workers: int = Field(default=4, ge=1)
     slate_env_file: str | None = None
     credentials_profile: str = "default"

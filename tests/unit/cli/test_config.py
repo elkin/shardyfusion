@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -190,19 +191,19 @@ class TestManifestStoreConfig:
 class TestReaderConfigNewFields:
     def test_pool_checkout_timeout_default(self) -> None:
         cfg = ReaderConfig()
-        assert cfg.pool_checkout_timeout == 30.0
+        assert cfg.pool_checkout_timeout == timedelta(seconds=30.0)
 
     def test_pool_checkout_timeout_custom(self) -> None:
-        cfg = ReaderConfig(pool_checkout_timeout=15.0)
-        assert cfg.pool_checkout_timeout == 15.0
+        cfg = ReaderConfig(pool_checkout_timeout=timedelta(seconds=15.0))
+        assert cfg.pool_checkout_timeout == timedelta(seconds=15.0)
 
     def test_pool_checkout_timeout_must_be_positive(self) -> None:
         with pytest.raises(ValidationError):
-            ReaderConfig(pool_checkout_timeout=0)
+            ReaderConfig(pool_checkout_timeout=timedelta(seconds=0))
 
     def test_pool_checkout_timeout_negative_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            ReaderConfig(pool_checkout_timeout=-1.0)
+            ReaderConfig(pool_checkout_timeout=timedelta(seconds=-1.0))
 
     def test_s3_prefix_default_none(self) -> None:
         cfg = ReaderConfig()
@@ -230,7 +231,7 @@ class TestLoadReaderConfigManifestStore:
         monkeypatch.chdir(tmp_path)  # no reader.toml here
         reader_cfg, store_cfg, output_cfg = load_reader_config(None)
         assert store_cfg.backend == "s3"
-        assert reader_cfg.pool_checkout_timeout == 30.0
+        assert reader_cfg.pool_checkout_timeout == timedelta(seconds=30.0)
 
     def test_with_manifest_store_section(self, tmp_path: Path) -> None:
         toml_content = """\
@@ -249,7 +250,7 @@ ensure_table = false
 
         reader_cfg, store_cfg, output_cfg = load_reader_config(str(config_file))
         assert reader_cfg.s3_prefix == "s3://bucket/prefix"
-        assert reader_cfg.pool_checkout_timeout == 10.0
+        assert reader_cfg.pool_checkout_timeout == timedelta(seconds=10.0)
         assert store_cfg.backend == "postgres"
         assert store_cfg.dsn == "host=localhost dbname=test"
         assert store_cfg.table_name == "my_table"

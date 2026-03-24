@@ -5,7 +5,7 @@ import threading
 import time
 import types
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -1124,7 +1124,7 @@ def test_pool_checkout_timeout_raises(tmp_path) -> None:
         manifest_store=manifest_store,
         reader_factory=lambda *, db_url, local_dir, checkpoint_id: _SlowReader(),
         thread_safety="pool",
-        pool_checkout_timeout=0.1,
+        pool_checkout_timeout=timedelta(seconds=0.1),
         max_workers=1,
     ) as reader:
         errors: list[Exception] = []
@@ -1393,7 +1393,7 @@ class TestReaderParameterValidation:
                 local_root=str(tmp_path),
                 manifest_store=_MutableManifestStore(manifests, "mem://manifest/one"),
                 reader_factory=_fake_reader_factory(stores),
-                pool_checkout_timeout=0,
+                pool_checkout_timeout=timedelta(seconds=0),
             )
 
     def test_pool_checkout_timeout_negative_raises(self, tmp_path) -> None:
@@ -1407,7 +1407,7 @@ class TestReaderParameterValidation:
                 local_root=str(tmp_path),
                 manifest_store=_MutableManifestStore(manifests, "mem://manifest/one"),
                 reader_factory=_fake_reader_factory(stores),
-                pool_checkout_timeout=-5.0,
+                pool_checkout_timeout=timedelta(seconds=-5.0),
             )
 
     def test_sharded_reader_max_workers_zero_raises(self, tmp_path) -> None:
@@ -1440,7 +1440,7 @@ class TestReaderPoolInternals:
         from shardyfusion.reader._state import _ReaderPool
 
         with pytest.raises(ValueError, match="must be > 0"):
-            _ReaderPool([_FakeReader({})], checkout_timeout=0)
+            _ReaderPool([_FakeReader({})], checkout_timeout=timedelta(seconds=0))
 
     def test_reader_pool_readers_is_tuple(self) -> None:
         from shardyfusion.reader._state import _ReaderPool

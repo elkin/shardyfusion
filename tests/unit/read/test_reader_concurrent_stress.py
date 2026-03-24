@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -358,7 +358,7 @@ def test_pool_exhaustion_blocks_then_completes() -> None:
         manifest_store=manifest_store,
         reader_factory=_make_factory(),
         thread_safety="pool",
-        pool_checkout_timeout=5.0,
+        pool_checkout_timeout=timedelta(seconds=5.0),
         max_workers=2,
     )
 
