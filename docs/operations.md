@@ -107,7 +107,8 @@ Rollback updates the `_CURRENT` pointer only — shard data and old manifests re
 Use `reader.health()` in health check endpoints to expose reader status:
 
 ```python
-health = reader.health(staleness_threshold_s=600.0)
+from datetime import timedelta
+health = reader.health(staleness_threshold=timedelta(minutes=10))
 ```
 
 `ReaderHealth` status values:
@@ -122,10 +123,10 @@ health = reader.health(staleness_threshold_s=600.0)
 
 Suggested alert thresholds based on your write pipeline cadence:
 
-| Pipeline Cadence | `staleness_threshold_s` | Alert Level |
+| Pipeline Cadence | `staleness_threshold` | Alert Level |
 |---|---|---|
-| Hourly | 7200 (2h) | Warning if no refresh in 2× cadence |
-| Daily | 172800 (2d) | Warning if no refresh in 2× cadence |
+| Hourly | `timedelta(hours=2)` | Warning if no refresh in 2× cadence |
+| Daily | `timedelta(days=2)` | Warning if no refresh in 2× cadence |
 | On-demand | Varies | Alert on `unhealthy` status only |
 
 ### Prometheus Integration
@@ -211,7 +212,7 @@ store = PostgresManifestStore(
 **Resolution:**
 
 1. Check S3 service health
-2. Increase retry budget: `RetryConfig(max_retries=5, initial_backoff_s=2.0)`
+2. Increase retry budget: `RetryConfig(max_retries=5, initial_backoff=timedelta(seconds=2.0))`
 3. Monitor `S3_RETRY` and `S3_RETRY_EXHAUSTED` metric events
 
 ### Pool Checkout Timeout

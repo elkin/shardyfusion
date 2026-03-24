@@ -302,7 +302,7 @@ from shardyfusion import WriteConfig, RetryConfig
 config = WriteConfig(
     num_dbs=8,
     s3_prefix="s3://bucket/prefix",
-    shard_retry=RetryConfig(max_retries=2, initial_backoff_s=1.0, backoff_multiplier=2.0),
+    shard_retry=RetryConfig(max_retries=2, initial_backoff=timedelta(seconds=1.0), backoff_multiplier=2.0),
 )
 ```
 
@@ -311,7 +311,7 @@ When a shard write fails with a retryable error (`ShardWriteError`), the writer 
 | Setting | Default | Description |
 |---|---|---|
 | `max_retries` | `3` | Maximum number of retry attempts after the initial failure |
-| `initial_backoff_s` | `1.0` | Delay before the first retry (seconds) |
+| `initial_backoff` | `timedelta(seconds=1.0)` | Delay before the first retry |
 | `backoff_multiplier` | `2.0` | Multiplier applied to the delay after each retry |
 
 **Spark** relies on speculative execution for fault tolerance and does not use `shard_retry`. **Python** writer support is deferred.

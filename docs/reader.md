@@ -79,18 +79,19 @@ Best for: moderate concurrency where read latency is low relative to lock conten
 Multiple reader instances per shard (`max_workers` copies), managed via a checkout pool. Concurrent threads get their own reader — no lock contention.
 
 ```python
+from datetime import timedelta
 reader = ConcurrentShardedReader(
     s3_prefix="s3://bucket/prefix",
     local_root="/tmp/shardyfusion-reader",
     thread_safety="pool",
     max_workers=8,              # 8 reader copies per shard
-    pool_checkout_timeout=30.0, # seconds to wait for an available reader
+    pool_checkout_timeout=timedelta(seconds=30.0), # duration to wait for an available reader
 )
 ```
 
 Best for: high concurrency or when individual reads have non-trivial latency. Trades memory for throughput.
 
-When all `max_workers` reader copies for a shard are checked out, the next thread blocks for up to `pool_checkout_timeout` seconds (default 30). If the timeout expires, `PoolExhaustedError` is raised. Tune this value based on your expected read latency and concurrency level.
+When all `max_workers` reader copies for a shard are checked out, the next thread blocks for up to `pool_checkout_timeout` (default 30s). If the timeout expires, `PoolExhaustedError` is raised. Tune this value based on your expected read latency and concurrency level.
 
 **Guidance on `max_workers`:** In lock mode, `max_workers` controls the `ThreadPoolExecutor` used by `multi_get` to read from multiple shards in parallel. In pool mode, it also controls how many reader copies are created per shard. Start with 4 and tune based on observed contention.
 
@@ -238,7 +239,7 @@ All readers expose a `health()` method that returns a diagnostic snapshot:
 health = reader.health()
 print(health.status)              # "healthy", "degraded", or "unhealthy"
 print(health.manifest_ref)        # current manifest reference
-print(health.manifest_age_seconds)  # seconds since manifest was published
+print(health.manifest_age)        # timedelta since manifest was published
 print(health.num_shards)          # number of active shards
 print(health.is_closed)           # whether the reader has been closed
 ```
@@ -249,19 +250,21 @@ print(health.is_closed)           # whether the reader has been closed
 |---|---|---|
 | `status` | `Literal["healthy", "degraded", "unhealthy"]` | Overall reader health |
 | `manifest_ref` | `str` | Reference to the currently loaded manifest |
-| `manifest_age_seconds` | `float` | Age of the manifest in seconds |
+| `manifest_age` | `timedelta` | Age of the manifest |
 | `num_shards` | `int` | Number of shards in the current snapshot |
 | `is_closed` | `bool` | Whether the reader has been closed |
 
-Use `staleness_threshold_s` to control when a manifest is considered stale (which affects the `status` field):
+Use `staleness_threshold` to control when a manifest is considered stale (which affects the `status` field):
 
 ```python
-health = reader.health(staleness_threshold_s=300.0)  # 5 minutes
+from datetime import timedelta
+health = reader.health(staleness_threshold=timedelta(minutes=5))
 ```
 
 ### Health Check Integration
 
 ```python
+from datetime import timedelta
 from fastapi import FastAPI
 from shardyfusion import ConcurrentShardedReader
 
@@ -270,9 +273,9 @@ reader = ConcurrentShardedReader(...)
 
 @app.get("/health")
 def health_check():
-    h = reader.health(staleness_threshold_s=600.0)
+    h = reader.health(staleness_threshold=timedelta(minutes=10))
     status_code = 200 if h.status == "healthy" else 503
-    return {"status": h.status, "manifest_age_s": h.manifest_age_seconds}, status_code
+    return {"status": h.status, "manifest_age_s": h.manifest_age.total_seconds()}, status_code
 ```
 
 !!! warning

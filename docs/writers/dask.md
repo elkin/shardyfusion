@@ -122,7 +122,7 @@ from shardyfusion import WriteConfig, RetryConfig
 config = WriteConfig(
     num_dbs=8,
     s3_prefix="s3://bucket/prefix",
-    shard_retry=RetryConfig(max_retries=2, initial_backoff_s=1.0),
+    shard_retry=RetryConfig(max_retries=2, initial_backoff=timedelta(seconds=1.0)),
 )
 ```
 

@@ -93,16 +93,16 @@ from shardyfusion import S3ManifestStore, RetryConfig
 
 store = S3ManifestStore(
     s3_prefix="s3://bucket/prefix",
-    manifest_name="manifest",              # default
-    current_name="_CURRENT",               # default
-    manifest_builder=None,                 # default: YamlManifestBuilder
-    credential_provider=None,              # optional CredentialProvider
-    s3_connection_options=None,            # optional S3ConnectionOptions
-    metrics_collector=None,                # optional MetricsCollector
-    retry_config=RetryConfig(              # optional, controls S3 retries
-        max_retries=3,                     # default
-        initial_backoff_s=1.0,             # default
-        backoff_multiplier=2.0,            # default
+    manifest_name="manifest",                      # default
+    current_name="_CURRENT",                       # default
+    manifest_builder=None,                         # default: YamlManifestBuilder
+    credential_provider=None,                      # optional CredentialProvider
+    s3_connection_options=None,                    # optional S3ConnectionOptions
+    metrics_collector=None,                        # optional MetricsCollector
+    retry_config=RetryConfig(                      # optional, controls S3 retries
+        max_retries=3,                             # default
+        initial_backoff=timedelta(seconds=1.0),    # default
+        backoff_multiplier=2.0,                    # default
     ),
 )
 ```
@@ -114,7 +114,7 @@ S3 operations use exponential backoff for transient errors. The default retry se
 ```python
 store = S3ManifestStore(
     s3_prefix="s3://bucket/prefix",
-    retry_config=RetryConfig(max_retries=5, initial_backoff_s=0.5),
+    retry_config=RetryConfig(max_retries=5, initial_backoff=timedelta(seconds=0.5)),
 )
 ```
 
