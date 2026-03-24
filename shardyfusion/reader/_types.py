@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -69,7 +69,7 @@ class ReaderHealth:
 
     status: Literal["healthy", "degraded", "unhealthy"]
     manifest_ref: str
-    manifest_age_seconds: float
+    manifest_age: timedelta
     num_shards: int
     is_closed: bool
 

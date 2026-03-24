@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 
 from shardyfusion.cli.config import OutputConfig
 from shardyfusion.cli.output import (
@@ -386,7 +387,7 @@ class TestBuildHealthResult:
         health = ReaderHealth(
             status="healthy",
             manifest_ref="s3://bucket/manifest",
-            manifest_age_seconds=42.123,
+            manifest_age=timedelta(seconds=42.123),
             num_shards=4,
             is_closed=False,
         )
@@ -404,7 +405,7 @@ class TestBuildHealthResult:
         health = ReaderHealth(
             status="unhealthy",
             manifest_ref="",
-            manifest_age_seconds=0.0,
+            manifest_age=timedelta(seconds=0.0),
             num_shards=0,
             is_closed=True,
         )

@@ -178,7 +178,7 @@ def build_health_result(health: ReaderHealth) -> dict[str, Any]:
         "op": "health",
         "status": health.status,
         "manifest_ref": health.manifest_ref,
-        "manifest_age_seconds": round(health.manifest_age_seconds, 1),
+        "manifest_age_seconds": round(health.manifest_age.total_seconds(), 1),
         "num_shards": health.num_shards,
         "is_closed": health.is_closed,
     }

@@ -6,6 +6,7 @@ import asyncio
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal, Self
 
@@ -341,13 +342,13 @@ class AsyncShardedReader:
     def shard_details(self) -> list[ShardDetail]:
         return _shard_details_from_router(self._require_state().router)
 
-    def health(self, *, staleness_threshold_s: float | None = None) -> ReaderHealth:
+    def health(self, *, staleness_threshold: timedelta | None = None) -> ReaderHealth:
         """Return a diagnostic snapshot of reader state."""
         if self._closed:
             return ReaderHealth(
                 status="unhealthy",
                 manifest_ref="",
-                manifest_age_seconds=0.0,
+                manifest_age=timedelta(0),
                 num_shards=0,
                 is_closed=True,
             )
@@ -355,18 +356,21 @@ class AsyncShardedReader:
             return ReaderHealth(
                 status="unhealthy",
                 manifest_ref="",
-                manifest_age_seconds=0.0,
+                manifest_age=timedelta(0),
                 num_shards=0,
                 is_closed=False,
             )
         age = time.monotonic() - self._init_time
         status: Literal["healthy", "degraded", "unhealthy"] = "healthy"
-        if staleness_threshold_s is not None and age > staleness_threshold_s:
+        if (
+            staleness_threshold is not None
+            and age > staleness_threshold.total_seconds()
+        ):
             status = "degraded"
         return ReaderHealth(
             status=status,
             manifest_ref=self._state.manifest_ref,
-            manifest_age_seconds=round(age, 2),
+            manifest_age=timedelta(seconds=round(age, 2)),
             num_shards=len(self._state.readers),
             is_closed=False,
         )
