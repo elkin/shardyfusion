@@ -315,7 +315,6 @@ def verify_routing_agreement(
             key,
             num_dbs=num_dbs,
             sharding=resolved_sharding,
-            key_encoding=key_encoding,
         )
 
         if python_db_id != spark_db_id:

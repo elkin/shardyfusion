@@ -55,7 +55,6 @@ def _add_db_id_hash(
                 key,
                 num_dbs=num_dbs,
                 sharding=sharding,
-                key_encoding=key_encoding,
             )
         )
         return pdf.assign(**{DB_ID_COL: db_ids})

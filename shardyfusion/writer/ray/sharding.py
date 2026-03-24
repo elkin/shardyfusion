@@ -57,7 +57,6 @@ def _add_db_id_hash(
                 key,
                 num_dbs=num_dbs,
                 sharding=sharding,
-                key_encoding=key_encoding,
             )
             for key in keys
         ]

@@ -12,7 +12,10 @@ from typing import Self
 
 from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
 from shardyfusion.manifest_store import InMemoryManifestStore
-from shardyfusion.writer.python.writer import _write_parallel
+from shardyfusion.writer.python._parallel_writer import _write_parallel
+
+_MAX_PARALLEL_SHARED_MEMORY_BYTES = 256 * 1024 * 1024
+_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER = 32 * 1024 * 1024
 
 
 class _CloseFailAdapter:
@@ -88,6 +91,8 @@ class TestParallelEmptyInput:
             key_fn=lambda r: r["id"],
             value_fn=lambda r: r["val"],
             max_queue_size=10,
+            max_parallel_shared_memory_bytes=_MAX_PARALLEL_SHARED_MEMORY_BYTES,
+            max_parallel_shared_memory_bytes_per_worker=_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER,
             max_writes_per_second=None,
             max_write_bytes_per_second=None,
         )
@@ -107,6 +112,8 @@ class TestParallelSingleShard:
             key_fn=lambda r: r["id"],
             value_fn=lambda r: r["val"],
             max_queue_size=10,
+            max_parallel_shared_memory_bytes=_MAX_PARALLEL_SHARED_MEMORY_BYTES,
+            max_parallel_shared_memory_bytes_per_worker=_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER,
             max_writes_per_second=None,
             max_write_bytes_per_second=None,
         )
@@ -127,6 +134,8 @@ class TestParallelManyShards:
             key_fn=lambda r: r["id"],
             value_fn=lambda r: r["val"],
             max_queue_size=50,
+            max_parallel_shared_memory_bytes=_MAX_PARALLEL_SHARED_MEMORY_BYTES,
+            max_parallel_shared_memory_bytes_per_worker=_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER,
             max_writes_per_second=None,
             max_write_bytes_per_second=None,
         )

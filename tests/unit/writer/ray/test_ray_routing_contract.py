@@ -49,7 +49,6 @@ def test_ray_python_hash_agreement_u64be(num_dbs: int) -> None:
             key,
             num_dbs=num_dbs,
             sharding=sharding,
-            key_encoding=KeyEncoding.U64BE,
         )
         assert ray_db_id == python_db_id, (
             f"key={key}, num_dbs={num_dbs}: Ray={ray_db_id}, Python={python_db_id}"
@@ -80,7 +79,6 @@ def test_ray_python_hash_agreement_u32be(num_dbs: int) -> None:
             key,
             num_dbs=num_dbs,
             sharding=sharding,
-            key_encoding=KeyEncoding.U32BE,
         )
         assert ray_db_id == python_db_id, (
             f"key={key}, num_dbs={num_dbs}: Ray(u32be)={ray_db_id}, Python={python_db_id}"

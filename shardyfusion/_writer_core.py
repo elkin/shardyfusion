@@ -30,7 +30,7 @@ from .manifest_store import S3ManifestStore
 from .metrics import MetricEvent, MetricsCollector
 from .ordering import compare_ordered
 from .routing import xxh3_db_id
-from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
+from .sharding_types import ShardingSpec, ShardingStrategy
 from .storage import create_s3_client, delete_prefix, join_s3, list_prefixes
 from .type_defs import KeyInput, RetryConfig
 
@@ -94,7 +94,6 @@ def route_key(
     *,
     num_dbs: int | None,
     sharding: ShardingSpec,
-    key_encoding: KeyEncoding,
     routing_context: dict[str, object] | None = None,
 ) -> int:
     """Route a key to a shard db_id (shared by all writer paths)."""

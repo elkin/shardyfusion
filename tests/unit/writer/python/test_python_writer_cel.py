@@ -168,7 +168,6 @@ class TestCelUnifiedMode:
                 key,
                 num_dbs=3,
                 sharding=config.sharding,
-                key_encoding=config.key_encoding,
             )
             read_db_id = router.route_one(key)
             assert write_db_id == read_db_id, f"key={key}"

@@ -470,7 +470,6 @@ def test_data_integrity(tmp_path: pathlib.Path) -> None:
                 key_int,
                 num_dbs=config.num_dbs,
                 sharding=config.sharding,
-                key_encoding=config.key_encoding,
             )
             assert expected_db_id == winner.db_id
 

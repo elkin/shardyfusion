@@ -9,7 +9,7 @@ The Python writer (`shardyfusion.writer.python.write_sharded`) is a pure-Python 
 - **Framework dependencies:** None
 - **Execution modes:** Single-process or parallel (`multiprocessing.spawn`)
 - **Rate limiting:** Unique non-blocking-first strategy in single-process mode
-- **Memory management:** Global memory ceiling to prevent OOM with many shards
+- **Memory management:** Global memory ceiling in single-process mode, bounded shared-memory IPC in parallel mode
 
 ## Data Flow
 
@@ -46,15 +46,19 @@ flowchart TD
     A["Iterable[T] + WriteConfig"] --> B["Spawn workers<br/>(one per shard, with queues)"]
     B --> C["Main: for record in records:"]
     C --> D["Route key → shard ID"]
-    D --> E["Encode → chunk → send to worker queue"]
-    E --> F["Track min/max in main process"]
-    F --> C
-    C -->|done| G["Flush remaining + send stop signals"]
-    G --> H["Join workers<br/>(graceful → terminate → kill)"]
-    H --> I["Collect results<br/>(global deadline)"]
-    I --> J["Patch min/max from main"]
-    J --> K["Select winners → publish → cleanup"]
-    K --> L[Return BuildResult]
+    D --> E["Encode → chunk → shared memory"]
+    E --> F["Send chunk descriptor to worker queue"]
+    F --> G["Track min/max in main process"]
+    G --> H{"SHM byte budget available?"}
+    H -->|yes| C
+    H -->|no| I["Block until worker reclaims segment"]
+    I --> C
+    C -->|done| J["Flush remaining + send stop signals"]
+    J --> K["Join workers<br/>(graceful → terminate → kill)"]
+    K --> L["Collect results<br/>(global deadline)"]
+    L --> M["Patch min/max from main"]
+    M --> N["Select winners → publish → cleanup"]
+    N --> O[Return BuildResult]
 ```
 
 ## How does single-process mode work?
@@ -70,10 +74,11 @@ Single-process mode opens all shard adapters in a single process using a context
 
 Parallel mode uses `multiprocessing.spawn` with one worker per shard:
 
-- **Spawn context:** `multiprocessing.get_context("spawn")` is hardcoded — all objects passed to workers must be picklable (fork is not used).
-- **Queue-based communication:** One queue per shard (with configurable max size for backpressure), plus a shared result queue for worker results.
-- **Main process responsibilities:** Routes records, encodes key/value pairs, chunks them (chunk size = batch_size/10), and sends chunks to the appropriate worker queue. Also tracks min/max keys (workers do not see the full dataset).
-- **Worker process:** Each worker consumes chunks from its queue and writes to a single shard adapter.
+- **Spawn context:** `multiprocessing.get_context("spawn")` is hardcoded — objects that cross the worker boundary (config, factory, queues, result payloads) must be picklable.
+- **Shared-memory payload transport:** The main process serializes each chunk into a flat buffer in `multiprocessing.shared_memory.SharedMemory`, then sends only a small descriptor on the per-shard queue.
+- **Queue-based control plane:** One queue per shard carries chunk descriptors and stop signals, plus shared reclaim/result queues for coordination.
+- **Main process responsibilities:** Routes records, encodes key/value pairs, chunks them (target chunk size = `batch_size/10`, capped by a private per-segment byte limit), enforces global/per-worker shared-memory byte budgets, and tracks min/max keys.
+- **Worker process:** Each worker consumes descriptors from its queue, decodes the shared-memory chunk into its local batch buffer, writes to a single shard adapter, then acknowledges the segment so the parent can reclaim it.
 
 ## Batch Flushing Strategy
 
@@ -90,11 +95,18 @@ batch full?
 
 This design prevents unnecessary blocking: if the rate limiter denies a flush but the batch isn't excessively large, the writer continues accumulating more records. Only when the batch doubles to 2x the configured `batch_size` does it escalate to a blocking call, providing backpressure.
 
-## Global Memory Ceiling
+## Memory Ceilings
 
-Unique to the Python single-process writer, `max_total_batched_items` and `max_total_batched_bytes` prevent OOM when buffering across many shards:
+Single-process mode exposes `max_total_batched_items` and `max_total_batched_bytes` to prevent OOM when buffering across many shards:
 
 When the total items or bytes across all shard batches exceeds the ceiling, an eviction loop flushes the largest batch (by bytes, then item count) until the total drops below the limit. This prevents scenarios where many open shards each accumulate small batches that collectively exhaust memory.
+
+Parallel mode uses shared-memory segments for payload transfer, so it has separate byte budgets:
+
+- `max_parallel_shared_memory_bytes`: cap on total outstanding shared-memory payload bytes across all workers.
+- `max_parallel_shared_memory_bytes_per_worker`: cap on outstanding shared-memory payload bytes for one worker.
+
+When either limit would be exceeded, the parent blocks before allocating another segment. Backpressure is released only when workers acknowledge consumed segments and the parent reclaims them.
 
 ## What happens with empty shards?
 
@@ -156,10 +168,10 @@ Same as all writers — retry CURRENT pointer up to 3 times, cleanup is best-eff
 
 | Gotcha | Detail |
 |---|---|
-| **`multiprocessing.spawn` serialization** | All objects passed to workers must be picklable. This includes config, factory, and `key_fn`/`value_fn`. Lambda functions are not picklable — use named functions. |
+| **`multiprocessing.spawn` serialization** | Objects that cross the worker boundary must be picklable. This includes config and adapter factory. `key_fn`, `value_fn`, and `columns_fn` stay in the parent process. |
 | **Workers get independent rate limiters** | Each worker creates its own token bucket. There is no global cross-worker coordination — aggregate rate = `rate x num_dbs`. |
 | **Min/max tracked in main** | The main process tracks min/max keys and patches them into worker results. Workers do not have visibility into keys from other shards. |
 | **`columns_fn` for CEL routing context** | The `columns_fn` parameter provides additional column values for CEL routing context (analogous to `cel_columns` in framework writers). |
 | **No verification step** | Unlike Spark/Dask/Ray, the Python writer has no routing verification — it uses the routing function directly, so there's no framework-vs-Python divergence to verify. |
 | **CEL + parallel incompatible for discovery** | Parallel mode requires `num_dbs > 0` upfront. CEL discovery (deriving `num_dbs` from data) only works in single-process mode. |
-| **Global memory ceiling** | Only available in single-process mode. Parallel mode relies on queue backpressure (configurable `max_queue_size`) instead. |
+| **Parallel SHM budgets** | `max_queue_size` bounds descriptor backlog, not payload bytes. Use `max_parallel_shared_memory_bytes` and `max_parallel_shared_memory_bytes_per_worker` to bound outstanding shared-memory usage. |

@@ -57,7 +57,6 @@ def test_dask_python_hash_agreement_u64be(num_dbs: int) -> None:
             key,
             num_dbs=num_dbs,
             sharding=sharding,
-            key_encoding=KeyEncoding.U64BE,
         )
         assert dask_db_id == python_db_id, (
             f"key={key}, num_dbs={num_dbs}: Dask={dask_db_id}, Python={python_db_id}"
@@ -87,7 +86,6 @@ def test_dask_python_hash_agreement_u32be(num_dbs: int) -> None:
             key,
             num_dbs=num_dbs,
             sharding=sharding,
-            key_encoding=KeyEncoding.U32BE,
         )
         assert dask_db_id == python_db_id, (
             f"key={key}, num_dbs={num_dbs}: Dask(u32be)={dask_db_id}, Python={python_db_id}"

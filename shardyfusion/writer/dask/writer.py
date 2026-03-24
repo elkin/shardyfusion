@@ -348,7 +348,6 @@ def _verify_routing_agreement(
             key,
             num_dbs=num_dbs,
             sharding=resolved_sharding,
-            key_encoding=key_encoding,
             routing_context=routing_context,
         )
 

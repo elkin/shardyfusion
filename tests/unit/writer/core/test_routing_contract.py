@@ -245,7 +245,6 @@ def test_writer_reader_routing_identity_int(key: int, num_dbs: int) -> None:
         key,
         num_dbs=num_dbs,
         sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
-        key_encoding=KeyEncoding.U64BE,
     )
     router = _build_router(num_dbs=num_dbs)
     reader_result = router.route_one(key)
@@ -265,7 +264,6 @@ def test_writer_reader_routing_identity_str(key: str, num_dbs: int) -> None:
         key,
         num_dbs=num_dbs,
         sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
-        key_encoding=KeyEncoding.UTF8,
     )
     router = _build_router(num_dbs=num_dbs, encoding=KeyEncoding.UTF8)
     reader_result = router.route_one(key)
@@ -285,7 +283,6 @@ def test_writer_reader_routing_identity_bytes(key: bytes, num_dbs: int) -> None:
         key,
         num_dbs=num_dbs,
         sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
-        key_encoding=KeyEncoding.RAW,
     )
     router = _build_router(num_dbs=num_dbs, encoding=KeyEncoding.RAW)
     reader_result = router.route_one(key)
