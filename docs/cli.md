@@ -57,6 +57,9 @@ uv run shardy --current-url s3://bucket/prefix/_CURRENT route 42
 # Reload manifest
 uv run shardy --current-url s3://bucket/prefix/_CURRENT refresh
 
+# Reader health (exit 0/1/2 for healthy/degraded/unhealthy)
+uv run shardy --current-url s3://bucket/prefix/_CURRENT health
+
 # Interactive REPL (no subcommand)
 uv run shardy --current-url s3://bucket/prefix/_CURRENT
 ```
@@ -92,7 +95,7 @@ uv run shardy route 42
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `get` | `KEY` | Look up a single key |
+| `get` | `[--strict] KEY` | Look up a single key; `--strict` exits 1 when the key is not found |
 | `multiget` | `KEY [KEY ...]` or `-` | Look up multiple keys; pass `-` to read from stdin |
 | `info` | — | Show manifest metadata (run_id, num_dbs, sharding, key_encoding, row_count) |
 | `shards` | — | Show per-shard details (db_id, row_count, min/max key, URL) |
@@ -101,6 +104,7 @@ uv run shardy route 42
 | `history` | `[--limit N]` | List recent published manifests |
 | `rollback` | `--ref REF \| --run-id RUN_ID \| --offset N` | Roll back the current pointer to a previous manifest |
 | `schema` | `[--type manifest\|current-pointer]` | Print the JSON Schema for manifest or current-pointer formats |
+| `health` | `[--staleness-threshold SECONDS]` | Report reader health; exit 0=healthy, 1=degraded, 2=unhealthy |
 | `exec` | `--script FILE [--output FILE]` | Execute a YAML batch script |
 
 ## Key Coercion
@@ -219,7 +223,8 @@ shardy> quit
 Interactive mode defaults to `json` (pretty-printed with indentation) output instead of `jsonl`.
 
 REPL commands: `get KEY`, `multiget KEY [KEY ...]`, `info`, `shards`, `route KEY`,
-`refresh`, `history [LIMIT]`, `use (--offset N | --ref REF | --latest)`,
+`refresh`, `history [LIMIT]`, `health [STALENESS_THRESHOLD]`,
+`use (--offset N | --ref REF | --latest)`,
 `quit`/`exit`/`Ctrl-D`.
 
 ### REPL-Only Commands
@@ -255,6 +260,73 @@ uv run shardy --current-url s3://bucket/prefix/_CURRENT history --limit 5
 ```
 
 Output shows each manifest's reference, run ID, and publication timestamp in reverse chronological order.
+
+## Reader Health
+
+Check reader health — whether the manifest is loaded, how stale it is, and how many shards are open:
+
+```bash
+uv run shardy --current-url s3://bucket/prefix/_CURRENT health
+```
+
+```json
+{
+  "op": "health",
+  "status": "healthy",
+  "manifest_ref": "s3://bucket/prefix/manifests/.../manifest",
+  "manifest_age_seconds": 42.3,
+  "num_shards": 4,
+  "is_closed": false
+}
+```
+
+Exit codes map to standard monitoring conventions:
+
+| Exit code | `status` | Meaning |
+|---|---|---|
+| `0` | `healthy` | Manifest loaded and fresh |
+| `1` | `degraded` | Manifest loaded but stale (age exceeds threshold) |
+| `2` | `unhealthy` | Reader closed, manifest missing, or unexpected error |
+
+Use `--staleness-threshold SECONDS` to control when stale manifests are reported as degraded:
+
+```bash
+# Degrade if manifest is older than 5 minutes
+uv run shardy health --staleness-threshold 300
+```
+
+Without `--staleness-threshold`, the library's default threshold applies (staleness is not checked separately from overall health).
+
+The machine-readable exit codes make `health` suitable for Kubernetes liveness/readiness probes and monitoring integrations:
+
+```bash
+# In a readiness probe or health-check script
+shardy health --staleness-threshold 600 && echo "OK" || echo "DEGRADED/UNHEALTHY"
+```
+
+In the REPL, `health` accepts an optional staleness threshold in seconds:
+
+```
+shardy> health
+shardy> health 300
+```
+
+### `--strict` on `get`
+
+By default, `get` exits 0 regardless of whether the key was found. Pass `--strict` to exit 1
+when the key is not found, while still emitting the JSON result to stdout:
+
+```bash
+# Exits 0 if key exists, 1 if not found — result always goes to stdout
+uv run shardy get --strict 42
+
+# Script use: check presence without suppressing output
+if ! uv run shardy get --strict 42 > result.json; then
+  echo "Key 42 not in snapshot" >&2
+fi
+```
+
+This allows shell scripts to branch on key presence while still capturing the full result.
 
 ## Rollback
 
@@ -320,6 +392,8 @@ on_error: continue    # stop (default) | continue
 commands:
   - op: get
     key: 42
+  - op: get              # --strict equivalent: result emitted, error record on not-found
+    key: 99
   - op: multiget
     keys: [1, 2, 3]
   - op: info
@@ -327,6 +401,12 @@ commands:
   - op: route
     key: 42
   - op: refresh
+  - op: health                    # check reader health
+  - op: health                    # check with staleness threshold
+    staleness_threshold: 300
+  - op: history                   # list recent manifests (default limit 10)
+  - op: history
+    limit: 5
 ```
 
 Batch mode defaults output to `jsonl` — one JSON object per command, streamed
