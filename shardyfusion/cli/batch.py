@@ -12,6 +12,7 @@ from .config import OutputConfig, coerce_cli_key
 from .output import (
     build_error_result,
     build_get_result,
+    build_health_result,
     build_info_result,
     build_multiget_result,
     build_refresh_result,
@@ -149,6 +150,22 @@ def _execute_command(
         db_id = reader.route_key(coerced, routing_context=routing_context)
         return build_route_result(key, db_id)
 
+    if op == "health":
+        staleness_threshold = cmd.get("staleness_threshold")
+        if staleness_threshold is not None:
+            staleness_threshold = float(staleness_threshold)
+        health = reader.health(staleness_threshold_s=staleness_threshold)
+        return build_health_result(health)
+
+    if op == "history":
+        limit = int(cmd.get("limit", 10))
+        from .output import build_history_result
+
+        store = reader._manifest_store
+        refs = store.list_manifests(limit=limit)
+        return build_history_result(refs)
+
     raise ValueError(
-        f"Unknown op: {op!r}. Supported: get, multiget, refresh, info, shards, route"
+        f"Unknown op: {op!r}. "
+        f"Supported: get, multiget, refresh, info, shards, route, health, history"
     )

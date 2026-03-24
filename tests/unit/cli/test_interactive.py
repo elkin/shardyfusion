@@ -10,7 +10,7 @@ from typing import Any
 
 from shardyfusion.cli.config import OutputConfig
 from shardyfusion.cli.interactive import ShardyRepl
-from shardyfusion.reader import ShardDetail, SnapshotInfo
+from shardyfusion.reader import ReaderHealth, ShardDetail, SnapshotInfo
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 
 _FAKE_CREATED_AT = datetime.fromisoformat("2026-01-01T00:00:00+00:00")
@@ -72,6 +72,15 @@ class _FakeReader:
 
     def route_key(self, key: Any, **kwargs: Any) -> int:
         return 0 if (isinstance(key, int) and key < 50) else 1
+
+    def health(self, *, staleness_threshold_s: float | None = None) -> ReaderHealth:
+        return ReaderHealth(
+            status="healthy",
+            manifest_ref="s3://bucket/manifests/test",
+            manifest_age_seconds=5.0,
+            num_shards=2,
+            is_closed=False,
+        )
 
     def close(self) -> None:
         pass
@@ -228,3 +237,23 @@ def test_do_schema_invalid_type() -> None:
     with redirect_stdout(buf):
         repl.onecmd("schema bogus")
     # Should print error to stderr but not crash
+
+
+def test_do_health() -> None:
+    repl = _make_repl()
+    buf = StringIO()
+    with redirect_stdout(buf):
+        repl.onecmd("health")
+    parsed = json.loads(buf.getvalue())
+    assert parsed["op"] == "health"
+    assert parsed["status"] == "healthy"
+    assert parsed["num_shards"] == 2
+
+
+def test_do_health_with_threshold() -> None:
+    repl = _make_repl()
+    buf = StringIO()
+    with redirect_stdout(buf):
+        repl.onecmd("health 300")
+    parsed = json.loads(buf.getvalue())
+    assert parsed["op"] == "health"

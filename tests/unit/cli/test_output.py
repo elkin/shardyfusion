@@ -8,6 +8,7 @@ from shardyfusion.cli.config import OutputConfig
 from shardyfusion.cli.output import (
     build_error_result,
     build_get_result,
+    build_health_result,
     build_multiget_result,
     encode_value,
     format_result,
@@ -371,3 +372,77 @@ class TestFormatCleanup:
         text_out = format_result(result, "text")
         table_out = format_result(result, "table")
         assert text_out == table_out
+
+
+# ---------------------------------------------------------------------------
+# build_health_result
+# ---------------------------------------------------------------------------
+
+
+class TestBuildHealthResult:
+    def test_structure(self) -> None:
+        from shardyfusion.reader import ReaderHealth
+
+        health = ReaderHealth(
+            status="healthy",
+            manifest_ref="s3://bucket/manifest",
+            manifest_age_seconds=42.123,
+            num_shards=4,
+            is_closed=False,
+        )
+        result = build_health_result(health)
+        assert result["op"] == "health"
+        assert result["status"] == "healthy"
+        assert result["manifest_ref"] == "s3://bucket/manifest"
+        assert result["manifest_age_seconds"] == 42.1
+        assert result["num_shards"] == 4
+        assert result["is_closed"] is False
+
+    def test_unhealthy(self) -> None:
+        from shardyfusion.reader import ReaderHealth
+
+        health = ReaderHealth(
+            status="unhealthy",
+            manifest_ref="",
+            manifest_age_seconds=0.0,
+            num_shards=0,
+            is_closed=True,
+        )
+        result = build_health_result(health)
+        assert result["status"] == "unhealthy"
+        assert result["is_closed"] is True
+
+
+class TestFormatHealth:
+    def test_text_format_healthy(self) -> None:
+        result = {
+            "op": "health",
+            "status": "healthy",
+            "manifest_age_seconds": 42.0,
+            "num_shards": 4,
+            "is_closed": False,
+        }
+        out = format_result(result, "text")
+        assert "status=healthy" in out
+        assert "shards=4" in out
+
+    def test_text_format_closed(self) -> None:
+        result = {
+            "op": "health",
+            "status": "unhealthy",
+            "manifest_age_seconds": 0.0,
+            "num_shards": 0,
+            "is_closed": True,
+        }
+        out = format_result(result, "text")
+        assert "CLOSED" in out
+
+    def test_table_delegates_to_text(self) -> None:
+        result = {
+            "op": "health",
+            "status": "healthy",
+            "manifest_age_seconds": 5.0,
+            "num_shards": 2,
+            "is_closed": False,
+        }
+        assert format_result(result, "table") == format_result(result, "text")

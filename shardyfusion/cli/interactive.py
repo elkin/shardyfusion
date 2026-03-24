@@ -14,6 +14,7 @@ from .config import OutputConfig, coerce_cli_key
 from .output import (
     build_error_result,
     build_get_result,
+    build_health_result,
     build_info_result,
     build_multiget_result,
     build_refresh_result,
@@ -109,6 +110,23 @@ class ShardyRepl(cmd.Cmd):
             emit(result, self._interactive_cfg)
         except Exception as exc:
             self._error("shards", None, str(exc))
+
+    def do_health(self, line: str) -> None:
+        """health [STALENESS_THRESHOLD] — Show reader health status."""
+        parts = shlex.split(line)
+        threshold: float | None = None
+        if parts:
+            try:
+                threshold = float(parts[0])
+            except ValueError:
+                self._error("health", None, f"Invalid threshold: {parts[0]!r}")
+                return
+        try:
+            health = self._reader.health(staleness_threshold_s=threshold)
+            result = build_health_result(health)
+            emit(result, self._interactive_cfg)
+        except Exception as exc:
+            self._error("health", None, str(exc))
 
     def do_route(self, line: str) -> None:
         """route KEY [--routing-context k=v ...] — Show which shard a key routes to."""

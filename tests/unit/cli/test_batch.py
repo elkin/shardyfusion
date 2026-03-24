@@ -12,16 +12,32 @@ import pytest
 
 from shardyfusion.cli.batch import load_script, run_script
 from shardyfusion.cli.config import OutputConfig
-from shardyfusion.reader import ShardDetail, SnapshotInfo
+from shardyfusion.reader import ReaderHealth, ShardDetail, SnapshotInfo
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 
 _FAKE_CREATED_AT = datetime.fromisoformat("2026-01-01T00:00:00+00:00")
+
+
+class _FakeManifestStore:
+    """Minimal manifest store for batch testing."""
+
+    def list_manifests(self, *, limit: int = 10) -> list[Any]:
+        from shardyfusion.manifest import ManifestRef
+
+        return [
+            ManifestRef(
+                ref="manifests/2026-01-01T00:00:00.000000Z_run_id=test-run/manifest",
+                run_id="test-run",
+                published_at=_FAKE_CREATED_AT,
+            )
+        ]
 
 
 class _FakeReader:
     def __init__(self, store: dict[Any, bytes] | None = None) -> None:
         self._store = store or {}
         self.last_routing_context: dict[str, object] | None = None
+        self._manifest_store = _FakeManifestStore()
 
     @property
     def key_encoding(self) -> str:
@@ -70,6 +86,15 @@ class _FakeReader:
     def route_key(self, key: Any, **kwargs: Any) -> int:
         self.last_routing_context = kwargs.get("routing_context")
         return 0 if (isinstance(key, int) and key < 50) else 1
+
+    def health(self, *, staleness_threshold_s: float | None = None) -> ReaderHealth:
+        return ReaderHealth(
+            status="healthy",
+            manifest_ref="s3://bucket/manifests/test",
+            manifest_age_seconds=5.0,
+            num_shards=2,
+            is_closed=False,
+        )
 
 
 def _write_script(content: str) -> str:
@@ -242,3 +267,49 @@ def test_run_script_route_with_routing_context() -> None:
     errors = run_script(reader, path, OutputConfig(), output_file=out)
     assert errors == 0
     assert reader.last_routing_context == {"region": "ap-south"}
+
+
+def test_run_script_health() -> None:
+    path = _write_script("commands:\n  - op: health\n")
+    reader = _FakeReader()
+    out = StringIO()
+    errors = run_script(reader, path, OutputConfig(), output_file=out)
+    assert errors == 0
+    parsed = json.loads(out.getvalue().strip())
+    assert parsed["op"] == "health"
+    assert parsed["status"] == "healthy"
+    assert parsed["num_shards"] == 2
+
+
+def test_run_script_health_with_threshold() -> None:
+    path = _write_script(
+        "commands:\n  - op: health\n    staleness_threshold: 300\n"
+    )
+    reader = _FakeReader()
+    out = StringIO()
+    errors = run_script(reader, path, OutputConfig(), output_file=out)
+    assert errors == 0
+    parsed = json.loads(out.getvalue().strip())
+    assert parsed["op"] == "health"
+
+
+def test_run_script_history() -> None:
+    path = _write_script("commands:\n  - op: history\n")
+    reader = _FakeReader()
+    out = StringIO()
+    errors = run_script(reader, path, OutputConfig(), output_file=out)
+    assert errors == 0
+    parsed = json.loads(out.getvalue().strip())
+    assert parsed["op"] == "history"
+    assert len(parsed["manifests"]) == 1
+    assert parsed["manifests"][0]["run_id"] == "test-run"
+
+
+def test_run_script_history_with_limit() -> None:
+    path = _write_script("commands:\n  - op: history\n    limit: 5\n")
+    reader = _FakeReader()
+    out = StringIO()
+    errors = run_script(reader, path, OutputConfig(), output_file=out)
+    assert errors == 0
+    parsed = json.loads(out.getvalue().strip())
+    assert parsed["op"] == "history"

@@ -13,7 +13,12 @@ from .config import OutputConfig
 if TYPE_CHECKING:
     from .._writer_core import CleanupAction
     from ..manifest import ManifestRef
-    from ..reader import ConcurrentShardedReader, ShardDetail, ShardedReader
+    from ..reader import (
+        ConcurrentShardedReader,
+        ReaderHealth,
+        ShardDetail,
+        ShardedReader,
+    )
 
 # ---------------------------------------------------------------------------
 # Value encoding
@@ -167,6 +172,18 @@ def build_cleanup_result(
     return result
 
 
+def build_health_result(health: ReaderHealth) -> dict[str, Any]:
+    """Build a dict representing reader health diagnostics."""
+    return {
+        "op": "health",
+        "status": health.status,
+        "manifest_ref": health.manifest_ref,
+        "manifest_age_seconds": round(health.manifest_age_seconds, 1),
+        "num_shards": health.num_shards,
+        "is_closed": health.is_closed,
+    }
+
+
 def build_error_result(op: str, key_hint: str | None, error: str) -> dict[str, Any]:
     result: dict[str, Any] = {"op": op, "error": error}
     if key_hint is not None:
@@ -224,6 +241,13 @@ def format_result(result: dict[str, Any], fmt: str) -> str:
             return "\n".join(lines) if lines else "(no manifests)"
         if op == "route":
             return f"{result.get('key', '')} -> shard {result.get('db_id', '?')}"
+        if op == "health":
+            parts = [f"status={result.get('status', '?')}"]
+            parts.append(f"manifest_age={result.get('manifest_age_seconds', 0)}s")
+            parts.append(f"shards={result.get('num_shards', 0)}")
+            if result.get("is_closed"):
+                parts.append("CLOSED")
+            return "  ".join(parts)
         if op == "cleanup":
             dry = "[DRY RUN] " if result.get("dry_run") else ""
             lines = [f"{dry}Cleanup for run_id={result.get('run_id', '?')}"]
@@ -287,6 +311,9 @@ def format_result(result: dict[str, Any], fmt: str) -> str:
                     f"{m['offset']:>3}  {m['published_at']:>26}  {m['run_id']}"
                 )
             return "\n".join(lines)
+        if op == "health":
+            # Reuse text format for table mode — health is a single record
+            return format_result(result, "text")
         if op == "cleanup":
             # Reuse text format for table mode — cleanup data is hierarchical, not tabular
             return format_result(result, "text")

@@ -31,6 +31,7 @@ from .config import (
 from .output import (
     build_error_result,
     build_get_result,
+    build_health_result,
     build_info_result,
     build_multiget_result,
     build_route_result,
@@ -388,8 +389,19 @@ def cli(
     metavar="KEY=VALUE",
     help="Routing context for CEL split mode (repeatable).",
 )
+@click.option(
+    "--strict",
+    is_flag=True,
+    default=False,
+    help="Exit with code 1 when the key is not found.",
+)
 @click.pass_context
-def get_cmd(ctx: click.Context, key: str, routing_ctx_pairs: tuple[str, ...]) -> None:
+def get_cmd(
+    ctx: click.Context,
+    key: str,
+    routing_ctx_pairs: tuple[str, ...],
+    strict: bool,
+) -> None:
     """Look up a single KEY."""
     from .config import parse_routing_context
 
@@ -403,6 +415,8 @@ def get_cmd(ctx: click.Context, key: str, routing_ctx_pairs: tuple[str, ...]) ->
             value = reader.get(coerced, routing_context=routing_context)
             result = build_get_result(key, value, output_cfg)
             emit(result, output_cfg)
+            if strict and value is None:
+                sys.exit(1)
         except Exception as exc:
             result = build_error_result("get", key, str(exc))
             emit(result, output_cfg, file=sys.stderr)
@@ -483,6 +497,37 @@ def shards_cmd(ctx: click.Context) -> None:
             result = build_error_result("shards", None, str(exc))
             emit(result, output_cfg, file=sys.stderr)
             sys.exit(1)
+
+
+@cli.command("health")
+@click.option(
+    "--staleness-threshold",
+    default=None,
+    type=float,
+    metavar="SECONDS",
+    help="Manifest age threshold in seconds; exceeding it marks the reader as degraded.",
+)
+@click.pass_context
+def health_cmd(ctx: click.Context, staleness_threshold: float | None) -> None:
+    """Show reader health status.
+
+    \b
+    Exit codes:  0 = healthy,  1 = degraded,  2 = unhealthy.
+    """
+    output_cfg = _get_output_cfg(ctx)
+    with _build_reader(ctx) as reader:
+        try:
+            health = reader.health(staleness_threshold_s=staleness_threshold)
+            result = build_health_result(health)
+            emit(result, output_cfg)
+            if health.status == "degraded":
+                sys.exit(1)
+            if health.status == "unhealthy":
+                sys.exit(2)
+        except Exception as exc:
+            result = build_error_result("health", None, str(exc))
+            emit(result, output_cfg, file=sys.stderr)
+            sys.exit(2)
 
 
 @cli.command("route")

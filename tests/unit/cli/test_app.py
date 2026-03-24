@@ -14,7 +14,7 @@ import click.testing
 
 from shardyfusion.cli.app import _build_manifest_store, cli
 from shardyfusion.cli.config import ManifestStoreConfig
-from shardyfusion.reader import ShardDetail, SnapshotInfo
+from shardyfusion.reader import ReaderHealth, ShardDetail, SnapshotInfo
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 
 _FAKE_CREATED_AT = datetime.fromisoformat("2026-01-01T00:00:00+00:00")
@@ -79,6 +79,18 @@ class _FakeReader:
 
     def route_key(self, key: Any, **kwargs: Any) -> int:
         return 0 if (isinstance(key, int) and key < 50) else 1
+
+    def health(self, *, staleness_threshold_s: float | None = None) -> ReaderHealth:
+        status = "healthy"
+        if staleness_threshold_s is not None and staleness_threshold_s < 1:
+            status = "degraded"
+        return ReaderHealth(
+            status=status,
+            manifest_ref="manifest-001.json",
+            manifest_age_seconds=42.0,
+            num_shards=2,
+            is_closed=False,
+        )
 
     def close(self) -> None:
         pass
@@ -591,3 +603,61 @@ class TestManifestTargetingDoesNotMutate:
 
         assert result.exit_code == 0
         manifest_store.set_current.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# health subcommand
+# ---------------------------------------------------------------------------
+
+
+class TestHealthSubcommand:
+    def test_health_healthy(self) -> None:
+        result = _invoke(["health"])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["op"] == "health"
+        assert parsed["status"] == "healthy"
+        assert parsed["num_shards"] == 2
+        assert parsed["is_closed"] is False
+
+    def test_health_degraded_exit_code(self) -> None:
+        """A degraded reader should exit with code 1."""
+        reader = _FakeReader()
+        result = _invoke(["health", "--staleness-threshold", "0.001"], reader=reader)
+        assert result.exit_code == 1
+        parsed = json.loads(result.output)
+        assert parsed["status"] == "degraded"
+
+    def test_health_text_format(self) -> None:
+        result = _invoke(["--output-format", "text", "health"])
+        assert result.exit_code == 0
+        assert "status=healthy" in result.output
+
+
+# ---------------------------------------------------------------------------
+# get --strict
+# ---------------------------------------------------------------------------
+
+
+class TestGetStrict:
+    def test_strict_key_found_exits_0(self) -> None:
+        reader = _FakeReader(store={42: b"hello"})
+        result = _invoke(["get", "--strict", "42"], reader=reader)
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["found"] is True
+
+    def test_strict_key_not_found_exits_1(self) -> None:
+        reader = _FakeReader(store={}, key_encoding="utf8")
+        result = _invoke(["get", "--strict", "missing"], reader=reader)
+        assert result.exit_code == 1
+        # Result is still emitted to stdout
+        parsed = json.loads(result.output)
+        assert parsed["found"] is False
+
+    def test_without_strict_not_found_exits_0(self) -> None:
+        reader = _FakeReader(store={}, key_encoding="utf8")
+        result = _invoke(["get", "missing"], reader=reader)
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["found"] is False
