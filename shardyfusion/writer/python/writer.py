@@ -4,6 +4,7 @@ import contextlib
 import multiprocessing
 import time
 from collections.abc import Callable, Iterable
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, TypeVar
 from uuid import uuid4
@@ -41,9 +42,9 @@ _logger = get_logger(__name__)
 T = TypeVar("T")
 
 _CHUNK_DIVISOR = 10
-_WORKER_JOIN_TIMEOUT_S = 60
-_WORKER_TERMINATE_TIMEOUT_S = 5
-_RESULT_COLLECT_TIMEOUT_S = 10
+_WORKER_JOIN_TIMEOUT = timedelta(seconds=60)
+_WORKER_TERMINATE_TIMEOUT = timedelta(seconds=5)
+_RESULT_COLLECT_TIMEOUT = timedelta(seconds=10)
 
 
 def write_sharded(
@@ -664,7 +665,7 @@ def _write_parallel(
     # Collect results with a global deadline instead of per-result timeout
     try:
         results: list[ShardAttemptResult] = []
-        deadline = time.monotonic() + _RESULT_COLLECT_TIMEOUT_S * num_dbs
+        deadline = time.monotonic() + _RESULT_COLLECT_TIMEOUT.total_seconds() * num_dbs
         for _ in range(num_dbs):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -692,9 +693,9 @@ def _write_parallel(
 def _join_and_terminate_workers(workers: list[multiprocessing.Process]) -> None:
     """Join workers with timeout, escalating to terminate/kill if needed."""
     for p in workers:
-        p.join(timeout=_WORKER_JOIN_TIMEOUT_S)
+        p.join(timeout=_WORKER_JOIN_TIMEOUT.total_seconds())
         if p.is_alive():
             p.terminate()
-            p.join(timeout=_WORKER_TERMINATE_TIMEOUT_S)
+            p.join(timeout=_WORKER_TERMINATE_TIMEOUT.total_seconds())
             if p.is_alive():
                 p.kill()
