@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import timedelta
 from typing import IO, TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -152,9 +153,10 @@ def _execute_command(
 
     if op == "health":
         staleness_threshold = cmd.get("staleness_threshold")
+        threshold_td = None
         if staleness_threshold is not None:
-            staleness_threshold = float(staleness_threshold)
-        health = reader.health(staleness_threshold_s=staleness_threshold)
+            threshold_td = timedelta(seconds=float(staleness_threshold))
+        health = reader.health(staleness_threshold=threshold_td)
         return build_health_result(health)
 
     if op == "history":

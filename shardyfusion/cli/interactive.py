@@ -5,6 +5,7 @@ from __future__ import annotations
 import cmd
 import shlex
 import sys
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -114,15 +115,15 @@ class ShardyRepl(cmd.Cmd):
     def do_health(self, line: str) -> None:
         """health [STALENESS_THRESHOLD] — Show reader health status."""
         parts = shlex.split(line)
-        threshold: float | None = None
+        threshold: timedelta | None = None
         if parts:
             try:
-                threshold = float(parts[0])
+                threshold = timedelta(seconds=float(parts[0]))
             except ValueError:
                 self._error("health", None, f"Invalid threshold: {parts[0]!r}")
                 return
         try:
-            health = self._reader.health(staleness_threshold_s=threshold)
+            health = self._reader.health(staleness_threshold=threshold)
             result = build_health_result(health)
             emit(result, self._interactive_cfg)
         except Exception as exc:

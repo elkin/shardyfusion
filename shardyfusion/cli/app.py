@@ -517,7 +517,12 @@ def health_cmd(ctx: click.Context, staleness_threshold: float | None) -> None:
     output_cfg = _get_output_cfg(ctx)
     with _build_reader(ctx) as reader:
         try:
-            health = reader.health(staleness_threshold_s=staleness_threshold)
+            threshold_td = (
+                timedelta(seconds=staleness_threshold)
+                if staleness_threshold is not None
+                else None
+            )
+            health = reader.health(staleness_threshold=threshold_td)
             result = build_health_result(health)
             emit(result, output_cfg)
             if health.status == "degraded":

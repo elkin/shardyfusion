@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from contextlib import redirect_stdout
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import StringIO
 from typing import Any
 
@@ -73,11 +73,11 @@ class _FakeReader:
     def route_key(self, key: Any, **kwargs: Any) -> int:
         return 0 if (isinstance(key, int) and key < 50) else 1
 
-    def health(self, *, staleness_threshold_s: float | None = None) -> ReaderHealth:
+    def health(self, *, staleness_threshold: timedelta | None = None) -> ReaderHealth:
         return ReaderHealth(
             status="healthy",
             manifest_ref="s3://bucket/manifests/test",
-            manifest_age_seconds=5.0,
+            manifest_age=timedelta(seconds=5.0),
             num_shards=2,
             is_closed=False,
         )
