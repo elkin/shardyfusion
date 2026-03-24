@@ -19,6 +19,7 @@ cel_expr_python = pytest.importorskip("cel_expr_python")  # noqa: F841
 from shardyfusion._writer_core import route_key
 from shardyfusion.cel import compile_cel, route_cel
 from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+from shardyfusion.errors import ConfigValidationError
 from shardyfusion.manifest import BuildResult
 from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.routing import SnapshotRouter
@@ -289,6 +290,25 @@ class TestCelUnifiedMode:
         encoder = make_key_encoder(config.key_encoding)
         for r in records:
             assert all_kv[encoder(r)] == f"v{r}".encode()
+
+    def test_direct_mode_rejects_parallel_execution(self, tmp_path: Path) -> None:
+        config, _ = _make_cel_config(
+            tmp_path,
+            cel_expr="key % 4",
+            cel_columns={"key": "int"},
+            boundaries=[1, 2, 3],
+        )
+
+        with pytest.raises(
+            ConfigValidationError, match="Parallel mode requires num_dbs"
+        ):
+            write_sharded(
+                list(range(10)),
+                config,
+                key_fn=lambda r: r,
+                value_fn=lambda r: b"v",
+                parallel=True,
+            )
 
 
 # ---------------------------------------------------------------------------

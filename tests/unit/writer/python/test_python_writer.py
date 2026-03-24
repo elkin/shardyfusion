@@ -10,6 +10,7 @@ import pytest
 
 from shardyfusion._writer_core import route_key
 from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+from shardyfusion.errors import ConfigValidationError
 from shardyfusion.manifest import BuildResult
 from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.metrics import MetricEvent
@@ -514,6 +515,37 @@ def test_parallel_rate_limited_write(tmp_path: Path) -> None:
     )
 
     assert result.stats.rows_written == 10
+
+
+@pytest.mark.parametrize(
+    ("field_name", "kwargs"),
+    [
+        (
+            "max_parallel_shared_memory_bytes",
+            {"max_parallel_shared_memory_bytes": 0},
+        ),
+        (
+            "max_parallel_shared_memory_bytes_per_worker",
+            {"max_parallel_shared_memory_bytes_per_worker": -1},
+        ),
+    ],
+)
+def test_parallel_shared_memory_limits_must_be_positive(
+    tmp_path: Path,
+    field_name: str,
+    kwargs: dict[str, int],
+) -> None:
+    config = _make_parallel_config(tmp_path, fake_adapter_factory, num_dbs=1)
+
+    with pytest.raises(ConfigValidationError, match=field_name):
+        write_sharded(
+            [0],
+            config,
+            key_fn=lambda r: r,
+            value_fn=lambda r: b"v",
+            parallel=True,
+            **kwargs,
+        )
 
 
 # ---------------------------------------------------------------------------
