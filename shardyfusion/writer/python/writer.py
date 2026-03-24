@@ -3,6 +3,7 @@
 import contextlib
 import time
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from typing import Any, TypeVar
 from uuid import uuid4
 
@@ -36,6 +37,20 @@ from shardyfusion.writer.python._parallel_writer import (
 _logger = get_logger(__name__)
 
 T = TypeVar("T")
+
+
+@dataclass(slots=True)
+class _SingleProcessState:
+    adapters: dict[int, Any] = field(default_factory=dict)
+    db_urls: dict[int, str] = field(default_factory=dict)
+    batches: dict[int, list[tuple[bytes, bytes]]] = field(default_factory=dict)
+    batch_byte_sizes: dict[int, int] = field(default_factory=dict)
+    row_counts: dict[int, int] = field(default_factory=dict)
+    min_keys: dict[int, KeyInput | None] = field(default_factory=dict)
+    max_keys: dict[int, KeyInput | None] = field(default_factory=dict)
+    checkpoint_ids: dict[int, str | None] = field(default_factory=dict)
+    total_batched_items: int = 0
+    total_batched_bytes: int = 0
 
 
 def write_sharded(
@@ -288,6 +303,266 @@ def _largest_batch_id(
     return best
 
 
+def _ensure_single_process_shard(state: _SingleProcessState, *, db_id: int) -> None:
+    if db_id in state.batches:
+        return
+    state.batches[db_id] = []
+    state.batch_byte_sizes[db_id] = 0
+    state.row_counts[db_id] = 0
+    state.min_keys[db_id] = None
+    state.max_keys[db_id] = None
+
+
+def _ensure_single_process_adapter(
+    state: _SingleProcessState,
+    *,
+    db_id: int,
+    stack: contextlib.ExitStack,
+    config: WriteConfig,
+    run_id: str,
+    attempt: int,
+    factory: DbAdapterFactory,
+) -> None:
+    if db_id in state.adapters:
+        return
+    db_url = _make_db_url(config, run_id, db_id, attempt)
+    local_dir = _make_local_dir(config, run_id, db_id, attempt)
+    local_dir.mkdir(parents=True, exist_ok=True)
+    adapter = factory(db_url=db_url, local_dir=local_dir)
+    stack.enter_context(adapter)
+    state.adapters[db_id] = adapter
+    state.db_urls[db_id] = db_url
+
+
+def _flush_single_process_shard(
+    state: _SingleProcessState,
+    *,
+    db_id: int,
+    stack: contextlib.ExitStack,
+    config: WriteConfig,
+    run_id: str,
+    attempt: int,
+    factory: DbAdapterFactory,
+) -> None:
+    _ensure_single_process_adapter(
+        state,
+        db_id=db_id,
+        stack=stack,
+        config=config,
+        run_id=run_id,
+        attempt=attempt,
+        factory=factory,
+    )
+    state.adapters[db_id].write_batch(state.batches[db_id])
+    state.total_batched_items -= len(state.batches[db_id])
+    state.total_batched_bytes -= state.batch_byte_sizes[db_id]
+    state.batches[db_id].clear()
+    state.batch_byte_sizes[db_id] = 0
+
+
+def _buffer_single_process_record(
+    state: _SingleProcessState,
+    *,
+    db_id: int,
+    key: KeyInput,
+    key_bytes: bytes,
+    value_bytes: bytes,
+) -> None:
+    _ensure_single_process_shard(state, db_id=db_id)
+    pair_bytes = len(key_bytes) + len(value_bytes)
+    state.batches[db_id].append((key_bytes, value_bytes))
+    state.batch_byte_sizes[db_id] += pair_bytes
+    state.total_batched_items += 1
+    state.total_batched_bytes += pair_bytes
+    state.row_counts[db_id] += 1
+    state.min_keys[db_id], state.max_keys[db_id] = update_min_max(
+        state.min_keys[db_id], state.max_keys[db_id], key
+    )
+
+
+def _flush_single_process_shard_with_limits(
+    state: _SingleProcessState,
+    *,
+    db_id: int,
+    stack: contextlib.ExitStack,
+    config: WriteConfig,
+    run_id: str,
+    attempt: int,
+    factory: DbAdapterFactory,
+    bucket: RateLimiter | None,
+    byte_bucket: RateLimiter | None,
+) -> None:
+    if bucket is not None:
+        bucket.acquire(len(state.batches[db_id]))
+    if byte_bucket is not None:
+        byte_bucket.acquire(state.batch_byte_sizes[db_id])
+    _flush_single_process_shard(
+        state,
+        db_id=db_id,
+        stack=stack,
+        config=config,
+        run_id=run_id,
+        attempt=attempt,
+        factory=factory,
+    )
+
+
+def _maybe_flush_single_process_batch(
+    state: _SingleProcessState,
+    *,
+    db_id: int,
+    stack: contextlib.ExitStack,
+    config: WriteConfig,
+    run_id: str,
+    attempt: int,
+    factory: DbAdapterFactory,
+    bucket: RateLimiter | None,
+    byte_bucket: RateLimiter | None,
+) -> None:
+    batch_size = len(state.batches[db_id])
+    if batch_size < config.batch_size:
+        return
+    if bucket is None or bucket.try_acquire(batch_size):
+        if byte_bucket is not None:
+            byte_bucket.acquire(state.batch_byte_sizes[db_id])
+        _flush_single_process_shard(
+            state,
+            db_id=db_id,
+            stack=stack,
+            config=config,
+            run_id=run_id,
+            attempt=attempt,
+            factory=factory,
+        )
+        return
+    if batch_size >= 2 * config.batch_size:
+        _flush_single_process_shard_with_limits(
+            state,
+            db_id=db_id,
+            stack=stack,
+            config=config,
+            run_id=run_id,
+            attempt=attempt,
+            factory=factory,
+            bucket=bucket,
+            byte_bucket=byte_bucket,
+        )
+
+
+def _single_process_over_memory_ceiling(
+    state: _SingleProcessState,
+    *,
+    max_total_batched_items: int | None,
+    max_total_batched_bytes: int | None,
+) -> bool:
+    return (
+        max_total_batched_items is not None
+        and state.total_batched_items > max_total_batched_items
+    ) or (
+        max_total_batched_bytes is not None
+        and state.total_batched_bytes > max_total_batched_bytes
+    )
+
+
+def _largest_buffered_shard_id(state: _SingleProcessState) -> int:
+    batch_ids = list(state.batches)
+    return batch_ids[
+        _largest_batch_id(
+            [state.batches[db_id] for db_id in batch_ids],
+            [state.batch_byte_sizes[db_id] for db_id in batch_ids],
+        )
+    ]
+
+
+def _enforce_single_process_memory_ceiling(
+    state: _SingleProcessState,
+    *,
+    stack: contextlib.ExitStack,
+    config: WriteConfig,
+    run_id: str,
+    attempt: int,
+    factory: DbAdapterFactory,
+    bucket: RateLimiter | None,
+    byte_bucket: RateLimiter | None,
+    max_total_batched_items: int | None,
+    max_total_batched_bytes: int | None,
+) -> None:
+    while state.batches and _single_process_over_memory_ceiling(
+        state,
+        max_total_batched_items=max_total_batched_items,
+        max_total_batched_bytes=max_total_batched_bytes,
+    ):
+        db_id = _largest_buffered_shard_id(state)
+        if not state.batches[db_id]:
+            break
+        _flush_single_process_shard_with_limits(
+            state,
+            db_id=db_id,
+            stack=stack,
+            config=config,
+            run_id=run_id,
+            attempt=attempt,
+            factory=factory,
+            bucket=bucket,
+            byte_bucket=byte_bucket,
+        )
+
+
+def _flush_remaining_single_process_batches(
+    state: _SingleProcessState,
+    *,
+    stack: contextlib.ExitStack,
+    config: WriteConfig,
+    run_id: str,
+    attempt: int,
+    factory: DbAdapterFactory,
+    bucket: RateLimiter | None,
+    byte_bucket: RateLimiter | None,
+) -> None:
+    for db_id in list(state.batches):
+        if not state.batches[db_id]:
+            continue
+        _flush_single_process_shard_with_limits(
+            state,
+            db_id=db_id,
+            stack=stack,
+            config=config,
+            run_id=run_id,
+            attempt=attempt,
+            factory=factory,
+            bucket=bucket,
+            byte_bucket=byte_bucket,
+        )
+
+
+def _finalize_single_process_adapters(state: _SingleProcessState) -> None:
+    for db_id, adapter in state.adapters.items():
+        adapter.flush()
+        state.checkpoint_ids[db_id] = adapter.checkpoint()
+
+
+def _build_single_process_results(
+    state: _SingleProcessState,
+    *,
+    attempt: int,
+    num_dbs: int,
+) -> list[ShardAttemptResult]:
+    all_db_ids = set(state.row_counts) | set(range(num_dbs))
+    return [
+        ShardAttemptResult(
+            db_id=db_id,
+            db_url=state.db_urls.get(db_id),
+            attempt=attempt,
+            row_count=state.row_counts.get(db_id, 0),
+            min_key=state.min_keys.get(db_id),
+            max_key=state.max_keys.get(db_id),
+            checkpoint_id=state.checkpoint_ids.get(db_id),
+            writer_info=WriterInfo(attempt=attempt),
+        )
+        for db_id in sorted(all_db_ids)
+    ]
+
+
 def _write_single_process(
     *,
     records: Iterable[T],
@@ -310,7 +585,7 @@ def _write_single_process(
     """
 
     attempt = 0
-    cel_mode = num_dbs is None  # CEL: discover from data
+    cel_mode = num_dbs is None
     bucket: RateLimiter | None = None
     if max_writes_per_second is not None:
         bucket = TokenBucket(
@@ -324,51 +599,10 @@ def _write_single_process(
             limiter_type="bytes",
         )
 
-    # Dict-based tracking supports both known num_dbs and CEL discovery mode.
-    adapters: dict[int, Any] = {}
-    db_urls: dict[int, str] = {}
-    batches: dict[int, list[tuple[bytes, bytes]]] = {}
-    batch_byte_sizes: dict[int, int] = {}
-    row_counts: dict[int, int] = {}
-    min_keys: dict[int, KeyInput | None] = {}
-    max_keys: dict[int, KeyInput | None] = {}
-    checkpoint_ids: dict[int, str | None] = {}
+    state = _SingleProcessState()
 
     with contextlib.ExitStack() as stack:
         key_encoder = make_key_encoder(config.key_encoding)
-
-        # Global batch tracking
-        total_batched_items = 0
-        total_batched_bytes = 0
-
-        def _ensure_shard(sid: int) -> None:
-            if sid in batches:
-                return
-            batches[sid] = []
-            batch_byte_sizes[sid] = 0
-            row_counts[sid] = 0
-            min_keys[sid] = None
-            max_keys[sid] = None
-
-        def _ensure_adapter(sid: int) -> None:
-            if sid in adapters:
-                return
-            db_url = _make_db_url(config, run_id, sid, attempt)
-            local_dir = _make_local_dir(config, run_id, sid, attempt)
-            local_dir.mkdir(parents=True, exist_ok=True)
-            adapter = factory(db_url=db_url, local_dir=local_dir)
-            stack.enter_context(adapter)
-            adapters[sid] = adapter
-            db_urls[sid] = db_url
-
-        def _flush_shard(sid: int) -> None:
-            nonlocal total_batched_items, total_batched_bytes
-            _ensure_adapter(sid)
-            adapters[sid].write_batch(batches[sid])
-            total_batched_items -= len(batches[sid])
-            total_batched_bytes -= batch_byte_sizes[sid]
-            batches[sid].clear()
-            batch_byte_sizes[sid] = 0
 
         for record in records:
             key = key_fn(record)
@@ -379,92 +613,56 @@ def _write_single_process(
                 sharding=config.sharding,
                 routing_context=routing_context,
             )
-            _ensure_shard(db_id)
             key_bytes = key_encoder(key)
             value_bytes = value_fn(record)
-
-            pair_bytes = len(key_bytes) + len(value_bytes)
-            batches[db_id].append((key_bytes, value_bytes))
-            batch_byte_sizes[db_id] += pair_bytes
-            total_batched_items += 1
-            total_batched_bytes += pair_bytes
-            row_counts[db_id] += 1
-            min_keys[db_id], max_keys[db_id] = update_min_max(
-                min_keys[db_id], max_keys[db_id], key
+            _buffer_single_process_record(
+                state,
+                db_id=db_id,
+                key=key,
+                key_bytes=key_bytes,
+                value_bytes=value_bytes,
+            )
+            _maybe_flush_single_process_batch(
+                state,
+                db_id=db_id,
+                stack=stack,
+                config=config,
+                run_id=run_id,
+                attempt=attempt,
+                factory=factory,
+                bucket=bucket,
+                byte_bucket=byte_bucket,
+            )
+            _enforce_single_process_memory_ceiling(
+                state,
+                stack=stack,
+                config=config,
+                run_id=run_id,
+                attempt=attempt,
+                factory=factory,
+                bucket=bucket,
+                byte_bucket=byte_bucket,
+                max_total_batched_items=max_total_batched_items,
+                max_total_batched_bytes=max_total_batched_bytes,
             )
 
-            if len(batches[db_id]) >= config.batch_size:
-                if bucket is None or bucket.try_acquire(len(batches[db_id])):
-                    if byte_bucket is not None:
-                        byte_bucket.acquire(batch_byte_sizes[db_id])
-                    _flush_shard(db_id)
-                elif len(batches[db_id]) >= 2 * config.batch_size:
-                    bucket.acquire(len(batches[db_id]))
-                    if byte_bucket is not None:
-                        byte_bucket.acquire(batch_byte_sizes[db_id])
-                    _flush_shard(db_id)
+        _flush_remaining_single_process_batches(
+            state,
+            stack=stack,
+            config=config,
+            run_id=run_id,
+            attempt=attempt,
+            factory=factory,
+            bucket=bucket,
+            byte_bucket=byte_bucket,
+        )
+        _finalize_single_process_adapters(state)
 
-            # Global memory ceiling: flush the largest shard batch
-            while batches and (
-                (
-                    max_total_batched_items is not None
-                    and total_batched_items > max_total_batched_items
-                )
-                or (
-                    max_total_batched_bytes is not None
-                    and total_batched_bytes > max_total_batched_bytes
-                )
-            ):
-                batch_ids = list(batches)
-                flush_id = batch_ids[
-                    _largest_batch_id(
-                        [batches[db_id] for db_id in batch_ids],
-                        [batch_byte_sizes[db_id] for db_id in batch_ids],
-                    )
-                ]
-                if not batches[flush_id]:
-                    break
-                if bucket is not None:
-                    bucket.acquire(len(batches[flush_id]))
-                if byte_bucket is not None:
-                    byte_bucket.acquire(batch_byte_sizes[flush_id])
-                _flush_shard(flush_id)
-
-        # Flush remaining
-        for sid in list(batches.keys()):
-            if batches[sid]:
-                if bucket is not None:
-                    bucket.acquire(len(batches[sid]))
-                if byte_bucket is not None:
-                    byte_bucket.acquire(batch_byte_sizes[sid])
-                _flush_shard(sid)
-
-        # Finalize only opened adapters
-        for sid in adapters:
-            adapters[sid].flush()
-            checkpoint_ids[sid] = adapters[sid].checkpoint()
-
-    # CEL mode: discover num_dbs from data
     if cel_mode:
         from shardyfusion._writer_core import discover_cel_num_dbs
 
-        num_dbs = discover_cel_num_dbs(set(row_counts.keys()))
+        num_dbs = discover_cel_num_dbs(set(state.row_counts))
 
-    # Build results for all known shard IDs
-    all_db_ids = set(row_counts.keys()) | set(range(num_dbs))
-    results: list[ShardAttemptResult] = []
-    for db_id in sorted(all_db_ids):
-        results.append(
-            ShardAttemptResult(
-                db_id=db_id,
-                db_url=db_urls.get(db_id),
-                attempt=attempt,
-                row_count=row_counts.get(db_id, 0),
-                min_key=min_keys.get(db_id),
-                max_key=max_keys.get(db_id),
-                checkpoint_id=checkpoint_ids.get(db_id),
-                writer_info=WriterInfo(attempt=attempt),
-            )
-        )
-
-    return results, num_dbs
+    return _build_single_process_results(
+        state, attempt=attempt, num_dbs=num_dbs
+    ), num_dbs
