@@ -797,11 +797,26 @@ def _spawn_retry_worker(runtime: _RetryParallelRuntime, *, db_id: int) -> None:
     runtime.workers[db_id] = process  # type: ignore[list-item]
 
     if runtime.chunk_refs_by_db[db_id]:
-        _append_attempt_url(runtime, db_id=db_id)
+        attempt = runtime.attempts[db_id]
+        attempt_url_recorded = False
         for chunk in runtime.chunk_refs_by_db[db_id]:
-            queue_obj.put(chunk)
+            if not _put_retry_message(
+                runtime,
+                db_id=db_id,
+                message=chunk,
+                expected_attempt=attempt,
+            ):
+                return
+            if not attempt_url_recorded:
+                _append_attempt_url(runtime, db_id=db_id)
+                attempt_url_recorded = True
     if runtime.dispatch_finished[db_id]:
-        queue_obj.put(None)
+        _put_retry_message(
+            runtime,
+            db_id=db_id,
+            message=None,
+            expected_attempt=runtime.attempts[db_id],
+        )
 
 
 def _start_retry_parallel_runtime(
@@ -971,13 +986,21 @@ def _put_retry_message(
     *,
     db_id: int,
     message: _FileChunkRef | None,
-) -> None:
+    expected_attempt: int | None = None,
+) -> bool:
+    target_attempt = (
+        runtime.attempts[db_id] if expected_attempt is None else expected_attempt
+    )
     while True:
+        if runtime.attempts[db_id] != target_attempt:
+            return False
         _drain_retry_worker_messages(runtime)
         _check_retry_worker_exits(runtime)
+        if runtime.attempts[db_id] != target_attempt:
+            return False
         try:
             runtime.queues[db_id].put(message, timeout=0.1)
-            return
+            return True
         except queue.Full:
             continue
 
@@ -1001,9 +1024,15 @@ def _send_retry_chunk(runtime: _RetryParallelRuntime, *, db_id: int) -> None:
         size=len(payload),
         row_count=len(batch),
     )
+    while not _put_retry_message(
+        runtime,
+        db_id=db_id,
+        message=chunk,
+        expected_attempt=runtime.attempts[db_id],
+    ):
+        continue
     runtime.chunk_refs_by_db[db_id].append(chunk)
     _append_attempt_url(runtime, db_id=db_id)
-    _put_retry_message(runtime, db_id=db_id, message=chunk)
     runtime.chunk_bufs[db_id] = []
     runtime.chunk_byte_sizes[db_id] = 0
 
@@ -1188,7 +1217,12 @@ def _finish_retry_dispatch(
     for db_id in range(num_dbs):
         _send_retry_chunk(runtime, db_id=db_id)
         runtime.dispatch_finished[db_id] = True
-        _put_retry_message(runtime, db_id=db_id, message=None)
+        _put_retry_message(
+            runtime,
+            db_id=db_id,
+            message=None,
+            expected_attempt=runtime.attempts[db_id],
+        )
 
 
 def _send_stop_signals(runtime: _ParallelRuntime, *, num_dbs: int) -> None:
@@ -1245,7 +1279,10 @@ def _collect_retry_parallel_results(
     *,
     num_dbs: int,
 ) -> list[ShardAttemptResult]:
-    deadline = time.monotonic() + _RESULT_COLLECT_TIMEOUT.total_seconds() * num_dbs
+    deadline = time.monotonic() + _retry_result_timeout_seconds(
+        retry_config=runtime.config.shard_retry,
+        num_dbs=num_dbs,
+    )
     while len(runtime.completed_results) < num_dbs:
         _drain_retry_worker_messages(runtime)
         _check_retry_worker_exits(runtime)
@@ -1259,6 +1296,24 @@ def _collect_retry_parallel_results(
         time.sleep(0.05)
 
     return [runtime.completed_results[db_id] for db_id in range(num_dbs)]
+
+
+def _retry_result_timeout_seconds(
+    *,
+    retry_config: RetryConfig | None,
+    num_dbs: int,
+) -> float:
+    timeout_s = _RESULT_COLLECT_TIMEOUT.total_seconds() * num_dbs
+    if retry_config is None:
+        return timeout_s
+
+    delay = retry_config.initial_backoff.total_seconds()
+    total_backoff_s = 0.0
+    for _ in range(retry_config.max_retries):
+        total_backoff_s += delay
+        delay *= retry_config.backoff_multiplier
+
+    return timeout_s + (total_backoff_s * num_dbs)
 
 
 def _collect_parallel_results(

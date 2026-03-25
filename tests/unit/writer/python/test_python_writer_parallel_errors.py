@@ -6,15 +6,17 @@ import os
 from collections.abc import Iterable
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Self
 
 import pytest
 
+import shardyfusion.writer.python._parallel_writer as parallel_writer_mod
 from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
 from shardyfusion.errors import ShardyfusionError
 from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.type_defs import RetryConfig
-from shardyfusion.writer.python._parallel_writer import _write_parallel
+from shardyfusion.writer.python._parallel_writer import _FileChunkRef, _write_parallel
 
 _MAX_PARALLEL_SHARED_MEMORY_BYTES = 256 * 1024 * 1024
 _MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER = 32 * 1024 * 1024
@@ -295,3 +297,157 @@ def test_parallel_retry_respawns_worker_on_unexpected_exit(tmp_path: Path) -> No
         "s3://bucket/test/shards/run_id=retry-worker-exit/db=00000/attempt=00",
         "s3://bucket/test/shards/run_id=retry-worker-exit/db=00000/attempt=01",
     )
+
+
+def test_send_retry_chunk_waits_to_record_chunk_until_queue_accepts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _make_config(
+        num_dbs=1,
+        run_id="queue-after-record",
+        local_root=str(tmp_path / "local"),
+        shard_retry=RetryConfig(
+            max_retries=1,
+            initial_backoff=timedelta(seconds=0),
+        ),
+    )
+    runtime = SimpleNamespace(
+        chunk_bufs=[[(b"k", b"v")]],
+        chunk_byte_sizes=[
+            parallel_writer_mod._SHARED_MEMORY_RECORD_HEADER.size
+            + len(b"k")
+            + len(b"v")
+        ],
+        spool_paths=[tmp_path / "spool.bin"],
+        chunk_refs_by_db=[[]],
+        attempt_urls_by_db=[[]],
+        config=config,
+        run_id="queue-after-record",
+        attempts=[0],
+    )
+
+    call_count = 0
+
+    def _fake_put_retry_message(
+        runtime_obj: object,
+        *,
+        db_id: int,
+        message: _FileChunkRef | None,
+        expected_attempt: int | None = None,
+    ) -> bool:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            assert runtime_obj.chunk_refs_by_db[db_id] == []
+            assert runtime_obj.attempt_urls_by_db[db_id] == []
+            assert message is not None
+            return False
+        return True
+
+    monkeypatch.setattr(
+        parallel_writer_mod,
+        "_put_retry_message",
+        _fake_put_retry_message,
+    )
+
+    parallel_writer_mod._send_retry_chunk(runtime, db_id=0)
+
+    assert call_count == 2
+    assert len(runtime.chunk_refs_by_db[0]) == 1
+    assert runtime.attempt_urls_by_db[0] == [
+        "s3://bucket/test/shards/run_id=queue-after-record/db=00000/attempt=00"
+    ]
+
+
+class _ReplayQueueShouldNotBlock:
+    def put(self, item: object, timeout: float | None = None) -> None:
+        raise AssertionError("replay should route through _put_retry_message")
+
+
+class _ReplayProcess:
+    exitcode: int | None = None
+
+    def start(self) -> None:
+        pass
+
+
+class _ReplayContext:
+    def Queue(self, maxsize: int) -> _ReplayQueueShouldNotBlock:
+        return _ReplayQueueShouldNotBlock()
+
+    def Process(self, *, target: object, args: tuple[object, ...]) -> _ReplayProcess:
+        return _ReplayProcess()
+
+
+def test_spawn_retry_worker_stops_replay_when_newer_attempt_takes_over(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _make_config(
+        num_dbs=1,
+        run_id="replay-takeover",
+        local_root=str(tmp_path / "local"),
+        shard_retry=RetryConfig(
+            max_retries=2,
+            initial_backoff=timedelta(seconds=0),
+        ),
+    )
+    runtime = SimpleNamespace(
+        ctx=_ReplayContext(),
+        max_queue_size=1,
+        result_queue=object(),
+        failure_queue=object(),
+        config=config,
+        run_id="replay-takeover",
+        factory=_good_factory,
+        attempts=[1],
+        max_writes_per_second=None,
+        max_write_bytes_per_second=None,
+        queues=[None],
+        workers=[None],
+        chunk_refs_by_db=[
+            [
+                _FileChunkRef(path="spool.bin", offset=0, size=1, row_count=1),
+                _FileChunkRef(path="spool.bin", offset=1, size=1, row_count=1),
+            ]
+        ],
+        attempt_urls_by_db=[[]],
+        dispatch_finished=[True],
+    )
+
+    calls: list[_FileChunkRef | None] = []
+
+    def _fake_put_retry_message(
+        runtime_obj: object,
+        *,
+        db_id: int,
+        message: _FileChunkRef | None,
+        expected_attempt: int | None = None,
+    ) -> bool:
+        calls.append(message)
+        return False
+
+    monkeypatch.setattr(
+        parallel_writer_mod,
+        "_put_retry_message",
+        _fake_put_retry_message,
+    )
+
+    parallel_writer_mod._spawn_retry_worker(runtime, db_id=0)
+
+    assert len(calls) == 1
+    assert runtime.attempt_urls_by_db[0] == []
+
+
+def test_retry_result_timeout_includes_retry_backoff_budget() -> None:
+    timeout_s = parallel_writer_mod._retry_result_timeout_seconds(
+        retry_config=RetryConfig(
+            max_retries=4,
+            initial_backoff=timedelta(seconds=1),
+            backoff_multiplier=2.0,
+        ),
+        num_dbs=1,
+    )
+
+    assert timeout_s == pytest.approx(25.0)
