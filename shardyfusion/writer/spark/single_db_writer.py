@@ -2,13 +2,13 @@
 
 import math
 import time
-from pathlib import Path
 from uuid import uuid4
 
 from pyspark import StorageLevel
 from pyspark.sql import DataFrame
 
 from shardyfusion._rate_limiter import RateLimiter, TokenBucket
+from shardyfusion._shard_writer import _RetryAttemptContext, _run_attempts_with_retry
 from shardyfusion._writer_core import (
     ShardAttemptResult,
     assemble_build_result,
@@ -18,7 +18,11 @@ from shardyfusion._writer_core import (
     update_min_max,
 )
 from shardyfusion.config import WriteConfig
-from shardyfusion.errors import ConfigValidationError, ShardyfusionError
+from shardyfusion.errors import (
+    ConfigValidationError,
+    ShardWriteError,
+    ShardyfusionError,
+)
 from shardyfusion.logging import FailureSeverity, log_failure
 from shardyfusion.manifest import BuildResult, WriterInfo
 from shardyfusion.serde import ValueSpec, make_key_encoder
@@ -27,7 +31,6 @@ from shardyfusion.slatedb_adapter import (
     DbAdapterFactory,
     SlateDbFactory,
 )
-from shardyfusion.storage import join_s3
 from shardyfusion.type_defs import KeyInput
 
 from .util import DataFrameCacheContext, SparkConfOverrideContext
@@ -126,15 +129,27 @@ def _write_single_db_impl(
 
     # Phase 3: Stream to single writer
     write_started = time.perf_counter()
-    attempt_result = _stream_to_single_db(
-        df=df_prepared,
-        config=config,
+    attempt_result = _run_attempts_with_retry(
+        db_id=0,
         run_id=run_id,
-        key_col=key_col,
-        value_spec=value_spec,
-        prefetch_partitions=prefetch_partitions,
-        max_writes_per_second=max_writes_per_second,
-        max_write_bytes_per_second=max_write_bytes_per_second,
+        s3_prefix=config.s3_prefix,
+        shard_prefix=config.output.shard_prefix,
+        db_path_template=config.output.db_path_template,
+        local_root=config.output.local_root,
+        retry_config=config.shard_retry,
+        metrics_collector=config.metrics_collector,
+        started=started,
+        attempt_fn=lambda ctx: _stream_to_single_db(
+            df=df_prepared,
+            config=config,
+            run_id=run_id,
+            key_col=key_col,
+            value_spec=value_spec,
+            prefetch_partitions=prefetch_partitions,
+            max_writes_per_second=max_writes_per_second,
+            max_write_bytes_per_second=max_write_bytes_per_second,
+            attempt_ctx=ctx,
+        ),
     )
     write_duration_ms = int((time.perf_counter() - write_started) * 1000)
 
@@ -181,27 +196,15 @@ def _stream_to_single_db(
     prefetch_partitions: bool,
     max_writes_per_second: float | None,
     max_write_bytes_per_second: float | None,
+    attempt_ctx: _RetryAttemptContext,
 ) -> ShardAttemptResult:
     """Stream DataFrame rows to a single shard adapter on the driver."""
 
     db_id = 0
-    attempt = 0
+    attempt = attempt_ctx.attempt
     key_encoder = make_key_encoder(config.key_encoding)
-
-    db_rel_path = config.output.db_path_template.format(db_id=db_id)
-    db_url = join_s3(
-        config.s3_prefix,
-        config.output.shard_prefix,
-        f"run_id={run_id}",
-        db_rel_path,
-        f"attempt={attempt:02d}",
-    )
-    local_dir = (
-        Path(config.output.local_root)
-        / f"run_id={run_id}"
-        / f"db={db_id:05d}"
-        / f"attempt={attempt:02d}"
-    )
+    db_url = attempt_ctx.db_url
+    local_dir = attempt_ctx.local_dir
     local_dir.mkdir(parents=True, exist_ok=True)
 
     factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory(
@@ -267,7 +270,7 @@ def _stream_to_single_db(
             rows_written=row_count,
             include_traceback=True,
         )
-        raise ShardyfusionError(
+        raise ShardWriteError(
             f"Single-db write failed for db_id={db_id}, attempt={attempt}: {exc}"
         ) from exc
 
@@ -283,4 +286,5 @@ def _stream_to_single_db(
             attempt=attempt,
             duration_ms=int((time.perf_counter() - write_started) * 1000),
         ),
+        all_attempt_urls=(*attempt_ctx.prior_attempt_urls, db_url),
     )

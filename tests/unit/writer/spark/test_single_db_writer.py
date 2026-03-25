@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from shardyfusion.manifest import BuildResult
 from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.serde import ValueSpec
 from shardyfusion.sharding_types import KeyEncoding
+from shardyfusion.type_defs import RetryConfig
 from shardyfusion.writer.spark.single_db_writer import write_single_db
 from shardyfusion.writer.spark.writer import DataFrameCacheContext
 from tests.helpers.tracking import (
@@ -659,6 +661,66 @@ class _FailingFactory:
 
     def __call__(self, *, db_url: str, local_dir: Path) -> _FailingAdapter:
         return _FailingAdapter(self._error)
+
+
+class _FailOnceAdapter(TrackingAdapter):
+    def __init__(self, *, error: Exception | None = None) -> None:
+        super().__init__()
+        self._error = error
+
+    def write_batch(self, pairs):  # type: ignore[override]
+        if self._error is not None:
+            raise self._error
+        super().write_batch(pairs)
+
+
+class _FailOnceFactory:
+    def __init__(self) -> None:
+        self.urls: list[str] = []
+        self.calls = 0
+
+    def __call__(self, *, db_url: str, local_dir: Path) -> _FailOnceAdapter:
+        self.urls.append(db_url)
+        adapter = _FailOnceAdapter(
+            error=RuntimeError("boom on first single-db attempt")
+            if self.calls == 0
+            else None
+        )
+        self.calls += 1
+        return adapter
+
+
+@pytest.mark.spark
+def test_single_db_retry_uses_new_attempt_id(
+    spark: SparkSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "shardyfusion.writer.spark.single_db_writer.cleanup_losers",
+        lambda *args, **kwargs: 0,
+    )
+    factory = _FailOnceFactory()
+    config = _make_config(factory=factory, batch_size=2)
+    config.shard_retry = RetryConfig(
+        max_retries=1,
+        initial_backoff=timedelta(seconds=0),
+    )
+    df = spark.createDataFrame([(k,) for k in range(5)], ["key"])
+
+    result = write_single_db(
+        df,
+        config,
+        key_col="key",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+    )
+
+    assert result.winners[0].attempt == 1
+    assert result.winners[0].db_url is not None
+    assert result.winners[0].db_url.endswith("attempt=01")
+    assert factory.urls == [
+        "s3://bucket/prefix/shards/run_id=test-run/db=00000/attempt=00",
+        "s3://bucket/prefix/shards/run_id=test-run/db=00000/attempt=01",
+    ]
 
 
 @pytest.mark.spark

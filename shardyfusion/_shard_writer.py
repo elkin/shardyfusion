@@ -62,6 +62,16 @@ class ShardWriteParams:
     started: float
 
 
+@dataclass(slots=True, frozen=True)
+class _RetryAttemptContext:
+    """Materialized URL/dir context for one retryable attempt."""
+
+    attempt: int
+    db_url: str
+    local_dir: Path
+    prior_attempt_urls: tuple[str, ...]
+
+
 # ---------------------------------------------------------------------------
 # URL / directory helpers
 # ---------------------------------------------------------------------------
@@ -294,6 +304,89 @@ def _flush_batch(
 # ---------------------------------------------------------------------------
 
 
+def _run_attempts_with_retry(
+    *,
+    db_id: int,
+    run_id: str,
+    s3_prefix: str,
+    shard_prefix: str,
+    db_path_template: str,
+    local_root: str,
+    retry_config: RetryConfig | None,
+    metrics_collector: MetricsCollector | None,
+    started: float,
+    attempt_fn: Callable[[_RetryAttemptContext], ShardAttemptResult],
+) -> ShardAttemptResult:
+    """Run ``attempt_fn`` with retry-specific attempt IDs and metadata."""
+
+    max_attempts = 1 + (retry_config.max_retries if retry_config else 0)
+    delay = retry_config.initial_backoff.total_seconds() if retry_config else 0.0
+    multiplier = retry_config.backoff_multiplier if retry_config else 1.0
+
+    last_exc: BaseException | None = None
+    failed_attempt_urls: list[str] = []
+
+    for attempt in range(max_attempts):
+        db_url = make_shard_url(
+            s3_prefix,
+            shard_prefix,
+            run_id,
+            db_path_template,
+            db_id,
+            attempt,
+        )
+        local_dir = make_shard_local_dir(local_root, run_id, db_id, attempt)
+        ctx = _RetryAttemptContext(
+            attempt=attempt,
+            db_url=db_url,
+            local_dir=local_dir,
+            prior_attempt_urls=tuple(failed_attempt_urls),
+        )
+
+        try:
+            return attempt_fn(ctx)
+        except ShardyfusionError as exc:
+            last_exc = exc
+            if not exc.retryable or attempt >= max_attempts - 1:
+                if attempt > 0 and metrics_collector is not None:
+                    metrics_collector.emit(
+                        MetricEvent.SHARD_WRITE_RETRY_EXHAUSTED,
+                        {
+                            "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                            "db_id": db_id,
+                            "attempts": attempt + 1,
+                        },
+                    )
+                raise
+
+            failed_attempt_urls.append(db_url)
+            log_failure(
+                "shard_write_retrying",
+                severity=FailureSeverity.TRANSIENT,
+                logger=_logger,
+                error=exc,
+                run_id=run_id,
+                db_id=db_id,
+                attempt=attempt,
+                next_attempt=attempt + 1,
+                backoff_s=delay,
+            )
+            if metrics_collector is not None:
+                metrics_collector.emit(
+                    MetricEvent.SHARD_WRITE_RETRIED,
+                    {
+                        "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                        "db_id": db_id,
+                        "attempt": attempt,
+                        "backoff_s": delay,
+                    },
+                )
+            time.sleep(delay)
+            delay *= multiplier
+
+    raise last_exc  # type: ignore[misc]
+
+
 def write_shard_with_retry(
     *,
     db_id: int,
@@ -331,24 +424,8 @@ def write_shard_with_retry(
         ShardWriteError: If all attempts fail with retryable errors.
         ShardyfusionError: Immediately on non-retryable errors.
     """
-    max_attempts = 1 + (retry_config.max_retries if retry_config else 0)
-    delay = retry_config.initial_backoff.total_seconds() if retry_config else 0.0
-    multiplier = retry_config.backoff_multiplier if retry_config else 1.0
 
-    last_exc: BaseException | None = None
-    failed_attempt_urls: list[str] = []
-
-    for attempt in range(max_attempts):
-        db_url = make_shard_url(
-            s3_prefix,
-            shard_prefix,
-            run_id,
-            db_path_template,
-            db_id,
-            attempt,
-        )
-        local_dir = make_shard_local_dir(local_root, run_id, db_id, attempt)
-
+    def _attempt_once(ctx: _RetryAttemptContext) -> ShardAttemptResult:
         ops_limiter: RateLimiter | None = None
         if max_writes_per_second is not None:
             ops_limiter = TokenBucket(
@@ -365,10 +442,10 @@ def write_shard_with_retry(
 
         params = ShardWriteParams(
             db_id=db_id,
-            attempt=attempt,
+            attempt=ctx.attempt,
             run_id=run_id,
-            db_url=db_url,
-            local_dir=local_dir,
+            db_url=ctx.db_url,
+            local_dir=ctx.local_dir,
             factory=factory,
             key_encoder=key_encoder,
             batch_size=batch_size,
@@ -378,53 +455,25 @@ def write_shard_with_retry(
             started=started,
         )
 
-        try:
-            return write_shard_core(
-                params,
-                rows_fn(),
-                writer_info_base=writer_info_base,
-                prior_attempt_urls=tuple(failed_attempt_urls),
-            )
-        except ShardyfusionError as exc:
-            last_exc = exc
-            if not exc.retryable or attempt >= max_attempts - 1:
-                if attempt > 0 and metrics_collector is not None:
-                    metrics_collector.emit(
-                        MetricEvent.SHARD_WRITE_RETRY_EXHAUSTED,
-                        {
-                            "elapsed_ms": int((time.perf_counter() - started) * 1000),
-                            "db_id": db_id,
-                            "attempts": attempt + 1,
-                        },
-                    )
-                raise
-            failed_attempt_urls.append(db_url)
-            log_failure(
-                "shard_write_retrying",
-                severity=FailureSeverity.TRANSIENT,
-                logger=_logger,
-                error=exc,
-                run_id=run_id,
-                db_id=db_id,
-                attempt=attempt,
-                next_attempt=attempt + 1,
-                backoff_s=delay,
-            )
-            if metrics_collector is not None:
-                metrics_collector.emit(
-                    MetricEvent.SHARD_WRITE_RETRIED,
-                    {
-                        "elapsed_ms": int((time.perf_counter() - started) * 1000),
-                        "db_id": db_id,
-                        "attempt": attempt,
-                        "backoff_s": delay,
-                    },
-                )
-            time.sleep(delay)
-            delay *= multiplier
+        return write_shard_core(
+            params,
+            rows_fn(),
+            writer_info_base=writer_info_base,
+            prior_attempt_urls=ctx.prior_attempt_urls,
+        )
 
-    # Unreachable, but satisfies type checker.
-    raise last_exc  # type: ignore[misc]
+    return _run_attempts_with_retry(
+        db_id=db_id,
+        run_id=run_id,
+        s3_prefix=s3_prefix,
+        shard_prefix=shard_prefix,
+        db_path_template=db_path_template,
+        local_root=local_root,
+        retry_config=retry_config,
+        metrics_collector=metrics_collector,
+        started=started,
+        attempt_fn=_attempt_once,
+    )
 
 
 # ---------------------------------------------------------------------------
