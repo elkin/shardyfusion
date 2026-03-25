@@ -53,20 +53,29 @@ def test_python_writer_publishes_manifest_and_current_to_local_s3(
 
     assert len(result.winners) == 4
     assert result.manifest_ref.startswith(f"s3://{bucket}/python-writer/manifests/")
+    assert result.run_record_ref is not None
+    assert result.run_record_ref.startswith(f"s3://{bucket}/python-writer/runs/")
 
     client = local_s3_service["client"]
     manifest_key = result.manifest_ref.split(f"s3://{bucket}/", 1)[1]
+    run_record_key = result.run_record_ref.split(f"s3://{bucket}/", 1)[1]
     current_key = "python-writer/_CURRENT"
 
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
+    run_record_obj = client.get_object(Bucket=bucket, Key=run_record_key)
     current_obj = client.get_object(Bucket=bucket, Key=current_key)
 
     manifest_payload = yaml.safe_load(manifest_obj["Body"].read())
+    run_record_payload = yaml.safe_load(run_record_obj["Body"].read())
     current_payload = json.loads(current_obj["Body"].read().decode("utf-8"))
 
     assert manifest_payload["required"]["run_id"] == "python-writer-local-s3"
     assert manifest_payload["required"]["num_dbs"] == 4
     assert len(manifest_payload["shards"]) == 4
+    assert run_record_payload["run_id"] == "python-writer-local-s3"
+    assert run_record_payload["status"] == "succeeded"
+    assert run_record_payload["manifest_ref"] == result.manifest_ref
+    assert run_record_payload["s3_prefix"] == s3_prefix
     assert current_payload["manifest_ref"] == result.manifest_ref
     assert sum(w.row_count for w in result.winners) == 24
 
@@ -113,6 +122,7 @@ def test_python_writer_parallel_publishes_manifest_and_current_to_local_s3(
     assert result.manifest_ref.startswith(
         f"s3://{bucket}/python-writer-parallel/manifests/"
     )
+    assert result.run_record_ref is not None
 
     client = local_s3_service["client"]
     manifest_key = result.manifest_ref.split(f"s3://{bucket}/", 1)[1]

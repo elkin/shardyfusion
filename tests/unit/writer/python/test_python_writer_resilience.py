@@ -10,6 +10,7 @@ import pytest
 
 from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
 from shardyfusion.manifest_store import InMemoryManifestStore
+from shardyfusion.run_registry import InMemoryRunRegistry, RunStatus
 from shardyfusion.sharding_types import KeyEncoding, ShardingSpec
 from shardyfusion.writer.python import write_sharded
 
@@ -63,6 +64,7 @@ def _make_config(
     num_dbs: int = 4,
     *,
     factory: _TrackingFactory | None = None,
+    run_registry: InMemoryRunRegistry | None = None,
     batch_size: int = 50_000,
     sharding: ShardingSpec | None = None,
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
@@ -76,6 +78,7 @@ def _make_config(
         sharding=sharding or ShardingSpec(),
         output=OutputOptions(run_id="test-run"),
         manifest=ManifestOptions(store=InMemoryManifestStore()),
+        run_registry=run_registry,
     )
 
 
@@ -245,3 +248,36 @@ class TestAdapterCloseFailureLogging:
 
         # ExitStack closes in LIFO order — all 3 adapters should be closed
         assert len(close_attempts) == 3
+
+
+class TestRunRecordFailureStatus:
+    def test_failed_write_marks_run_record_failed(self) -> None:
+        registry = InMemoryRunRegistry()
+
+        class _AlwaysFailAdapter(_TrackingAdapter):
+            def write_batch(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
+                raise RuntimeError("adapter write failed")
+
+        class _AlwaysFailFactory:
+            def __call__(self, *, db_url: str, local_dir: Path) -> _AlwaysFailAdapter:
+                return _AlwaysFailAdapter()
+
+        config = _make_config(
+            num_dbs=2,
+            factory=None,
+            run_registry=registry,
+        )
+        config.adapter_factory = _AlwaysFailFactory()
+
+        with pytest.raises(RuntimeError, match="adapter write failed"):
+            write_sharded(
+                list(range(4)),
+                config,
+                key_fn=lambda r: r,
+                value_fn=lambda r: b"v",
+            )
+
+        ref = next(iter(registry._records))
+        record = registry.load(ref)
+        assert record.status is RunStatus.FAILED
+        assert record.error_type == "RuntimeError"

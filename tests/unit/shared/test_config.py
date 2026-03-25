@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from shardyfusion.config import WriteConfig
+from shardyfusion.config import OutputOptions, WriteConfig
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.sharding_types import KeyEncoding
 
@@ -29,6 +29,7 @@ def test_write_config_accepts_valid_values() -> None:
         {"s3_prefix": "not-s3"},
         {"key_encoding": "u16be"},
         {"sharding": "invalid"},
+        {"output": OutputOptions(run_registry_prefix="bad/path")},
     ],
 )
 def test_write_config_rejects_invalid_values(kwargs: dict[str, object]) -> None:
@@ -48,3 +49,12 @@ def test_write_config_accepts_string_key_encoding() -> None:
         key_encoding="u32be",
     )
     assert config.key_encoding == KeyEncoding.U32BE
+
+
+def test_write_config_accepts_custom_run_registry_prefix() -> None:
+    config = WriteConfig(
+        num_dbs=4,
+        s3_prefix="s3://bucket/prefix",
+        output=OutputOptions(run_registry_prefix="writer-runs"),
+    )
+    assert config.output.run_registry_prefix == "writer-runs"
