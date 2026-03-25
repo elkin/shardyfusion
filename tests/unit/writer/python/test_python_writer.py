@@ -341,6 +341,24 @@ def _make_parallel_config(
     )
 
 
+def _winner_summary(result: BuildResult) -> dict[int, tuple[int, object, object]]:
+    return {
+        winner.db_id: (winner.row_count, winner.min_key, winner.max_key)
+        for winner in result.winners
+    }
+
+
+def _winner_contents_by_db(
+    root_dir: str,
+    result: BuildResult,
+) -> dict[int, dict[bytes, bytes]]:
+    contents: dict[int, dict[bytes, bytes]] = {}
+    for winner in result.winners:
+        assert winner.db_url is not None
+        contents[winner.db_id] = file_backed_load_db(root_dir, winner.db_url)
+    return contents
+
+
 def test_parallel_hash_routing_round_trip(tmp_path: Path) -> None:
     root_dir = str(tmp_path / "file_backed")
     factory = file_backed_adapter_factory(root_dir)
@@ -409,6 +427,91 @@ def test_parallel_batch_flushing(tmp_path: Path) -> None:
         shard_data = file_backed_load_db(root_dir, winner.db_url)
         all_kv.update(shard_data)
     assert len(all_kv) == 7
+
+
+def test_parallel_matches_single_process_output_contract(tmp_path: Path) -> None:
+    records = list(range(53))
+
+    single_root = str(tmp_path / "single" / "file_backed")
+    single_config = _make_parallel_config(
+        tmp_path / "single",
+        file_backed_adapter_factory(single_root),
+        num_dbs=4,
+        batch_size=20,
+    )
+    single_result = write_sharded(
+        records,
+        single_config,
+        key_fn=lambda r: r,
+        value_fn=lambda r: f"value-{r % 7}-{'x' * (r % 5)}".encode(),
+    )
+
+    parallel_root = str(tmp_path / "parallel" / "file_backed")
+    parallel_config = _make_parallel_config(
+        tmp_path / "parallel",
+        file_backed_adapter_factory(parallel_root),
+        num_dbs=4,
+        batch_size=20,
+    )
+    parallel_result = write_sharded(
+        records,
+        parallel_config,
+        key_fn=lambda r: r,
+        value_fn=lambda r: f"value-{r % 7}-{'x' * (r % 5)}".encode(),
+        parallel=True,
+    )
+
+    assert single_result.stats.rows_written == parallel_result.stats.rows_written == 53
+    assert _winner_summary(single_result) == _winner_summary(parallel_result)
+    assert _winner_contents_by_db(single_root, single_result) == _winner_contents_by_db(
+        parallel_root, parallel_result
+    )
+
+
+def test_parallel_shared_memory_backpressure_preserves_output_contract(
+    tmp_path: Path,
+) -> None:
+    records = list(range(15))
+
+    def value_fn(record: int) -> bytes:
+        return (b"payload-" + str(record).encode()) + (b"x" * 48)
+
+    baseline_root = str(tmp_path / "baseline" / "file_backed")
+    baseline_config = _make_parallel_config(
+        tmp_path / "baseline",
+        file_backed_adapter_factory(baseline_root),
+        num_dbs=1,
+        batch_size=20,
+    )
+    baseline_result = write_sharded(
+        records,
+        baseline_config,
+        key_fn=lambda r: r,
+        value_fn=value_fn,
+        parallel=True,
+    )
+
+    throttled_root = str(tmp_path / "throttled" / "file_backed")
+    throttled_config = _make_parallel_config(
+        tmp_path / "throttled",
+        file_backed_adapter_factory(throttled_root),
+        num_dbs=1,
+        batch_size=20,
+    )
+    throttled_result = write_sharded(
+        records,
+        throttled_config,
+        key_fn=lambda r: r,
+        value_fn=value_fn,
+        parallel=True,
+        max_parallel_shared_memory_bytes=176,
+        max_parallel_shared_memory_bytes_per_worker=176,
+    )
+
+    assert _winner_summary(baseline_result) == _winner_summary(throttled_result)
+    assert _winner_contents_by_db(
+        baseline_root, baseline_result
+    ) == _winner_contents_by_db(throttled_root, throttled_result)
 
 
 def test_parallel_data_integrity(tmp_path: Path) -> None:
