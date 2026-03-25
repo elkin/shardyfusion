@@ -125,7 +125,6 @@ def write_sharded(
         max_parallel_shared_memory_bytes_per_worker,
         field_name="max_parallel_shared_memory_bytes_per_worker",
     )
-    _validate_sharding(config)
     num_dbs = _resolve_num_dbs_before_sharding(records, config)
     run_id = config.output.run_id or uuid4().hex
     started = time.perf_counter()
@@ -250,12 +249,6 @@ def write_sharded(
             )
 
     return result
-
-
-def _validate_sharding(config: WriteConfig) -> None:
-    # ShardingSpec.__post_init__ handles most validation.
-    # CEL without boundaries is valid (direct mode: CEL output IS the shard ID).
-    pass
 
 
 def _resolve_num_dbs_before_sharding(
