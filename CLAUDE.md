@@ -11,6 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Pure-Python iterator-based writer (no Spark/Java needed)
 - Pluggable storage backends: SlateDB (default) and SQLite-on-S3
 - Manifest + `_CURRENT` publishing protocol (default S3, pluggable interfaces)
+- Run registry with one YAML run record per writer invocation for deferred cleanup workflows
 - Reader-side routing helpers for service-side `get` and `multi_get`
 - `shardy` CLI for interactive and batch lookups against published snapshots
 - Token-bucket rate limiting for all writer paths (`max_writes_per_second`, `max_write_bytes_per_second`)
@@ -75,8 +76,8 @@ The library is split into six independent paths that share config, manifest mode
 ```
 Layer 0 — Core types & errors: errors.py, type_defs.py (incl. RetryConfig), sharding_types.py, ordering.py, logging.py (incl. LogContext/JsonFormatter), metrics/ (package: _events.py, _protocol.py)
 Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py, cel.py (CEL compile/evaluate/boundaries, optional cel extra)
-Layer 2 — Storage, routing, manifest: storage.py (w/ RetryConfig, list_prefixes), manifest.py, routing.py, manifest_store.py (delegates to list_prefixes), async_manifest_store.py, db_manifest_store.py
-Layer 3 — Writer core: _writer_core.py (shared by all writers; empty_shard_result, cleanup: CleanupAction, cleanup_stale_attempts, cleanup_old_runs), _shard_writer.py (shared shard-write loop + retry: write_shard_core, write_shard_with_retry, ShardWriteParams)
+Layer 2 — Storage, routing, manifest, run registry: storage.py (w/ RetryConfig, list_prefixes), manifest.py, routing.py, manifest_store.py (delegates to list_prefixes), async_manifest_store.py, db_manifest_store.py, run_registry.py
+Layer 3 — Writer core: _writer_core.py (shared by all writers; assemble_build_result, cleanup_losers, CleanupAction, cleanup_stale_attempts, cleanup_old_runs), _shard_writer.py (shared shard-write loop + retry: write_shard_core, write_shard_with_retry, ShardWriteParams)
 Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/ (reader.py, concurrent_reader.py, _base.py, _types.py, _state.py), reader/async_reader.py, cli/app.py
 Layer 5 — Adapters & testing: slatedb_adapter.py, sqlite_adapter.py (optional apsw for range-read VFS), testing.py
 Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus extra), metrics/otel.py (metrics-otel extra)
@@ -89,27 +90,27 @@ Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus ext
 2. `writer/spark/sharding.py` adds `_slatedb_db_id` column via `mapInArrow` (hash or CEL, all Python-based), then converts the DataFrame to a pair RDD partitioned so partition index = db_id.
 3. Each partition writes one shard to S3 at a shard path (`shards/run_id=.../db=XXXXX/attempt=YY/`).
 4. The driver streams results via `toLocalIterator()` and selects deterministic winners (lowest attempt → task_attempt_id → URL).
-5. A manifest artifact is built and published, and the `_CURRENT` pointer is updated.
+5. A manifest artifact is built and published, the `_CURRENT` pointer is updated, and the run record is marked terminal (`succeeded` or `failed`).
 
 **Dask writer** (`write_sharded`):
 1. Entry point in `writer/dask/writer.py`. Accepts `dd.DataFrame` with `key_col`/`value_spec`.
 2. `writer/dask/sharding.py` adds `_slatedb_db_id` column via Python routing function applied per partition. For CEL sharding, uses `pandas_rows_to_contexts()` + `route_cel()` with full row context (supporting non-key columns).
 3. Shuffles by `_slatedb_db_id`, then `map_partitions` writes each shard. Empty shards (no rows in partition) are omitted from the manifest; `select_winners()` filters them out.
 4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `verify_routing_agreement()`.
-5. Uses the same `_writer_core.py` functions for winner selection, manifest building, and publishing.
+5. Uses the same `_writer_core.py` functions for winner selection, manifest building, publishing, and the same run-record lifecycle helper.
 
 **Ray writer** (`write_sharded`):
 1. Entry point in `writer/ray/writer.py`. Accepts `ray.data.Dataset` with `key_col`/`value_spec`.
 2. `writer/ray/sharding.py` adds `_slatedb_db_id` column via Arrow batch format (`map_batches` with `batch_format="pyarrow"`, `zero_copy_batch=True`). For CEL sharding, uses `route_cel_batch()` directly on Arrow batches (same approach as Spark).
 3. Repartitions by `_slatedb_db_id` using hash shuffle (`DataContext.shuffle_strategy = "HASH_SHUFFLE"`; saved/restored). Then `map_batches` writes each shard with `batch_format="pandas"`. Empty shards (no rows in partition) are omitted from the manifest; `select_winners()` filters them out.
 4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `_verify_routing_agreement()`.
-5. Uses the same `_writer_core.py` functions for winner selection, manifest building, and publishing.
+5. Uses the same `_writer_core.py` functions for winner selection, manifest building, publishing, and the same run-record lifecycle helper.
 
 **Python writer** (`write_sharded`):
 1. Entry point in `writer/python/writer.py`. Accepts `Iterable[T]` with `key_fn`/`value_fn` callables.
 2. Supports single-process (all adapters open simultaneously via `contextlib.ExitStack`) or multi-process (`parallel=True`, one worker per shard via `multiprocessing.spawn`).
 3. Optional rate limiting via `max_writes_per_second` and `max_write_bytes_per_second` (token-bucket in `_rate_limiter.py`). Single-process mode supports global memory ceilings via `max_total_batched_items` and `max_total_batched_bytes` to prevent OOM when buffering across many shards.
-4. Uses the same `_writer_core.py` functions for routing, winner selection, manifest building, and publishing.
+4. Uses the same `_writer_core.py` functions for routing, winner selection, manifest building, publishing, and the same run-record lifecycle helper.
 
 ### Read Pipeline
 
@@ -158,6 +159,25 @@ Manifest S3 keys are timestamp-prefixed (e.g., `2026-03-14T10:30:00.000000Z_run_
 
 Two-phase publish: manifest is written first, then `_CURRENT` pointer is updated. Both use `storage.put_bytes()` with exponential-backoff retries (3 attempts, 1s→2s→4s) for transient S3 errors.
 
+**Run record** (YAML, published to `s3_prefix/<run_registry_prefix>/{timestamp}_run_id={run_id}_{uuid}/run.yaml`):
+```yaml
+format_version: 1
+run_id: "..."
+writer_type: "spark"  # or dask / ray / python / single-db variant
+status: running       # running | succeeded | failed
+started_at: "..."
+updated_at: "..."
+lease_expires_at: "..."
+s3_prefix: "s3://bucket/prefix"
+shard_prefix: "shards"
+db_path_template: "db={db_id:05d}"
+manifest_ref: null
+error_type: null
+error_message: null
+```
+
+Run records are operational writer metadata. Readers do not consume them. `BuildResult.run_record_ref` points to the record when one was published.
+
 **DB manifest stores** use a `shardyfusion_manifests` table for manifest payloads and an append-only `shardyfusion_pointer` table for current-pointer tracking (one INSERT per `publish()` or `set_current()` call). `load_current()` reads the newest pointer row; falls back to the newest manifest row if the pointer table is empty.
 
 ### Key Abstractions
@@ -168,6 +188,7 @@ These are all Protocols, allowing user-provided implementations:
 |---|---|---|
 | `ManifestBuilder` | `YamlManifestBuilder` | Manifest serialization format |
 | `ManifestStore` | `S3ManifestStore` | Unified manifest read/write (publish + load + list + set_current) |
+| `RunRegistry` | `S3RunRegistry` | Run-scoped writer lifecycle record storage |
 | `AsyncManifestStore` | `AsyncS3ManifestStore` | Async read-only manifest loading (load + list) |
 | `AsyncShardReader` | `_SlateDbAsyncShardReader` | Async shard reader (get/close) |
 | `AsyncShardReaderFactory` | `AsyncSlateDbReaderFactory` | Async factory for opening shard readers |
@@ -283,6 +304,7 @@ Top-level exports from `shardyfusion.__init__` (`__all__`, grouped only for read
 - Credentials/connectivity: `CredentialProvider`, `EnvCredentialProvider`, `RetryConfig`, `S3ConnectionOptions`, `S3Credentials`, `StaticCredentialProvider`
 - Errors: `ConfigValidationError`, `ManifestBuildError`, `ManifestParseError`, `ManifestStoreError`, `PoolExhaustedError`, `PublishCurrentError`, `PublishManifestError`, `ReaderStateError`, `S3TransientError`, `ShardAssignmentError`, `ShardCoverageError`, `ShardWriteError`, `ShardyfusionError`, `SlateDbApiError`
 - Manifest/store: `InMemoryManifestStore`, `ManifestArtifact`, `ManifestBuilder`, `ManifestRef`, `ManifestShardingSpec`, `ManifestStore`, `RequiredBuildMeta`, `RequiredShardMeta`, `S3ManifestStore`, `YamlManifestBuilder`, `parse_manifest`
+- Run registry: `InMemoryRunRegistry`, `RunRecord`, `RunRegistry`, `RunStatus`, `S3RunRegistry`
 - Reader/routing: `AsyncManifestStore`, `AsyncS3ManifestStore`, `AsyncShardReader`, `AsyncShardReaderFactory`, `AsyncShardReaderHandle`, `AsyncShardedReader`, `AsyncSlateDbReaderFactory`, `ConcurrentShardedReader`, `ReaderHealth`, `ShardDetail`, `ShardReader`, `ShardReaderFactory`, `ShardReaderHandle`, `ShardedReader`, `SlateDbReaderFactory`, `SnapshotInfo`, `SnapshotRouter`
 - Adapters: `DbAdapter`, `DbAdapterFactory`, `SlateDbFactory`
 - Rate limiting: `AcquireResult`, `RateLimiter`, `ThreadSafeTokenBucket`, `TokenBucket`
@@ -307,7 +329,7 @@ SQLite backend adapters are imported from their module (not re-exported at top l
 - **`tests/unit/backend/sqlite/`** — SQLite adapter unit tests (`test_sqlite_adapter.py`, `test_sqlite_range_reader.py`). Range-read tests require `apsw`.
 - **`tests/integration/`** — S3 via `moto`; Spark writer tests require Spark + Java. `backend/sqlite/` tests SQLite adapter against moto S3.
 - **`tests/e2e/`** — Garage S3 via compose; `just d-e2e`
-- **`tests/helpers/`** — `s3_test_scenarios.py` (shared scenarios for moto/Garage), `smoke_scenarios.py` (shared smoke E2E data and scenarios for HASH/CEL sharding across all writer frameworks), `tracking.py` (test doubles: `TrackingAdapter`, `TrackingFactory`, `RecordingTokenBucket`, `InMemoryPublisher`)
+- **`tests/helpers/`** — `s3_test_scenarios.py` (shared scenarios for moto/Garage), `smoke_scenarios.py` (shared smoke E2E data and scenarios for HASH/CEL sharding across all writer frameworks), `run_record_assertions.py` (shared run-record content assertions), `tracking.py` (test doubles: `TrackingAdapter`, `TrackingFactory`, `RecordingTokenBucket`, `InMemoryPublisher`)
 - Markers: `@pytest.mark.spark`, `@pytest.mark.dask`, `@pytest.mark.ray`, `@pytest.mark.cel`, `@pytest.mark.e2e`
 - **CEL tests**: require `cel` extra (`cel-expr-python`). Use `@pytest.mark.cel` marker. Skipped via `pytest.importorskip()` when the extra is not installed.
 - **Contract tests**: hypothesis property tests in `tests/unit/writer/core/test_routing_contract.py`, framework cross-checks in `writer/spark/`, `writer/dask/`, and `writer/ray/`
@@ -342,7 +364,7 @@ SQLite backend adapters are imported from their module (not re-exported at top l
 - **Ray tests need `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0`**: Ray ≥ 2.47 auto-detects `uv run` in the process tree and overrides worker Python to create fresh venvs. The env var is set in `tox.ini` for raywriter envs. For direct pytest, either set the var or use `uv run --extra writer-ray pytest ...`.
 - **`acquire_async()` is part of the `RateLimiter` Protocol**: Uses `asyncio.sleep` — safe for event loops. The sync `acquire()` uses `time.sleep` and must not be called from async code.
 - **`try_acquire()` is pure arithmetic**: Guaranteed non-blocking (replenish + compare + deduct). Safe to call from async code directly without `to_thread()`.
-- **`RetryConfig` usage**: Used in two places: (1) `S3ManifestStore` / `AsyncS3ManifestStore` for transient S3 errors, and (2) `WriteConfig.shard_retry` for shard write retries (Dask/Ray only; Spark relies on speculative execution; Python writer deferred). When `shard_retry` is set, `write_shard_with_retry()` in `_shard_writer.py` retries failed shard writes with exponential backoff, each attempt writing to a new S3 path (`attempt=00`, `attempt=01`, ...).
+- **`RetryConfig` usage**: Used in two places: (1) `S3ManifestStore` / `AsyncS3ManifestStore` for transient S3 errors, and (2) `WriteConfig.shard_retry` for retryable writer paths. `shard_retry` currently covers Dask/Ray sharded writes, Spark/Dask/Ray `write_single_db()`, and Python parallel writes. Spark sharded writes still rely on Spark task retry/speculation. When `shard_retry` is set, the retry path writes each attempt to a fresh S3 prefix (`attempt=00`, `attempt=01`, ...).
 - **`cel-expr-python` does not support Python 3.14**: The `cel` extra depends on `cel-expr-python` which has no py3.14 wheels. CEL tests are skipped on py3.14 via `pytest.importorskip()`.
 
 ## Environment Notes

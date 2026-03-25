@@ -10,13 +10,13 @@
   - Reader path (async): `reader/async_reader.py`, `routing.py`, `async_manifest_store.py` (`AsyncS3ManifestStore`)
   - CLI path: `cli/app.py`, `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
   - SQLite backend: `sqlite_adapter.py` (writer + download-and-cache reader + range-read VFS reader + async wrappers)
-  - Shared models/protocols: `config.py`, `credentials.py`, `manifest.py`, `manifest_store.py`, `async_manifest_store.py`, `storage.py`, `testing.py`
+  - Shared models/protocols: `config.py`, `credentials.py`, `manifest.py`, `manifest_store.py`, `async_manifest_store.py`, `run_registry.py`, `storage.py`, `testing.py`
   - Core utilities: `errors.py`, `type_defs.py`, `sharding_types.py`, `ordering.py`, `logging.py`, `serde.py`, `cel.py`, `_rate_limiter.py`, `metrics/`
 - Tests: `tests/`
   - Unit: `tests/unit/shared`, `tests/unit/read`, `tests/unit/read_async`, `tests/unit/writer`, `tests/unit/backend/{slatedb,sqlite}`, `tests/unit/cel`, `tests/unit/metrics`, `tests/unit/cli`
   - Integration: `tests/integration/read`, `tests/integration/writer`, `tests/integration/backend/sqlite`
   - E2E: `tests/e2e/read`, `tests/e2e/writer` (Garage S3 via compose)
-  - Shared helpers: `tests/helpers/s3_test_scenarios.py` (backend-agnostic test scenarios)
+  - Shared helpers: `tests/helpers/s3_test_scenarios.py`, `tests/helpers/smoke_scenarios.py`, `tests/helpers/run_record_assertions.py`
 - Docs: `docs/` with MkDocs config in `mkdocs.yml`
 - Local container/dev setup: `docker/ci.Dockerfile`, `.devcontainer/devcontainer.json`
 
