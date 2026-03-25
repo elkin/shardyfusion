@@ -16,13 +16,19 @@ import shardyfusion.writer.python._parallel_writer as parallel_writer_mod
 from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
 from shardyfusion.errors import ShardyfusionError
 from shardyfusion.manifest_store import InMemoryManifestStore
+from shardyfusion.run_registry import InMemoryRunRegistry
 from shardyfusion.serde import make_key_encoder
 from shardyfusion.testing import FileBackedSlateDbAdapter, file_backed_load_db
 from shardyfusion.type_defs import RetryConfig
+from shardyfusion.writer.python import write_sharded
 from shardyfusion.writer.python._parallel_writer import (
     _file_shard_worker,
     _FileChunkRef,
     _write_parallel,
+)
+from tests.helpers.run_record_assertions import (
+    assert_success_run_record,
+    load_in_memory_run_record,
 )
 from tests.helpers.tracking import TrackingFactory
 
@@ -196,6 +202,7 @@ def _make_config(
     run_id: str = "test-run",
     local_root: str | None = None,
     shard_retry: RetryConfig | None = None,
+    run_registry: InMemoryRunRegistry | None = None,
 ) -> WriteConfig:
     return WriteConfig(
         num_dbs=num_dbs,
@@ -207,6 +214,7 @@ def _make_config(
             local_root=local_root or "/tmp/shardyfusion-tests",
         ),
         shard_retry=shard_retry,
+        run_registry=run_registry,
     )
 
 
@@ -388,6 +396,44 @@ def test_parallel_retry_replays_to_new_attempt_and_cleans_spool(
         "s3://bucket/test/shards/run_id=retry-file-spool/db=00000/attempt=01",
     )
     assert not (local_root / "run_id=retry-file-spool" / "_parallel_spool").exists()
+
+
+def test_write_sharded_parallel_retry_records_succeeded_run_record(
+    tmp_path: Path,
+) -> None:
+    registry = InMemoryRunRegistry()
+    marker_path = tmp_path / "retry-run-record.marker"
+    local_root = tmp_path / "local"
+    config = _make_config(
+        num_dbs=1,
+        run_id="retry-run-record",
+        local_root=str(local_root),
+        shard_retry=RetryConfig(
+            max_retries=1,
+            initial_backoff=timedelta(seconds=0),
+        ),
+        run_registry=registry,
+    )
+    config.adapter_factory = _FailOnceMarkerFactory(str(marker_path))
+
+    result = write_sharded(
+        [{"id": i, "val": b"x"} for i in range(10)],
+        config,
+        key_fn=lambda r: r["id"],
+        value_fn=lambda r: r["val"],
+        parallel=True,
+    )
+
+    assert len(result.winners) == 1
+    assert result.winners[0].attempt == 1
+
+    run_record = load_in_memory_run_record(registry, result)
+    assert_success_run_record(
+        run_record,
+        result=result,
+        writer_type="python",
+        s3_prefix=config.s3_prefix,
+    )
 
 
 def test_parallel_retry_replay_preserves_final_shard_contents(tmp_path: Path) -> None:

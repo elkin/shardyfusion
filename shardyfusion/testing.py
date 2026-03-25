@@ -2,6 +2,7 @@
 
 import base64
 import json
+import re
 import types
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -287,6 +288,97 @@ def real_file_adapter_factory(object_store_root: str) -> RealSlateDbFileAdapterF
     """Return a serializable real SlateDB file-backed adapter factory."""
 
     return RealSlateDbFileAdapterFactory(object_store_root=object_store_root)
+
+
+_DB_ID_RE = re.compile(r"(?:^|/)db=(\d+)(?:/|$)")
+_ATTEMPT_RE = re.compile(r"(?:^|/)attempt=(\d+)(?:/|$)")
+
+
+def _parse_db_url_identity(db_url: str) -> tuple[int | None, int | None]:
+    bucket, key = parse_s3_url(db_url)
+    del bucket
+    db_match = _DB_ID_RE.search(key)
+    attempt_match = _ATTEMPT_RE.search(key)
+    db_id = int(db_match.group(1)) if db_match is not None else None
+    attempt = int(attempt_match.group(1)) if attempt_match is not None else None
+    return db_id, attempt
+
+
+class _FailOnceAdapter:
+    """Proxy adapter that injects one retryable write failure."""
+
+    def __init__(
+        self,
+        inner: Any,
+        *,
+        marker_path: Path | None,
+        error_message: str,
+    ) -> None:
+        self._inner = inner
+        self._marker_path = marker_path
+        self._error_message = error_message
+
+    @property
+    def db(self) -> Any:
+        return self._inner.db
+
+    def __enter__(self) -> Self:
+        entered = self._inner.__enter__()
+        if entered is not None:
+            self._inner = entered
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: types.TracebackType | None,
+    ) -> None:
+        self._inner.__exit__(exc_type, exc, tb)
+
+    def write_batch(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
+        if self._marker_path is not None:
+            self._marker_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                self._marker_path.touch(exist_ok=False)
+            except FileExistsError:
+                pass
+            else:
+                raise RuntimeError(self._error_message)
+        self._inner.write_batch(pairs)
+
+    def flush(self) -> None:
+        self._inner.flush()
+
+    def checkpoint(self) -> str | None:
+        return self._inner.checkpoint()
+
+    def close(self) -> None:
+        self._inner.close()
+
+
+@dataclass(slots=True)
+class FailOnceAdapterFactory:
+    """Wrap another adapter factory and fail once for selected db ids/attempts."""
+
+    inner_factory: Any
+    marker_root: str
+    fail_db_ids: tuple[int, ...] = (0,)
+    fail_attempts: tuple[int, ...] = (0,)
+    error_message: str = "simulated transient write failure"
+
+    def __call__(self, *, db_url: str, local_dir: Path) -> _FailOnceAdapter:
+        db_id, attempt = _parse_db_url_identity(db_url)
+        marker_path: Path | None = None
+        if db_id in self.fail_db_ids and attempt in self.fail_attempts:
+            marker_name = f"db={db_id:05d}_attempt={attempt:02d}.once"
+            marker_path = Path(self.marker_root) / marker_name
+
+        return _FailOnceAdapter(
+            self.inner_factory(db_url=db_url, local_dir=local_dir),
+            marker_path=marker_path,
+            error_message=self.error_message,
+        )
 
 
 @dataclass(slots=True)

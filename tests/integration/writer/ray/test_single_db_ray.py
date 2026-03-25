@@ -20,6 +20,10 @@ from shardyfusion.type_defs import S3ConnectionOptions
 from shardyfusion.writer.ray.single_db_writer import (
     write_single_db,
 )
+from tests.helpers.run_record_assertions import (
+    assert_success_run_record,
+    load_s3_run_record,
+)
 
 
 def test_single_db_ray_publishes_manifest_and_current(
@@ -75,8 +79,15 @@ def test_single_db_ray_publishes_manifest_and_current(
 
     manifest_payload = yaml.safe_load(manifest_obj["Body"].read())
     current_payload = json.loads(current_obj["Body"].read().decode("utf-8"))
+    run_record = load_s3_run_record(local_s3_service, result.run_record_ref)
 
     assert manifest_payload["required"]["run_id"] == "single-db-ray-test"
     assert manifest_payload["required"]["num_dbs"] == 1
     assert len(manifest_payload["shards"]) == 1
+    assert_success_run_record(
+        run_record,
+        result=result,
+        writer_type="ray",
+        s3_prefix=s3_prefix,
+    )
     assert current_payload["manifest_ref"] == result.manifest_ref

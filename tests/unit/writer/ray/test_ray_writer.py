@@ -19,6 +19,7 @@ from shardyfusion.config import (
 from shardyfusion.manifest import BuildResult, WriterInfo
 from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.metrics import MetricEvent
+from shardyfusion.run_registry import InMemoryRunRegistry
 from shardyfusion.serde import ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import (
     KeyEncoding,
@@ -30,6 +31,10 @@ from shardyfusion.testing import (
     file_backed_load_db,
 )
 from shardyfusion.writer.ray import write_sharded
+from tests.helpers.run_record_assertions import (
+    assert_success_run_record,
+    load_in_memory_run_record,
+)
 
 # ---------------------------------------------------------------------------
 # Test infrastructure
@@ -81,6 +86,7 @@ def _make_config(
     num_dbs: int = 4,
     *,
     factory: _TrackingFactory | None = None,
+    run_registry: InMemoryRunRegistry | None = None,
     batch_size: int = 50_000,
     sharding: ShardingSpec | None = None,
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
@@ -94,6 +100,7 @@ def _make_config(
         sharding=sharding or ShardingSpec(),
         output=OutputOptions(run_id="test-run"),
         manifest=ManifestOptions(store=InMemoryManifestStore()),
+        run_registry=run_registry,
     )
 
 
@@ -154,6 +161,27 @@ def test_hash_routing_round_trip() -> None:
     assert sorted(w.db_id for w in result.winners) == [0, 1, 2, 3]
     assert sum(w.row_count for w in result.winners) == 40
     assert result.manifest_ref.startswith("mem://manifests/")
+
+
+def test_hash_routing_round_trip_records_succeeded_run_record() -> None:
+    registry = InMemoryRunRegistry()
+    config = _make_config(num_dbs=4, run_registry=registry)
+    ds = _make_ray_ds([{"id": i} for i in range(12)], parallelism=2)
+
+    result = write_sharded(
+        ds,
+        config,
+        key_col="id",
+        value_spec=ValueSpec.callable_encoder(lambda row: f"v{row['id']}".encode()),
+    )
+
+    run_record = load_in_memory_run_record(registry, result)
+    assert_success_run_record(
+        run_record,
+        result=result,
+        writer_type="ray",
+        s3_prefix=config.s3_prefix,
+    )
 
 
 def test_empty_input() -> None:

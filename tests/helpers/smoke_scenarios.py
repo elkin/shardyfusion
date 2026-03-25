@@ -20,6 +20,10 @@ from shardyfusion.serde import make_key_encoder
 from shardyfusion.sharding_types import KeyEncoding
 from shardyfusion.slatedb_adapter import DbAdapterFactory
 from shardyfusion.type_defs import S3ConnectionOptions, ShardReaderFactory
+from tests.helpers.run_record_assertions import (
+    assert_success_run_record,
+    load_s3_run_record,
+)
 from tests.helpers.s3_test_scenarios import (
     _default_connection_options,
     _default_credential_provider,
@@ -195,6 +199,8 @@ def run_smoke_write_then_read_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
+    writer_type: str,
+    expect_retry: bool = False,
     num_dbs: int = 3,
     max_keys_per_shard: int | None = None,
     expected_num_shards: int | None = None,
@@ -245,6 +251,17 @@ def run_smoke_write_then_read_scenario(
         assert len(result.winners) == expected_num_shards
     total_rows = sum(w.row_count for w in result.winners)
     assert total_rows == len(SMOKE_DATA)
+    assert result.run_record_ref is not None
+    if expect_retry:
+        assert any(winner.attempt > 0 for winner in result.winners)
+
+    run_record = load_s3_run_record(s3_service, result.run_record_ref)
+    assert_success_run_record(
+        run_record,
+        result=result,
+        writer_type=writer_type,
+        s3_prefix=s3_prefix,
+    )
 
     # ---- Shard placement (independent of reader) ----
     from shardyfusion.routing import xxh3_db_id
@@ -278,6 +295,7 @@ def run_smoke_cel_scenario(
     s3_service: LocalS3Service,
     tmp_path: Path,
     *,
+    writer_type: str,
     cel_expr: str,
     cel_columns: dict[str, str],
     boundaries: list[int | str] | None = None,
@@ -342,6 +360,15 @@ def run_smoke_cel_scenario(
     assert len(result.winners) == expected_num_shards
     total_rows = sum(w.row_count for w in result.winners)
     assert total_rows == len(SMOKE_DATA)
+    assert result.run_record_ref is not None
+
+    run_record = load_s3_run_record(s3_service, result.run_record_ref)
+    assert_success_run_record(
+        run_record,
+        result=result,
+        writer_type=writer_type,
+        s3_prefix=s3_prefix,
+    )
 
     # ---- Shard placement (independent of reader) ----
     from shardyfusion.cel import compile_cel, route_cel

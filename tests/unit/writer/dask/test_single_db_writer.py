@@ -21,6 +21,7 @@ from shardyfusion.errors import (
 )
 from shardyfusion.manifest import BuildResult
 from shardyfusion.manifest_store import InMemoryManifestStore
+from shardyfusion.run_registry import InMemoryRunRegistry
 from shardyfusion.serde import ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import KeyEncoding
 from shardyfusion.testing import (
@@ -31,6 +32,10 @@ from shardyfusion.type_defs import RetryConfig
 from shardyfusion.writer.dask.single_db_writer import (
     DaskCacheContext,
     write_single_db,
+)
+from tests.helpers.run_record_assertions import (
+    assert_success_run_record,
+    load_in_memory_run_record,
 )
 from tests.helpers.tracking import (
     RecordingTokenBucket,
@@ -61,6 +66,7 @@ def _make_config(
     batch_size: int = 50_000,
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
     num_dbs: int = 1,
+    run_registry: InMemoryRunRegistry | None = None,
 ) -> WriteConfig:
     return WriteConfig(
         num_dbs=num_dbs,
@@ -70,6 +76,7 @@ def _make_config(
         adapter_factory=factory or TrackingFactory(),
         output=OutputOptions(run_id="test-run"),
         manifest=ManifestOptions(store=InMemoryManifestStore()),
+        run_registry=run_registry,
     )
 
 
@@ -110,6 +117,28 @@ def test_basic_sorted_write() -> None:
     adapter = factory.adapters[0]
     all_keys = [pair[0] for call in adapter.write_calls for pair in call]
     assert all_keys == sorted(all_keys)
+
+
+def test_basic_sorted_write_records_succeeded_run_record() -> None:
+    registry = InMemoryRunRegistry()
+    config = _make_config(batch_size=100, run_registry=registry)
+    records = [{"id": k} for k in [5, 3, 1, 4, 2]]
+    ddf = _make_dask_df(records, npartitions=1)
+
+    result = write_single_db(
+        ddf,
+        config,
+        key_col="id",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+    )
+
+    run_record = load_in_memory_run_record(registry, result)
+    assert_success_run_record(
+        run_record,
+        result=result,
+        writer_type="dask",
+        s3_prefix=config.s3_prefix,
+    )
 
 
 def test_sort_keys_false() -> None:
@@ -734,6 +763,39 @@ def test_single_db_retry_uses_new_attempt_id(
         "s3://bucket/prefix/shards/run_id=test-run/db=00000/attempt=00",
         "s3://bucket/prefix/shards/run_id=test-run/db=00000/attempt=01",
     ]
+
+
+def test_single_db_retry_records_succeeded_run_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "shardyfusion.writer.dask.single_db_writer.cleanup_losers",
+        lambda *args, **kwargs: 0,
+    )
+    registry = InMemoryRunRegistry()
+    factory = _FailOnceFactory()
+    config = _make_config(factory=factory, batch_size=2, run_registry=registry)
+    config.shard_retry = RetryConfig(
+        max_retries=1,
+        initial_backoff=timedelta(seconds=0),
+    )
+
+    ddf = _make_dask_df([{"id": k} for k in range(5)], npartitions=1)
+    result = write_single_db(
+        ddf,
+        config,
+        key_col="id",
+        value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
+    )
+
+    assert result.winners[0].attempt == 1
+    run_record = load_in_memory_run_record(registry, result)
+    assert_success_run_record(
+        run_record,
+        result=result,
+        writer_type="dask",
+        s3_prefix=config.s3_prefix,
+    )
 
 
 def test_unexpected_error_wrapped_in_slatedb_error() -> None:

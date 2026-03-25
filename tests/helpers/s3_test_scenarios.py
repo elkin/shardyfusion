@@ -31,6 +31,10 @@ from shardyfusion.reader import ConcurrentShardedReader
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 from shardyfusion.slatedb_adapter import DbAdapterFactory
 from shardyfusion.type_defs import S3ConnectionOptions, ShardReaderFactory
+from tests.helpers.run_record_assertions import (
+    assert_success_run_record,
+    load_s3_run_record,
+)
 
 if TYPE_CHECKING:
     from ..conftest import LocalS3Service
@@ -197,6 +201,8 @@ def run_writer_publishes_manifest_scenario(
     tmp_path: Path,
     *,
     adapter_factory: DbAdapterFactory,
+    expect_retry: bool = False,
+    write_kwargs: dict[str, Any] | None = None,
     credential_provider: CredentialProvider | None = None,
     s3_connection_options: S3ConnectionOptions | None = None,
 ) -> None:
@@ -237,10 +243,14 @@ def run_writer_publishes_manifest_scenario(
         config,
         key_col="id",
         value_spec=ValueSpec.binary_col("payload"),
+        **(write_kwargs or {}),
     )
 
     assert len(result.winners) == 4
     assert result.manifest_ref.startswith(f"s3://{bucket}/writer-only/manifests/")
+    assert result.run_record_ref is not None
+    if expect_retry:
+        assert any(winner.attempt > 0 for winner in result.winners)
 
     manifest_key = result.manifest_ref.split(f"s3://{bucket}/", 1)[1]
     current_key = "writer-only/_CURRENT"
@@ -256,6 +266,14 @@ def run_writer_publishes_manifest_scenario(
     assert manifest_payload["required"]["num_dbs"] == 4
     assert len(manifest_payload["shards"]) == 4
     assert current_payload["manifest_ref"] == result.manifest_ref
+
+    run_record = load_s3_run_record(s3_service, result.run_record_ref)
+    assert_success_run_record(
+        run_record,
+        result=result,
+        writer_type="spark",
+        s3_prefix=s3_prefix,
+    )
 
     # Verify each shard was physically written and total rows sum correctly.
     total_rows = 0

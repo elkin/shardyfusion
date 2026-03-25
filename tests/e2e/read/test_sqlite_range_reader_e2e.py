@@ -58,6 +58,7 @@ def test_smoke_hash_range_reader(garage_s3_service, tmp_path) -> None:
         _write_fn,
         garage_s3_service,
         tmp_path,
+        writer_type="python",
         num_dbs=3,
         expected_num_shards=3,
         adapter_factory=adapter_factory,
