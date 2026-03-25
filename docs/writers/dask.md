@@ -6,7 +6,7 @@ The Dask writer (`shardyfusion.writer.dask.write_sharded`) is a Dask DataFrame-b
 
 - **Input:** Dask `DataFrame`
 - **Java required:** No
-- **Speculative execution:** Not supported (attempt is always 0)
+- **Speculative execution:** Not supported
 - **Sharding:** Per-partition routing via pandas
 - **Parallelism:** Dask scheduler-level (distributed or threaded)
 - **Execution model:** Lazy — `.compute()` triggers all work
@@ -58,7 +58,8 @@ Each Dask partition is processed as follows:
 1. **Empty partition check:** If the input pandas DataFrame is empty, an empty result is returned immediately — no S3 I/O.
 2. **Group by shard ID:** The partition is split by shard.
 3. **Per-shard write:** Each group is written independently:
-    - `attempt` is always 0 (Dask does not support speculative execution).
+    - `attempt` starts at 0 and increments only when `WriteConfig.shard_retry`
+      replays the shard after a retryable failure.
     - Rows are iterated, encoding keys and values.
     - **numpy scalar conversion:** Keys extracted from pandas are numpy types — they must be converted to native Python types before encoding or routing.
     - Batches are flushed when full.
@@ -147,6 +148,15 @@ If a shard write exhausts all retry attempts (or fails with a non-retryable erro
 
 Same as all writers — retry CURRENT pointer up to 3 times on failure with exponential backoff (1s, 2s, 4s).
 
+### Run Record Lifecycle
+
+Each Dask writer invocation also maintains one driver-owned run record under
+`output.run_registry_prefix` (default `runs`). The record is created as
+`running`, updated with `manifest_ref` once publish succeeds, and then marked
+`succeeded` or `failed`. `BuildResult.run_record_ref` returns the record
+location. Readers do not consume this record; it is for operational inspection
+and future deferred cleanup workflows.
+
 ### Lazy vs Eager Failure Timing
 
 Sharding and shuffle are lazy — errors surface only at `.compute()` time. Verification (sampling) is eager and can fail early before the write phase begins.
@@ -157,7 +167,7 @@ Sharding and shuffle are lazy — errors surface only at `.compute()` time. Veri
 |---|---|
 | **pandas NaN for None** | Mixed int+None columns become `float64` in pandas. Result conversion handles NaN → None and float → int. |
 | **numpy scalar types** | Keys from pandas DataFrames are numpy types (e.g., `numpy.int64`). Must convert to native Python before encoding or routing. |
-| **attempt always 0** | Dask has no retry/speculation model at the shardyfusion level. A failed partition write fails the entire pipeline. |
+| **Attempts only grow with `shard_retry`** | Dask has no speculative execution. Without `WriteConfig.shard_retry`, attempts stay at 0 and a failed shard aborts the write. |
 | **Result metadata required** | Dask's `map_partitions` needs metadata to infer the output schema. Without it, Dask cannot construct the task graph. |
 | **Lazy execution timing** | Sharding bugs may not surface until `.compute()`. Only verification runs eagerly before the write phase. |
 | **Shuffle is not 1:1** | Shuffle collocates rows but doesn't guarantee exactly one shard per partition. The write phase groups by shard ID within each partition. |

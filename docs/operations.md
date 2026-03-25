@@ -100,6 +100,23 @@ Rollback updates the `_CURRENT` pointer only — shard data and old manifests re
 !!! warning
     Rollback affects all readers pointing at this `_CURRENT`. Coordinate with your team before rolling back in production.
 
+## Run Registry
+
+Each writer invocation also publishes one run record under
+`output.run_registry_prefix` (default `runs`) as:
+
+`s3://bucket/prefix/runs/<timestamp>_run_id=<run_id>_<uuid>/run.yaml`
+
+Operational notes:
+
+- the record is writer-owned metadata, not part of the reader contract
+- status transitions are `running` -> `succeeded` or `failed`
+- successful runs store `manifest_ref`; failed runs may leave it `null`
+- `updated_at` and `lease_expires_at` are refreshed while the writer is alive
+
+This record is intended for deferred cleanup and operational inspection. The
+current cleanup CLI does not consume the run registry yet.
+
 ## Health Monitoring
 
 ### Reader Health Checks

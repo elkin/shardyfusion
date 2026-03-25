@@ -2,13 +2,14 @@
 
 ## Overview
 
-`shardyfusion` builds a sharded snapshot into multiple independent SlateDB databases, writes metadata (manifest + CURRENT pointer), and provides service-side readers that route keys to the correct shard. Four writer backends are supported: Spark, Dask, Ray, and pure Python.
+`shardyfusion` builds a sharded snapshot into multiple independent SlateDB databases, writes metadata (manifest + CURRENT pointer), maintains a run-scoped writer record for deferred cleanup workflows, and provides service-side readers that route keys to the correct shard. Four writer backends are supported: Spark, Dask, Ray, and pure Python.
 
 Core behavior:
 
-- One logical snapshot write produces up to `num_dbs` shards. The shard count can be set explicitly, computed from `max_keys_per_shard`, or determined by the CEL expression (`num_dbs` must be 0). Only shards that receive data are written to storage and appear in the manifest.
+- One logical snapshot write produces up to `num_dbs` shards. The shard count can be set explicitly, computed from `max_keys_per_shard`, or determined by the CEL expression (`num_dbs` must be `None`). Only shards that receive data are written to storage and appear in the manifest.
 - Writes are retry/speculation-safe with attempt-isolated paths.
 - A deterministic winner is selected per shard (`db_id`) on the driver.
+- Each writer invocation also maintains one run record under `output.run_registry_prefix` (default `runs`) and marks it `running`, `succeeded`, or `failed`.
 - Reader side loads CURRENT -> manifest -> opens per-shard readers -> routes lookups.
 
 ## Write Side (Snapshot Build)
@@ -19,7 +20,7 @@ All four backends follow the same three-phase pipeline:
 2. **Write** — partition data by `db_id`, write each shard to S3
 3. **Publish** — build manifest, publish manifest, publish `_CURRENT` pointer
 
-The backends differ in how they distribute work, but share all core logic for routing, winner selection, manifest building, and publishing.
+The backends differ in how they distribute work, but share all core logic for routing, winner selection, manifest building, publishing, and run-record lifecycle management.
 
 ### Sharding Strategies
 
@@ -45,7 +46,7 @@ config = WriteConfig(num_dbs=8, s3_prefix="s3://bucket/prefix")
 
 # Auto-computed from target shard size
 config = WriteConfig(
-    num_dbs=0,
+    num_dbs=None,
     s3_prefix="s3://bucket/prefix",
     sharding=ShardingSpec(max_keys_per_shard=50_000),
 )
@@ -156,7 +157,7 @@ Entrypoint: `shardyfusion.writer.spark.write_sharded`
 5. Each partition writes one attempt-isolated shard location on S3-compatible storage.
 6. Driver collects partition results (attempt metadata), picks deterministic winners per `db_id`.
 7. Manifest artifact is built, published, then CURRENT pointer is published.
-8. `BuildResult` is returned with winners, artifact, refs, and typed stats.
+8. `BuildResult` is returned with winners, the published `manifest_ref`, the optional `run_record_ref`, and typed stats.
 
 See [Spark Writer Deep Dive](writers/spark.md) for data flow diagrams and Spark-specific behavior.
 
@@ -271,6 +272,8 @@ Write artifacts:
   - ...
 - Manifest object (timestamp-prefixed for chronological listing):
   - `s3://bucket/prefix/manifests/2026-03-14T10:30:00.000000Z_run_id=9f.../manifest`
+- Run record object (one YAML record per writer invocation):
+  - `s3://bucket/prefix/runs/2026-03-14T10:30:00.000000Z_run_id=9f..._<uuid>/run.yaml`
 - CURRENT pointer object (JSON):
   - `s3://bucket/prefix/_CURRENT`
 
@@ -278,7 +281,8 @@ Notes:
 
 - Manifest S3 keys are timestamp-prefixed (e.g., `2026-03-14T10:30:00.000000Z_run_id=abc123/manifest`) so that `list_manifests()` can use S3 `CommonPrefixes` for chronological ordering.
 - Manifest stores winner shard URLs (`db_url`) and required routing/build metadata.
-- Non-winning attempt paths are automatically cleaned up after publish via `cleanup_losers()` (best-effort).
+- Run records are writer-owned operational metadata. Readers do not consume them.
+- Non-winning attempt paths are still cleaned up after publish via `cleanup_losers()` (best-effort). The run record is the durable signal that lets a future sweeper discover runs that may need deferred cleanup inspection.
 
 ## Configuration
 
@@ -296,6 +300,7 @@ Direct fields:
 - `adapter_factory` (default `SlateDbFactory()`)
 - `shard_retry` (default `None`) — optional `RetryConfig` for retryable writer paths: Dask/Ray shard writes, Spark/Dask/Ray `write_single_db()`, and Python parallel writes
 - `metrics_collector` (default `None`) — optional `MetricsCollector` for lifecycle events
+- `run_registry` (default `None`) — optional injected `RunRegistry`; S3-backed by default and in-memory for local/test manifest stores
 
 Grouped options:
 
@@ -305,6 +310,7 @@ Grouped options:
   - `run_id`
   - `db_path_template`
   - `shard_prefix`
+  - `run_registry_prefix`
   - `local_root`
 - `manifest: ManifestOptions`
   - `manifest_builder`
@@ -391,6 +397,10 @@ See [Sharding Strategies](#sharding-strategies) for full configuration details.
   - close retired readers when no in-flight operations are using them
 
 ## Mermaid Diagram: Write Side (Generic)
+
+The diagram below omits the run-record heartbeat and terminal update for
+clarity. In the actual implementation, the writer also maintains one
+run-scoped record alongside the publish flow.
 
 ```mermaid
 flowchart TD

@@ -6,7 +6,7 @@ The Ray writer (`shardyfusion.writer.ray.write_sharded`) is a Ray Data-based wri
 
 - **Input:** Ray `Dataset`
 - **Java required:** No
-- **Speculative execution:** Not supported (attempt is always 0)
+- **Speculative execution:** Not supported
 - **Sharding:** Arrow-native batch processing (zero-copy)
 - **Parallelism:** Ray worker-level
 - **Shuffle:** Hash shuffle with process-global lock guard
@@ -62,7 +62,9 @@ Each Ray batch is processed as follows:
 2. **Group by shard ID:** Same pattern as Dask — groups by shard.
 3. **Per-shard write:** Each group is written independently:
     - Uses `os.makedirs()` (not pathlib) to create local directories.
-    - `attempt` is always 0, rows are iterated with numpy scalar conversion, batches are flushed when full.
+    - `attempt` starts at 0 and increments only when `WriteConfig.shard_retry`
+      replays the shard after a retryable failure.
+    - Rows are iterated with numpy scalar conversion, batches are flushed when full.
 
 **Batch format choice:**
 
@@ -130,7 +132,17 @@ The process-global lock protects against concurrent `write_sharded()` calls corr
 
 ### Two-Phase Publish and Cleanup
 
-Same as all writers — retry CURRENT pointer up to 3 times, cleanup is best-effort.
+Same as all writers — retry CURRENT pointer up to 3 times, cleanup is
+best-effort.
+
+### Run Record Lifecycle
+
+Each Ray writer invocation also maintains one driver-owned run record under
+`output.run_registry_prefix` (default `runs`). The record is created as
+`running`, updated with `manifest_ref` once publish succeeds, and then marked
+`succeeded` or `failed`. `BuildResult.run_record_ref` returns the record
+location. Readers do not consume this record; it is for operational inspection
+and future deferred cleanup workflows.
 
 ## Gotchas
 

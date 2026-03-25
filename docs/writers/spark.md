@@ -134,9 +134,19 @@ An exception in a partition writer propagates to the driver via the result strea
 
 If the manifest uploads but the `_CURRENT` pointer fails, it retries up to 3 times with exponential backoff (1s, 2s, 4s). The manifest is already on S3 and safe. If all retries fail, `PublishManifestError` is raised.
 
+### Run Record Lifecycle
+
+Each Spark writer invocation also maintains one driver-owned run record under
+`output.run_registry_prefix` (default `runs`). The record is created as
+`running`, updated with `manifest_ref` once publish succeeds, and then marked
+`succeeded` or `failed`. `BuildResult.run_record_ref` returns the record
+location.
+
 ### Cleanup
 
-Non-winning attempt paths are deleted after publish, but failures are logged and skipped — never raised.
+Non-winning attempt paths are deleted after publish, but failures are logged
+and skipped — never raised. The run record is the durable signal for future
+deferred cleanup workflows; readers do not consume it.
 
 ### Context Manager Safety
 

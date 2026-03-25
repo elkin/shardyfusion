@@ -23,6 +23,7 @@ Key guarantees (all backends):
 - one-writer-per-db partitioning contract (`num_dbs` partitions)
 - retry/speculation safety via attempt-isolated shard output URLs
 - deterministic winner selection per `db_id`
+- one run-scoped writer record per invocation for deferred cleanup discovery
 
 ## Typical Usage
 
@@ -99,7 +100,26 @@ Manifest + CURRENT behavior:
 2. manifest is published first
 3. `_CURRENT` JSON pointer is published second
 
+In parallel, the writer maintains one run record under `output.run_registry_prefix`
+(default `runs`). The record starts as `running`, stores `manifest_ref` after
+publish, and ends as `succeeded` or `failed`. Readers do not consume this
+record; it is operational metadata for future cleanup workflows.
+
 See [Architecture](how-it-works.md) for end-to-end data flow details.
+
+## Run Registry
+
+Writers now publish one YAML run record per invocation:
+
+- location: `s3://bucket/prefix/<run_registry_prefix>/<timestamp>_run_id=<run_id>_<uuid>/run.yaml`
+- config: `WriteConfig.output.run_registry_prefix` (default `runs`)
+- result surface: `BuildResult.run_record_ref`
+
+The run record is intentionally separate from the manifest:
+
+- manifests stay reader-facing and contain only snapshot metadata readers need
+- run records hold writer lifecycle state for operators and future deferred cleanup jobs
+- inline loser cleanup via `cleanup_losers()` remains best-effort
 
 ## Single-Shard Writers
 

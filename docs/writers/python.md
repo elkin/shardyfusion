@@ -120,7 +120,7 @@ When either limit would be exceeded, the parent blocks before allocating another
 CEL sharding in the Python writer has a unique constraint:
 
 - **Single-process:** `num_dbs` is unknown until iteration completes. After all records are routed, the observed shard IDs are validated as consecutive 0-based integers and `num_dbs` is derived from `max(db_id) + 1`.
-- **Parallel:** CEL discovery is not supported because workers must be spawned before iteration (requires knowing `num_dbs` upfront). The config must specify `num_dbs > 0` for parallel CEL writes.
+- **Parallel:** CEL discovery is not supported because workers must be spawned before iteration. In practice, Python parallel mode does not support CEL direct-mode shard-count discovery.
 
 ## Worker Lifecycle
 
@@ -149,7 +149,10 @@ Results are collected from the result queue with a global deadline of `10s x num
 
 ### Single-Process Mode
 
-No retry mechanism. If any adapter operation fails, the exception propagates up through the context manager stack. The stack closes all already-opened adapters in LIFO order. Partially-written shards remain on S3 until cleanup.
+No retry mechanism. If any adapter operation fails, the exception propagates up
+through the context manager stack. The stack closes all already-opened adapters
+in LIFO order. Partially-written shards remain on S3 until inline or deferred
+cleanup removes them.
 
 ### Parallel Mode — Worker Failure
 
@@ -165,7 +168,17 @@ No retry mechanism. If any adapter operation fails, the exception propagates up 
 
 ### Two-Phase Publish and Cleanup
 
-Same as all writers — retry CURRENT pointer up to 3 times, cleanup is best-effort.
+Same as all writers — retry CURRENT pointer up to 3 times, cleanup is
+best-effort.
+
+### Run Record Lifecycle
+
+Each Python writer invocation also maintains one driver-owned run record under
+`output.run_registry_prefix` (default `runs`). The record is created as
+`running`, updated with `manifest_ref` once publish succeeds, and then marked
+`succeeded` or `failed`. `BuildResult.run_record_ref` returns the record
+location. Readers do not consume this record; it is for operational inspection
+and future deferred cleanup workflows.
 
 ## Gotchas
 
@@ -176,5 +189,5 @@ Same as all writers — retry CURRENT pointer up to 3 times, cleanup is best-eff
 | **Min/max tracked in main** | The main process tracks min/max keys and patches them into worker results. Workers do not have visibility into keys from other shards. |
 | **`columns_fn` for CEL routing context** | The `columns_fn` parameter provides additional column values for CEL routing context (analogous to `cel_columns` in framework writers). |
 | **No verification step** | Unlike Spark/Dask/Ray, the Python writer has no routing verification — it uses the routing function directly, so there's no framework-vs-Python divergence to verify. |
-| **CEL + parallel incompatible for discovery** | Parallel mode requires `num_dbs > 0` upfront. CEL discovery (deriving `num_dbs` from data) only works in single-process mode. |
+| **CEL + parallel incompatible for discovery** | Python parallel mode cannot discover CEL shard counts at runtime. CEL direct mode therefore only works in single-process mode. |
 | **Parallel SHM budgets** | `max_queue_size` bounds descriptor backlog, not payload bytes. `max_parallel_shared_memory_bytes` and `max_parallel_shared_memory_bytes_per_worker` only apply to the default shared-memory transport; retry-enabled parallel mode uses local spool files instead. |
