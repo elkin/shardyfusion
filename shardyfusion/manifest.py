@@ -136,6 +136,7 @@ class BuildResult:
     winners: list[RequiredShardMeta]
     manifest_ref: str
     stats: BuildStats
+    run_record_ref: str | None = None
 
 
 class ManifestBuilder(Protocol):

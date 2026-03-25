@@ -18,6 +18,7 @@ from .type_defs import JsonObject, RetryConfig, S3ConnectionOptions
 
 if TYPE_CHECKING:
     from .manifest_store import ManifestStore
+    from .run_registry import RunRegistry
 
 _SAFE_SEGMENT_CHARS = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
@@ -31,6 +32,7 @@ class OutputOptions:
     run_id: str | None = None
     db_path_template: str = "db={db_id:05d}"
     shard_prefix: str = "shards"
+    run_registry_prefix: str = "runs"
     local_root: str = field(
         default_factory=lambda: str(Path(tempfile.gettempdir()) / "shardyfusion")
     )
@@ -95,6 +97,7 @@ class WriteConfig:
     manifest: ManifestOptions = field(default_factory=ManifestOptions)
 
     metrics_collector: MetricsCollector | None = None
+    run_registry: RunRegistry | None = None
 
     shard_retry: RetryConfig | None = None
 
@@ -137,6 +140,10 @@ class WriteConfig:
 
         _validate_s3_prefix(self.s3_prefix)
         _validate_segment(self.output.shard_prefix, field_name="output.shard_prefix")
+        _validate_segment(
+            self.output.run_registry_prefix,
+            field_name="output.run_registry_prefix",
+        )
 
         try:
             self.output.db_path_template.format(db_id=0)

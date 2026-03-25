@@ -81,6 +81,13 @@ from .reader import (
     SnapshotInfo,
 )
 from .routing import SnapshotRouter
+from .run_registry import (
+    InMemoryRunRegistry,
+    RunRecord,
+    RunRegistry,
+    RunStatus,
+    S3RunRegistry,
+)
 from .serde import ValueSpec
 from .sharding_types import BoundaryValue, KeyEncoding, ShardingSpec, ShardingStrategy
 from .slatedb_adapter import (
@@ -122,6 +129,7 @@ __all__ = [
     "EnvCredentialProvider",
     "FailureSeverity",
     "InMemoryManifestStore",
+    "InMemoryRunRegistry",
     "JsonFormatter",
     "KeyEncoding",
     "LogContext",
@@ -147,9 +155,13 @@ __all__ = [
     "RequiredBuildMeta",
     "RequiredShardMeta",
     "RetryConfig",
+    "RunRecord",
+    "RunRegistry",
+    "RunStatus",
     "S3ConnectionOptions",
     "S3Credentials",
     "S3ManifestStore",
+    "S3RunRegistry",
     "S3TransientError",
     "ShardAssignmentError",
     "ShardCoverageError",

@@ -359,6 +359,7 @@ def assemble_build_result(
     run_id: str,
     winners: list[RequiredShardMeta],
     manifest_ref: str,
+    run_record_ref: str | None,
     num_attempts: int,
     shard_duration_ms: int,
     write_duration_ms: int,
@@ -385,6 +386,7 @@ def assemble_build_result(
         winners=winners,
         manifest_ref=manifest_ref,
         stats=stats,
+        run_record_ref=run_record_ref,
     )
 
 
