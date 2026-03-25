@@ -42,6 +42,7 @@ nav:
     - 2026-03-15 Reliable Loser Cleanup Plan: engineering-notes/2026-03-15-reliable-loser-cleanup-plan.md
     - 2026-03-24 Test Coverage Gap Closure: engineering-notes/2026-03-24-test-coverage-gap-closure.md
     - 2026-03-25 Consistent Writer Retry: engineering-notes/2026-03-25-consistent-writer-retry.md
+    - 2026-03-25 Run Registry For Deferred Cleanup: engineering-notes/2026-03-25-run-registry-for-deferred-cleanup.md
   - Operations: operations.md
   - Cloud Testing: cloud-testing.md
   - Release Process: release.md
