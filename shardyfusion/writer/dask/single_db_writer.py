@@ -28,6 +28,7 @@ from shardyfusion.errors import (
 )
 from shardyfusion.logging import FailureSeverity, log_failure
 from shardyfusion.manifest import BuildResult, WriterInfo
+from shardyfusion.run_registry import managed_run_record
 from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
 from shardyfusion.slatedb_adapter import (
@@ -132,79 +133,89 @@ def _write_single_db_impl(
     max_write_bytes_per_second: float | None,
 ) -> BuildResult:
     """Implementation: sort, stream partitions, write, publish."""
-
-    # Compute partition count (triggers a compute when num_partitions is None).
-    if num_partitions is None:
-        total_rows = len(ddf)
-        num_partitions = max(1, math.ceil(total_rows / config.batch_size))
-
-    # Sort and repartition.
-    if sort_keys:
-        ddf_prepared = ddf.sort_values(key_col).repartition(npartitions=num_partitions)
-    else:
-        ddf_prepared = ddf.repartition(npartitions=num_partitions)
-
-    # No sharding happens in single-db mode.  The sort task graph is lazy so
-    # its actual execution cost is included in write_duration_ms below.
-    shard_duration_ms = 0
-
-    # Phase 3: Stream partitions to single writer
-    write_started = time.perf_counter()
-    attempt_result = _run_attempts_with_retry(
-        db_id=0,
-        run_id=run_id,
-        s3_prefix=config.s3_prefix,
-        shard_prefix=config.output.shard_prefix,
-        db_path_template=config.output.db_path_template,
-        local_root=config.output.local_root,
-        retry_config=config.shard_retry,
-        metrics_collector=config.metrics_collector,
-        started=started,
-        attempt_fn=lambda ctx: _stream_to_single_db(
-            ddf=ddf_prepared,
-            config=config,
-            run_id=run_id,
-            key_col=key_col,
-            value_spec=value_spec,
-            prefetch_partitions=prefetch_partitions,
-            max_writes_per_second=max_writes_per_second,
-            max_write_bytes_per_second=max_write_bytes_per_second,
-            attempt_ctx=ctx,
-        ),
-    )
-    write_duration_ms = int((time.perf_counter() - write_started) * 1000)
-
-    # Phase 4: Publish
-    attempts = [attempt_result]
-    winners, num_attempts, all_attempt_urls = select_winners(attempts, num_dbs=1)
-
-    resolved_sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
-
-    manifest_started = time.perf_counter()
-    manifest_ref = publish_to_store(
+    with managed_run_record(
         config=config,
         run_id=run_id,
-        resolved_sharding=resolved_sharding,
-        winners=winners,
-        key_col=key_col,
-        started=started,
-    )
-    manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
+        writer_type="dask",
+    ) as run_record:
+        # Compute partition count (triggers a compute when num_partitions is None).
+        if num_partitions is None:
+            total_rows = len(ddf)
+            num_partitions = max(1, math.ceil(total_rows / config.batch_size))
 
-    cleanup_losers(
-        all_attempt_urls, winners, metrics_collector=config.metrics_collector
-    )
+        # Sort and repartition.
+        if sort_keys:
+            ddf_prepared = ddf.sort_values(key_col).repartition(
+                npartitions=num_partitions
+            )
+        else:
+            ddf_prepared = ddf.repartition(npartitions=num_partitions)
 
-    return assemble_build_result(
-        run_id=run_id,
-        winners=winners,
-        manifest_ref=manifest_ref,
-        num_attempts=num_attempts,
-        shard_duration_ms=shard_duration_ms,
-        write_duration_ms=write_duration_ms,
-        manifest_duration_ms=manifest_duration_ms,
-        started=started,
-    )
+        # No sharding happens in single-db mode.  The sort task graph is lazy so
+        # its actual execution cost is included in write_duration_ms below.
+        shard_duration_ms = 0
+
+        # Phase 3: Stream partitions to single writer
+        write_started = time.perf_counter()
+        attempt_result = _run_attempts_with_retry(
+            db_id=0,
+            run_id=run_id,
+            s3_prefix=config.s3_prefix,
+            shard_prefix=config.output.shard_prefix,
+            db_path_template=config.output.db_path_template,
+            local_root=config.output.local_root,
+            retry_config=config.shard_retry,
+            metrics_collector=config.metrics_collector,
+            started=started,
+            attempt_fn=lambda ctx: _stream_to_single_db(
+                ddf=ddf_prepared,
+                config=config,
+                run_id=run_id,
+                key_col=key_col,
+                value_spec=value_spec,
+                prefetch_partitions=prefetch_partitions,
+                max_writes_per_second=max_writes_per_second,
+                max_write_bytes_per_second=max_write_bytes_per_second,
+                attempt_ctx=ctx,
+            ),
+        )
+        write_duration_ms = int((time.perf_counter() - write_started) * 1000)
+
+        # Phase 4: Publish
+        attempts = [attempt_result]
+        winners, num_attempts, all_attempt_urls = select_winners(attempts, num_dbs=1)
+
+        resolved_sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
+
+        manifest_started = time.perf_counter()
+        manifest_ref = publish_to_store(
+            config=config,
+            run_id=run_id,
+            resolved_sharding=resolved_sharding,
+            winners=winners,
+            key_col=key_col,
+            started=started,
+        )
+        run_record.set_manifest_ref(manifest_ref)
+        manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
+
+        cleanup_losers(
+            all_attempt_urls, winners, metrics_collector=config.metrics_collector
+        )
+
+        result = assemble_build_result(
+            run_id=run_id,
+            winners=winners,
+            manifest_ref=manifest_ref,
+            run_record_ref=run_record.run_record_ref,
+            num_attempts=num_attempts,
+            shard_duration_ms=shard_duration_ms,
+            write_duration_ms=write_duration_ms,
+            manifest_duration_ms=manifest_duration_ms,
+            started=started,
+        )
+        run_record.mark_succeeded()
+        return result
 
 
 def _stream_to_single_db(

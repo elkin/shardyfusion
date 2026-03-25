@@ -34,6 +34,7 @@ from shardyfusion.logging import (
 )
 from shardyfusion.manifest import BuildResult, WriterInfo
 from shardyfusion.metrics import MetricEvent, MetricsCollector
+from shardyfusion.run_registry import managed_run_record
 from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import DB_ID_COL, KeyEncoding
 from shardyfusion.slatedb_adapter import (
@@ -161,7 +162,14 @@ def _write_sharded_impl(
 
     mc = config.metrics_collector
 
-    with LogContext(run_id=run_id):
+    with (
+        LogContext(run_id=run_id),
+        managed_run_record(
+            config=config,
+            run_id=run_id,
+            writer_type="spark",
+        ) as run_record,
+    ):
         log_event(
             "write_started",
             logger=_logger,
@@ -239,6 +247,7 @@ def _write_sharded_impl(
             started=started,
             num_dbs=num_dbs,
         )
+        run_record.set_manifest_ref(manifest_ref)
         manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
 
         cleanup_losers(
@@ -251,6 +260,7 @@ def _write_sharded_impl(
             run_id=run_id,
             winners=write_outcome.winners,
             manifest_ref=manifest_ref,
+            run_record_ref=run_record.run_record_ref,
             num_attempts=write_outcome.num_attempts,
             shard_duration_ms=prepared_rows.shard_duration_ms,
             write_duration_ms=write_outcome.write_duration_ms,
@@ -272,6 +282,8 @@ def _write_sharded_impl(
                     "rows_written": result.stats.rows_written,
                 },
             )
+
+        run_record.mark_succeeded()
 
         return result
 

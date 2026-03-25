@@ -28,6 +28,7 @@ from shardyfusion.logging import (
 )
 from shardyfusion.manifest import BuildResult
 from shardyfusion.metrics import MetricEvent, MetricsCollector
+from shardyfusion.run_registry import managed_run_record
 from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import (
     DB_ID_COL,
@@ -142,7 +143,14 @@ def write_sharded(
 
     mc = config.metrics_collector
 
-    with LogContext(run_id=run_id):
+    with (
+        LogContext(run_id=run_id),
+        managed_run_record(
+            config=config,
+            run_id=run_id,
+            writer_type="dask",
+        ) as run_record,
+    ):
         log_event(
             "write_started",
             logger=_logger,
@@ -257,6 +265,7 @@ def write_sharded(
             started=started,
             num_dbs=num_dbs,
         )
+        run_record.set_manifest_ref(manifest_ref)
         manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
 
         cleanup_losers(all_attempt_urls, winners, metrics_collector=mc)
@@ -265,6 +274,7 @@ def write_sharded(
             run_id=run_id,
             winners=winners,
             manifest_ref=manifest_ref,
+            run_record_ref=run_record.run_record_ref,
             num_attempts=num_attempts,
             shard_duration_ms=shard_duration_ms,
             write_duration_ms=write_duration_ms,
@@ -286,6 +296,8 @@ def write_sharded(
                     "rows_written": result.stats.rows_written,
                 },
             )
+
+        run_record.mark_succeeded()
 
         return result
 

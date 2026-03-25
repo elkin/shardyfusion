@@ -22,6 +22,7 @@ from shardyfusion.errors import ConfigValidationError
 from shardyfusion.logging import get_logger, log_event
 from shardyfusion.manifest import BuildResult, WriterInfo
 from shardyfusion.metrics import MetricEvent
+from shardyfusion.run_registry import managed_run_record
 from shardyfusion.serde import make_key_encoder
 from shardyfusion.slatedb_adapter import DbAdapterFactory, SlateDbFactory
 from shardyfusion.type_defs import KeyInput
@@ -130,7 +131,14 @@ def write_sharded(
     started = time.perf_counter()
     mc = config.metrics_collector
 
-    with LogContext(run_id=run_id):
+    with (
+        LogContext(run_id=run_id),
+        managed_run_record(
+            config=config,
+            run_id=run_id,
+            writer_type="python",
+        ) as run_record,
+    ):
         log_event(
             "write_started",
             logger=_logger,
@@ -218,6 +226,7 @@ def write_sharded(
             started=started,
             num_dbs=num_dbs,
         )
+        run_record.set_manifest_ref(manifest_ref)
         manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
 
         cleanup_losers(all_attempt_urls, winners, metrics_collector=mc)
@@ -226,6 +235,7 @@ def write_sharded(
             run_id=run_id,
             winners=winners,
             manifest_ref=manifest_ref,
+            run_record_ref=run_record.run_record_ref,
             num_attempts=num_attempts,
             shard_duration_ms=0,
             write_duration_ms=write_duration_ms,
@@ -247,6 +257,8 @@ def write_sharded(
                     "rows_written": result.stats.rows_written,
                 },
             )
+
+        run_record.mark_succeeded()
 
     return result
 
