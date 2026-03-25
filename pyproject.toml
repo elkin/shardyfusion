@@ -242,6 +242,7 @@ source = [
 ]
 
 [tool.coverage.report]
+fail_under = 75
 show_missing = true
 precision = 1
 skip_covered = true
