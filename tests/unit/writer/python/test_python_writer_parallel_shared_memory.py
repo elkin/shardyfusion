@@ -25,6 +25,7 @@ from shardyfusion.writer.python._parallel_writer import (
     _ParallelRuntime,
     _release_shared_memory_segment,
     _send_chunk,
+    _shard_worker,
     _shared_memory_chunk_bytes,
     _SharedMemoryChunkRef,
     _SharedMemoryReclaim,
@@ -32,6 +33,7 @@ from shardyfusion.writer.python._parallel_writer import (
     _wait_for_reclaim_or_worker_exit,
     _wait_for_shared_memory_budget,
 )
+from tests.helpers.tracking import TrackingFactory
 
 
 class _FakeSegmentHandle:
@@ -452,3 +454,64 @@ def test_parallel_shared_memory_limit_rejects_large_record(tmp_path: Path) -> No
             max_parallel_shared_memory_bytes=1024,
             max_parallel_shared_memory_bytes_per_worker=64,
         )
+
+
+def test_shard_worker_consumes_shared_memory_chunks_and_reports_result(
+    tmp_path: Path,
+) -> None:
+    factory = TrackingFactory()
+    config = WriteConfig(
+        num_dbs=1,
+        s3_prefix="s3://bucket/prefix",
+        batch_size=2,
+        adapter_factory=factory,
+        output=OutputOptions(
+            run_id="shared-memory-worker",
+            local_root=str(tmp_path / "local"),
+        ),
+        manifest=ManifestOptions(store=InMemoryManifestStore()),
+    )
+    batch = [
+        (b"k1", b"v1"),
+        (b"k2", b"v2"),
+        (b"k3", b"v3"),
+    ]
+    size = _shared_memory_chunk_bytes(batch)
+    shm = _create_shared_memory_chunk(batch, size=size)
+    work_queue: queue.Queue[_SharedMemoryChunkRef | None] = queue.Queue()
+    reclaim_queue: queue.Queue[_SharedMemoryReclaim] = queue.Queue()
+    result_queue: queue.Queue[ShardAttemptResult] = queue.Queue()
+    work_queue.put(
+        _SharedMemoryChunkRef(name=shm.name, size=size, row_count=len(batch))
+    )
+    work_queue.put(None)
+
+    try:
+        _shard_worker(
+            0,
+            work_queue,  # type: ignore[arg-type]
+            reclaim_queue,  # type: ignore[arg-type]
+            result_queue,  # type: ignore[arg-type]
+            config,
+            "shared-memory-worker",
+            factory,
+            None,
+            None,
+        )
+    finally:
+        shm.close()
+        shm.unlink()
+
+    result = result_queue.get_nowait()
+    reclaim = reclaim_queue.get_nowait()
+    adapter = factory.adapters[0]
+
+    assert reclaim == _SharedMemoryReclaim(name=shm.name)
+    assert [len(call) for call in adapter.write_calls] == [2, 1]
+    assert adapter.flushed is True
+    assert result.row_count == 3
+    assert result.checkpoint_id == "fake-checkpoint"
+    assert (
+        result.db_url
+        == "s3://bucket/prefix/shards/run_id=shared-memory-worker/db=00000/attempt=00"
+    )
