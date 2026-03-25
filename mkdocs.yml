@@ -38,6 +38,9 @@ nav:
   - Observability: observability.md
   - Error Handling: error-handling.md
   - Engineering Notes:
+    - 2026-03-14 Manifest History & Rollback: engineering-notes/2026-03-14-manifest-history-and-rollback.md
+    - 2026-03-15 Reliable Loser Cleanup Plan: engineering-notes/2026-03-15-reliable-loser-cleanup-plan.md
+    - 2026-03-24 Test Coverage Gap Closure: engineering-notes/2026-03-24-test-coverage-gap-closure.md
     - 2026-03-25 Consistent Writer Retry: engineering-notes/2026-03-25-consistent-writer-retry.md
   - Operations: operations.md
   - Cloud Testing: cloud-testing.md

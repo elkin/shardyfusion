@@ -1,4 +1,11 @@
-# Manifest History & Rollback
+# 2026-03-14 Manifest History & Rollback
+
+- Status: `implemented`
+- Date: `2026-03-14`
+- Baseline repo commit before this change series: `765e56e9de8fe92f4eec9c5694e0a6389e509e35`
+- Baseline commit summary: `fix: add run_id to partition-level shard log calls`
+- Recorded in commit:
+  - `d4e525a78786d16e1c1c91a153bd68f98240e9c0` `feat: add manifest history, rollback, and reader fallback`
 
 ## Problem
 
