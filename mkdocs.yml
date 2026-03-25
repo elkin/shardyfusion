@@ -37,6 +37,8 @@ nav:
   - CLI (shardy): cli.md
   - Observability: observability.md
   - Error Handling: error-handling.md
+  - Engineering Notes:
+    - 2026-03-25 Consistent Writer Retry: engineering-notes/2026-03-25-consistent-writer-retry.md
   - Operations: operations.md
   - Cloud Testing: cloud-testing.md
   - Release Process: release.md

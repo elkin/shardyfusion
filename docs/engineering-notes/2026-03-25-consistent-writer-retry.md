@@ -1,26 +1,39 @@
-# Retry Design Updates
+# 2026-03-25 Consistent Writer Retry
+
+- Status: `implemented`
+- Date: `2026-03-25`
+- Baseline repo commit before this change series: `0097fdfbad1099c3ad494532b423132e71ac8b49`
+- Baseline commit summary: `Remove duplicate code coverage limit from pyproject.toml`
+- Initial implementation commits:
+  - `37fe4f7` `feat: add retryable single-db writer attempts`
+  - `1b922dd` `feat: add retryable python parallel spool writer`
+  - `3ab8255` `docs: describe consistent writer retry behavior`
 
 ## Summary
 
-This change set makes retry behavior more consistent across writer backends and adds built-in retry support to the Python parallel writer.
+This change series made retry behavior more consistent across writer backends and added built-in retry support to the Python parallel writer.
 
-Two design updates were implemented:
+Two core updates were implemented:
 
 1. Writers that perform built-in retries now write each retry attempt to a fresh `attempt=NN` path.
 2. The Python parallel writer now supports optional per-shard retry using durable file-backed spool files.
 
-The goal was not to make writes exactly-once at the shard-materialization level. The goal was to make retries safe, deterministic at publish time, and consistent across backends.
+The goal was not to make shard materialization exactly-once. The goal was to make retries safe, deterministic at publish time, and easier to reason about across backends.
 
-## What Changed
+## Previous State
 
-### 1. Shared Retry Semantics Across Retrying Writers
-
-Before this change:
+Before this change series:
 
 - Dask and Ray sharded writers already retried shard writes into fresh `attempt=NN` paths.
-- Spark sharded writer already had attempt-isolated paths through Spark task attempts.
+- Spark sharded writer already used attempt-isolated paths via Spark task attempts.
 - `write_single_db()` paths did not use built-in retry and effectively wrote only `attempt=00`.
-- Python parallel writer had no built-in retry.
+- Python parallel writer had no built-in retry and relied only on shared memory for parent-to-worker transfer.
+
+That meant retry semantics were inconsistent across backends, and the Python parallel writer had no durable replay source if a worker died or a shard write failed late in the attempt.
+
+## What Was Implemented
+
+### Shared Retry Semantics Across Retrying Writers
 
 After this change:
 
@@ -29,84 +42,7 @@ After this change:
 - Spark, Dask, and Ray `write_single_db()` now use built-in retry and advance through `attempt=00`, `attempt=01`, and so on.
 - Python parallel writer now optionally retries per shard when `WriteConfig.shard_retry` is configured.
 
-### 2. Python Parallel Writer Retry
-
-Before this change, the Python parallel writer used only shared memory for parent-to-worker transfer. That was efficient, but it was not replayable:
-
-- If adapter operations failed late in the shard attempt, there was no durable replay source.
-- If a worker process died after consuming shared-memory chunks, the parent could not reconstruct the shard input.
-
-After this change:
-
-- Default Python parallel mode still uses shared memory when `shard_retry` is `None`.
-- Retry-enabled Python parallel mode switches to a durable per-shard spool file.
-- The parent appends serialized chunks to disk and sends only chunk metadata to workers.
-- If a worker fails or exits unexpectedly, the parent respawns it and replays that shard from the spool file into a fresh attempt path.
-
-## Why These Changes Were Made
-
-## Consistency
-
-Retry behavior should mean the same thing across backends:
-
-- a retryable failure should not overwrite the previous attempt
-- each retry should produce a distinct attempt path
-- cleanup and winner selection should work the same way across implementations
-
-Extending the existing attempt model to single-db writers makes the system easier to reason about and aligns them with the existing sharded Dask/Ray behavior.
-
-## Safety
-
-Retrying into the same output path is unsafe. It makes it hard to distinguish:
-
-- a clean retry
-- a partial rewrite
-- a mixed state after an interrupted write
-
-Fresh attempt IDs avoid path reuse and preserve the current winner-selection model.
-
-## Replayability for Python Parallel Mode
-
-The Python parallel writer needed a durable replay source to support retry correctly.
-
-Shared memory alone cannot provide that because it is:
-
-- transient
-- reclaimed as workers progress
-- lost if the worker dies after consuming the chunk
-
-The file-backed spool design solves that by making shard input durable until the parent accepts a successful result.
-
-## Design Details
-
-### Shared Retry Orchestration
-
-Retry attempt orchestration is now centralized in the shared shard writer logic.
-
-Responsibilities of the shared retry loop:
-
-- assign attempt numbers
-- derive `db_url` and `local_dir` for each attempt
-- preserve `all_attempt_urls`
-- apply exponential backoff
-- emit retry metrics
-- stop immediately on non-retryable failures
-
-This keeps attempt numbering and retry bookkeeping uniform across Dask, Ray, and single-db writers.
-
-### Single-DB Writers
-
-`write_single_db()` in Spark, Dask, and Ray now wraps the write phase in the shared retry loop.
-
-Important scope choice:
-
-- The expensive distributed sort/preparation phase is still outside the retry loop.
-- Retry covers the adapter write attempt itself.
-- Each retry reopens a fresh adapter against a new `attempt=NN` path.
-
-This keeps retry focused on transient write failures and avoids repeating more work than necessary.
-
-### Python Parallel Writer
+### Python Parallel Writer Retry
 
 The Python parallel writer now has two transport modes.
 
@@ -129,9 +65,86 @@ Used when `shard_retry` is configured.
 - Parent records chunk metadata: file path, offset, size, row count.
 - Parent sends only chunk metadata over `multiprocessing.Queue`.
 - Worker reconstructs batches by reading those file ranges.
-- On retryable failure, the parent respawns the worker and replays all prior chunks for that shard into a new attempt path.
+- On retryable failure, the parent respawns the worker and replays prior chunks for that shard into a new attempt path.
 
-### Failure Handling Model
+## Why These Changes Were Made
+
+### Consistency
+
+Retry behavior should mean the same thing across backends:
+
+- a retryable failure should not overwrite the previous attempt
+- each retry should produce a distinct attempt path
+- cleanup and winner selection should work the same way across implementations
+
+Extending the existing attempt model to single-db writers aligns them with the existing sharded Dask/Ray behavior.
+
+### Safety
+
+Retrying into the same output path is unsafe. It makes it hard to distinguish:
+
+- a clean retry
+- a partial rewrite
+- a mixed state after an interrupted write
+
+Fresh attempt IDs avoid path reuse and preserve the current winner-selection model.
+
+### Replayability for Python Parallel Mode
+
+Shared memory alone cannot provide durable replay because it is:
+
+- transient
+- reclaimed as workers progress
+- lost if the worker dies after consuming the chunk
+
+The file-backed spool design solves that by making shard input durable until the parent accepts a successful result.
+
+## Design Details
+
+### Shared Retry Orchestration
+
+Retry attempt orchestration is centralized in the shared shard writer logic.
+
+Responsibilities of the shared retry loop:
+
+- assign attempt numbers
+- derive `db_url` and `local_dir` for each attempt
+- preserve `all_attempt_urls`
+- apply exponential backoff
+- emit retry metrics
+- stop immediately on non-retryable failures
+
+This keeps attempt numbering and retry bookkeeping uniform across Dask, Ray, and single-db writers.
+
+### Single-DB Writers
+
+`write_single_db()` in Spark, Dask, and Ray now wraps the write phase in the shared retry loop.
+
+Important scope choice:
+
+- The expensive distributed sort or preparation phase is still outside the retry loop.
+- Retry covers the adapter write attempt itself.
+- Each retry reopens a fresh adapter against a new `attempt=NN` path.
+
+This keeps retry focused on transient write failures and avoids repeating more work than necessary.
+
+### Python Parallel Writer
+
+The retry-enabled Python parallel mode persists shard input locally and replays it by shard attempt.
+
+Important protocol details in the current implementation:
+
+- A chunk is appended to the replay history only after it has been successfully queued to the current worker attempt.
+- Worker replay during respawn uses the same attempt-aware queue helper as live dispatch, so replay does not block forever on a dead worker queue.
+- Retry result collection timeouts include the configured retry backoff budget instead of using only a fixed per-shard deadline.
+
+Those details were tightened after review because the first version had three problems:
+
+- a chunk could be marked replayable before it had actually been queued, which could duplicate rows after a respawn
+- replay used blocking queue writes with no liveness polling, which could hang indefinitely
+- result collection used a fixed timeout that could expire before legitimate retry backoff windows elapsed
+
+## Failure Handling Model
 
 The implemented design targets safe retry, not exact-once attempt creation.
 
@@ -146,11 +159,11 @@ If the worker crashes in that window:
 - the shard attempt may already exist and be valid
 - the parent may still retry because success was not observed
 
-The implemented design accepts that outcome. The retry writes to a fresh attempt path, and manifest winner selection keeps publication deterministic.
+The design accepts that outcome. The retry writes to a fresh attempt path, and manifest winner selection keeps publication deterministic.
 
-This means duplicate successful attempts are possible in rare crash cases, but mixed-path corruption is avoided.
+This means duplicate successful attempts are still possible in rare crash cases, but mixed-path corruption is avoided.
 
-## Implementation Notes
+## Implementation Areas
 
 Primary implementation areas:
 
@@ -164,8 +177,9 @@ Primary implementation areas:
   - added single-db retry support
 - `shardyfusion/writer/python/_parallel_writer.py`
   - added retry-enabled file-spool transport
-  - added worker respawn/replay logic
+  - added worker respawn and replay logic
   - preserved shared-memory mode as the default fast path
+  - later tightened queue publication ordering, replay liveness, and timeout sizing
 
 Additional updates:
 
@@ -175,7 +189,7 @@ Additional updates:
   - updated retry descriptions and backend coverage
 - unit tests
   - added retry-specific coverage for single-db writers
-  - added retry/replay coverage for Python parallel mode
+  - added retry and replay coverage for Python parallel mode
 
 ## Pros
 
@@ -219,6 +233,7 @@ The retry-enabled Python parallel mode is materially more complex than the origi
 - worker respawn
 - replay ordering
 - stale result filtering
+- attempt-aware queue handoff
 
 That increases maintenance cost.
 
@@ -232,7 +247,7 @@ This is acceptable for correctness because winner selection stays deterministic,
 
 This change does not add retry everywhere:
 
-- Spark sharded writes still rely on Spark task retry/speculation.
+- Spark sharded writes still rely on Spark task retry and speculation.
 - Python single-process mode still has no built-in retry.
 
 That is intentional, but it means retry behavior is still backend- and mode-dependent.
@@ -249,16 +264,16 @@ Rejected because a shard attempt can fail after many successful `write_batch()` 
 
 ### Success Markers
 
-Not implemented because they would introduce a commit convention that other writer paths do not currently use. The implemented design stays aligned with the existing winner-selection and loser-cleanup model.
+Not implemented because they would introduce a commit convention that other writer paths do not currently use. The design stays aligned with the existing winner-selection and loser-cleanup model.
 
 ## Resulting Behavior
 
-With this change, the retry story is now:
+With this change series, the retry story is now:
 
-- Dask/Ray sharded writes: built-in per-shard retry, fresh attempt paths
+- Dask and Ray sharded writes: built-in per-shard retry, fresh attempt paths
 - Spark sharded writes: Spark-managed attempts, fresh attempt paths
-- Spark/Dask/Ray single-db writes: built-in whole-db retry, fresh attempt paths
+- Spark, Dask, and Ray single-db writes: built-in whole-db retry, fresh attempt paths
 - Python parallel writes: optional per-shard retry via durable spool files, fresh attempt paths
 - Python single-process writes: no built-in retry
 
-This is a meaningful improvement in consistency and reliability, while keeping the existing attempt-based publish model intact.
+This is a meaningful improvement in consistency and reliability while keeping the existing attempt-based publish model intact.
