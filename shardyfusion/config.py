@@ -71,7 +71,9 @@ class WriteConfig:
         output: Output path/layout settings.
         manifest: Manifest build and publish settings.
         metrics_collector: Optional observer for write lifecycle events.
-        shard_retry: Retry configuration for shard writes (Dask/Ray only).
+        shard_retry: Optional retry configuration. Used for per-shard retry in
+            Dask/Ray sharded writes, whole-database retry in Spark/Dask/Ray
+            `write_single_db()`, and retry-enabled Python parallel writes.
         credential_provider: Credential provider for S3 access. When also
             set on ``manifest``, the manifest-level provider takes precedence.
         s3_connection_options: S3 transport/connection overrides. When also

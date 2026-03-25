@@ -9,7 +9,7 @@ The Python writer (`shardyfusion.writer.python.write_sharded`) is a pure-Python 
 - **Framework dependencies:** None
 - **Execution modes:** Single-process or parallel (`multiprocessing.spawn`)
 - **Rate limiting:** Unique non-blocking-first strategy in single-process mode
-- **Memory management:** Global memory ceiling in single-process mode, bounded shared-memory IPC in parallel mode
+- **Memory management:** Global memory ceiling in single-process mode; parallel mode uses shared memory by default and durable local spool files when retry is enabled
 
 ## Data Flow
 
@@ -75,10 +75,11 @@ Single-process mode opens all shard adapters in a single process using a context
 Parallel mode uses `multiprocessing.spawn` with one worker per shard:
 
 - **Spawn context:** `multiprocessing.get_context("spawn")` is hardcoded — objects that cross the worker boundary (config, factory, queues, result payloads) must be picklable.
-- **Shared-memory payload transport:** The main process serializes each chunk into a flat buffer in `multiprocessing.shared_memory.SharedMemory`, then sends only a small descriptor on the per-shard queue.
+- **Default transport:** Without `shard_retry`, the main process serializes each chunk into `multiprocessing.shared_memory.SharedMemory` and sends only a descriptor on the per-shard queue.
+- **Retry-enabled transport:** With `WriteConfig.shard_retry`, the parent appends each shard chunk to a durable local spool file and sends `(path, offset, size, row_count)` metadata over the queue. If a worker fails, the parent respawns it and replays that shard from the spool file into a new `attempt=NN` output path.
 - **Queue-based control plane:** One queue per shard carries chunk descriptors and stop signals, plus shared reclaim/result queues for coordination.
-- **Main process responsibilities:** Routes records, encodes key/value pairs, chunks them (target chunk size = `batch_size/10`, capped by a private per-segment byte limit), enforces global/per-worker shared-memory byte budgets, and tracks min/max keys.
-- **Worker process:** Each worker consumes descriptors from its queue, decodes the shared-memory chunk into its local batch buffer, writes to a single shard adapter, then acknowledges the segment so the parent can reclaim it.
+- **Main process responsibilities:** Routes records, encodes key/value pairs, chunks them (target chunk size = `batch_size/10`, capped by a private per-segment byte limit), tracks min/max keys, and either manages shared-memory budgets or durable spool files depending on retry mode.
+- **Worker process:** Each worker consumes descriptors from its queue, reconstructs batches locally, writes to a single shard adapter, and reports the final attempt result back to the parent.
 
 ## Batch Flushing Strategy
 
@@ -156,9 +157,11 @@ No retry mechanism. If any adapter operation fails, the exception propagates up 
 - Main process detects worker failure via exit codes after joining, raises an error listing failed `(db_id, exit_code)` pairs.
 - On main-process exception during routing, stop signals are sent to all worker queues so workers exit cleanly. The finally block handles worker join/terminate.
 
-### No Partial Recovery
+### Retry Behavior
 
-If any worker fails (parallel) or any adapter operation fails (single-process), the entire write fails. No mechanism to retry individual shards.
+- **Single-process:** No built-in shard retry. Failures propagate to the caller, which can retry the whole write.
+- **Parallel without `shard_retry`:** Same as before: any worker failure aborts the write.
+- **Parallel with `shard_retry`:** Retryable worker or adapter failures are retried per shard with exponential backoff. Each retry uses a fresh `attempt=NN` path. Because success is learned asynchronously from the worker, a crash after `checkpoint()` but before result delivery can leave an orphaned earlier attempt; winner selection and loser cleanup still make the published snapshot deterministic.
 
 ### Two-Phase Publish and Cleanup
 
@@ -174,4 +177,4 @@ Same as all writers — retry CURRENT pointer up to 3 times, cleanup is best-eff
 | **`columns_fn` for CEL routing context** | The `columns_fn` parameter provides additional column values for CEL routing context (analogous to `cel_columns` in framework writers). |
 | **No verification step** | Unlike Spark/Dask/Ray, the Python writer has no routing verification — it uses the routing function directly, so there's no framework-vs-Python divergence to verify. |
 | **CEL + parallel incompatible for discovery** | Parallel mode requires `num_dbs > 0` upfront. CEL discovery (deriving `num_dbs` from data) only works in single-process mode. |
-| **Parallel SHM budgets** | `max_queue_size` bounds descriptor backlog, not payload bytes. Use `max_parallel_shared_memory_bytes` and `max_parallel_shared_memory_bytes_per_worker` to bound outstanding shared-memory usage. |
+| **Parallel SHM budgets** | `max_queue_size` bounds descriptor backlog, not payload bytes. `max_parallel_shared_memory_bytes` and `max_parallel_shared_memory_bytes_per_worker` only apply to the default shared-memory transport; retry-enabled parallel mode uses local spool files instead. |

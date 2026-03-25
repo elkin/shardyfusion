@@ -110,7 +110,7 @@ The verification step samples rows before the write phase:
 
 ### Shard-Level Retry
 
-Same as Dask — when `WriteConfig.shard_retry` is set, individual shard writes are retried on transient failures with exponential backoff. Each retry writes to a new S3 path. See [Dask Writer — Shard-Level Retry](dask.md#shard-level-retry) for configuration details.
+Same as Dask — when `WriteConfig.shard_retry` is set, individual shard writes are retried on transient failures with exponential backoff. Each retry writes to a new S3 path. The same setting also enables whole-database retry for `write_single_db()`. See [Dask Writer — Shard-Level Retry](dask.md#shard-level-retry) for configuration details.
 
 ### No Speculative Execution
 

@@ -109,6 +109,7 @@ The routing verification step is a runtime safety net:
 - Uses `coalesce()` (**not** `repartition()`) after sorting — `coalesce` preserves the sorted order within each partition by merging partitions without shuffling, while `repartition` would re-shuffle and destroy sort order.
 - Streams sorted partitions to the driver with one partition prefetched.
 - A single shared token bucket controls the write rate (not per-partition).
+- When `WriteConfig.shard_retry` is configured, the whole single-db write is retried on retryable failures, and each retry writes to a fresh `attempt=NN` path.
 - Wrapped in config override and cache context managers.
 
 ## Error Handling & Fault Tolerance

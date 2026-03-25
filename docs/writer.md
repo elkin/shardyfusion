@@ -292,9 +292,9 @@ orthogonal:
 - Larger `batch_size` → fewer but bigger acquire calls.
 - Neither setting affects the other; they can be tuned independently.
 
-## Shard-Level Retry (Dask & Ray)
+## Writer Retry
 
-The Dask and Ray writers support optional per-shard retry on transient failures via `WriteConfig.shard_retry`:
+`WriteConfig.shard_retry` enables retry for the writer paths that can safely replay input:
 
 ```python
 from shardyfusion import WriteConfig, RetryConfig
@@ -306,7 +306,13 @@ config = WriteConfig(
 )
 ```
 
-When a shard write fails with a retryable error (`ShardWriteError`), the writer retries with exponential backoff. Each attempt writes to a new S3 path (`attempt=00`, `attempt=01`, ...) with fresh rate limiters. Non-retryable errors propagate immediately.
+Supported paths:
+
+- Dask and Ray sharded writers: per-shard retry.
+- Spark, Dask, and Ray `write_single_db()`: whole-database retry.
+- Python `write_sharded(..., parallel=True)`: per-shard retry using a durable local spool file per shard.
+
+Every retry writes to a fresh attempt path (`attempt=00`, `attempt=01`, ...) with a fresh adapter and fresh rate limiters. Non-retryable errors propagate immediately.
 
 | Setting | Default | Description |
 |---|---|---|
@@ -314,7 +320,7 @@ When a shard write fails with a retryable error (`ShardWriteError`), the writer 
 | `initial_backoff` | `timedelta(seconds=1.0)` | Delay before the first retry |
 | `backoff_multiplier` | `2.0` | Multiplier applied to the delay after each retry |
 
-**Spark** relies on speculative execution for fault tolerance and does not use `shard_retry`. **Python** writer support is deferred.
+**Spark sharded** writes still rely on Spark task retry/speculation rather than shardyfusion-managed `shard_retry`, but their task attempts are still isolated by `attempt=NN`.
 
 When `shard_retry` is `None` (the default), all writers make a single attempt with no retry — preserving existing behavior.
 

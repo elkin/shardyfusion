@@ -294,7 +294,7 @@ Direct fields:
 - `key_encoding` (default `u64be`)
 - `batch_size` (default 50,000)
 - `adapter_factory` (default `SlateDbFactory()`)
-- `shard_retry` (default `None`) — optional `RetryConfig` for shard-level write retry (Dask/Ray only)
+- `shard_retry` (default `None`) — optional `RetryConfig` for retryable writer paths: Dask/Ray shard writes, Spark/Dask/Ray `write_single_db()`, and Python parallel writes
 - `metrics_collector` (default `None`) — optional `MetricsCollector` for lifecycle events
 
 Grouped options:

@@ -89,7 +89,7 @@ reader = ShardedReader(
 | `SHARD_WRITE_RETRY_EXHAUSTED` | `elapsed_ms`, `db_id`, `attempts` | All shard write retry attempts failed |
 
 !!! note
-    Writer retry events are only emitted when `WriteConfig.shard_retry` is configured (Dask and Ray writers). Spark relies on speculative execution for fault tolerance. The built-in Prometheus and OTel collectors do not yet instrument these events — custom collectors can handle them via the standard `emit()` protocol.
+    Writer retry events are only emitted when `WriteConfig.shard_retry` is configured. That currently covers Dask/Ray sharded writes, Spark/Dask/Ray `write_single_db()`, and Python parallel writes. Spark sharded writes still rely on Spark task retry/speculation instead. The built-in Prometheus and OTel collectors do not yet instrument these events — custom collectors can handle them via the standard `emit()` protocol.
 
 ### Infrastructure
 

@@ -114,7 +114,7 @@ The verification step samples rows eagerly before the write phase:
 
 ### Shard-Level Retry
 
-When `WriteConfig.shard_retry` is set to a `RetryConfig`, individual shard writes are retried on transient failures (`ShardWriteError`, `retryable=True`). Each retry writes to a new S3 path (`attempt=00`, `attempt=01`, ...) with fresh rate limiters. Non-retryable errors propagate immediately without retry. When `shard_retry` is `None` (default), behavior is unchanged — a single attempt with no retry.
+When `WriteConfig.shard_retry` is set to a `RetryConfig`, individual shard writes are retried on transient failures (`ShardWriteError`, `retryable=True`). Each retry writes to a new S3 path (`attempt=00`, `attempt=01`, ...) with fresh rate limiters. Non-retryable errors propagate immediately without retry. The same setting also enables whole-database retry for `write_single_db()`. When `shard_retry` is `None` (default), behavior is unchanged — a single attempt with no retry.
 
 ```python
 from shardyfusion import WriteConfig, RetryConfig
