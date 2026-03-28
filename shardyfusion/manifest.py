@@ -1,5 +1,9 @@
 """Manifest models and extensibility protocols."""
 
+from __future__ import annotations
+
+import json
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
@@ -14,6 +18,8 @@ from .sharding_types import (
     validate_routing_values,
 )
 from .type_defs import JsonObject, JsonValue
+
+SQLITE_MANIFEST_CONTENT_TYPE = "application/x-sqlite3"
 
 
 @dataclass(slots=True, frozen=True)
@@ -217,3 +223,128 @@ class YamlManifestBuilder:
             default_flow_style=False,
         ).encode("utf-8")
         return ManifestArtifact(payload=payload, content_type="application/x-yaml")
+
+
+# ---------------------------------------------------------------------------
+# SQLite manifest schema and builder
+# ---------------------------------------------------------------------------
+
+_SQLITE_BUILD_META_DDL = """\
+CREATE TABLE build_meta (
+    run_id           TEXT    NOT NULL,
+    created_at       TEXT    NOT NULL,
+    num_dbs          INTEGER NOT NULL,
+    s3_prefix        TEXT    NOT NULL,
+    key_col          TEXT    NOT NULL,
+    sharding         TEXT    NOT NULL,
+    db_path_template TEXT    NOT NULL,
+    shard_prefix     TEXT    NOT NULL,
+    format_version   INTEGER NOT NULL,
+    key_encoding     TEXT    NOT NULL,
+    custom           TEXT    NOT NULL DEFAULT '{}'
+)"""
+
+_SQLITE_SHARDS_DDL = """\
+CREATE TABLE shards (
+    db_id         INTEGER NOT NULL PRIMARY KEY,
+    db_url        TEXT,
+    attempt       INTEGER NOT NULL,
+    row_count     INTEGER NOT NULL,
+    min_key       TEXT,
+    max_key       TEXT,
+    checkpoint_id TEXT,
+    writer_info   TEXT    NOT NULL DEFAULT '{}'
+)"""
+
+
+class SqliteManifestBuilder:
+    """Manifest builder emitting a SQLite database.
+
+    The database contains two tables:
+
+    * ``build_meta`` — single row with :class:`RequiredBuildMeta` fields.
+      Nested ``sharding`` spec and ``custom`` fields stored as JSON TEXT.
+    * ``shards`` — one row per non-empty shard, indexed by ``db_id``.
+      ``min_key``/``max_key`` stored as JSON to preserve type info.
+      ``writer_info`` stored as JSON TEXT.
+
+    The serialized database is returned as the ``payload`` of a
+    :class:`ManifestArtifact` with content type ``application/x-sqlite3``.
+    Uses :meth:`sqlite3.Connection.serialize` (Python 3.11+) for
+    zero-copy in-memory serialization.
+    """
+
+    def __init__(self) -> None:
+        self._custom_fields: JsonObject = {}
+
+    def add_custom_field(self, key: str, value: JsonValue) -> None:
+        self._custom_fields[key] = value
+
+    def build(
+        self,
+        *,
+        required_build: RequiredBuildMeta,
+        shards: list[RequiredShardMeta],
+        custom_fields: JsonObject,
+    ) -> ManifestArtifact:
+        merged_custom = dict(self._custom_fields)
+        merged_custom.update(custom_fields)
+
+        con = sqlite3.connect(":memory:")
+        try:
+            con.execute(_SQLITE_BUILD_META_DDL)
+            con.execute(_SQLITE_SHARDS_DDL)
+
+            rb = required_build.model_dump(mode="json")
+            con.execute(
+                "INSERT INTO build_meta"
+                " (run_id, created_at, num_dbs, s3_prefix, key_col,"
+                "  sharding, db_path_template, shard_prefix,"
+                "  format_version, key_encoding, custom)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    rb["run_id"],
+                    rb["created_at"],
+                    rb["num_dbs"],
+                    rb["s3_prefix"],
+                    rb["key_col"],
+                    json.dumps(rb["sharding"], sort_keys=True),
+                    rb["db_path_template"],
+                    rb["shard_prefix"],
+                    rb["format_version"],
+                    rb["key_encoding"],
+                    json.dumps(merged_custom, sort_keys=True),
+                ),
+            )
+
+            for shard in shards:
+                sd = shard.model_dump(mode="json")
+                con.execute(
+                    "INSERT INTO shards"
+                    " (db_id, db_url, attempt, row_count,"
+                    "  min_key, max_key, checkpoint_id, writer_info)"
+                    " VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        sd["db_id"],
+                        sd["db_url"],
+                        sd["attempt"],
+                        sd["row_count"],
+                        json.dumps(sd["min_key"])
+                        if sd["min_key"] is not None
+                        else None,
+                        json.dumps(sd["max_key"])
+                        if sd["max_key"] is not None
+                        else None,
+                        sd["checkpoint_id"],
+                        json.dumps(sd["writer_info"], sort_keys=True),
+                    ),
+                )
+
+            con.commit()
+            payload = con.serialize()
+        finally:
+            con.close()
+
+        return ManifestArtifact(
+            payload=payload, content_type=SQLITE_MANIFEST_CONTENT_TYPE
+        )

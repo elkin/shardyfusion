@@ -47,6 +47,7 @@ from .logging import (
     get_logger,
 )
 from .manifest import (
+    SQLITE_MANIFEST_CONTENT_TYPE,
     BuildDurations,
     BuildResult,
     BuildStats,
@@ -58,6 +59,7 @@ from .manifest import (
     ParsedManifest,
     RequiredBuildMeta,
     RequiredShardMeta,
+    SqliteManifestBuilder,
     WriterInfo,
     YamlManifestBuilder,
 )
@@ -66,6 +68,8 @@ from .manifest_store import (
     ManifestStore,
     S3ManifestStore,
     parse_manifest,
+    parse_manifest_payload,
+    parse_sqlite_manifest,
 )
 from .metrics import MetricEvent, MetricsCollector
 from .reader import (
@@ -159,6 +163,7 @@ __all__ = [
     "RunStatus",
     "S3ConnectionOptions",
     "S3Credentials",
+    "SQLITE_MANIFEST_CONTENT_TYPE",
     "S3ManifestStore",
     "S3RunRegistry",
     "S3TransientError",
@@ -178,6 +183,7 @@ __all__ = [
     "SlateDbReaderFactory",
     "SnapshotInfo",
     "SnapshotRouter",
+    "SqliteManifestBuilder",
     "StaticCredentialProvider",
     "ThreadSafeTokenBucket",
     "TokenBucket",
@@ -190,4 +196,6 @@ __all__ = [
     "configure_logging",
     "get_logger",
     "parse_manifest",
+    "parse_manifest_payload",
+    "parse_sqlite_manifest",
 ]

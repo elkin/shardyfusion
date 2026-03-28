@@ -218,7 +218,7 @@ class S3ManifestStore:
                 manifest_ref=ref,
             )
             raise
-        return parse_manifest(payload)
+        return parse_manifest_payload(payload)
 
     def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
         manifests_prefix = join_s3(self.s3_prefix, "manifests") + "/"
@@ -241,9 +241,11 @@ class S3ManifestStore:
         refs.sort(key=lambda r: r.published_at, reverse=True)
         return refs[:limit]
 
-    def set_current(self, ref: str) -> None:
+    def set_current(
+        self, ref: str, *, content_type: str = "application/x-yaml"
+    ) -> None:
         run_id = _extract_run_id_from_ref(ref)
-        self._write_current(ref, "application/x-yaml", run_id)
+        self._write_current(ref, content_type, run_id)
 
     def _write_current(self, manifest_ref: str, content_type: str, run_id: str) -> None:
         """Write the _CURRENT pointer to S3."""
@@ -318,6 +320,21 @@ class InMemoryManifestStore:
 # Parsing helpers
 # ---------------------------------------------------------------------------
 
+# First 16 bytes of every SQLite database file.
+_SQLITE_MAGIC = b"SQLite format 3\x00"
+
+
+def parse_manifest_payload(payload: bytes) -> ParsedManifest:
+    """Auto-detect manifest format and parse.
+
+    Dispatches to :func:`parse_sqlite_manifest` if the payload starts
+    with the SQLite magic header, otherwise falls back to
+    :func:`parse_manifest` (YAML).
+    """
+    if payload[:16] == _SQLITE_MAGIC:
+        return parse_sqlite_manifest(payload)
+    return parse_manifest(payload)
+
 
 def parse_manifest(payload: bytes) -> ParsedManifest:
     """Parse a YAML manifest payload into typed ParsedManifest."""
@@ -326,6 +343,84 @@ def parse_manifest(payload: bytes) -> ParsedManifest:
         data = yaml.safe_load(payload)
     except Exception as exc:
         raise ManifestParseError(f"Manifest payload is not valid YAML: {exc}") from exc
+
+    try:
+        parsed = ParsedManifest.model_validate(data)
+    except ValidationError as exc:
+        raise ManifestParseError(f"Manifest validation failed: {exc}") from exc
+
+    _validate_manifest(parsed.required_build, parsed.shards)
+    return parsed
+
+
+def parse_sqlite_manifest(payload: bytes) -> ParsedManifest:
+    """Parse a SQLite manifest payload into typed ParsedManifest.
+
+    Opens the serialized SQLite database in memory via
+    :meth:`sqlite3.Connection.deserialize`, reads ``build_meta`` and
+    ``shards`` tables, and validates identically to :func:`parse_manifest`.
+    """
+    import json
+    import sqlite3
+
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    try:
+        try:
+            con.deserialize(payload)
+        except Exception as exc:
+            raise ManifestParseError(
+                f"Manifest payload is not a valid SQLite database: {exc}"
+            ) from exc
+
+        row = con.execute("SELECT * FROM build_meta LIMIT 1").fetchone()
+        if row is None:
+            raise ManifestParseError("SQLite manifest has no build_meta row")
+
+        build_data = {
+            "run_id": row["run_id"],
+            "created_at": row["created_at"],
+            "num_dbs": row["num_dbs"],
+            "s3_prefix": row["s3_prefix"],
+            "key_col": row["key_col"],
+            "sharding": json.loads(row["sharding"]),
+            "db_path_template": row["db_path_template"],
+            "shard_prefix": row["shard_prefix"],
+            "format_version": row["format_version"],
+            "key_encoding": row["key_encoding"],
+        }
+        custom = json.loads(row["custom"]) if row["custom"] else {}
+
+        shard_rows = con.execute("SELECT * FROM shards ORDER BY db_id").fetchall()
+
+        shards_data = []
+        for sr in shard_rows:
+            shards_data.append(
+                {
+                    "db_id": sr["db_id"],
+                    "db_url": sr["db_url"],
+                    "attempt": sr["attempt"],
+                    "row_count": sr["row_count"],
+                    "min_key": json.loads(sr["min_key"])
+                    if sr["min_key"] is not None
+                    else None,
+                    "max_key": json.loads(sr["max_key"])
+                    if sr["max_key"] is not None
+                    else None,
+                    "checkpoint_id": sr["checkpoint_id"],
+                    "writer_info": json.loads(sr["writer_info"]),
+                }
+            )
+    except ManifestParseError:
+        raise
+    except Exception as exc:
+        raise ManifestParseError(
+            f"Failed to read SQLite manifest tables: {exc}"
+        ) from exc
+    finally:
+        con.close()
+
+    data = {"required": build_data, "shards": shards_data, "custom": custom}
 
     try:
         parsed = ParsedManifest.model_validate(data)
