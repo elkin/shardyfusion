@@ -170,10 +170,6 @@ class TestManifestStoreConfig:
         assert cfg.backend == "postgres"
         assert cfg.dsn == "host=localhost dbname=mydb"
 
-    def test_comdb2_backend(self) -> None:
-        cfg = ManifestStoreConfig(backend="comdb2", dsn="mydb")
-        assert cfg.backend == "comdb2"
-
     def test_custom_table_name(self) -> None:
         cfg = ManifestStoreConfig(table_name="my_manifests")
         assert cfg.table_name == "my_manifests"
@@ -298,25 +294,12 @@ class TestResolveDsn:
 
 
 class TestBuildConnectionFactory:
-    def test_postgres_returns_callable(self) -> None:
-        factory = build_connection_factory("postgres", "host=localhost dbname=test")
+    def test_returns_callable(self) -> None:
+        factory = build_connection_factory("host=localhost dbname=test")
         assert callable(factory)
 
-    def test_comdb2_returns_callable(self) -> None:
-        factory = build_connection_factory("comdb2", "mydb")
-        assert callable(factory)
-
-    def test_postgres_missing_driver(self) -> None:
-        factory = build_connection_factory("postgres", "host=localhost")
+    def test_missing_driver(self) -> None:
+        factory = build_connection_factory("host=localhost")
         # The ImportError happens when calling the factory, not creating it
         with pytest.raises(ImportError, match="psycopg2"):
             factory()
-
-    def test_comdb2_missing_driver(self) -> None:
-        factory = build_connection_factory("comdb2", "mydb")
-        with pytest.raises(ImportError, match="comdb2"):
-            factory()
-
-    def test_invalid_backend_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unsupported"):
-            build_connection_factory("sqlite", "test.db")  # type: ignore[arg-type]

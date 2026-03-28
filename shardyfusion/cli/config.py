@@ -23,7 +23,7 @@ from ..type_defs import S3ConnectionOptions
 class ManifestStoreConfig(BaseModel):
     """Manifest store backend settings from [manifest_store] in reader.toml."""
 
-    backend: Literal["s3", "postgres", "comdb2"] = "s3"
+    backend: Literal["s3", "postgres"] = "s3"
     dsn: str | None = None
     table_name: str = "shardyfusion_manifests"
     ensure_table: bool = True
@@ -294,42 +294,24 @@ def resolve_dsn(store_cfg: ManifestStoreConfig) -> str:
     )
 
 
-def build_connection_factory(
-    backend: Literal["postgres", "comdb2"], dsn: str
-) -> Callable[[], Any]:
-    """Return a zero-arg callable that opens a fresh DB-API 2 connection.
+def build_connection_factory(dsn: str) -> Callable[[], Any]:
+    """Return a zero-arg callable that opens a fresh psycopg2 connection.
 
-    The driver module is imported lazily so the CLI doesn't require DB
-    drivers unless a DB backend is actually configured.
+    The driver module is imported lazily so the CLI doesn't require
+    psycopg2 unless the postgres backend is actually configured.
     """
-    if backend == "postgres":
 
-        def _connect_postgres() -> Any:
-            try:
-                import psycopg2
-            except ImportError:
-                raise ImportError(
-                    "psycopg2 is required for the 'postgres' manifest store backend. "
-                    "Install it with: pip install psycopg2-binary"
-                ) from None
-            return psycopg2.connect(dsn)
+    def _connect() -> Any:
+        try:
+            import psycopg2
+        except ImportError:
+            raise ImportError(
+                "psycopg2 is required for the 'postgres' manifest store backend. "
+                "Install it with: pip install psycopg2-binary"
+            ) from None
+        return psycopg2.connect(dsn)
 
-        return _connect_postgres
-
-    if backend == "comdb2":
-
-        def _connect_comdb2() -> Any:
-            try:
-                import comdb2  # type: ignore[import-untyped]
-            except ImportError:
-                raise ImportError(
-                    "comdb2 driver is required for the 'comdb2' manifest store backend."
-                ) from None
-            return comdb2.connect(dsn)
-
-        return _connect_comdb2
-
-    raise ValueError(f"Unsupported DB backend: {backend!r}")
+    return _connect
 
 
 # ---------------------------------------------------------------------------

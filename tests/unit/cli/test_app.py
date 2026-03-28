@@ -315,22 +315,6 @@ class TestBuildManifestStore:
             mock_cls.assert_called_once()
             assert store is mock_cls.return_value
 
-    def test_comdb2_backend(self) -> None:
-        store_cfg = ManifestStoreConfig(backend="comdb2", dsn="mydb")
-        params: dict[str, Any] = {
-            "s3_prefix": "s3://bucket/prefix",
-            "current_pointer_key": "_CURRENT",
-            "credential_provider": None,
-            "s3_connection_options": {},
-        }
-        with patch(
-            "shardyfusion.db_manifest_store.Comdb2ManifestStore", autospec=True
-        ) as mock_cls:
-            mock_cls.return_value = MagicMock()
-            store = _build_manifest_store(store_cfg, params)
-            mock_cls.assert_called_once()
-            assert store is mock_cls.return_value
-
 
 # ---------------------------------------------------------------------------
 # DB backend: s3_prefix required, --current-url warns

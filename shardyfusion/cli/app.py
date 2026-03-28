@@ -61,22 +61,13 @@ def _build_manifest_store(
             s3_connection_options=params["s3_connection_options"],
         )
 
-    # DB backends (postgres / comdb2)
+    # Postgres backend
     dsn = resolve_dsn(store_cfg)
-    conn_factory = build_connection_factory(store_cfg.backend, dsn)  # type: ignore[arg-type]
+    conn_factory = build_connection_factory(dsn)
 
-    if store_cfg.backend == "postgres":
-        from ..db_manifest_store import PostgresManifestStore
+    from ..db_manifest_store import PostgresManifestStore
 
-        return PostgresManifestStore(
-            conn_factory,
-            table_name=store_cfg.table_name,
-            ensure_table=store_cfg.ensure_table,
-        )
-
-    from ..db_manifest_store import Comdb2ManifestStore
-
-    return Comdb2ManifestStore(
+    return PostgresManifestStore(
         conn_factory,
         table_name=store_cfg.table_name,
         ensure_table=store_cfg.ensure_table,
