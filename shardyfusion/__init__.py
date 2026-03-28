@@ -67,6 +67,8 @@ from .manifest_store import (
     InMemoryManifestStore,
     ManifestStore,
     S3ManifestStore,
+    SqliteShardLookup,
+    load_sqlite_build_meta,
     parse_manifest,
     parse_manifest_payload,
     parse_sqlite_manifest,
@@ -84,7 +86,7 @@ from .reader import (
     SlateDbReaderFactory,
     SnapshotInfo,
 )
-from .routing import SnapshotRouter
+from .routing import ShardLookup, SnapshotRouter
 from .run_registry import (
     InMemoryRunRegistry,
     RunRecord,
@@ -176,6 +178,7 @@ __all__ = [
     "ShardReaderHandle",
     "ShardedReader",
     "ShardingSpec",
+    "ShardLookup",
     "ShardingStrategy",
     "ShardyfusionError",
     "SlateDbApiError",
@@ -184,6 +187,7 @@ __all__ = [
     "SnapshotInfo",
     "SnapshotRouter",
     "SqliteManifestBuilder",
+    "SqliteShardLookup",
     "StaticCredentialProvider",
     "ThreadSafeTokenBucket",
     "TokenBucket",
@@ -195,6 +199,7 @@ __all__ = [
     "cel_sharding_by_columns",
     "configure_logging",
     "get_logger",
+    "load_sqlite_build_meta",
     "parse_manifest",
     "parse_manifest_payload",
     "parse_sqlite_manifest",

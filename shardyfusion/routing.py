@@ -1,6 +1,9 @@
 """Snapshot routing helpers for sharded manifests."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
+from typing import Protocol
 
 import xxhash
 
@@ -13,6 +16,19 @@ from .sharding_types import (
     validate_routing_values,
 )
 from .type_defs import KeyInput
+
+
+class ShardLookup(Protocol):
+    """Protocol for shard metadata access — eager (list) or lazy (SQLite)."""
+
+    def get_shard(self, db_id: int) -> RequiredShardMeta:
+        """Return metadata for a shard by db_id.
+
+        Must return a synthetic empty-shard entry (``db_url=None``,
+        ``row_count=0``) for db_ids that have no data.
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Universal hash: xxh3_64 with seed=0
@@ -66,7 +82,18 @@ def xxh3_db_id(key: KeyInput, num_dbs: int) -> int:
 
 
 class SnapshotRouter:
-    """Route point lookups to a shard database id using manifest sharding metadata."""
+    """Route point lookups to a shard database id using manifest sharding metadata.
+
+    Operates in two modes:
+
+    * **Eager** (default ``__init__``): preloads all shards into a list.
+      Best for small-to-medium shard counts (up to ~10 K).
+    * **Lazy** (:meth:`from_build_meta`): delegates shard lookups to a
+      :class:`ShardLookup` provider (e.g. backed by SQLite with range
+      reads).  Constant memory regardless of shard count.
+
+    Both modes expose :meth:`get_shard` for uniform shard access.
+    """
 
     route_one: Callable[[KeyInput], int]
     encode_lookup_key: Callable[[KeyInput], bytes]
@@ -79,12 +106,43 @@ class SnapshotRouter:
         # Missing db_ids (empty shards omitted from the manifest) get synthetic
         # metadata-only entries with db_url=None and row_count=0.
         shard_by_id = {s.db_id: s for s in shards}
-        self.shards = [
+        self.shards: list[RequiredShardMeta] = [
             shard_by_id.get(
                 db_id, RequiredShardMeta(db_id=db_id, attempt=0, row_count=0)
             )
             for db_id in range(required_build.num_dbs)
         ]
+        self._shard_lookup: ShardLookup | None = None
+        self._init_routing(required_build)
+
+    @classmethod
+    def from_build_meta(
+        cls,
+        required_build: RequiredBuildMeta,
+        *,
+        shard_lookup: ShardLookup,
+    ) -> SnapshotRouter:
+        """Create a router with lazy shard lookup (no preloaded shard list).
+
+        Use this when the manifest has too many shards to load into memory.
+        The *shard_lookup* provider supplies :class:`RequiredShardMeta` on
+        demand (e.g. via indexed SQLite queries).
+
+        .. note::
+
+           ``router.shards`` is an empty list in lazy mode.  Code that
+           iterates over all shards must use the lookup provider directly
+           or switch to :meth:`get_shard`.
+        """
+        router = object.__new__(cls)
+        router.required_build = required_build
+        router.shards = []
+        router._shard_lookup = shard_lookup
+        router._init_routing(required_build)
+        return router
+
+    def _init_routing(self, required_build: RequiredBuildMeta) -> None:
+        """Shared routing setup (strategy, key encoder, CEL state)."""
         self.strategy = required_build.sharding.strategy
         self.num_dbs = required_build.num_dbs
         self.key_encoding = required_build.key_encoding
@@ -105,6 +163,21 @@ class SnapshotRouter:
         self._cel_columns = required_build.sharding.cel_columns
         self.route_one = self._build_route_one()
         self.encode_lookup_key = self._build_lookup_key_encoder()
+
+    def get_shard(self, db_id: int) -> RequiredShardMeta:
+        """Look up shard metadata by *db_id*.
+
+        Works in both eager (list) and lazy (lookup) mode.  Returns a
+        synthetic empty-shard entry for db_ids with no data.
+        """
+        if self._shard_lookup is not None:
+            return self._shard_lookup.get_shard(db_id)
+        return self.shards[db_id]
+
+    @property
+    def is_lazy(self) -> bool:
+        """True when this router uses lazy shard lookup (no preloaded list)."""
+        return self._shard_lookup is not None
 
     def route(
         self, key: KeyInput, *, routing_context: dict[str, object] | None = None

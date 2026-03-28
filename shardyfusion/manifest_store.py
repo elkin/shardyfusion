@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
+from collections import OrderedDict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -360,9 +362,6 @@ def parse_sqlite_manifest(payload: bytes) -> ParsedManifest:
     :meth:`sqlite3.Connection.deserialize`, reads ``build_meta`` and
     ``shards`` tables, and validates identically to :func:`parse_manifest`.
     """
-    import json
-    import sqlite3
-
     con = sqlite3.connect(":memory:")
     con.row_factory = sqlite3.Row
     try:
@@ -474,6 +473,132 @@ def _validate_manifest(
                 "Categorical CEL manifest num_dbs must match routing_values cardinality "
                 f"(expected {expected_num_dbs}, got {num_dbs})"
             )
+
+
+# ---------------------------------------------------------------------------
+# SQLite manifest — granular access helpers
+# ---------------------------------------------------------------------------
+
+
+def load_sqlite_build_meta(
+    con: sqlite3.Connection,
+) -> tuple[RequiredBuildMeta, dict[str, Any]]:
+    """Read ``RequiredBuildMeta`` and custom fields from an open SQLite manifest.
+
+    Unlike :func:`parse_sqlite_manifest` (which takes raw bytes and loads
+    all shards), this reads only the ``build_meta`` row — a single small
+    query, ideal for lazy-router initialization.
+
+    Returns ``(required_build, custom_fields)``.
+    """
+    old_factory = con.row_factory
+    con.row_factory = sqlite3.Row
+    try:
+        row = con.execute("SELECT * FROM build_meta LIMIT 1").fetchone()
+    finally:
+        con.row_factory = old_factory
+    if row is None:
+        raise ManifestParseError("SQLite manifest has no build_meta row")
+
+    build_data = {
+        "run_id": row["run_id"],
+        "created_at": row["created_at"],
+        "num_dbs": row["num_dbs"],
+        "s3_prefix": row["s3_prefix"],
+        "key_col": row["key_col"],
+        "sharding": json.loads(row["sharding"]),
+        "db_path_template": row["db_path_template"],
+        "shard_prefix": row["shard_prefix"],
+        "format_version": row["format_version"],
+        "key_encoding": row["key_encoding"],
+    }
+    custom = json.loads(row["custom"]) if row["custom"] else {}
+
+    try:
+        required_build = RequiredBuildMeta.model_validate(build_data)
+    except ValidationError as exc:
+        raise ManifestParseError(
+            f"SQLite manifest build_meta validation failed: {exc}"
+        ) from exc
+    return required_build, custom
+
+
+class SqliteShardLookup:
+    """Lazy shard metadata provider backed by a SQLite manifest connection.
+
+    Satisfies the :class:`~shardyfusion.routing.ShardLookup` protocol.
+    Queries the ``shards`` table by ``db_id`` (B-tree index) and caches
+    results in an LRU dict with bounded size.
+
+    Parameters
+    ----------
+    con:
+        An open ``sqlite3.Connection`` to a SQLite manifest database.
+        The caller owns the connection lifetime; this class does **not**
+        close it.
+    num_dbs:
+        Total number of shards (from ``RequiredBuildMeta.num_dbs``).
+    cache_size:
+        Maximum number of shard entries to cache.  0 disables caching.
+    """
+
+    def __init__(
+        self,
+        con: sqlite3.Connection,
+        num_dbs: int,
+        *,
+        cache_size: int = 4096,
+    ) -> None:
+        self._con = con
+        self._num_dbs = num_dbs
+        self._cache_size = cache_size
+        self._cache: OrderedDict[int, RequiredShardMeta] = OrderedDict()
+
+    def get_shard(self, db_id: int) -> RequiredShardMeta:
+        """Return shard metadata for *db_id*, or a synthetic empty entry."""
+        if self._cache_size > 0:
+            cached = self._cache.get(db_id)
+            if cached is not None:
+                self._cache.move_to_end(db_id)
+                return cached
+
+        shard = self._query_shard(db_id)
+
+        if self._cache_size > 0:
+            if len(self._cache) >= self._cache_size:
+                self._cache.popitem(last=False)
+            self._cache[db_id] = shard
+        return shard
+
+    def _query_shard(self, db_id: int) -> RequiredShardMeta:
+        old_factory = self._con.row_factory
+        self._con.row_factory = sqlite3.Row
+        try:
+            row = self._con.execute(
+                "SELECT * FROM shards WHERE db_id = ?", (db_id,)
+            ).fetchone()
+        finally:
+            self._con.row_factory = old_factory
+
+        if row is None:
+            return RequiredShardMeta(db_id=db_id, attempt=0, row_count=0)
+
+        return RequiredShardMeta.model_validate(
+            {
+                "db_id": row["db_id"],
+                "db_url": row["db_url"],
+                "attempt": row["attempt"],
+                "row_count": row["row_count"],
+                "min_key": json.loads(row["min_key"])
+                if row["min_key"] is not None
+                else None,
+                "max_key": json.loads(row["max_key"])
+                if row["max_key"] is not None
+                else None,
+                "checkpoint_id": row["checkpoint_id"],
+                "writer_info": json.loads(row["writer_info"]),
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
