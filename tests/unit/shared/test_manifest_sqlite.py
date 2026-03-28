@@ -1,7 +1,7 @@
 """Tests for SQLite manifest serialization and parsing."""
 
-import json
 import sqlite3
+from datetime import UTC, datetime
 
 import pytest
 
@@ -19,8 +19,6 @@ from shardyfusion.manifest_store import (
     parse_sqlite_manifest,
 )
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
-
-from datetime import UTC, datetime
 
 
 def _make_required_build(**overrides):

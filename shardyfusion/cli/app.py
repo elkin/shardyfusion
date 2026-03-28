@@ -854,14 +854,21 @@ def cleanup_cmd(
     "--type",
     "schema_type",
     default="manifest",
-    type=click.Choice(["manifest", "current-pointer"], case_sensitive=False),
+    type=click.Choice(
+        ["manifest", "current-pointer", "sqlite-manifest"], case_sensitive=False
+    ),
     help="Which schema to print (default: manifest).",
 )
 def schema_cmd(schema_type: str) -> None:
     """Print the JSON Schema for manifest or current-pointer formats."""
     import json
 
-    from ..manifest import CurrentPointer, ParsedManifest
+    from ..manifest import (
+        _SQLITE_BUILD_META_DDL,
+        _SQLITE_SHARDS_DDL,
+        CurrentPointer,
+        ParsedManifest,
+    )
 
     if schema_type == "manifest":
         schema = {
@@ -871,6 +878,14 @@ def schema_cmd(schema_type: str) -> None:
             "title": "SlateDB/SQLite Sharded Manifest",
             "description": "JSON manifest published to S3 by the sharded writer.",
         }
+        click.echo(json.dumps(schema, indent=2))
+    elif schema_type == "sqlite-manifest":
+        click.echo("-- SQLite manifest schema (two tables)")
+        click.echo("-- Used when manifest_content_type = 'application/x-sqlite3'")
+        click.echo()
+        click.echo(f"{_SQLITE_BUILD_META_DDL};")
+        click.echo()
+        click.echo(f"{_SQLITE_SHARDS_DDL};")
     else:
         schema = {
             **CurrentPointer.model_json_schema(),
@@ -879,8 +894,7 @@ def schema_cmd(schema_type: str) -> None:
             "title": "SlateDB/SQLite Sharded CURRENT Pointer",
             "description": "JSON pointer published to S3 at _CURRENT.",
         }
-
-    click.echo(json.dumps(schema, indent=2))
+        click.echo(json.dumps(schema, indent=2))
 
 
 # ---------------------------------------------------------------------------

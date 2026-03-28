@@ -22,7 +22,7 @@ from .manifest import (
     RequiredShardMeta,
     YamlManifestBuilder,
 )
-from .manifest_store import parse_manifest
+from .manifest_store import parse_manifest_payload
 
 _logger = get_logger(__name__)
 
@@ -223,7 +223,7 @@ class _DbManifestStoreBase(ABC):
             raise ManifestParseError(f"Manifest not found: ref={ref}")
 
         payload_str = row[0]
-        return parse_manifest(
+        return parse_manifest_payload(
             payload_str.encode("utf-8") if isinstance(payload_str, str) else payload_str
         )
 

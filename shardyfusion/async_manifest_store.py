@@ -82,9 +82,9 @@ class AsyncS3ManifestStore:
                 manifest_ref=ref,
             )
             raise
-        from .manifest_store import parse_manifest
+        from .manifest_store import parse_manifest_payload
 
-        return parse_manifest(payload)
+        return parse_manifest_payload(payload)
 
     async def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
         from .manifest_store import parse_manifest_dir_entry
