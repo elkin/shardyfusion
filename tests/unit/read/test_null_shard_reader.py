@@ -229,12 +229,11 @@ class TestConcurrentReaderNullShards:
 class TestManifestSparseShards:
     def test_sparse_manifest_round_trip(self) -> None:
         """Manifest with only non-empty shards round-trips; router fills gaps."""
-        import yaml
-
-        from shardyfusion.manifest import YamlManifestBuilder
+        from shardyfusion.manifest import SqliteManifestBuilder
+        from shardyfusion.manifest_store import parse_sqlite_manifest
         from shardyfusion.routing import SnapshotRouter
 
-        builder = YamlManifestBuilder()
+        builder = SqliteManifestBuilder()
         build = _required_build(num_dbs=3)
         # Only shard 0 and 2 have data; shard 1 is omitted (empty)
         shards = [
@@ -258,11 +257,7 @@ class TestManifestSparseShards:
             custom_fields={},
         )
 
-        payload = yaml.safe_load(artifact.payload)
-        assert len(payload["shards"]) == 2
-
-        # Deserialize and verify the router reconstructs all 3 shards
-        parsed = ParsedManifest.model_validate(payload)
+        parsed = parse_sqlite_manifest(artifact.payload)
         assert len(parsed.shards) == 2
 
         router = SnapshotRouter(parsed.required_build, parsed.shards)

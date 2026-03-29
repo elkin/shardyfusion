@@ -5,10 +5,9 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 
-import yaml
-
 from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
 from shardyfusion.credentials import StaticCredentialProvider
+from shardyfusion.manifest_store import parse_manifest_payload
 from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
 from shardyfusion.testing import FailOnceAdapterFactory, file_backed_adapter_factory
 from shardyfusion.type_defs import RetryConfig, S3ConnectionOptions
@@ -68,13 +67,13 @@ def test_python_writer_publishes_manifest_and_current_to_local_s3(
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
     current_obj = client.get_object(Bucket=bucket, Key=current_key)
 
-    manifest_payload = yaml.safe_load(manifest_obj["Body"].read())
+    manifest = parse_manifest_payload(manifest_obj["Body"].read())
     current_payload = json.loads(current_obj["Body"].read().decode("utf-8"))
     run_record = load_s3_run_record(local_s3_service, result.run_record_ref)
 
-    assert manifest_payload["required"]["run_id"] == "python-writer-local-s3"
-    assert manifest_payload["required"]["num_dbs"] == 4
-    assert len(manifest_payload["shards"]) == 4
+    assert manifest.required_build.run_id == "python-writer-local-s3"
+    assert manifest.required_build.num_dbs == 4
+    assert len(manifest.shards) == 4
     assert_success_run_record(
         run_record,
         result=result,
@@ -136,13 +135,13 @@ def test_python_writer_parallel_publishes_manifest_and_current_to_local_s3(
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
     current_obj = client.get_object(Bucket=bucket, Key=current_key)
 
-    manifest_payload = yaml.safe_load(manifest_obj["Body"].read())
+    manifest = parse_manifest_payload(manifest_obj["Body"].read())
     current_payload = json.loads(current_obj["Body"].read().decode("utf-8"))
     run_record = load_s3_run_record(local_s3_service, result.run_record_ref)
 
-    assert manifest_payload["required"]["run_id"] == "python-writer-parallel-local-s3"
-    assert manifest_payload["required"]["num_dbs"] == 4
-    assert len(manifest_payload["shards"]) == 4
+    assert manifest.required_build.run_id == "python-writer-parallel-local-s3"
+    assert manifest.required_build.num_dbs == 4
+    assert len(manifest.shards) == 4
     assert_success_run_record(
         run_record,
         result=result,

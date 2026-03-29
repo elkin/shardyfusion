@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import pytest
-import yaml
 
 cel_expr_python = pytest.importorskip("cel_expr_python")  # noqa: F841
 
 from shardyfusion.cel import compile_cel, route_cel
 from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
 from shardyfusion.credentials import StaticCredentialProvider
-from shardyfusion.manifest_store import parse_manifest
+from shardyfusion.manifest_store import parse_manifest_payload
 from shardyfusion.routing import SnapshotRouter
 from shardyfusion.sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
 from shardyfusion.testing import file_backed_adapter_factory, file_backed_load_db
@@ -71,12 +70,12 @@ def test_cel_unified_publishes_manifest_to_s3(local_s3_service, tmp_path):
     client = local_s3_service["client"]
     manifest_key = result.manifest_ref.split(f"s3://{bucket}/", 1)[1]
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
-    manifest_payload = yaml.safe_load(manifest_obj["Body"].read())
+    manifest = parse_manifest_payload(manifest_obj["Body"].read())
 
-    assert manifest_payload["required"]["sharding"]["strategy"] == "cel"
-    assert manifest_payload["required"]["sharding"]["cel_expr"] == "key % 4"
-    assert manifest_payload["required"]["sharding"]["cel_columns"] == {"key": "int"}
-    assert "routing_values" not in manifest_payload["required"]["sharding"]
+    assert manifest.required_build.sharding.strategy == "cel"
+    assert manifest.required_build.sharding.cel_expr == "key % 4"
+    assert manifest.required_build.sharding.cel_columns == {"key": "int"}
+    assert manifest.required_build.sharding.routing_values is None
 
 
 def test_cel_unified_router_round_trip(local_s3_service, tmp_path):
@@ -97,7 +96,7 @@ def test_cel_unified_router_round_trip(local_s3_service, tmp_path):
     client = local_s3_service["client"]
     manifest_key = result.manifest_ref.split(f"s3://{bucket}/", 1)[1]
     raw = client.get_object(Bucket=bucket, Key=manifest_key)["Body"].read()
-    manifest = parse_manifest(raw)
+    manifest = parse_manifest_payload(raw)
     router = SnapshotRouter(manifest.required_build, manifest.shards)
 
     # Verify every key routes to the correct shard
@@ -165,7 +164,7 @@ def test_cel_split_mode_routes_by_context(local_s3_service, tmp_path):
         .get_object(Bucket=bucket, Key=manifest_key)["Body"]
         .read()
     )
-    manifest = parse_manifest(raw)
+    manifest = parse_manifest_payload(raw)
     router = SnapshotRouter(manifest.required_build, manifest.shards)
 
     assert router.route_with_context({"region": "ap"}) == 0

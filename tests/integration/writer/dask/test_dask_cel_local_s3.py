@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-import yaml
 
 cel_expr_python = pytest.importorskip("cel_expr_python")  # noqa: F841
 
@@ -14,7 +13,7 @@ import pandas as pd
 from shardyfusion.cel import compile_cel, route_cel
 from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
 from shardyfusion.credentials import StaticCredentialProvider
-from shardyfusion.manifest_store import parse_manifest
+from shardyfusion.manifest_store import parse_manifest_payload
 from shardyfusion.routing import SnapshotRouter
 from shardyfusion.serde import ValueSpec
 from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
@@ -77,15 +76,13 @@ def test_dask_cel_unified_publishes_manifest(local_s3_service, tmp_path):
     # Verify manifest on S3
     client = local_s3_service["client"]
     manifest_key = result.manifest_ref.split(f"s3://{bucket}/", 1)[1]
-    manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
-    payload = yaml.safe_load(manifest_obj["Body"].read())
+    raw = client.get_object(Bucket=bucket, Key=manifest_key)["Body"].read()
+    manifest = parse_manifest_payload(raw)
 
-    assert payload["required"]["sharding"]["strategy"] == "cel"
-    assert payload["required"]["sharding"]["cel_expr"] == "key % 4"
+    assert manifest.required_build.sharding.strategy == "cel"
+    assert manifest.required_build.sharding.cel_expr == "key % 4"
 
     # Router round-trip
-    raw = client.get_object(Bucket=bucket, Key=manifest_key)["Body"].read()
-    manifest = parse_manifest(raw)
     router = SnapshotRouter(manifest.required_build, manifest.shards)
 
     compiled = compile_cel("key % 4", {"key": "int"})

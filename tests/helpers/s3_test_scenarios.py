@@ -17,16 +17,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import yaml
-
 from shardyfusion.credentials import CredentialProvider, StaticCredentialProvider
 from shardyfusion.manifest import (
     CurrentPointer,
     ManifestShardingSpec,
     RequiredBuildMeta,
     RequiredShardMeta,
+    SqliteManifestBuilder,
 )
-from shardyfusion.manifest_store import S3ManifestStore
+from shardyfusion.manifest_store import S3ManifestStore, parse_manifest_payload
 from shardyfusion.reader import ConcurrentShardedReader
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 from shardyfusion.slatedb_adapter import DbAdapterFactory
@@ -132,19 +131,15 @@ def run_reader_loads_manifest_scenario(
         ),
     ]
 
-    manifest_payload = yaml.safe_dump(
-        {
-            "required": required.model_dump(mode="json"),
-            "shards": [shard.model_dump(mode="json") for shard in shards],
-            "custom": {},
-        },
-        sort_keys=True,
-        default_flow_style=False,
-    ).encode("utf-8")
+    manifest_payload = (
+        SqliteManifestBuilder()
+        .build(required_build=required, shards=shards, custom_fields={})
+        .payload
+    )
     current_payload = json.dumps(
         CurrentPointer(
             manifest_ref=manifest_ref,
-            manifest_content_type="application/x-yaml",
+            manifest_content_type="application/x-sqlite3",
             run_id="reader-local",
             updated_at=datetime(2026, 1, 1, tzinfo=UTC),
         ).model_dump(mode="json"),
@@ -158,7 +153,7 @@ def run_reader_loads_manifest_scenario(
         Bucket=bucket,
         Key=manifest_ref.split(f"s3://{bucket}/", 1)[1],
         Body=manifest_payload,
-        ContentType="application/x-yaml",
+        ContentType="application/x-sqlite3",
     )
     client.put_object(
         Bucket=bucket,
@@ -259,12 +254,12 @@ def run_writer_publishes_manifest_scenario(
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
     current_obj = client.get_object(Bucket=bucket, Key=current_key)
 
-    manifest_payload = yaml.safe_load(manifest_obj["Body"].read())
+    manifest = parse_manifest_payload(manifest_obj["Body"].read())
     current_payload = json.loads(current_obj["Body"].read().decode("utf-8"))
 
-    assert manifest_payload["required"]["run_id"] == "writer-local-s3"
-    assert manifest_payload["required"]["num_dbs"] == 4
-    assert len(manifest_payload["shards"]) == 4
+    assert manifest.required_build.run_id == "writer-local-s3"
+    assert manifest.required_build.num_dbs == 4
+    assert len(manifest.shards) == 4
     assert current_payload["manifest_ref"] == result.manifest_ref
 
     run_record = load_s3_run_record(s3_service, result.run_record_ref)
@@ -442,12 +437,12 @@ def run_python_writer_publishes_manifest_scenario(
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
     current_obj = client.get_object(Bucket=bucket, Key=current_key)
 
-    manifest_payload = yaml.safe_load(manifest_obj["Body"].read())
+    manifest = parse_manifest_payload(manifest_obj["Body"].read())
     current_payload = json.loads(current_obj["Body"].read().decode("utf-8"))
 
-    assert manifest_payload["required"]["run_id"] == f"python-writer-{mode_label}"
-    assert manifest_payload["required"]["num_dbs"] == 4
-    assert len(manifest_payload["shards"]) == 4
+    assert manifest.required_build.run_id == f"python-writer-{mode_label}"
+    assert manifest.required_build.num_dbs == 4
+    assert len(manifest.shards) == 4
     assert current_payload["manifest_ref"] == result.manifest_ref
 
     # Verify each shard was physically written and total rows sum correctly.
@@ -526,12 +521,12 @@ def run_dask_writer_publishes_manifest_scenario(
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
     current_obj = client.get_object(Bucket=bucket, Key=current_key)
 
-    manifest_payload = yaml.safe_load(manifest_obj["Body"].read())
+    manifest = parse_manifest_payload(manifest_obj["Body"].read())
     current_payload = json.loads(current_obj["Body"].read().decode("utf-8"))
 
-    assert manifest_payload["required"]["run_id"] == "dask-writer-e2e"
-    assert manifest_payload["required"]["num_dbs"] == 4
-    assert len(manifest_payload["shards"]) == 4
+    assert manifest.required_build.run_id == "dask-writer-e2e"
+    assert manifest.required_build.num_dbs == 4
+    assert len(manifest.shards) == 4
     assert current_payload["manifest_ref"] == result.manifest_ref
 
     # Verify each shard was physically written and total rows sum correctly.
@@ -784,12 +779,12 @@ def run_ray_writer_publishes_manifest_scenario(
     manifest_obj = client.get_object(Bucket=bucket, Key=manifest_key)
     current_obj = client.get_object(Bucket=bucket, Key=current_key)
 
-    manifest_payload = yaml.safe_load(manifest_obj["Body"].read())
+    manifest = parse_manifest_payload(manifest_obj["Body"].read())
     current_payload = json.loads(current_obj["Body"].read().decode("utf-8"))
 
-    assert manifest_payload["required"]["run_id"] == "ray-writer-e2e"
-    assert manifest_payload["required"]["num_dbs"] == 4
-    assert len(manifest_payload["shards"]) == 4
+    assert manifest.required_build.run_id == "ray-writer-e2e"
+    assert manifest.required_build.num_dbs == 4
+    assert len(manifest.shards) == 4
     assert current_payload["manifest_ref"] == result.manifest_ref
 
     # Verify each shard was physically written and total rows sum correctly.

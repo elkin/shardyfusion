@@ -13,7 +13,6 @@ from shardyfusion.manifest import (
     RequiredBuildMeta,
     RequiredShardMeta,
 )
-from shardyfusion.manifest_store import parse_manifest
 from shardyfusion.reader import ConcurrentShardedReader
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 
@@ -54,7 +53,9 @@ class InMemoryManifestStore:
         )
 
     def load_manifest(self, ref: str) -> ParsedManifest:
-        return parse_manifest(self.manifests[ref])
+        from shardyfusion.manifest_store import parse_manifest_payload
+
+        return parse_manifest_payload(self.manifests[ref])
 
     def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
         return []
@@ -148,23 +149,20 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
         ),
     ]
 
-    import yaml
+    from shardyfusion.manifest import SqliteManifestBuilder
 
-    manifest_payload = yaml.safe_dump(
-        {
-            "required": required.model_dump(mode="json"),
-            "shards": [shard.model_dump(mode="json") for shard in shards],
-            "custom": {},
-        },
-        sort_keys=True,
-    ).encode("utf-8")
+    manifest_payload = (
+        SqliteManifestBuilder()
+        .build(required_build=required, shards=shards, custom_fields={})
+        .payload
+    )
 
     pointers = {
         "mem://current": json.dumps(
             {
                 "format_version": 2,
                 "manifest_ref": "mem://manifest/1",
-                "manifest_content_type": "application/x-yaml",
+                "manifest_content_type": "application/x-sqlite3",
                 "run_id": "run-1",
                 "updated_at": "2026-01-01T00:00:00+00:00",
             },

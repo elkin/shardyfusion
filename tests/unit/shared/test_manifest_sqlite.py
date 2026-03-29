@@ -88,17 +88,17 @@ class TestSqliteManifestBuilder:
             strategy=ShardingStrategy.CEL,
             cel_expr="key % 1000",
             cel_columns={"key": "int"},
-            boundaries=[250, 500, 750],
+            routing_values=[250, 500, 750],
         )
-        rb = _make_required_build(sharding=sharding)
-        shards = [_make_shard(i) for i in range(4)]
+        rb = _make_required_build(sharding=sharding, format_version=3, num_dbs=3)
+        shards = [_make_shard(i) for i in range(3)]
         artifact = builder.build(required_build=rb, shards=shards, custom_fields={})
 
         parsed = parse_sqlite_manifest(artifact.payload)
         assert parsed.required_build.sharding.strategy == ShardingStrategy.CEL
         assert parsed.required_build.sharding.cel_expr == "key % 1000"
         assert parsed.required_build.sharding.cel_columns == {"key": "int"}
-        assert parsed.required_build.sharding.boundaries == [250, 500, 750]
+        assert parsed.required_build.sharding.routing_values == [250, 500, 750]
 
     def test_custom_fields_merged(self) -> None:
         builder = SqliteManifestBuilder()
