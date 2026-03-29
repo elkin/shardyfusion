@@ -6,9 +6,8 @@ import json
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any
 
-import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .sharding_types import (
@@ -47,7 +46,7 @@ class ManifestShardingSpec(BaseModel):
     hash_algorithm: str = "xxh3_64"
 
     @model_validator(mode="after")
-    def _validate_model(self) -> "ManifestShardingSpec":
+    def _validate_model(self) -> ManifestShardingSpec:
         if self.strategy == ShardingStrategy.CEL:
             if not self.cel_expr:
                 raise ValueError("CEL strategy requires cel_expr")
@@ -166,63 +165,6 @@ class BuildResult:
     manifest_ref: str
     stats: BuildStats
     run_record_ref: str | None = None
-
-
-class ManifestBuilder(Protocol):
-    """Protocol for custom manifest formats."""
-
-    def add_custom_field(self, key: str, value: JsonValue) -> None:
-        """Register one custom field before build."""
-        ...
-
-    def build(
-        self,
-        *,
-        required_build: RequiredBuildMeta,
-        shards: list[RequiredShardMeta],
-        custom_fields: JsonObject,
-    ) -> ManifestArtifact:
-        """Build a manifest artifact containing required metadata."""
-        ...
-
-
-class YamlManifestBuilder:
-    """Default manifest builder emitting YAML.
-
-    Uses ``yaml.safe_dump`` for native ``bytes`` support (``!!binary``),
-    human-readable output, and deterministic key ordering.
-    """
-
-    def __init__(self) -> None:
-        self._custom_fields: JsonObject = {}
-
-    def add_custom_field(self, key: str, value: JsonValue) -> None:
-        self._custom_fields[key] = value
-
-    def build(
-        self,
-        *,
-        required_build: RequiredBuildMeta,
-        shards: list[RequiredShardMeta],
-        custom_fields: JsonObject,
-    ) -> ManifestArtifact:
-
-        merged_custom = dict(self._custom_fields)
-        merged_custom.update(custom_fields)
-
-        payload_obj = {
-            "required": required_build.model_dump(mode="json", exclude_none=True),
-            "shards": [
-                shard.model_dump(mode="json", exclude_none=True) for shard in shards
-            ],
-            "custom": merged_custom,
-        }
-        payload = yaml.safe_dump(
-            payload_obj,
-            sort_keys=True,
-            default_flow_style=False,
-        ).encode("utf-8")
-        return ManifestArtifact(payload=payload, content_type="application/x-yaml")
 
 
 # ---------------------------------------------------------------------------

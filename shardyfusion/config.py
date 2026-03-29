@@ -10,7 +10,6 @@ from urllib.parse import urlparse
 
 from .credentials import CredentialProvider
 from .errors import ConfigValidationError
-from .manifest import ManifestBuilder
 from .metrics import MetricsCollector
 from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
 from .slatedb_adapter import DbAdapterFactory
@@ -42,7 +41,6 @@ class OutputOptions:
 class ManifestOptions:
     """Manifest build and publish settings."""
 
-    manifest_builder: ManifestBuilder | None = None
     store: ManifestStore | None = None
     custom_manifest_fields: JsonObject = field(default_factory=dict)
     credential_provider: CredentialProvider | None = None

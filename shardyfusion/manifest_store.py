@@ -15,8 +15,6 @@ from collections import OrderedDict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
-import yaml
-
 if TYPE_CHECKING:
     from .type_defs import RetryConfig
 
@@ -26,14 +24,14 @@ from .credentials import CredentialProvider
 from .errors import ManifestParseError
 from .logging import FailureSeverity, get_logger, log_failure
 from .manifest import (
+    SQLITE_MANIFEST_CONTENT_TYPE,
     CurrentPointer,
     ManifestArtifact,
-    ManifestBuilder,
     ManifestRef,
     ParsedManifest,
     RequiredBuildMeta,
     RequiredShardMeta,
-    YamlManifestBuilder,
+    SqliteManifestBuilder,
 )
 from .metrics import MetricsCollector
 from .storage import (
@@ -138,7 +136,6 @@ class S3ManifestStore:
         *,
         manifest_name: str = "manifest",
         current_pointer_key: str = "_CURRENT",
-        manifest_builder: ManifestBuilder | None = None,
         credential_provider: CredentialProvider | None = None,
         s3_connection_options: S3ConnectionOptions | None = None,
         metrics_collector: MetricsCollector | None = None,
@@ -149,7 +146,6 @@ class S3ManifestStore:
         self.s3_prefix = s3_prefix.rstrip("/")
         self.manifest_name = manifest_name
         self.current_pointer_key = current_pointer_key
-        self._builder = manifest_builder
         credentials = credential_provider.resolve() if credential_provider else None
         self._s3_client = create_s3_client(credentials, s3_connection_options)
         self._metrics = metrics_collector
@@ -163,7 +159,7 @@ class S3ManifestStore:
         shards: list[RequiredShardMeta],
         custom: dict[str, Any],
     ) -> str:
-        builder = self._builder or YamlManifestBuilder()
+        builder = SqliteManifestBuilder()
         artifact = builder.build(
             required_build=required_build,
             shards=shards,
@@ -244,7 +240,7 @@ class S3ManifestStore:
         return refs[:limit]
 
     def set_current(
-        self, ref: str, *, content_type: str = "application/x-yaml"
+        self, ref: str, *, content_type: str = SQLITE_MANIFEST_CONTENT_TYPE
     ) -> None:
         run_id = _extract_run_id_from_ref(ref)
         self._write_current(ref, content_type, run_id)
@@ -327,32 +323,17 @@ _SQLITE_MAGIC = b"SQLite format 3\x00"
 
 
 def parse_manifest_payload(payload: bytes) -> ParsedManifest:
-    """Auto-detect manifest format and parse.
+    """Parse a manifest payload.
 
-    Dispatches to :func:`parse_sqlite_manifest` if the payload starts
-    with the SQLite magic header, otherwise falls back to
-    :func:`parse_manifest` (YAML).
+    The payload must be a serialized SQLite database (starts with the
+    16-byte SQLite magic header).  Raises :class:`ManifestParseError`
+    for unrecognised formats.
     """
-    if payload[:16] == _SQLITE_MAGIC:
-        return parse_sqlite_manifest(payload)
-    return parse_manifest(payload)
-
-
-def parse_manifest(payload: bytes) -> ParsedManifest:
-    """Parse a YAML manifest payload into typed ParsedManifest."""
-
-    try:
-        data = yaml.safe_load(payload)
-    except Exception as exc:
-        raise ManifestParseError(f"Manifest payload is not valid YAML: {exc}") from exc
-
-    try:
-        parsed = ParsedManifest.model_validate(data)
-    except ValidationError as exc:
-        raise ManifestParseError(f"Manifest validation failed: {exc}") from exc
-
-    _validate_manifest(parsed.required_build, parsed.shards)
-    return parsed
+    if payload[:16] != _SQLITE_MAGIC:
+        raise ManifestParseError(
+            "Unsupported manifest format: expected SQLite (magic header not found)"
+        )
+    return parse_sqlite_manifest(payload)
 
 
 def parse_sqlite_manifest(payload: bytes) -> ParsedManifest:

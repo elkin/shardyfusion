@@ -53,7 +53,6 @@ from .manifest import (
     BuildStats,
     CurrentPointer,
     ManifestArtifact,
-    ManifestBuilder,
     ManifestRef,
     ManifestShardingSpec,
     ParsedManifest,
@@ -61,7 +60,6 @@ from .manifest import (
     RequiredShardMeta,
     SqliteManifestBuilder,
     WriterInfo,
-    YamlManifestBuilder,
 )
 from .manifest_store import (
     InMemoryManifestStore,
@@ -69,7 +67,6 @@ from .manifest_store import (
     S3ManifestStore,
     SqliteShardLookup,
     load_sqlite_build_meta,
-    parse_manifest,
     parse_manifest_payload,
     parse_sqlite_manifest,
 )
@@ -139,7 +136,6 @@ __all__ = [
     "KeyEncoding",
     "LogContext",
     "ManifestArtifact",
-    "ManifestBuilder",
     "ManifestBuildError",
     "ManifestOptions",
     "ManifestParseError",
@@ -194,13 +190,11 @@ __all__ = [
     "ValueSpec",
     "WriteConfig",
     "WriterInfo",
-    "YamlManifestBuilder",
     "cel_sharding",
     "cel_sharding_by_columns",
     "configure_logging",
     "get_logger",
     "load_sqlite_build_meta",
-    "parse_manifest",
     "parse_manifest_payload",
     "parse_sqlite_manifest",
 ]

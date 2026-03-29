@@ -326,7 +326,6 @@ def publish_to_store(
 
     store = config.manifest.store or S3ManifestStore(
         config.s3_prefix,
-        manifest_builder=config.manifest.manifest_builder,
         credential_provider=config.manifest.credential_provider
         or config.credential_provider,
         s3_connection_options=config.manifest.s3_connection_options
