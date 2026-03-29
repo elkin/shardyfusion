@@ -32,7 +32,7 @@ graph TD
 | `ShardCoverageError` | No | After shard writes, results don't cover all expected `range(num_dbs)` |
 | `ShardWriteError` | Yes | Adapter operations (write_batch, flush, checkpoint) failed with a potentially transient error |
 | `SlateDbApiError` | No | SlateDB package missing, reader close failures, API-level errors |
-| `ManifestBuildError` | No | `ManifestBuilder.build()` raises during manifest creation |
+| `ManifestBuildError` | No | Manifest artifact creation failed during `SqliteManifestBuilder.build()` |
 | `PublishManifestError` | Yes | Manifest upload to S3 fails (transient) |
 | `PublishCurrentError` | Yes | CURRENT pointer upload fails after manifest is already published |
 | `ManifestParseError` | No | Malformed manifest JSON, missing required fields, structural violations |

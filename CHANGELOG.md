@@ -35,7 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Infrastructure
 - **`ManifestStore`** protocol — unified manifest read/write interface.
-- **`ManifestBuilder`** protocol for custom manifest serialization formats.
 - **`DbAdapterFactory`** protocol for custom shard database backends.
 - **Key encodings**: `u64be` (default, 8-byte) and `u32be` (4-byte) big-endian unsigned integer encodings.
 - **JSON schema validation** for manifest and CURRENT pointer formats.

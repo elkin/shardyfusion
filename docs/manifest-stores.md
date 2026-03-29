@@ -69,7 +69,7 @@ No `publish()` or `set_current()` — manifest publishing is always a writer-sid
 
 ## S3ManifestStore
 
-The default implementation. Manifests are stored as JSON objects in S3; the current pointer is a separate `_CURRENT` JSON object.
+The default implementation. Manifests are stored as SQLite database files in S3; the current pointer is a separate `_CURRENT` JSON object.
 
 ### S3 Object Layout
 
@@ -77,7 +77,7 @@ The default implementation. Manifests are stored as JSON objects in S3; the curr
 s3://bucket/prefix/
 ├── manifests/
 │   ├── 2026-03-14T10:30:00.000000Z_run_id=abc123/
-│   │   └── manifest          ← manifest JSON payload
+│   │   └── manifest          ← manifest SQLite payload
 │   ├── 2026-03-13T08:00:00.000000Z_run_id=def456/
 │   │   └── manifest
 │   └── ...
@@ -95,7 +95,6 @@ store = S3ManifestStore(
     s3_prefix="s3://bucket/prefix",
     manifest_name="manifest",                      # default
     current_name="_CURRENT",                       # default
-    manifest_builder=None,                         # default: YamlManifestBuilder
     credential_provider=None,                      # optional CredentialProvider
     s3_connection_options=None,                    # optional S3ConnectionOptions
     metrics_collector=None,                        # optional MetricsCollector
@@ -120,40 +119,19 @@ store = S3ManifestStore(
 
 ### Manifest Format
 
-```json
-{
-  "required": {
-    "run_id": "abc123",
-    "created_at": "2026-03-14T10:30:00Z",
-    "num_dbs": 8,
-    "s3_prefix": "s3://bucket/prefix",
-    "key_col": "id",
-    "sharding": {"strategy": "HASH"},
-    "db_path_template": "db={db_id:05d}",
-    "shard_prefix": "shards",
-    "format_version": 1,
-    "key_encoding": "u64be"
-  },
-  "shards": [
-    {
-      "db_id": 0,
-      "db_url": "s3://bucket/prefix/db=00000",
-      "attempt": 0,
-      "row_count": 125000,
-      "min_key": 3,
-      "max_key": 999997
-    }
-  ],
-  "custom": {}
-}
-```
+Manifests are serialized as SQLite databases (`application/x-sqlite3`) with two tables:
+
+- **`build_meta`** — single row with run metadata (run_id, num_dbs, s3_prefix, sharding as JSON, etc.)
+- **`shards`** — one row per non-empty shard (db_id, db_url, attempt, row_count, min_key/max_key as JSON, writer_info as JSON)
+
+Use `parse_manifest_payload()` or `parse_sqlite_manifest()` to deserialize into a `ParsedManifest` object.
 
 ### CURRENT Pointer Format
 
 ```json
 {
   "manifest_ref": "s3://bucket/prefix/manifests/2026-03-14T10:30:00.000000Z_run_id=abc123/manifest",
-  "manifest_content_type": "application/x-yaml",
+  "manifest_content_type": "application/x-sqlite3",
   "run_id": "abc123",
   "updated_at": "2026-03-14T10:30:01Z",
   "format_version": 1

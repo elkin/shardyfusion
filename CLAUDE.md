@@ -153,7 +153,7 @@ Manifest S3 keys are timestamp-prefixed (e.g., `2026-03-14T10:30:00.000000Z_run_
 
 **CURRENT pointer** (JSON, published to `s3_prefix/_CURRENT`):
 ```json
-{"manifest_ref": "s3://bucket/.../manifest.yaml", "manifest_content_type": "application/x-yaml",
+{"manifest_ref": "s3://bucket/.../manifest", "manifest_content_type": "application/x-sqlite3",
  "run_id": "...", "updated_at": "...", "format_version": 1}
 ```
 
@@ -186,7 +186,7 @@ These are all Protocols, allowing user-provided implementations:
 
 | Protocol | Default Implementation | Purpose |
 |---|---|---|
-| `ManifestBuilder` | `YamlManifestBuilder` | Manifest serialization format |
+| — | `SqliteManifestBuilder` | Manifest serialization (SQLite format, used internally by `S3ManifestStore`) |
 | `ManifestStore` | `S3ManifestStore` | Unified manifest read/write (publish + load + list + set_current) |
 | `RunRegistry` | `S3RunRegistry` | Run-scoped writer lifecycle record storage |
 | `AsyncManifestStore` | `AsyncS3ManifestStore` | Async read-only manifest loading (load + list) |
@@ -303,7 +303,7 @@ Top-level exports from `shardyfusion.__init__` (`__all__`, grouped only for read
 - Config/build: `BuildDurations`, `BuildResult`, `BuildStats`, `CurrentPointer`, `ManifestOptions`, `OutputOptions`, `WriteConfig`, `WriterInfo`
 - Credentials/connectivity: `CredentialProvider`, `EnvCredentialProvider`, `RetryConfig`, `S3ConnectionOptions`, `S3Credentials`, `StaticCredentialProvider`
 - Errors: `ConfigValidationError`, `ManifestBuildError`, `ManifestParseError`, `ManifestStoreError`, `PoolExhaustedError`, `PublishCurrentError`, `PublishManifestError`, `ReaderStateError`, `S3TransientError`, `ShardAssignmentError`, `ShardCoverageError`, `ShardWriteError`, `ShardyfusionError`, `SlateDbApiError`
-- Manifest/store: `InMemoryManifestStore`, `ManifestArtifact`, `ManifestBuilder`, `ManifestRef`, `ManifestShardingSpec`, `ManifestStore`, `RequiredBuildMeta`, `RequiredShardMeta`, `S3ManifestStore`, `YamlManifestBuilder`, `parse_manifest`
+- Manifest/store: `InMemoryManifestStore`, `ManifestArtifact`, `ManifestRef`, `ManifestShardingSpec`, `ManifestStore`, `RequiredBuildMeta`, `RequiredShardMeta`, `S3ManifestStore`, `SqliteManifestBuilder`, `parse_manifest_payload`, `parse_sqlite_manifest`
 - Run registry: `InMemoryRunRegistry`, `RunRecord`, `RunRegistry`, `RunStatus`, `S3RunRegistry`
 - Reader/routing: `AsyncManifestStore`, `AsyncS3ManifestStore`, `AsyncShardReader`, `AsyncShardReaderFactory`, `AsyncShardReaderHandle`, `AsyncShardedReader`, `AsyncSlateDbReaderFactory`, `ConcurrentShardedReader`, `ReaderHealth`, `ShardDetail`, `ShardReader`, `ShardReaderFactory`, `ShardReaderHandle`, `ShardedReader`, `SlateDbReaderFactory`, `SnapshotInfo`, `SnapshotRouter`
 - Adapters: `DbAdapter`, `DbAdapterFactory`, `SlateDbFactory`
