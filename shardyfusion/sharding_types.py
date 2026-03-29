@@ -7,43 +7,60 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Self
 
-from .ordering import compare_ordered
-
 DB_ID_COL = "_shard_id"
 
-BoundaryValue = int | float | str | bytes
+RoutingValue = int | str | bytes
+
+_SUPPORTED_ROUTING_VALUE_TYPES = (int, str, bytes)
 
 
-def validate_boundaries(boundaries: Sequence[BoundaryValue]) -> None:
-    """Validate boundaries are non-null, same-type, and strictly increasing.
-
-    Raises :class:`ValueError` on invalid input.
-    """
-    if any(b is None for b in boundaries):
-        raise ValueError("Boundaries must not contain null values")
-    if any(isinstance(b, bool) for b in boundaries):
-        raise ValueError("Boundaries must not be boolean values")
-    for idx in range(1, len(boundaries)):
-        left = boundaries[idx - 1]
-        right = boundaries[idx]
+def _validate_homogeneous_non_null_values(
+    values: Sequence[object],
+    *,
+    field_name: str,
+) -> None:
+    if any(value is None for value in values):
+        raise ValueError(f"{field_name} must not contain null values")
+    if any(isinstance(value, bool) for value in values):
+        raise ValueError(f"{field_name} must not be boolean values")
+    for idx, value in enumerate(values):
+        if not isinstance(value, _SUPPORTED_ROUTING_VALUE_TYPES):
+            raise ValueError(
+                f"{field_name} must be int, str, or bytes values; "
+                f"got {field_name}[{idx}]={value!r} "
+                f"({type(value).__name__})"
+            )
+    for idx in range(1, len(values)):
+        left = values[idx - 1]
+        right = values[idx]
         if type(left) is not type(right):
             raise ValueError(
-                "Boundaries must all share the same type; "
-                f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
+                f"{field_name} must all share the same type; "
+                f"got {field_name}[{idx - 1}]={left!r}, {field_name}[{idx}]={right!r}"
             )
-        msg = (
-            "Boundaries contain non-comparable values; "
-            f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
-        )
-        try:
-            is_increasing = compare_ordered(left, right, mismatch_message=msg) < 0
-        except ValueError as exc:
-            raise ValueError(str(exc)) from exc
-        if not is_increasing:
-            raise ValueError(
-                "Boundaries must be strictly increasing; "
-                f"got boundaries[{idx - 1}]={left!r}, boundaries[{idx}]={right!r}"
-            )
+
+
+def validate_routing_values(
+    routing_values: Sequence[RoutingValue],
+    *,
+    require_unique: bool = True,
+) -> None:
+    """Validate categorical routing values are unique and type-consistent."""
+
+    _validate_homogeneous_non_null_values(
+        routing_values,
+        field_name="Routing values",
+    )
+    if not require_unique:
+        return
+    seen: set[RoutingValue] = set()
+    duplicates: list[RoutingValue] = []
+    for value in routing_values:
+        if value in seen and value not in duplicates:
+            duplicates.append(value)
+        seen.add(value)
+    if duplicates:
+        raise ValueError(f"Routing values must be unique; duplicates={duplicates!r}")
 
 
 class KeyEncoding(str, Enum):
@@ -100,18 +117,19 @@ class ShardingSpec:
     Supports int, str, and bytes keys. Requires ``num_dbs > 0`` (explicit or computed
     from ``max_keys_per_shard``).
 
-    **CEL**: Flexible shard assignment via a CEL expression. The expression must produce
-    **consecutive 0-based integer shard IDs** (e.g., ``shard_hash(key) % 100u`` yields
-    IDs 0–99). A built-in ``shard_hash()`` function (wrapping xxh3_64) is available in
-    CEL expressions. ``num_dbs`` is always discovered from data; it must not be provided
-    explicitly. Optional ``boundaries`` enable ``bisect_right``-based routing.
+    **CEL**: Flexible shard assignment via a CEL expression. The expression may return
+    a dense integer shard id directly, or a categorical token resolved by exact match
+    against ``routing_values``. A built-in ``shard_hash()`` function (wrapping xxh3_64)
+    is available in CEL expressions. ``num_dbs`` is always derived from routing
+    metadata or discovered from data; it must not be provided explicitly.
     """
 
     strategy: ShardingStrategy = ShardingStrategy.HASH
-    boundaries: list[BoundaryValue] | None = None
+    routing_values: list[RoutingValue] | None = None
     cel_expr: str | None = None
     cel_columns: dict[str, str] | None = None
     max_keys_per_shard: int | None = None
+    infer_routing_values_from_data: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.strategy, ShardingStrategy):
@@ -121,12 +139,22 @@ class ShardingSpec:
                 raise ValueError("CEL strategy requires cel_expr")
             if not self.cel_columns:
                 raise ValueError("CEL strategy requires cel_columns")
+            if self.infer_routing_values_from_data:
+                if self.routing_values is not None:
+                    raise ValueError(
+                        "infer_routing_values_from_data cannot be combined with "
+                        "routing_values"
+                    )
         elif self.cel_expr is not None:
             raise ValueError("cel_expr is only valid with CEL strategy")
-        if self.boundaries is not None and self.strategy != ShardingStrategy.CEL:
-            raise ValueError("boundaries are only valid with CEL strategy")
-        if self.boundaries:
-            validate_boundaries(self.boundaries)
+        elif self.routing_values is not None:
+            raise ValueError("routing_values are only valid with CEL strategy")
+        elif self.infer_routing_values_from_data:
+            raise ValueError(
+                "infer_routing_values_from_data is only valid with CEL strategy"
+            )
+        if self.routing_values is not None:
+            validate_routing_values(self.routing_values)
         if (
             self.max_keys_per_shard is not None
             and self.strategy != ShardingStrategy.HASH
@@ -140,8 +168,9 @@ class ShardingSpec:
 
         d: dict[str, object] = {
             "strategy": self.strategy.value,
-            "boundaries": self.boundaries,
         }
+        if self.routing_values is not None:
+            d["routing_values"] = self.routing_values
         if self.cel_expr is not None:
             d["cel_expr"] = self.cel_expr
         if self.cel_columns is not None:

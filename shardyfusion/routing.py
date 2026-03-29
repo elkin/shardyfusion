@@ -6,7 +6,12 @@ import xxhash
 
 from .manifest import RequiredBuildMeta, RequiredShardMeta
 from .serde import make_key_encoder
-from .sharding_types import KeyEncoding, ShardingStrategy, validate_boundaries
+from .sharding_types import (
+    KeyEncoding,
+    RoutingValue,
+    ShardingStrategy,
+    validate_routing_values,
+)
 from .type_defs import KeyInput
 
 # ---------------------------------------------------------------------------
@@ -84,9 +89,17 @@ class SnapshotRouter:
         self.num_dbs = required_build.num_dbs
         self.key_encoding = required_build.key_encoding
 
-        self._boundaries = list(required_build.sharding.boundaries or [])
-        if self._boundaries:
-            validate_boundaries(self._boundaries)
+        routing_values = required_build.sharding.routing_values
+        self._routing_values = (
+            list(routing_values) if routing_values is not None else None
+        )
+        if self._routing_values is not None:
+            validate_routing_values(self._routing_values)
+            self._routing_lookup: dict[RoutingValue, int] | None = {
+                value: idx for idx, value in enumerate(self._routing_values)
+            }
+        else:
+            self._routing_lookup = None
         self._cel_compiled: object | None = None
         self._cel_expr = required_build.sharding.cel_expr
         self._cel_columns = required_build.sharding.cel_columns
@@ -109,15 +122,43 @@ class SnapshotRouter:
     ) -> dict[int, list[KeyInput]]:
         """Group keys by routed db id while preserving order within each shard bucket."""
 
+        grouped, missing = self.group_keys_allow_missing(
+            keys,
+            routing_context=routing_context,
+        )
+        if missing:
+            raise ValueError(
+                f"One or more keys could not be routed for this snapshot: {missing!r}"
+            )
+        return grouped
+
+    def group_keys_allow_missing(
+        self,
+        keys: list[KeyInput],
+        *,
+        routing_context: dict[str, object] | None = None,
+    ) -> tuple[dict[int, list[KeyInput]], list[KeyInput]]:
+        """Group keys by routed db id, returning unroutable categorical keys separately."""
+
+        from .cel import UnknownRoutingTokenError
+
         grouped: dict[int, list[KeyInput]] = {}
+        missing: list[KeyInput] = []
         if routing_context is not None:
-            db_id = self.route_with_context(routing_context)
+            try:
+                db_id = self.route_with_context(routing_context)
+            except UnknownRoutingTokenError:
+                return {}, list(keys)
             grouped[db_id] = list(keys)
         else:
             for key in keys:
-                db_id = self.route_one(key)
+                try:
+                    db_id = self.route_one(key)
+                except UnknownRoutingTokenError:
+                    missing.append(key)
+                    continue
                 grouped.setdefault(db_id, []).append(key)
-        return grouped
+        return grouped, missing
 
     def _build_lookup_key_encoder(self) -> Callable[[KeyInput], bytes]:
         if self.key_encoding == KeyEncoding.U64BE:
@@ -169,18 +210,21 @@ class SnapshotRouter:
             return lambda key: xxh3_db_id(key, num_dbs)
 
         if self.strategy == ShardingStrategy.CEL:
-            from .cel import compile_cel, route_cel
+            from .cel import compile_cel, resolve_cel_routing_key
 
             assert self._cel_expr is not None and self._cel_columns is not None
             compiled = compile_cel(self._cel_expr, self._cel_columns)
-            boundaries = self._boundaries
+            routing_values = self._routing_values
+            routing_lookup = self._routing_lookup
 
             # Key-only mode: cel_columns has only "key" — auto-wrap key value
             cel_col_keys = set(self._cel_columns.keys())
             if cel_col_keys == {"key"}:
-                if boundaries:
-                    return lambda key: route_cel(compiled, {"key": key}, boundaries)
-                return lambda key: route_cel(compiled, {"key": key}, None)
+                return lambda key: resolve_cel_routing_key(
+                    compiled.evaluate({"key": key}),
+                    routing_values=routing_values,
+                    lookup=routing_lookup,
+                )
 
             # Multi-column mode: route_one cannot work without routing_context
             def _route_multi_column_error(key: KeyInput) -> int:
@@ -199,11 +243,15 @@ class SnapshotRouter:
         In multi-column mode, the CEL expression evaluates over multiple columns
         from the routing context, not just the key.
         """
-        from .cel import route_cel
+        from .cel import resolve_cel_routing_key
 
         if self._cel_compiled is None:
             from .cel import compile_cel
 
             assert self._cel_expr is not None and self._cel_columns is not None
             self._cel_compiled = compile_cel(self._cel_expr, self._cel_columns)
-        return route_cel(self._cel_compiled, routing_context, self._boundaries or None)  # type: ignore[arg-type]
+        return resolve_cel_routing_key(
+            self._cel_compiled.evaluate(routing_context),  # type: ignore[union-attr]
+            routing_values=self._routing_values,
+            lookup=self._routing_lookup,
+        )

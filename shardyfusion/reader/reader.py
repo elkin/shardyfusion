@@ -51,6 +51,12 @@ from ._types import (
 _logger = get_logger(__name__)
 
 
+def _is_unknown_categorical_token_error(exc: Exception) -> bool:
+    from shardyfusion.cel import UnknownRoutingTokenError
+
+    return isinstance(exc, UnknownRoutingTokenError)
+
+
 # ---------------------------------------------------------------------------
 # ShardedReader — non-thread-safe, no locks, no refcounting
 # ---------------------------------------------------------------------------
@@ -220,7 +226,21 @@ class ShardedReader(_BaseShardedReader):
         t0 = time.perf_counter() if mc is not None else 0.0
 
         state = self._state
-        db_id = state.router.route(key, routing_context=routing_context)
+        try:
+            db_id = state.router.route(key, routing_context=routing_context)
+        except ValueError as exc:
+            if _is_unknown_categorical_token_error(exc):
+                result = None
+                if mc is not None:
+                    mc.emit(
+                        MetricEvent.READER_GET,
+                        {
+                            "duration_ms": int((time.perf_counter() - t0) * 1000),
+                            "found": False,
+                        },
+                    )
+                return result
+            raise
         key_bytes = state.router.encode_lookup_key(key)
         result = state.readers[db_id].get(key_bytes)
 
@@ -253,8 +273,11 @@ class ShardedReader(_BaseShardedReader):
         key_list = list(keys)
         state = self._state
 
-        grouped = state.router.group_keys(key_list, routing_context=routing_context)
-        results: dict[KeyInput, bytes | None] = {}
+        grouped, missing = state.router.group_keys_allow_missing(
+            key_list,
+            routing_context=routing_context,
+        )
+        results: dict[KeyInput, bytes | None] = {key: None for key in missing}
 
         if self._executor is not None and len(grouped) > 1:
             futures = {

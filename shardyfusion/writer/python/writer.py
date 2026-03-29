@@ -11,6 +11,7 @@ from shardyfusion._rate_limiter import RateLimiter, TokenBucket
 from shardyfusion._writer_core import (
     ShardAttemptResult,
     assemble_build_result,
+    build_categorical_routing_values,
     cleanup_losers,
     publish_to_store,
     route_key,
@@ -24,6 +25,7 @@ from shardyfusion.manifest import BuildResult, WriterInfo
 from shardyfusion.metrics import MetricEvent
 from shardyfusion.run_registry import managed_run_record
 from shardyfusion.serde import make_key_encoder
+from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
 from shardyfusion.slatedb_adapter import DbAdapterFactory, SlateDbFactory
 from shardyfusion.type_defs import KeyInput
 from shardyfusion.writer.python._parallel_writer import (
@@ -126,7 +128,22 @@ def write_sharded(
         max_parallel_shared_memory_bytes_per_worker,
         field_name="max_parallel_shared_memory_bytes_per_worker",
     )
+    resolved_sharding = config.sharding
+    if config.sharding.infer_routing_values_from_data:
+        if parallel:
+            raise ConfigValidationError(
+                "Parallel mode does not support inferred categorical CEL routing. "
+                "Materialize records and use single-process mode."
+            )
+        resolved_sharding = _resolve_inferred_categorical_sharding(
+            records,
+            sharding=config.sharding,
+            key_fn=key_fn,
+            columns_fn=columns_fn,
+        )
     num_dbs = _resolve_num_dbs_before_sharding(records, config)
+    if resolved_sharding.routing_values is not None:
+        num_dbs = max(1, len(resolved_sharding.routing_values))
     run_id = config.output.run_id or uuid4().hex
     started = time.perf_counter()
     mc = config.metrics_collector
@@ -181,6 +198,7 @@ def write_sharded(
             attempts, num_dbs = _write_single_process(
                 records=records,
                 config=config,
+                sharding=resolved_sharding,
                 num_dbs=num_dbs,
                 run_id=run_id,
                 factory=factory,
@@ -220,7 +238,7 @@ def write_sharded(
         manifest_ref = publish_to_store(
             config=config,
             run_id=run_id,
-            resolved_sharding=config.sharding,
+            resolved_sharding=resolved_sharding,
             winners=winners,
             key_col="_key",
             started=started,
@@ -287,6 +305,38 @@ def _resolve_num_dbs_before_sharding(
     return resolve_num_dbs(
         config,
         lambda: len(records) if isinstance(records, Sized) else 0,
+    )
+
+
+def _resolve_inferred_categorical_sharding(
+    records: Iterable[T],
+    *,
+    sharding: ShardingSpec,
+    key_fn: Callable[[T], KeyInput],
+    columns_fn: Callable[[T], dict[str, Any]] | None,
+) -> ShardingSpec:
+    if iter(records) is records:
+        raise ConfigValidationError(
+            "Inferred categorical CEL routing requires a reiterable input. "
+            "Materialize generators before writing."
+        )
+
+    from shardyfusion.cel import compile_cel
+
+    assert sharding.cel_expr is not None and sharding.cel_columns is not None
+    compiled = compile_cel(sharding.cel_expr, sharding.cel_columns)
+    tokens = []
+    for record in records:
+        context = (
+            columns_fn(record) if columns_fn is not None else {"key": key_fn(record)}
+        )
+        tokens.append(compiled.evaluate(context))
+
+    return ShardingSpec(
+        strategy=ShardingStrategy.CEL,
+        routing_values=build_categorical_routing_values(tokens),
+        cel_expr=sharding.cel_expr,
+        cel_columns=dict(sharding.cel_columns),
     )
 
 
@@ -572,6 +622,7 @@ def _write_single_process(
     *,
     records: Iterable[T],
     config: WriteConfig,
+    sharding: ShardingSpec,
     num_dbs: int | None,
     run_id: str,
     factory: DbAdapterFactory,
@@ -608,6 +659,11 @@ def _write_single_process(
 
     with contextlib.ExitStack() as stack:
         key_encoder = make_key_encoder(config.key_encoding)
+        cel_lookup = (
+            {value: idx for idx, value in enumerate(sharding.routing_values)}
+            if sharding.routing_values is not None
+            else None
+        )
 
         for record in records:
             key = key_fn(record)
@@ -615,8 +671,9 @@ def _write_single_process(
             db_id = route_key(
                 key,
                 num_dbs=num_dbs,
-                sharding=config.sharding,
+                sharding=sharding,
                 routing_context=routing_context,
+                cel_lookup=cel_lookup,
             )
             key_bytes = key_encoder(key)
             value_bytes = value_fn(record)
@@ -666,7 +723,10 @@ def _write_single_process(
     if cel_mode:
         from shardyfusion._writer_core import discover_cel_num_dbs
 
-        num_dbs = discover_cel_num_dbs(set(state.row_counts))
+        if sharding.routing_values is not None:
+            num_dbs = max(1, len(sharding.routing_values))
+        else:
+            num_dbs = discover_cel_num_dbs(set(state.row_counts))
 
     return _build_single_process_results(
         state, attempt=attempt, num_dbs=num_dbs

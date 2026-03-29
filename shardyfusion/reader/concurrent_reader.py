@@ -61,6 +61,12 @@ from ._types import (
 _logger = get_logger(__name__)
 
 
+def _is_unknown_categorical_token_error(exc: Exception) -> bool:
+    from shardyfusion.cel import UnknownRoutingTokenError
+
+    return isinstance(exc, UnknownRoutingTokenError)
+
+
 class ConcurrentShardedReader(_BaseShardedReader):
     """Thread-safe sharded reader with lock or pool concurrency modes."""
 
@@ -252,7 +258,21 @@ class ConcurrentShardedReader(_BaseShardedReader):
         t0 = time.perf_counter() if mc is not None else 0.0
 
         with self._use_state() as state:
-            db_id = state.router.route(key, routing_context=routing_context)
+            try:
+                db_id = state.router.route(key, routing_context=routing_context)
+            except ValueError as exc:
+                if _is_unknown_categorical_token_error(exc):
+                    result = None
+                    if mc is not None:
+                        mc.emit(
+                            MetricEvent.READER_GET,
+                            {
+                                "duration_ms": int((time.perf_counter() - t0) * 1000),
+                                "found": False,
+                            },
+                        )
+                    return result
+                raise
             key_bytes = state.router.encode_lookup_key(key)
             handle = state.handles[db_id]
             result = _read_one(handle, key_bytes)
@@ -282,8 +302,11 @@ class ConcurrentShardedReader(_BaseShardedReader):
 
         key_list = list(keys)
         with self._use_state() as state:
-            grouped = state.router.group_keys(key_list, routing_context=routing_context)
-            results: dict[KeyInput, bytes | None] = {}
+            grouped, missing = state.router.group_keys_allow_missing(
+                key_list,
+                routing_context=routing_context,
+            )
+            results: dict[KeyInput, bytes | None] = {key: None for key in missing}
 
             if self._executor is not None and len(grouped) > 1:
                 futures = {

@@ -5,9 +5,14 @@ from datetime import datetime
 from typing import Any, Protocol
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .sharding_types import BoundaryValue, KeyEncoding, ShardingStrategy
+from .sharding_types import (
+    KeyEncoding,
+    RoutingValue,
+    ShardingStrategy,
+    validate_routing_values,
+)
 from .type_defs import JsonObject, JsonValue
 
 
@@ -27,13 +32,31 @@ class ManifestShardingSpec(BaseModel):
     serialization and deserialization in manifests.
     """
 
-    model_config = ConfigDict(use_enum_values=False)
+    model_config = ConfigDict(use_enum_values=False, extra="forbid")
 
     strategy: ShardingStrategy = ShardingStrategy.HASH
-    boundaries: list[BoundaryValue] | None = None
+    routing_values: list[RoutingValue] | None = None
     cel_expr: str | None = None
     cel_columns: dict[str, str] | None = None
     hash_algorithm: str = "xxh3_64"
+
+    @model_validator(mode="after")
+    def _validate_model(self) -> "ManifestShardingSpec":
+        if self.strategy == ShardingStrategy.CEL:
+            if not self.cel_expr:
+                raise ValueError("CEL strategy requires cel_expr")
+            if not self.cel_columns:
+                raise ValueError("CEL strategy requires cel_columns")
+            if self.routing_values is not None:
+                validate_routing_values(self.routing_values)
+        else:
+            if self.routing_values is not None:
+                raise ValueError("routing_values are only valid with CEL strategy")
+            if self.cel_expr is not None:
+                raise ValueError("cel_expr is only valid with CEL strategy")
+            if self.cel_columns is not None:
+                raise ValueError("cel_columns are only valid with CEL strategy")
+        return self
 
 
 class RequiredBuildMeta(BaseModel):
@@ -182,8 +205,10 @@ class YamlManifestBuilder:
         merged_custom.update(custom_fields)
 
         payload_obj = {
-            "required": required_build.model_dump(mode="json"),
-            "shards": [shard.model_dump(mode="json") for shard in shards],
+            "required": required_build.model_dump(mode="json", exclude_none=True),
+            "shards": [
+                shard.model_dump(mode="json", exclude_none=True) for shard in shards
+            ],
             "custom": merged_custom,
         }
         payload = yaml.safe_dump(

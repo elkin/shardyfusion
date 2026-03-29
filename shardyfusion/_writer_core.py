@@ -13,6 +13,7 @@ from .errors import (
     ConfigValidationError,
     PublishCurrentError,
     PublishManifestError,
+    ShardAssignmentError,
     ShardCoverageError,
 )
 from .logging import FailureSeverity, get_logger, log_event, log_failure
@@ -30,7 +31,12 @@ from .manifest_store import S3ManifestStore
 from .metrics import MetricEvent, MetricsCollector
 from .ordering import compare_ordered
 from .routing import xxh3_db_id
-from .sharding_types import ShardingSpec, ShardingStrategy
+from .sharding_types import (
+    RoutingValue,
+    ShardingSpec,
+    ShardingStrategy,
+    validate_routing_values,
+)
 from .storage import create_s3_client, delete_prefix, join_s3, list_prefixes
 from .type_defs import KeyInput, RetryConfig
 
@@ -95,6 +101,7 @@ def route_key(
     num_dbs: int | None,
     sharding: ShardingSpec,
     routing_context: dict[str, object] | None = None,
+    cel_lookup: dict[RoutingValue, int] | None = None,
 ) -> int:
     """Route a key to a shard db_id (shared by all writer paths)."""
 
@@ -107,7 +114,19 @@ def route_key(
         columns_key = tuple(sorted(sharding.cel_columns.items()))
         cached = _compile_cel_cached(sharding.cel_expr, columns_key)
         ctx = routing_context if routing_context is not None else {"key": key}
-        return route_cel(cached, ctx, sharding.boundaries)
+        try:
+            return route_cel(
+                cached,
+                ctx,
+                sharding.routing_values,
+                cel_lookup,
+            )
+        except Exception as exc:
+            from .cel import UnknownRoutingTokenError
+
+            if isinstance(exc, UnknownRoutingTokenError):
+                raise ShardAssignmentError(str(exc)) from exc
+            raise
     raise ConfigValidationError(
         f"Sharding strategy {sharding.strategy!r} not supported."
     )
@@ -116,7 +135,7 @@ def route_key(
 def resolve_num_dbs(config: WriteConfig, count_fn: Callable[[], int]) -> int | None:
     """Resolve num_dbs from config or max_keys_per_shard.
 
-    Returns ``None`` for CEL (discovered after sharding from data).
+    Returns ``None`` for CEL when shard cardinality must be discovered from data.
 
     Args:
         config: Write configuration.
@@ -127,6 +146,12 @@ def resolve_num_dbs(config: WriteConfig, count_fn: Callable[[], int]) -> int | N
 
     if config.num_dbs is not None and config.num_dbs > 0:
         return config.num_dbs
+
+    if (
+        config.sharding.strategy == ShardingStrategy.CEL
+        and config.sharding.routing_values is not None
+    ):
+        return max(1, len(config.sharding.routing_values))
 
     if config.sharding.max_keys_per_shard is not None:
         count = count_fn()
@@ -143,8 +168,7 @@ def discover_cel_num_dbs(
 ) -> int:
     """Discover num_dbs from CEL-assigned db_ids and validate they are consecutive.
 
-    CEL expressions must produce consecutive 0-based shard IDs (e.g. via
-    ``shard_hash(key) % N`` or ``bisect_right``).
+    CEL expressions must produce consecutive 0-based shard IDs directly.
 
     Returns:
         num_dbs (= max(db_id) + 1 = len(distinct_db_ids) for consecutive IDs).
@@ -169,6 +193,27 @@ def discover_cel_num_dbs(
         )
 
     return expected
+
+
+def build_categorical_routing_values(
+    values: Iterable[RoutingValue],
+) -> list[RoutingValue]:
+    """Return deterministic sorted distinct routing values for categorical CEL."""
+
+    raw_values = list(values)
+    if not raw_values:
+        return []
+    try:
+        validate_routing_values(raw_values, require_unique=False)
+    except ValueError as exc:
+        raise ConfigValidationError(str(exc)) from exc
+    distinct = list(set(raw_values))
+    try:
+        return sorted(distinct)
+    except TypeError as exc:
+        raise ConfigValidationError(
+            "Categorical CEL routing values must be orderable."
+        ) from exc
 
 
 def select_winners(
@@ -275,6 +320,7 @@ def publish_to_store(
         sharding=manifest_safe_sharding(resolved_sharding),
         db_path_template=config.output.db_path_template,
         shard_prefix=config.output.shard_prefix,
+        format_version=_manifest_format_version_for_sharding(resolved_sharding),
         key_encoding=config.key_encoding,
     )
 
@@ -574,14 +620,18 @@ def _utc_now() -> datetime:
 def manifest_safe_sharding(sharding: ShardingSpec) -> ManifestShardingSpec:
     return ManifestShardingSpec(
         strategy=sharding.strategy,
-        boundaries=list(sharding.boundaries)
-        if sharding.boundaries is not None
+        routing_values=list(sharding.routing_values)
+        if sharding.routing_values is not None
         else None,
         cel_expr=sharding.cel_expr,
         cel_columns=dict(sharding.cel_columns)
         if sharding.cel_columns is not None
         else None,
     )
+
+
+def _manifest_format_version_for_sharding(sharding: ShardingSpec) -> int:
+    return 3 if sharding.routing_values is not None else 2
 
 
 def update_min_max(

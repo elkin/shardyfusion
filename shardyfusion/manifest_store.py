@@ -45,6 +45,7 @@ from .storage import (
 from .type_defs import S3ConnectionOptions
 
 _logger = get_logger(__name__)
+_SUPPORTED_MANIFEST_FORMAT_VERSIONS = frozenset({1, 2, 3})
 
 # Shared timestamp format for manifest S3 key prefixes.
 MANIFEST_TIMESTAMP_FMT = "%Y-%m-%dT%H:%M:%S.%fZ"
@@ -338,6 +339,13 @@ def parse_manifest(payload: bytes) -> ParsedManifest:
 def _validate_manifest(
     required_build: RequiredBuildMeta, shards: list[RequiredShardMeta]
 ) -> None:
+    if required_build.format_version not in _SUPPORTED_MANIFEST_FORMAT_VERSIONS:
+        raise ManifestParseError(
+            "Unsupported manifest format_version: "
+            f"{required_build.format_version}. "
+            f"Supported: {sorted(_SUPPORTED_MANIFEST_FORMAT_VERSIONS)}"
+        )
+
     num_dbs = required_build.num_dbs
     if len(shards) > num_dbs:
         raise ManifestParseError(
@@ -358,6 +366,19 @@ def _validate_manifest(
 
     if not required_build.sharding or not required_build.sharding.strategy:
         raise ManifestParseError("Manifest required.sharding.strategy is missing")
+
+    routing_values = required_build.sharding.routing_values
+    if routing_values is not None:
+        if required_build.format_version < 3:
+            raise ManifestParseError(
+                "Manifest sharding.routing_values requires format_version >= 3"
+            )
+        expected_num_dbs = max(1, len(routing_values))
+        if num_dbs != expected_num_dbs:
+            raise ManifestParseError(
+                "Categorical CEL manifest num_dbs must match routing_values cardinality "
+                f"(expected {expected_num_dbs}, got {num_dbs})"
+            )
 
 
 # ---------------------------------------------------------------------------

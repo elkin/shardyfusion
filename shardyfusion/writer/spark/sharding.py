@@ -7,6 +7,7 @@ from pyspark.sql import DataFrame, Row
 from pyspark.sql import functions as F
 from pyspark.sql.types import IntegerType, StructField, StructType
 
+from shardyfusion._writer_core import build_categorical_routing_values
 from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.sharding_types import (
     DB_ID_COL,
@@ -26,7 +27,7 @@ def add_db_id_column(
 
     resolved = ShardingSpec(
         strategy=sharding.strategy,
-        boundaries=sharding.boundaries,
+        routing_values=sharding.routing_values,
         cel_expr=sharding.cel_expr,
         cel_columns=sharding.cel_columns,
     )
@@ -60,16 +61,26 @@ def add_db_id_column(
             from shardyfusion.cel import compile_cel
 
             assert sharding.cel_expr is not None and sharding.cel_columns is not None
-            boundaries_for_cel = (
-                list(sharding.boundaries) if sharding.boundaries is not None else None
+            routing_values_for_cel = (
+                _discover_categorical_routing_values(
+                    df,
+                    cel_expr=sharding.cel_expr,
+                    cel_columns=dict(sharding.cel_columns),
+                )
+                if sharding.infer_routing_values_from_data
+                else (
+                    list(sharding.routing_values)
+                    if sharding.routing_values is not None
+                    else None
+                )
             )
-            resolved.boundaries = boundaries_for_cel
+            resolved.routing_values = routing_values_for_cel
             resolved.cel_expr = sharding.cel_expr
             resolved.cel_columns = sharding.cel_columns
 
             _cel_expr = sharding.cel_expr
             _cel_cols = dict(sharding.cel_columns)
-            _cel_boundaries = boundaries_for_cel
+            _cel_routing_values = routing_values_for_cel
 
             compile_cel(_cel_expr, _cel_cols)  # validate eagerly on driver
 
@@ -81,7 +92,11 @@ def add_db_id_column(
 
                 _compiled = _compile(_cel_expr, _cel_cols)
                 for batch in iterator:
-                    db_ids = route_cel_batch(_compiled, batch, _cel_boundaries)
+                    db_ids = route_cel_batch(
+                        _compiled,
+                        batch,
+                        _cel_routing_values,
+                    )
                     yield batch.append_column(
                         DB_ID_COL, pa.array(db_ids, type=pa.int32())
                     )
@@ -125,3 +140,24 @@ def prepare_partitioned_rdd(
 
     pair_rdd = cast(RDD[Row], prepared.rdd).map(lambda row: (int(row[DB_ID_COL]), row))
     return pair_rdd.partitionBy(num_dbs, lambda key: int(key))
+
+
+def _discover_categorical_routing_values(
+    df: DataFrame,
+    *,
+    cel_expr: str,
+    cel_columns: dict[str, str],
+) -> list[int | str | bytes]:
+    selected = df.select(*cel_columns.keys())
+    _cel_expr = cel_expr
+    _cel_cols = dict(cel_columns)
+
+    def _partition_tokens(rows):  # type: ignore[no-untyped-def]
+        from shardyfusion.cel import compile_cel
+
+        compiled = compile_cel(_cel_expr, _cel_cols)
+        for row in rows:
+            yield compiled.evaluate(row.asDict(recursive=False))
+
+    distinct_tokens = selected.rdd.mapPartitions(_partition_tokens).distinct().collect()
+    return build_categorical_routing_values(distinct_tokens)

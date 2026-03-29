@@ -170,7 +170,7 @@ def write_sharded(
         resolved_sharding = config.sharding
         num_dbs = _resolve_num_dbs_before_sharding(ddf, config)
 
-        ddf_with_id = add_db_id_column(
+        ddf_with_id, resolved_sharding = add_db_id_column(
             ddf,
             key_col=key_col,
             num_dbs=num_dbs,
@@ -179,7 +179,9 @@ def write_sharded(
         )
 
         # CEL: discover num_dbs from data and validate consecutive IDs
-        if num_dbs is None:
+        if num_dbs is None and resolved_sharding.routing_values is not None:
+            num_dbs = max(1, len(resolved_sharding.routing_values))
+        elif num_dbs is None:
             distinct_ids = set(ddf_with_id[DB_ID_COL].unique().compute().tolist())
             num_dbs = discover_cel_num_dbs(distinct_ids)
 

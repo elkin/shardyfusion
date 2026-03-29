@@ -1,13 +1,17 @@
 """CEL (Common Expression Language) integration for flexible sharding.
 
 Provides compile/evaluate/routing functions shared by all writer backends
-and the reader routing layer.  Requires the ``cel`` extra:
+and the reader routing layer. Requires the ``cel`` extra:
 ``pip install shardyfusion[cel]``.
 
-CEL expressions must produce **consecutive 0-based integer shard IDs**
-(e.g., ``shard_hash(key) % 100u`` yields IDs 0–99).  A built-in
-``shard_hash()`` function wrapping xxh3_64 is registered automatically.
-The number of shards is discovered from data (``max(db_id) + 1``).
+CEL routing supports three resolver modes:
+
+- direct integer mode: the expression returns the dense internal shard id
+- categorical mode: the expression returns a discrete token and
+  ``routing_values`` resolves the shard id by exact match
+
+A built-in ``shard_hash()`` function wrapping xxh3_64 is registered
+automatically.
 
 Uses ``cel-expr-python`` (Google's C++ CEL wrapper) via:
     ``from cel_expr_python.cel import NewEnv, Type``
@@ -17,14 +21,13 @@ from __future__ import annotations
 
 import functools
 import json
-from bisect import bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
 from .errors import ConfigValidationError
-from .sharding_types import ShardingSpec, ShardingStrategy
+from .sharding_types import RoutingValue, ShardingSpec, ShardingStrategy
 
 # ---------------------------------------------------------------------------
 # Lazy imports — fail fast with a clear message
@@ -158,11 +161,17 @@ class CompiledCel:
         # S307: This is cel_expr_python's sandboxed evaluator, not Python's eval()
         cel_result = self._expr.eval(data=context)  # noqa: S307
         value = cel_result.plain_value()
-        if not isinstance(value, (int, str, bytes)):
+        if isinstance(value, bytearray):
+            value = bytes(value)
+        if isinstance(value, bool) or not isinstance(value, (int, str, bytes)):
             raise ConfigValidationError(
                 f"CEL expression must return int, str, or bytes; got {type(value).__name__}"
             )
         return value
+
+
+class UnknownRoutingTokenError(ValueError):
+    """Raised when categorical CEL routing produces a token not in the snapshot."""
 
 
 def compile_cel(expr: str, columns: dict[str, str]) -> CompiledCel:
@@ -244,17 +253,21 @@ def evaluate_cel_arrow_batch(
 def route_cel_batch(
     compiled: CompiledCel,
     batch: Any,
-    boundaries: list[int | float | str | bytes] | None,
+    routing_values: Sequence[RoutingValue] | None = None,
 ) -> list[int]:
     """Evaluate CEL and route each row to a shard.
 
-    If ``boundaries`` is provided, uses ``bisect_right`` for routing.
+    If ``routing_values`` is provided, uses categorical exact-match lookup.
     Otherwise, the CEL output is used directly as the shard ID.
     """
     routing_keys = evaluate_cel_arrow_batch(compiled, batch)
-    if boundaries:
-        return [bisect_right(boundaries, rk) for rk in routing_keys]
-    return [int(rk) for rk in routing_keys]
+    if routing_values is not None:
+        lookup = build_categorical_routing_lookup(routing_values)
+        return [
+            resolve_cel_routing_key(rk, routing_values=routing_values, lookup=lookup)
+            for rk in routing_keys
+        ]
+    return [resolve_cel_routing_key(rk) for rk in routing_keys]
 
 
 # ---------------------------------------------------------------------------
@@ -265,23 +278,57 @@ def route_cel_batch(
 def route_cel(
     compiled: CompiledCel,
     context: dict[str, Any],
-    boundaries: list[int | float | str | bytes] | None,
+    routing_values: Sequence[RoutingValue] | None = None,
+    lookup: dict[RoutingValue, int] | None = None,
 ) -> int:
     """Evaluate CEL expression and route to a shard.
 
     Args:
         compiled: Compiled CEL expression.
         context: Variable bindings for the expression.
-        boundaries: Optional sorted boundary values. If provided,
-            ``bisect_right(boundaries, result)`` gives the shard ID.
-            If None, the CEL result is used directly as the shard ID.
+        routing_values: Optional categorical routing values. If provided,
+            exact-match lookup gives the shard ID.
 
     Returns:
         Shard db_id (0-based).
     """
     routing_key = compiled.evaluate(context)
-    if boundaries:
-        return bisect_right(boundaries, routing_key)
+    return resolve_cel_routing_key(
+        routing_key,
+        routing_values=routing_values,
+        lookup=lookup,
+    )
+
+
+def build_categorical_routing_lookup(
+    routing_values: Sequence[RoutingValue],
+) -> dict[RoutingValue, int]:
+    """Build exact-match lookup for categorical CEL routing."""
+
+    return {value: idx for idx, value in enumerate(routing_values)}
+
+
+def resolve_cel_routing_key(
+    routing_key: int | str | bytes,
+    *,
+    routing_values: Sequence[RoutingValue] | None = None,
+    lookup: dict[RoutingValue, int] | None = None,
+) -> int:
+    """Resolve a CEL routing key to a dense internal shard id."""
+
+    if routing_values is not None:
+        value_to_db_id = (
+            lookup
+            if lookup is not None
+            else build_categorical_routing_lookup(routing_values)
+        )
+        try:
+            return value_to_db_id[routing_key]
+        except KeyError as exc:
+            raise UnknownRoutingTokenError(
+                f"Categorical CEL routing token {routing_key!r} is not present "
+                "in this snapshot."
+            ) from exc
     return int(routing_key)
 
 
@@ -318,7 +365,7 @@ def cel_sharding(
     expr: str,
     columns: dict[str, str | CelType],
     *,
-    boundaries: Sequence[int | float | str | bytes] | None = None,
+    routing_values: Sequence[RoutingValue] | None = None,
 ) -> ShardingSpec:
     """Build a :class:`ShardingSpec` for an arbitrary CEL expression.
 
@@ -330,14 +377,10 @@ def cel_sharding(
 
         cel_sharding("key % 4", {"key": "int"})
 
-    Boundary routing example::
-
-        cel_sharding("region", {"region": "string"}, boundaries=["eu", "us"])
-
     Args:
         expr: CEL expression to evaluate for routing.
         columns: Mapping of column name to CEL type string or :class:`CelType`.
-        boundaries: Optional sorted routing boundaries for ``bisect_right`` mode.
+        routing_values: Optional categorical routing values for exact-match mode.
 
     Returns:
         A :class:`ShardingSpec` with strategy CEL.
@@ -363,7 +406,7 @@ def cel_sharding(
 
     return ShardingSpec(
         strategy=ShardingStrategy.CEL,
-        boundaries=list(boundaries) if boundaries is not None else None,
+        routing_values=list(routing_values) if routing_values is not None else None,
         cel_expr=expr,
         cel_columns=normalized_columns,
     )
@@ -371,15 +414,17 @@ def cel_sharding(
 
 def cel_sharding_by_columns(
     *columns: str | CelColumn,
-    num_shards: int,
+    num_shards: int | None = None,
     separator: str = ":",
 ) -> ShardingSpec:
     """Build a :class:`ShardingSpec` for CEL-based partitioning by column values.
 
     Each column is either a bare name (``str``, defaults to
     :attr:`CelType.STRING`) or a :class:`CelColumn` instance.  The generated
-    CEL expression hashes the column value(s) and takes modulo ``num_shards``
-    to produce a 0-based shard ID.
+    CEL expression either hashes the column value(s) and takes modulo
+    ``num_shards`` to produce a 0-based shard ID, or when ``num_shards`` is
+    omitted, returns a categorical routing token whose distinct values are
+    discovered from data at write time.
 
     Single column example::
 
@@ -401,7 +446,8 @@ def cel_sharding_by_columns(
 
     Args:
         *columns: One or more column specifications.
-        num_shards: Target number of shards (embedded as ``% <N>u``).
+        num_shards: Target number of shards (embedded as ``% <N>u``). If omitted,
+            categorical routing values are inferred from data at write time.
         separator: Delimiter for multi-column concatenation (default ``":"``).
 
     Returns:
@@ -414,7 +460,7 @@ def cel_sharding_by_columns(
         raise ConfigValidationError(
             "cel_sharding_by_columns requires at least one column"
         )
-    if num_shards < 1:
+    if num_shards is not None and num_shards < 1:
         raise ConfigValidationError(f"num_shards must be >= 1; got {num_shards}")
 
     parsed: list[CelColumn] = []
@@ -449,8 +495,15 @@ def cel_sharding_by_columns(
                 parts.append(f"string({c.name})")
         inner = f" + {separator_literal} + ".join(parts)
 
-    cel_expr = f"shard_hash({inner}) % {num_shards}u"
+    if num_shards is None:
+        return ShardingSpec(
+            strategy=ShardingStrategy.CEL,
+            cel_expr=inner,
+            cel_columns=cel_columns,
+            infer_routing_values_from_data=True,
+        )
 
+    cel_expr = f"shard_hash({inner}) % {num_shards}u"
     return cel_sharding(cel_expr, cel_columns)
 
 

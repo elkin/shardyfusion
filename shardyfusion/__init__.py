@@ -89,7 +89,7 @@ from .run_registry import (
     S3RunRegistry,
 )
 from .serde import ValueSpec
-from .sharding_types import BoundaryValue, KeyEncoding, ShardingSpec, ShardingStrategy
+from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
 from .slatedb_adapter import (
     DbAdapter,
     DbAdapterFactory,
@@ -113,7 +113,6 @@ __all__ = [
     "AsyncShardReaderHandle",
     "AsyncShardedReader",
     "AsyncSlateDbReaderFactory",
-    "BoundaryValue",
     "BuildDurations",
     "BuildResult",
     "BuildStats",

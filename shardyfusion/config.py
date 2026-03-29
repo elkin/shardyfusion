@@ -119,7 +119,7 @@ class WriteConfig:
                 raise ConfigValidationError(str(exc)) from exc
 
         if self.sharding.strategy == ShardingStrategy.CEL:
-            # CEL: num_dbs is always discovered from data or boundaries
+            # CEL: num_dbs is derived from routing metadata or discovered from data.
             if self.num_dbs is not None:
                 raise ConfigValidationError(
                     "num_dbs must be None for CEL strategy "

@@ -374,7 +374,9 @@ def _prepare_partitioned_rows(
     )
 
     # CEL: discover num_dbs from data and validate consecutive IDs
-    if num_dbs is None:
+    if num_dbs is None and resolved_sharding.routing_values is not None:
+        num_dbs = max(1, len(resolved_sharding.routing_values))
+    elif num_dbs is None:
         agg_row = df_with_db_id.agg(
             F.max(DB_ID_COL).alias("max_id"),
             F.countDistinct(DB_ID_COL).alias("n_distinct"),
