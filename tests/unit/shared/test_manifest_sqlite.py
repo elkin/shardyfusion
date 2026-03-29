@@ -211,8 +211,14 @@ class TestParseSqliteManifestRejectsInvalid:
             parse_sqlite_manifest(b"\xff\xfe\x00\x01garbage")
 
     def test_rejects_empty_database(self) -> None:
-        """A valid SQLite DB with no tables should fail."""
+        """A valid SQLite DB with no manifest tables should fail."""
         con = sqlite3.connect(":memory:")
+        # Python 3.13 can reject serializing a never-initialized in-memory DB.
+        # Create and drop a dummy table so the payload is still a valid SQLite
+        # database with no manifest tables.
+        con.execute("CREATE TABLE _tmp (id INTEGER)")
+        con.execute("DROP TABLE _tmp")
+        con.commit()
         payload = con.serialize()
         con.close()
         with pytest.raises(ManifestParseError):
