@@ -233,7 +233,7 @@ jobs:
         run: pip install "coverage[toml]>=7.2"
 
       - name: Download all coverage data
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: coverage-*
           path: coverage-data
