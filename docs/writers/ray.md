@@ -45,6 +45,7 @@ The Ray writer assigns shard IDs using Arrow batch processing, avoiding the Arro
 - Also operates on Arrow batches with zero-copy mode.
 - Evaluates the CEL expression directly on Arrow batches — the same approach as the Spark writer.
 - Supports full row context via `cel_columns`.
+- Supports direct and categorical CEL resolver modes. Inferred categorical mode discovers sorted distinct routing tokens before final shard assignment.
 
 ## How are rows distributed across workers?
 

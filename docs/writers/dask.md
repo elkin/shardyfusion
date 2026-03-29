@@ -44,6 +44,7 @@ The Dask writer assigns shard IDs by applying the routing function to each panda
 
 - Each partition compiles the CEL expression, builds per-row routing contexts, and evaluates the expression per row.
 - Supports full row context — non-key columns specified in `cel_columns` are available in CEL expressions.
+- Supports direct and categorical CEL resolver modes. Inferred categorical mode discovers sorted distinct routing tokens before final shard assignment.
 
 ## How are rows distributed across workers?
 

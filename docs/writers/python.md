@@ -115,12 +115,13 @@ When either limit would be exceeded, the parent blocks before allocating another
 
 **Parallel:** Workers with zero rows report `row_count=0`. The main process marks their `db_url=None`.
 
-## How is CEL shard count discovered?
+## How is CEL routing metadata discovered?
 
 CEL sharding in the Python writer has a unique constraint:
 
-- **Single-process:** `num_dbs` is unknown until iteration completes. After all records are routed, the observed shard IDs are validated as consecutive 0-based integers and `num_dbs` is derived from `max(db_id) + 1`.
-- **Parallel:** CEL discovery is not supported because workers must be spawned before iteration. In practice, Python parallel mode does not support CEL direct-mode shard-count discovery.
+- **Single-process direct mode:** `num_dbs` is unknown until iteration completes. After all records are routed, the observed shard IDs are validated as consecutive 0-based integers and `num_dbs` is derived from `max(db_id) + 1`.
+- **Single-process inferred categorical mode:** the writer evaluates the CEL token for each record, collects sorted distinct routing tokens, stores them as `routing_values`, and uses their position as the dense internal shard ID.
+- **Parallel:** CEL discovery is not supported because workers must be spawned before iteration. In practice, Python parallel mode does not support direct-mode shard-count discovery or inferred categorical routing.
 
 ## Worker Lifecycle
 
@@ -189,5 +190,5 @@ and future deferred cleanup workflows.
 | **Min/max tracked in main** | The main process tracks min/max keys and patches them into worker results. Workers do not have visibility into keys from other shards. |
 | **`columns_fn` for CEL routing context** | The `columns_fn` parameter provides additional column values for CEL routing context (analogous to `cel_columns` in framework writers). |
 | **No verification step** | Unlike Spark/Dask/Ray, the Python writer has no routing verification — it uses the routing function directly, so there's no framework-vs-Python divergence to verify. |
-| **CEL + parallel incompatible for discovery** | Python parallel mode cannot discover CEL shard counts at runtime. CEL direct mode therefore only works in single-process mode. |
+| **CEL + parallel incompatible for discovery** | Python parallel mode cannot discover direct-mode shard counts or inferred categorical routing values at runtime. Explicit `routing_values` still work because the shard set is already known. |
 | **Parallel SHM budgets** | `max_queue_size` bounds descriptor backlog, not payload bytes. `max_parallel_shared_memory_bytes` and `max_parallel_shared_memory_bytes_per_worker` only apply to the default shared-memory transport; retry-enabled parallel mode uses local spool files instead. |

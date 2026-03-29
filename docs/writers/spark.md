@@ -48,6 +48,7 @@ Shard IDs are assigned using Arrow-native processing on executors, which process
 - The CEL expression is compiled on the driver for validation, then re-compiled in the map closure on each executor (CEL compiled objects are not serializable).
 - Operates directly on Arrow batches, supporting access to non-key columns specified in `cel_columns`.
 - The shard ID range is validated after assignment via a filter check when `num_dbs > 0`.
+- Supports direct and categorical CEL resolver modes. Inferred categorical mode discovers sorted distinct routing tokens before the Arrow routing pass is finalized.
 
 ## How are rows distributed across workers?
 

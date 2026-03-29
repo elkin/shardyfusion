@@ -58,10 +58,12 @@ User-provided CEL expression evaluated at write time (shard assignment) and read
 
 Key properties:
 
-- Expression must produce **consecutive 0-based integer shard IDs** (e.g., `shard_hash(key) % 100u` produces IDs 0–99)
+- Expression can resolve shards in one of two ways:
+  - direct integer mode: return the dense shard ID directly
+  - categorical mode: return a discrete token and resolve it by exact match against `routing_values`
 - Built-in `shard_hash()` function wraps xxh3_64 for use within CEL expressions
-- `num_dbs` is always **discovered from data** (`max(db_id) + 1`) — it must not be provided explicitly
-- Optional `boundaries` field enables `bisect_right`-based routing for range-like patterns
+- `num_dbs` is always derived from resolver metadata or discovered from data — it must not be provided explicitly
+- Optional `routing_values` enables exact-match categorical routing
 - Supports multi-column routing via `cel_columns` — non-key columns are available in the expression
 
 **Two routing modes:**
@@ -78,17 +80,29 @@ Key properties:
     cel_sharding("shard_hash(key) % 100u", {"key": "int"})
     ```
 
-2. **Boundary** — expression returns a routing key, `bisect_right(boundaries, key)` determines the shard:
+2. **Categorical** — expression returns a discrete token, exact-matched against `routing_values`:
 
     ```python
     from shardyfusion import cel_sharding
 
-    # Range sharding: 3 shards (key < 10, 10 <= key < 20, key >= 20)
-    cel_sharding("key", {"key": "int"}, boundaries=[10, 20])
-
-    # Multi-column: route by region
-    cel_sharding("region", {"region": "string"}, boundaries=["eu", "us"])
+    cel_sharding(
+        "region + \":\" + tier",
+        {"region": "string", "tier": "string"},
+        routing_values=["ap:bronze", "eu:gold", "us:silver"],
+    )
     ```
+
+If you want range-like buckets, encode them directly in the CEL expression so
+the result is already a dense shard ID:
+
+```python
+from shardyfusion import cel_sharding
+
+cel_sharding(
+    'key < 10 ? 0 : key < 20 ? 1 : 2',
+    {"key": "int"},
+)
+```
 
 #### CEL helpers
 
@@ -103,7 +117,7 @@ spec = cel_sharding("key % 8", {"key": "int"})
 spec = cel_sharding(
     "region",
     {"region": CelType.STRING},
-    boundaries=["eu", "us"],
+    routing_values=["ap", "eu", "us"],
 )
 ```
 
@@ -132,6 +146,12 @@ spec = cel_sharding_by_columns("region", CelColumn("tier", CelType.INT), num_sha
 # Custom separator
 spec = cel_sharding_by_columns("a", "b", num_shards=4, separator="/")
 # → cel_expr='shard_hash(a + "/" + b) % 4u'
+
+# Distinct-value categorical routing with inferred token table
+spec = cel_sharding_by_columns("region", "tier")
+# → cel_expr='region + ":" + tier'
+#   infer_routing_values_from_data=True
+#   routing_values resolved from sorted distinct tokens at write time
 ```
 
 Columns are either bare strings (type defaults to `CelType.STRING`) or `CelColumn` instances with an explicit `CelType`. Supported types: `STRING`, `INT`, `UINT`, `DOUBLE`, `BOOL`, `BYTES`.
@@ -143,7 +163,8 @@ Columns are either bare strings (type defaults to `CelType.STRING`) or `CelColum
 | Shard assignment | `xxh3_64(key) % num_dbs` | User-defined expression |
 | `num_dbs` | Explicit or auto-computed | Discovered from data |
 | Multi-column routing | No | Yes (via `routing_context`) |
-| Range-based sharding | No | Yes (via `boundaries`) |
+| Explicit range bucketing | No | Yes (return dense shard IDs directly) |
+| Exact categorical routing | No | Yes (via `routing_values`) |
 | Extra dependency | None | `cel` extra |
 
 ### Spark write pipeline
@@ -305,7 +326,7 @@ Direct fields:
 Grouped options:
 
 - `sharding: ShardingSpec`
-  - `strategy`, `boundaries`, `cel_expr`, `cel_columns`, `max_keys_per_shard`
+  - `strategy`, `routing_values`, `cel_expr`, `cel_columns`, `max_keys_per_shard`
 - `output: OutputOptions`
   - `run_id`
   - `db_path_template`
@@ -368,7 +389,9 @@ Primary classes: `ShardedReader`, `ConcurrentShardedReader`, `AsyncShardedReader
 ### Routing semantics
 
 - **HASH**: `xxh3_64(canonical_bytes(key), seed=0) % num_dbs` — all writers and the reader use the same Python implementation. Supports int, str, and bytes keys.
-- **CEL**: The same CEL expression is evaluated at both write time and read time. Must produce consecutive 0-based shard IDs. Optional `boundaries` for `bisect_right`-based routing.
+- **CEL**: The same CEL expression is evaluated at both write time and read time. It can route directly by integer shard id or by exact-match `routing_values`.
+
+For categorical CEL snapshots, unknown routing tokens are treated as misses by `get()` and `multi_get()`. Introspection helpers such as `route_key()` still raise because there is no shard for an unknown token.
 
 For CEL routing that uses non-key columns, pass a `routing_context` at read time:
 
