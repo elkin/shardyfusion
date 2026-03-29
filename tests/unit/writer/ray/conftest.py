@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+
+os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
+
 import pytest
 
 ray = pytest.importorskip("ray", reason="requires writer-ray extra")

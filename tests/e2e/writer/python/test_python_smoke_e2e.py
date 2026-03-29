@@ -144,7 +144,6 @@ def test_smoke_hash_max_keys_per_shard(garage_s3_service, tmp_path, backend) -> 
 @pytest.mark.cel
 def test_smoke_cel_key_modulo(garage_s3_service, tmp_path, backend) -> None:
     pytest.importorskip("cel_expr_python")
-    # key % 3 with boundaries [1, 2] → 3 shards
     run_smoke_cel_scenario(
         _hash_write_fn,
         garage_s3_service,
@@ -152,7 +151,6 @@ def test_smoke_cel_key_modulo(garage_s3_service, tmp_path, backend) -> None:
         writer_type="python",
         cel_expr="key % 3",
         cel_columns={"key": "int"},
-        boundaries=[1, 2],
         expected_num_shards=3,
         adapter_factory=backend.adapter_factory,
         reader_factory=backend.reader_factory,
@@ -210,7 +208,7 @@ def test_smoke_cel_routing_context(garage_s3_service, tmp_path, backend) -> None
         writer_type="python",
         cel_expr="group",
         cel_columns={"group": "string"},
-        boundaries=["b"],
+        routing_values=["a", "b"],
         expected_num_shards=2,
         routing_context_fn=lambda row: {"group": row[2]},
         adapter_factory=backend.adapter_factory,

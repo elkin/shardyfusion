@@ -36,7 +36,6 @@ def test_ray_cel_unified_publishes_manifest(local_s3_service, tmp_path):
             strategy=ShardingStrategy.CEL,
             cel_expr="key % 4",
             cel_columns={"key": "int"},
-            boundaries=[1, 2, 3],
         ),
         output=OutputOptions(
             run_id="ray-cel",
@@ -82,4 +81,4 @@ def test_ray_cel_unified_publishes_manifest(local_s3_service, tmp_path):
 
     compiled = compile_cel("key % 4", {"key": "int"})
     for key in range(40):
-        assert route_cel(compiled, {"key": key}, [1, 2, 3]) == router.route_one(key)
+        assert route_cel(compiled, {"key": key}) == router.route_one(key)

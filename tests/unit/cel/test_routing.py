@@ -23,7 +23,7 @@ def _build_required(
     num_dbs: int,
     cel_expr: str,
     cel_columns: dict[str, str],
-    boundaries: list[int | str] | None = None,
+    routing_values: list[int | str | bytes] | None = None,
     key_encoding: KeyEncoding = KeyEncoding.UTF8,
 ) -> RequiredBuildMeta:
     return RequiredBuildMeta(
@@ -37,7 +37,7 @@ def _build_required(
             strategy=ShardingStrategy.CEL,
             cel_expr=cel_expr,
             cel_columns=cel_columns,
-            boundaries=boundaries,
+            routing_values=routing_values,
         ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
@@ -59,7 +59,7 @@ def _make_shards(num_dbs: int) -> list[RequiredShardMeta]:
 class TestSnapshotRouterCelKeyOnly:
     """CEL key-only mode: auto-wraps key in {"key": value}."""
 
-    def test_cel_direct_mode_no_boundaries(self) -> None:
+    def test_cel_direct_mode(self) -> None:
         """CEL expression directly returns shard ID."""
         required = _build_required(
             num_dbs=4,
@@ -72,19 +72,42 @@ class TestSnapshotRouterCelKeyOnly:
         assert router.route_one(1) == 1
         assert router.route_one(5) == 1
 
-    def test_cel_with_boundaries(self) -> None:
-        """CEL expression + bisect_right boundaries."""
+    def test_cel_direct_explicit_ranges(self) -> None:
         required = _build_required(
             num_dbs=3,
-            cel_expr="key",
+            cel_expr="key < 10 ? 0 : key < 20 ? 1 : 2",
             cel_columns={"key": "int"},
-            boundaries=[10, 20],
         )
         router = SnapshotRouter(required, _make_shards(3))
 
         assert router.route_one(5) == 0
         assert router.route_one(15) == 1
         assert router.route_one(25) == 2
+
+    def test_cel_with_categorical_routing_values(self) -> None:
+        required = _build_required(
+            num_dbs=3,
+            cel_expr="region",
+            cel_columns={"region": "string"},
+            routing_values=["ap", "eu", "us"],
+        )
+        router = SnapshotRouter(required, _make_shards(3))
+
+        assert router.route_with_context({"region": "ap"}) == 0
+        assert router.route_with_context({"region": "eu"}) == 1
+        assert router.route_with_context({"region": "us"}) == 2
+
+    def test_categorical_unknown_token_raises(self) -> None:
+        required = _build_required(
+            num_dbs=3,
+            cel_expr="region",
+            cel_columns={"region": "string"},
+            routing_values=["ap", "eu", "us"],
+        )
+        router = SnapshotRouter(required, _make_shards(3))
+
+        with pytest.raises(ValueError, match="not present"):
+            router.route_with_context({"region": "jp"})
 
 
 class TestSnapshotRouterCelMultiColumn:
@@ -94,48 +117,23 @@ class TestSnapshotRouterCelMultiColumn:
         """route(key, routing_context=...) works for multi-column CEL."""
         required = _build_required(
             num_dbs=3,
-            cel_expr="region",
+            cel_expr='region == "ap" ? 0 : region == "eu" ? 1 : 2',
             cel_columns={"region": "string"},
-            boundaries=["eu", "us"],
         )
         router = SnapshotRouter(required, _make_shards(3))
 
         assert router.route_with_context({"region": "ap"}) == 0
         assert router.route_with_context({"region": "eu"}) == 1
+        assert router.route_with_context({"region": "us"}) == 2
 
     def test_route_one_raises_for_multi_column(self) -> None:
         """route_one(key) raises ValueError for multi-column CEL."""
         required = _build_required(
             num_dbs=3,
-            cel_expr="region",
+            cel_expr='region == "ap" ? 0 : region == "eu" ? 1 : 2',
             cel_columns={"region": "string"},
-            boundaries=["eu", "us"],
         )
         router = SnapshotRouter(required, _make_shards(3))
 
         with pytest.raises(ValueError, match="routing_context"):
             router.route_one("anything")
-
-
-class TestSnapshotRouterBoundaryValidation:
-    """Router rejects unsorted boundaries from manifest data."""
-
-    def test_rejects_unsorted_boundaries(self) -> None:
-        required = _build_required(
-            num_dbs=3,
-            cel_expr="key",
-            cel_columns={"key": "int"},
-            boundaries=[20, 10],
-        )
-        with pytest.raises(ValueError, match="strictly increasing"):
-            SnapshotRouter(required, _make_shards(3))
-
-    def test_rejects_duplicate_boundaries(self) -> None:
-        required = _build_required(
-            num_dbs=3,
-            cel_expr="key",
-            cel_columns={"key": "int"},
-            boundaries=[10, 10],
-        )
-        with pytest.raises(ValueError, match="strictly increasing"):
-            SnapshotRouter(required, _make_shards(3))

@@ -97,7 +97,7 @@ def _cel_key_only_manifest(num_dbs: int = 4) -> ParsedManifest:
 
 
 def _cel_multi_column_manifest(num_dbs: int = 3) -> ParsedManifest:
-    """CEL multi-column mode using boundaries: region → bisect_right."""
+    """CEL multi-column direct mode using explicit integer routing."""
     required = RequiredBuildMeta(
         run_id="run-cel-mc",
         created_at="2026-01-01T00:00:00+00:00",
@@ -107,12 +107,41 @@ def _cel_multi_column_manifest(num_dbs: int = 3) -> ParsedManifest:
         key_encoding=KeyEncoding.UTF8,
         sharding=ManifestShardingSpec(
             strategy=ShardingStrategy.CEL,
-            cel_expr="region",
+            cel_expr='region == "ap" ? 0 : region == "eu" ? 1 : 2',
             cel_columns={"region": "string"},
-            boundaries=["eu", "us"],
         ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
+    )
+    shards = [
+        RequiredShardMeta(
+            db_id=i,
+            db_url=f"mem://db/{i}",
+            attempt=0,
+            row_count=10,
+        )
+        for i in range(num_dbs)
+    ]
+    return ParsedManifest(required_build=required, shards=shards, custom={})
+
+
+def _cel_categorical_manifest(num_dbs: int = 3) -> ParsedManifest:
+    required = RequiredBuildMeta(
+        run_id="run-cel-cat",
+        created_at="2026-01-01T00:00:00+00:00",
+        num_dbs=num_dbs,
+        s3_prefix="s3://bucket/prefix",
+        key_col="key",
+        key_encoding=KeyEncoding.UTF8,
+        sharding=ManifestShardingSpec(
+            strategy=ShardingStrategy.CEL,
+            cel_expr="region",
+            cel_columns={"region": "string"},
+            routing_values=["ap", "eu", "us"],
+        ),
+        db_path_template="db={db_id:05d}",
+        shard_prefix="shards",
+        format_version=3,
     )
     shards = [
         RequiredShardMeta(
@@ -191,7 +220,6 @@ class TestCelMultiColumnReaderRouting:
             manifest_store=store,
             reader_factory=_fake_factory(stores),
         )
-        # "ap" < "eu" → shard 0
         val = reader.get("k", routing_context={"region": "ap"})
         assert val == b"ap-shard"
         reader.close()
@@ -223,11 +251,8 @@ class TestCelMultiColumnReaderRouting:
             manifest_store=store,
             reader_factory=_fake_factory(stores),
         )
-        # "ap" < "eu" → shard 0
         assert reader.route_key("k", routing_context={"region": "ap"}) == 0
-        # "eu" == boundary[0] → shard 1
         assert reader.route_key("k", routing_context={"region": "eu"}) == 1
-        # "us" == boundary[1] → shard 2
         assert reader.route_key("k", routing_context={"region": "us"}) == 2
         reader.close()
 
@@ -246,3 +271,55 @@ class TestCelMultiColumnReaderRouting:
         with pytest.raises(ValueError, match="routing_context"):
             reader.route_key("k")
         reader.close()
+
+
+class TestCelCategoricalReaderRouting:
+    def _stores(self) -> dict[str, dict[bytes, bytes]]:
+        return {
+            "mem://db/0": {b"k": b"ap-shard"},
+            "mem://db/1": {b"k": b"eu-shard"},
+            "mem://db/2": {b"k": b"us-shard"},
+        }
+
+    def test_get_unknown_categorical_token_returns_miss(self, tmp_path: Path) -> None:
+        manifest = _cel_categorical_manifest(3)
+        store = _FixedManifestStore(manifest, "mem://manifest/cel-cat")
+
+        reader = ShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=store,
+            reader_factory=_fake_factory(self._stores()),
+        )
+        assert reader.get("k", routing_context={"region": "jp"}) is None
+        reader.close()
+
+    def test_multi_get_unknown_categorical_token_returns_misses(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        manifest = _cel_categorical_manifest(3)
+        store = _FixedManifestStore(manifest, "mem://manifest/cel-cat")
+
+        reader = ShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=store,
+            reader_factory=_fake_factory(self._stores()),
+        )
+        result = reader.multi_get(["k", "missing"], routing_context={"region": "jp"})
+        assert result == {"k": None, "missing": None}
+        reader.close()
+
+    def test_route_key_unknown_categorical_token_raises(self, tmp_path: Path) -> None:
+        manifest = _cel_categorical_manifest(3)
+        store = _FixedManifestStore(manifest, "mem://manifest/cel-cat")
+
+        with ShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=store,
+            reader_factory=_fake_factory(self._stores()),
+        ) as reader:
+            with pytest.raises(ValueError, match="not present"):
+                reader.route_key("k", routing_context={"region": "jp"})

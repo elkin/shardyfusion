@@ -71,9 +71,8 @@ class TestYamlManifestBuilder:
         builder = YamlManifestBuilder()
         sharding = ManifestShardingSpec(
             strategy=ShardingStrategy.CEL,
-            cel_expr="key % 1000",
+            cel_expr="shard_hash(key) % 4u",
             cel_columns={"key": "int"},
-            boundaries=[250, 500, 750],
         )
         rb = self._make_required_build(sharding=sharding)
         shards = [self._make_shard(i) for i in range(4)]
@@ -81,9 +80,25 @@ class TestYamlManifestBuilder:
 
         parsed = parse_manifest(artifact.payload)
         assert parsed.required_build.sharding.strategy == ShardingStrategy.CEL
-        assert parsed.required_build.sharding.cel_expr == "key % 1000"
+        assert parsed.required_build.sharding.cel_expr == "shard_hash(key) % 4u"
         assert parsed.required_build.sharding.cel_columns == {"key": "int"}
-        assert parsed.required_build.sharding.boundaries == [250, 500, 750]
+        assert parsed.required_build.sharding.routing_values is None
+
+    def test_categorical_cel_fields_in_manifest(self) -> None:
+        builder = YamlManifestBuilder()
+        sharding = ManifestShardingSpec(
+            strategy=ShardingStrategy.CEL,
+            cel_expr="region",
+            cel_columns={"region": "string"},
+            routing_values=["ap", "eu", "us"],
+        )
+        rb = self._make_required_build(sharding=sharding, num_dbs=3, format_version=3)
+        shards = [self._make_shard(i) for i in range(3)]
+        artifact = builder.build(required_build=rb, shards=shards, custom_fields={})
+
+        parsed = parse_manifest(artifact.payload)
+        assert parsed.required_build.format_version == 3
+        assert parsed.required_build.sharding.routing_values == ["ap", "eu", "us"]
 
     def test_custom_fields_merged(self) -> None:
         builder = YamlManifestBuilder()

@@ -62,6 +62,56 @@ def test_parse_manifest_round_trip() -> None:
     assert parsed.custom == {"env": "test"}
 
 
+def test_parse_manifest_round_trip_categorical_cel() -> None:
+    payload = {
+        "required": {
+            "run_id": "run-1",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "num_dbs": 3,
+            "s3_prefix": "s3://bucket/prefix",
+            "key_col": "id",
+            "key_encoding": "u64be",
+            "sharding": {
+                "strategy": "cel",
+                "cel_expr": "region",
+                "cel_columns": {"region": "string"},
+                "routing_values": ["ap", "eu", "us"],
+            },
+            "db_path_template": "db={db_id:05d}",
+            "shard_prefix": "shards",
+            "format_version": 3,
+        },
+        "shards": [
+            {
+                "db_id": 0,
+                "db_url": "s3://bucket/prefix/db=00000",
+                "attempt": 0,
+                "row_count": 1,
+                "writer_info": {},
+            },
+            {
+                "db_id": 1,
+                "db_url": "s3://bucket/prefix/db=00001",
+                "attempt": 0,
+                "row_count": 1,
+                "writer_info": {},
+            },
+            {
+                "db_id": 2,
+                "db_url": "s3://bucket/prefix/db=00002",
+                "attempt": 0,
+                "row_count": 1,
+                "writer_info": {},
+            },
+        ],
+        "custom": {},
+    }
+
+    parsed = parse_manifest(_to_yaml(payload))
+    assert parsed.required_build.format_version == 3
+    assert parsed.required_build.sharding.routing_values == ["ap", "eu", "us"]
+
+
 def test_parse_manifest_rejects_bad_shard_coverage() -> None:
     payload = {
         "required": {

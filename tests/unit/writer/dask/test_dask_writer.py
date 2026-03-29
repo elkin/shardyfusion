@@ -32,6 +32,7 @@ from shardyfusion.testing import (
     file_backed_adapter_factory,
     file_backed_load_db,
 )
+from shardyfusion.writer.dask import sharding as dask_sharding
 from shardyfusion.writer.dask import write_sharded
 from tests.helpers.run_record_assertions import (
     assert_success_run_record,
@@ -220,6 +221,32 @@ def test_empty_input() -> None:
     # No records → no non-empty shards in winners
     assert len(result.winners) == 0
     assert result.stats.rows_written == 0
+
+
+def test_inferred_categorical_discovers_distinct_tokens_before_compute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf = pd.DataFrame({"region": ["ap", "ap", "eu", "ap", "eu"]})
+    ddf = dd.from_pandas(pdf, npartitions=2)
+    captured: list[list[object]] = []
+
+    def _capture(values):  # type: ignore[no-untyped-def]
+        values_list = list(values)
+        captured.append(values_list)
+        return sorted(values_list)
+
+    monkeypatch.setattr(dask_sharding, "build_categorical_routing_values", _capture)
+
+    routing_values = dask_sharding._discover_categorical_routing_values(
+        ddf,
+        cel_expr="region",
+        cel_columns={"region": "string"},
+    )
+
+    assert len(captured) == 1
+    assert len(captured[0]) == 2
+    assert set(captured[0]) == {"ap", "eu"}
+    assert routing_values == ["ap", "eu"]
 
 
 def test_batch_flushing() -> None:

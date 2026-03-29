@@ -41,7 +41,7 @@ def test_shuffle_strategy_restored_on_repartition_failure() -> None:
     with (
         patch(
             "shardyfusion.writer.ray.writer.add_db_id_column",
-            return_value=mock_ds,
+            return_value=(mock_ds, config.sharding),
         ),
         patch(
             "shardyfusion.writer.ray.writer._verify_routing_agreement",

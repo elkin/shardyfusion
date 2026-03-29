@@ -9,7 +9,6 @@ Requires the ``cel`` extra (``cel-expr-python``).
 
 from __future__ import annotations
 
-from bisect import bisect_right
 from pathlib import Path
 
 import pytest
@@ -44,7 +43,7 @@ def _make_cel_config(
     *,
     cel_expr: str,
     cel_columns: dict[str, str],
-    boundaries: list[int | float | str],
+    routing_values: list[int | str | bytes] | None = None,
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
     batch_size: int = 50_000,
 ) -> tuple[WriteConfig, str]:
@@ -61,7 +60,7 @@ def _make_cel_config(
             strategy=ShardingStrategy.CEL,
             cel_expr=cel_expr,
             cel_columns=cel_columns,
-            boundaries=boundaries,
+            routing_values=routing_values,
         ),
         output=OutputOptions(run_id="test-cel"),
         manifest=ManifestOptions(store=store),
@@ -80,12 +79,10 @@ class TestCelUnifiedMode:
 
     def test_write_and_read_modulo_routing(self, tmp_path: Path) -> None:
         """key % 4 routes 100 records into 4 shards correctly."""
-        # Precompute boundaries for key%4 → values 0,1,2,3 → boundaries [1,2,3]
         config, root_dir = _make_cel_config(
             tmp_path,
             cel_expr="key % 4",
             cel_columns={"key": "int"},
-            boundaries=[1, 2, 3],
         )
 
         records = list(range(100))
@@ -107,10 +104,9 @@ class TestCelUnifiedMode:
             shard_data = file_backed_load_db(root_dir, winner.db_url)
             for key_bytes in shard_data:
                 key_int = int.from_bytes(key_bytes, byteorder="big", signed=False)
-                routing_key = compiled.evaluate({"key": key_int})
-                expected_db_id = bisect_right([1, 2, 3], routing_key)
+                expected_db_id = route_cel(compiled, {"key": key_int})
                 assert expected_db_id == winner.db_id, (
-                    f"key={key_int}, routing_key={routing_key}, "
+                    f"key={key_int}, "
                     f"expected_db_id={expected_db_id}, actual={winner.db_id}"
                 )
 
@@ -121,7 +117,6 @@ class TestCelUnifiedMode:
             tmp_path,
             cel_expr="key % 2",
             cel_columns={"key": "int"},
-            boundaries=[1],
         )
         config.manifest.store = store
 
@@ -138,7 +133,7 @@ class TestCelUnifiedMode:
         assert sharding.strategy == ShardingStrategy.CEL
         assert sharding.cel_expr == "key % 2"
         assert sharding.cel_columns == {"key": "int"}
-        assert sharding.boundaries == [1]
+        assert sharding.routing_values is None
 
     def test_router_reconstructed_from_manifest(self, tmp_path: Path) -> None:
         """SnapshotRouter built from CEL manifest routes keys correctly."""
@@ -147,7 +142,6 @@ class TestCelUnifiedMode:
             tmp_path,
             cel_expr="key % 3",
             cel_columns={"key": "int"},
-            boundaries=[1, 2],
         )
         config.manifest.store = store
 
@@ -174,7 +168,7 @@ class TestCelUnifiedMode:
             assert write_db_id == read_db_id, f"key={key}"
 
     def test_single_shard_all_keys(self, tmp_path: Path) -> None:
-        """With no boundaries, all keys route to shard 0."""
+        """Direct CEL can route all keys to shard 0."""
         store = InMemoryManifestStore()
         root_dir = str(tmp_path / "file_backed")
         config = WriteConfig(
@@ -184,9 +178,8 @@ class TestCelUnifiedMode:
             adapter_factory=file_backed_adapter_factory(root_dir),
             sharding=ShardingSpec(
                 strategy=ShardingStrategy.CEL,
-                cel_expr="key % 1",
+                cel_expr="0",
                 cel_columns={"key": "int"},
-                boundaries=[],
             ),
             output=OutputOptions(run_id="test-single"),
             manifest=ManifestOptions(store=store),
@@ -208,7 +201,6 @@ class TestCelUnifiedMode:
             tmp_path,
             cel_expr="key % 4",
             cel_columns={"key": "int"},
-            boundaries=[1, 2, 3],
         )
 
         result = write_sharded(
@@ -227,7 +219,6 @@ class TestCelUnifiedMode:
             tmp_path,
             cel_expr="key % 4",
             cel_columns={"key": "int"},
-            boundaries=[1, 2, 3],
         )
 
         records = list(range(200))
@@ -250,7 +241,7 @@ class TestCelUnifiedMode:
             assert all_kv[encoder(r)] == f"value-{r}".encode()
 
     def test_direct_mode_shard_hash(self, tmp_path: Path) -> None:
-        """CEL direct mode: shard_hash(key) % N produces shard IDs directly, no boundaries."""
+        """CEL direct mode: shard_hash(key) % N produces shard IDs directly."""
         store = InMemoryManifestStore()
         root_dir = str(tmp_path / "file_backed")
         config = WriteConfig(
@@ -262,7 +253,6 @@ class TestCelUnifiedMode:
                 strategy=ShardingStrategy.CEL,
                 cel_expr="shard_hash(key) % 4u",
                 cel_columns={"key": "int"},
-                boundaries=[],
             ),
             output=OutputOptions(run_id="test-direct-hash"),
             manifest=ManifestOptions(store=store),
@@ -296,7 +286,6 @@ class TestCelUnifiedMode:
             tmp_path,
             cel_expr="key % 4",
             cel_columns={"key": "int"},
-            boundaries=[1, 2, 3],
         )
 
         with pytest.raises(
@@ -326,7 +315,6 @@ class TestCelSplitMode:
 
     def test_split_mode_routes_by_context(self, tmp_path: Path) -> None:
         """Records route by 'region' context, stored by 'user_id' key."""
-        # 3 regions → 3 shards, boundaries at "eu", "us" (sorted: ap < eu < us)
         store = InMemoryManifestStore()
         root_dir = str(tmp_path / "file_backed")
         config = WriteConfig(
@@ -338,7 +326,7 @@ class TestCelSplitMode:
                 strategy=ShardingStrategy.CEL,
                 cel_expr="region",
                 cel_columns={"region": "string"},
-                boundaries=["eu", "us"],
+                routing_values=["ap", "eu", "us"],
             ),
             output=OutputOptions(run_id="test-split"),
             manifest=ManifestOptions(store=store),
@@ -373,7 +361,11 @@ class TestCelSplitMode:
                 user_id = key_bytes.decode("utf-8")
                 payload = val_bytes.decode("utf-8")
                 region = payload.split("@")[1]
-                expected_db_id = route_cel(compiled, {"region": region}, ["eu", "us"])
+                expected_db_id = route_cel(
+                    compiled,
+                    {"region": region},
+                    ["ap", "eu", "us"],
+                )
                 assert expected_db_id == winner.db_id, (
                     f"user={user_id}, region={region}, "
                     f"expected={expected_db_id}, actual={winner.db_id}"
@@ -392,7 +384,7 @@ class TestCelSplitMode:
                 strategy=ShardingStrategy.CEL,
                 cel_expr="region",
                 cel_columns={"region": "string"},
-                boundaries=["eu", "us"],
+                routing_values=["ap", "eu", "us"],
             ),
             output=OutputOptions(run_id="test-split-read"),
             manifest=ManifestOptions(store=store),
@@ -416,9 +408,9 @@ class TestCelSplitMode:
         manifest = store.load_manifest(result.manifest_ref)
         router = SnapshotRouter(manifest.required_build, manifest.shards)
 
-        assert router.route_with_context({"region": "ap"}) == 0  # < "eu"
-        assert router.route_with_context({"region": "eu"}) == 1  # >= "eu", < "us"
-        assert router.route_with_context({"region": "us"}) == 2  # >= "us"
+        assert router.route_with_context({"region": "ap"}) == 0
+        assert router.route_with_context({"region": "eu"}) == 1
+        assert router.route_with_context({"region": "us"}) == 2
 
     def test_split_mode_uneven_distribution(self, tmp_path: Path) -> None:
         """Shards can have uneven record counts in split mode."""
@@ -433,7 +425,7 @@ class TestCelSplitMode:
                 strategy=ShardingStrategy.CEL,
                 cel_expr="region",
                 cel_columns={"region": "string"},
-                boundaries=["eu", "us"],
+                routing_values=["ap", "eu", "us"],
             ),
             output=OutputOptions(run_id="test-uneven"),
             manifest=ManifestOptions(store=store),
@@ -455,6 +447,100 @@ class TestCelSplitMode:
         )
 
         assert result.stats.rows_written == 10
-        # Find the "us" shard (db_id=2) — should have 8 rows
         us_shard = next(w for w in result.winners if w.db_id == 2)
         assert us_shard.row_count == 8
+
+
+class TestCelCategoricalMode:
+    def test_infers_routing_values_from_helper(self, tmp_path: Path) -> None:
+        from shardyfusion.cel import cel_sharding_by_columns
+
+        store = InMemoryManifestStore()
+        root_dir = str(tmp_path / "file_backed")
+        config = WriteConfig(
+            num_dbs=None,
+            s3_prefix="s3://bucket/prefix",
+            key_encoding=KeyEncoding.UTF8,
+            adapter_factory=file_backed_adapter_factory(root_dir),
+            sharding=cel_sharding_by_columns("region"),
+            output=OutputOptions(run_id="test-categorical"),
+            manifest=ManifestOptions(store=store),
+        )
+
+        records = [
+            ("alice", "ap"),
+            ("bob", "eu"),
+            ("carol", "us"),
+            ("dave", "ap"),
+        ]
+
+        result = write_sharded(
+            records,
+            config,
+            key_fn=lambda r: r[0],
+            value_fn=lambda r: f"{r[0]}@{r[1]}".encode(),
+            columns_fn=lambda r: {"region": r[1]},
+        )
+
+        assert len(result.winners) == 3
+        manifest = store.load_manifest(result.manifest_ref)
+        assert manifest.required_build.format_version == 3
+        assert manifest.required_build.sharding.routing_values == ["ap", "eu", "us"]
+
+        router = SnapshotRouter(manifest.required_build, manifest.shards)
+        assert router.route_with_context({"region": "ap"}) == 0
+        assert router.route_with_context({"region": "eu"}) == 1
+        assert router.route_with_context({"region": "us"}) == 2
+
+    def test_inferred_categorical_requires_reiterable_input(
+        self, tmp_path: Path
+    ) -> None:
+        from shardyfusion.cel import cel_sharding_by_columns
+
+        config = WriteConfig(
+            num_dbs=None,
+            s3_prefix="s3://bucket/prefix",
+            key_encoding=KeyEncoding.UTF8,
+            adapter_factory=file_backed_adapter_factory(str(tmp_path / "file_backed")),
+            sharding=cel_sharding_by_columns("region"),
+            output=OutputOptions(run_id="test-categorical-iter"),
+            manifest=ManifestOptions(store=InMemoryManifestStore()),
+        )
+
+        def _records():
+            yield ("alice", "ap")
+            yield ("bob", "eu")
+
+        with pytest.raises(ConfigValidationError, match="reiterable input"):
+            write_sharded(
+                _records(),
+                config,
+                key_fn=lambda r: r[0],
+                value_fn=lambda r: b"v",
+                columns_fn=lambda r: {"region": r[1]},
+            )
+
+    def test_inferred_categorical_rejects_parallel(self, tmp_path: Path) -> None:
+        from shardyfusion.cel import cel_sharding_by_columns
+
+        config = WriteConfig(
+            num_dbs=None,
+            s3_prefix="s3://bucket/prefix",
+            key_encoding=KeyEncoding.UTF8,
+            adapter_factory=file_backed_adapter_factory(str(tmp_path / "file_backed")),
+            sharding=cel_sharding_by_columns("region"),
+            output=OutputOptions(run_id="test-categorical-parallel"),
+            manifest=ManifestOptions(store=InMemoryManifestStore()),
+        )
+
+        with pytest.raises(
+            ConfigValidationError, match="does not support inferred categorical"
+        ):
+            write_sharded(
+                [("alice", "ap"), ("bob", "eu")],
+                config,
+                key_fn=lambda r: r[0],
+                value_fn=lambda r: b"v",
+                columns_fn=lambda r: {"region": r[1]},
+                parallel=True,
+            )

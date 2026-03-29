@@ -52,10 +52,10 @@ a 10-row dataset (`SMOKE_DATA`: keys 0–9, byte values, group column "a"/"b"):
 | `test_smoke_hash` | HASH | `num_dbs=3` | 3 |
 | `test_smoke_hash_num_dbs_2` | HASH | `num_dbs=2` | 2 |
 | `test_smoke_hash_max_keys_per_shard` | HASH | `max_keys_per_shard=5` | 2 (auto) |
-| `test_smoke_cel_key_modulo` | CEL | `key % 3`, boundaries=[1,2] | 3 |
+| `test_smoke_cel_key_modulo` | CEL | `key % 3` | 3 |
 | `test_smoke_cel_shard_hash` | CEL | `shard_hash(key) % 3u` | 3 |
 | `test_smoke_cel_key_identity` | CEL | `uint(key)` | 10 |
-| `test_smoke_cel_routing_context` | CEL | `group` column, boundaries=["b"] | 2 |
+| `test_smoke_cel_routing_context` | CEL | `group` column, `routing_values=["a","b"]` | 2 |
 
 **Assertions per smoke test:**
 

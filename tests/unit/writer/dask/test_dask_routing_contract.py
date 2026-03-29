@@ -42,13 +42,14 @@ def test_dask_python_hash_agreement_u64be(num_dbs: int) -> None:
     ddf = dd.from_pandas(pdf, npartitions=4)
     sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
 
-    result = add_db_id_column(
+    result_ddf, _ = add_db_id_column(
         ddf,
         key_col="id",
         num_dbs=num_dbs,
         sharding=sharding,
         key_encoding=KeyEncoding.U64BE,
-    ).compute()
+    )
+    result = result_ddf.compute()
 
     for _, row in result.iterrows():
         key = int(row["id"])  # convert numpy scalar to Python int
@@ -71,13 +72,14 @@ def test_dask_python_hash_agreement_u32be(num_dbs: int) -> None:
     ddf = dd.from_pandas(pdf, npartitions=4)
     sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
 
-    result = add_db_id_column(
+    result_ddf, _ = add_db_id_column(
         ddf,
         key_col="id",
         num_dbs=num_dbs,
         sharding=sharding,
         key_encoding=KeyEncoding.U32BE,
-    ).compute()
+    )
+    result = result_ddf.compute()
 
     for _, row in result.iterrows():
         key = int(row["id"])  # convert numpy scalar to Python int

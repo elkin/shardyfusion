@@ -1,8 +1,8 @@
-"""Tests for ShardingSpec with CEL fields and expanded types."""
+"""Tests for ``ShardingSpec`` CEL fields and categorical routing values."""
 
 import pytest
 
-from shardyfusion.sharding_types import BoundaryValue, ShardingSpec, ShardingStrategy
+from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
 
 
 class TestShardingSpecCel:
@@ -22,6 +22,25 @@ class TestShardingSpecCel:
         )
         assert spec.cel_expr == "key % 10"
         assert spec.cel_columns == {"key": "int"}
+
+    def test_cel_accepts_routing_values(self) -> None:
+        spec = ShardingSpec(
+            strategy=ShardingStrategy.CEL,
+            cel_expr="region",
+            cel_columns={"region": "string"},
+            routing_values=["ap", "eu", "us"],
+        )
+        assert spec.routing_values == ["ap", "eu", "us"]
+
+    def test_rejects_infer_flag_with_routing_values(self) -> None:
+        with pytest.raises(ValueError, match="cannot be combined"):
+            ShardingSpec(
+                strategy=ShardingStrategy.CEL,
+                cel_expr="region",
+                cel_columns={"region": "string"},
+                routing_values=["ap", "eu"],
+                infer_routing_values_from_data=True,
+            )
 
     def test_cel_expr_rejected_for_hash(self) -> None:
         with pytest.raises(ValueError, match="cel_expr is only valid with CEL"):
@@ -56,70 +75,50 @@ class TestShardingSpecCel:
         assert spec.max_keys_per_shard == 1000
 
 
-class TestBoundaryValidation:
-    """Boundaries must be strictly increasing, non-null, same-type, non-boolean."""
-
-    def _cel_spec(self, boundaries: list[BoundaryValue] | None) -> ShardingSpec:
+class TestRoutingValueValidation:
+    def _cel_spec(self, routing_values: list[int | str | bytes]) -> ShardingSpec:
         return ShardingSpec(
             strategy=ShardingStrategy.CEL,
-            cel_expr="key",
-            cel_columns={"key": "int"},
-            boundaries=boundaries,
+            cel_expr="region",
+            cel_columns={"region": "string"},
+            routing_values=routing_values,
         )
 
-    def test_rejects_unsorted(self) -> None:
-        with pytest.raises(ValueError, match="strictly increasing"):
-            self._cel_spec([20, 10])
-
-    def test_rejects_duplicates(self) -> None:
-        with pytest.raises(ValueError, match="strictly increasing"):
-            self._cel_spec([10, 10])
-
     def test_rejects_nulls(self) -> None:
-        with pytest.raises(ValueError, match="null"):
-            self._cel_spec([10, None])  # type: ignore[list-item]
+        with pytest.raises(ValueError, match="must not contain null values"):
+            self._cel_spec(["ap", None])  # type: ignore[list-item]
 
     def test_rejects_booleans(self) -> None:
-        with pytest.raises(ValueError, match="boolean"):
-            self._cel_spec([True])
+        with pytest.raises(ValueError, match="must not be boolean"):
+            self._cel_spec([True])  # type: ignore[list-item]
 
     def test_rejects_mixed_types(self) -> None:
-        with pytest.raises(ValueError, match="same type"):
+        with pytest.raises(ValueError, match="must all share the same type"):
             self._cel_spec([10, "hello"])  # type: ignore[list-item]
+
+    def test_rejects_duplicates(self) -> None:
+        with pytest.raises(ValueError, match="must be unique"):
+            self._cel_spec(["ap", "ap"])
+
+    def test_rejects_floats(self) -> None:
+        with pytest.raises(ValueError, match="must be int, str, or bytes"):
+            self._cel_spec([1.5, 2.5])  # type: ignore[list-item]
+
+    def test_rejects_bytearrays(self) -> None:
+        with pytest.raises(ValueError, match="must be int, str, or bytes"):
+            self._cel_spec([bytearray(b"a")])  # type: ignore[list-item]
 
     def test_accepts_valid_ints(self) -> None:
         spec = self._cel_spec([10, 20, 30])
-        assert spec.boundaries == [10, 20, 30]
+        assert spec.routing_values == [10, 20, 30]
 
     def test_accepts_valid_strings(self) -> None:
         spec = self._cel_spec(["a", "b", "c"])
-        assert spec.boundaries == ["a", "b", "c"]
+        assert spec.routing_values == ["a", "b", "c"]
 
     def test_accepts_valid_bytes(self) -> None:
         spec = self._cel_spec([b"\x00", b"\x80", b"\xff"])
-        assert spec.boundaries == [b"\x00", b"\x80", b"\xff"]
-
-    def test_accepts_none_boundaries(self) -> None:
-        spec = self._cel_spec(None)
-        assert spec.boundaries is None
-
-    def test_accepts_empty_boundaries(self) -> None:
-        spec = self._cel_spec([])
-        assert spec.boundaries == []
-
-    def test_accepts_single_boundary(self) -> None:
-        spec = self._cel_spec([42])
-        assert spec.boundaries == [42]
-
-
-class TestBoundaryValueBytes:
-    def test_bytes_boundary_type(self) -> None:
-        boundaries: list[BoundaryValue] = [b"\x00", b"\x80", b"\xff"]
-        assert all(isinstance(b, bytes) for b in boundaries)
-
-    def test_mixed_boundary_types(self) -> None:
-        boundaries: list[BoundaryValue] = [10, 20.5, "hello", b"\x00"]
-        assert len(boundaries) == 4
+        assert spec.routing_values == [b"\x00", b"\x80", b"\xff"]
 
 
 class TestToManifestDict:
@@ -128,13 +127,22 @@ class TestToManifestDict:
             strategy=ShardingStrategy.CEL,
             cel_expr="key % 10",
             cel_columns={"key": "int"},
-            boundaries=[100, 200],
         )
         d = spec.to_manifest_dict()
         assert d["strategy"] == "cel"
         assert d["cel_expr"] == "key % 10"
         assert d["cel_columns"] == {"key": "int"}
-        assert d["boundaries"] == [100, 200]
+        assert "routing_values" not in d
+
+    def test_categorical_fields_included(self) -> None:
+        spec = ShardingSpec(
+            strategy=ShardingStrategy.CEL,
+            cel_expr="region",
+            cel_columns={"region": "string"},
+            routing_values=["ap", "eu", "us"],
+        )
+        d = spec.to_manifest_dict()
+        assert d["routing_values"] == ["ap", "eu", "us"]
 
     def test_hash_no_cel_fields(self) -> None:
         spec = ShardingSpec(strategy=ShardingStrategy.HASH)

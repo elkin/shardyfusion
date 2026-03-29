@@ -11,9 +11,7 @@ from shardyfusion.routing import SnapshotRouter, xxh3_db_id
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 
 
-def _build_required(
-    *, strategy: ShardingStrategy, num_dbs: int, boundaries=None
-) -> RequiredBuildMeta:
+def _build_required(*, strategy: ShardingStrategy, num_dbs: int) -> RequiredBuildMeta:
     return RequiredBuildMeta(
         run_id="run-1",
         created_at="2026-01-01T00:00:00+00:00",
@@ -21,7 +19,7 @@ def _build_required(
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding=KeyEncoding.U64BE,
-        sharding=ManifestShardingSpec(strategy=strategy, boundaries=boundaries),
+        sharding=ManifestShardingSpec(strategy=strategy),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
     )
@@ -114,7 +112,7 @@ def test_hash_router_supports_string_and_bytes_keys() -> None:
 
 
 def _build_required_u32be(
-    *, strategy: ShardingStrategy, num_dbs: int, boundaries=None
+    *, strategy: ShardingStrategy, num_dbs: int
 ) -> RequiredBuildMeta:
     return RequiredBuildMeta(
         run_id="run-1",
@@ -123,7 +121,7 @@ def _build_required_u32be(
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding=KeyEncoding.U32BE,
-        sharding=ManifestShardingSpec(strategy=strategy, boundaries=boundaries),
+        sharding=ManifestShardingSpec(strategy=strategy),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
     )

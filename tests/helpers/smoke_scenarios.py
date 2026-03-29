@@ -298,7 +298,7 @@ def run_smoke_cel_scenario(
     writer_type: str,
     cel_expr: str,
     cel_columns: dict[str, str],
-    boundaries: list[int | str] | None = None,
+    routing_values: list[int | str | bytes] | None = None,
     expected_num_shards: int,
     adapter_factory: DbAdapterFactory,
     reader_factory: ShardReaderFactory,
@@ -311,7 +311,7 @@ def run_smoke_cel_scenario(
     Args:
         cel_expr: The CEL expression (e.g. ``"key % 3"``, ``"shard_hash(key) % 3u"``).
         cel_columns: Column name → CEL type mapping (e.g. ``{"key": "int"}``).
-        boundaries: Optional boundary list for bisect_right routing.
+        routing_values: Optional categorical token table for exact-match routing.
         expected_num_shards: How many non-empty shards the expression should produce.
         adapter_factory: Backend-specific factory for opening shard writers.
         reader_factory: Backend-specific factory for opening shard readers.
@@ -344,7 +344,7 @@ def run_smoke_cel_scenario(
             strategy=ShardingStrategy.CEL,
             cel_expr=cel_expr,
             cel_columns=cel_columns,
-            boundaries=boundaries,
+            routing_values=routing_values,
         ),
         adapter_factory=adapter_factory,
         manifest=ManifestOptions(
@@ -374,8 +374,7 @@ def run_smoke_cel_scenario(
     from shardyfusion.cel import compile_cel, route_cel
 
     compiled = compile_cel(cel_expr, cel_columns)
-    # Widen boundaries type for route_cel (list invariance).
-    cel_boundaries: Any = boundaries
+    cel_routing_values: Any = routing_values
     if routing_context_fn is not None:
         key_to_ctx: dict[int, dict[str, Any]] = {}
         for row in SMOKE_DATA:
@@ -384,14 +383,22 @@ def run_smoke_cel_scenario(
             key_to_ctx[row[0]] = ctx
         _verify_shard_placement(
             result,
-            route_fn=lambda key: route_cel(compiled, key_to_ctx[key], cel_boundaries),
+            route_fn=lambda key: route_cel(
+                compiled,
+                key_to_ctx[key],
+                cel_routing_values,
+            ),
             reader_factory=reader_factory,
             local_root=local_root,
         )
     else:
         _verify_shard_placement(
             result,
-            route_fn=lambda key: route_cel(compiled, {"key": key}, cel_boundaries),
+            route_fn=lambda key: route_cel(
+                compiled,
+                {"key": key},
+                cel_routing_values,
+            ),
             reader_factory=reader_factory,
             local_root=local_root,
         )

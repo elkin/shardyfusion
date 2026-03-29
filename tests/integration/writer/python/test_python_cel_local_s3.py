@@ -33,7 +33,6 @@ def _cel_config(local_s3_service, tmp_path, *, run_id, s3_subpath, **overrides):
             strategy=ShardingStrategy.CEL,
             cel_expr="key % 4",
             cel_columns={"key": "int"},
-            boundaries=[1, 2, 3],
         ),
         output=OutputOptions(run_id=run_id, local_root=str(tmp_path / "local")),
         manifest=ManifestOptions(
@@ -77,7 +76,7 @@ def test_cel_unified_publishes_manifest_to_s3(local_s3_service, tmp_path):
     assert manifest_payload["required"]["sharding"]["strategy"] == "cel"
     assert manifest_payload["required"]["sharding"]["cel_expr"] == "key % 4"
     assert manifest_payload["required"]["sharding"]["cel_columns"] == {"key": "int"}
-    assert manifest_payload["required"]["sharding"]["boundaries"] == [1, 2, 3]
+    assert "routing_values" not in manifest_payload["required"]["sharding"]
 
 
 def test_cel_unified_router_round_trip(local_s3_service, tmp_path):
@@ -104,7 +103,7 @@ def test_cel_unified_router_round_trip(local_s3_service, tmp_path):
     # Verify every key routes to the correct shard
     compiled = compile_cel("key % 4", {"key": "int"})
     for key in range(40):
-        write_db_id = route_cel(compiled, {"key": key}, [1, 2, 3])
+        write_db_id = route_cel(compiled, {"key": key})
         read_db_id = router.route_one(key)
         assert write_db_id == read_db_id, f"key={key}"
 
@@ -124,7 +123,7 @@ def test_cel_split_mode_routes_by_context(local_s3_service, tmp_path):
             strategy=ShardingStrategy.CEL,
             cel_expr="region",
             cel_columns={"region": "string"},
-            boundaries=["eu", "us"],
+            routing_values=["ap", "eu", "us"],
         ),
         output=OutputOptions(run_id="cel-split", local_root=str(tmp_path / "local")),
         manifest=ManifestOptions(

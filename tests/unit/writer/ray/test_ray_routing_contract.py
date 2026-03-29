@@ -34,7 +34,7 @@ def test_ray_python_hash_agreement_u64be(num_dbs: int) -> None:
     ds = ray.data.from_items([{"id": k} for k in EDGE_CASE_KEYS], override_num_blocks=4)
     sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
 
-    result_ds = add_db_id_column(
+    result_ds, _ = add_db_id_column(
         ds,
         key_col="id",
         num_dbs=num_dbs,
@@ -64,7 +64,7 @@ def test_ray_python_hash_agreement_u32be(num_dbs: int) -> None:
     )
     sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
 
-    result_ds = add_db_id_column(
+    result_ds, _ = add_db_id_column(
         ds,
         key_col="id",
         num_dbs=num_dbs,

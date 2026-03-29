@@ -124,6 +124,47 @@ def test_invalid_sharding_strategy() -> None:
         parse_manifest(payload)
 
 
+def test_routing_values_require_format_version_3() -> None:
+    data = _build_valid_manifest(num_dbs=2)
+    data["required"]["format_version"] = 2
+    data["required"]["sharding"] = {
+        "strategy": "cel",
+        "cel_expr": "region",
+        "cel_columns": {"region": "string"},
+        "routing_values": ["ap", "eu"],
+    }
+    payload = _to_yaml(data)
+    with pytest.raises(ManifestParseError, match="format_version >= 3"):
+        parse_manifest(payload)
+
+
+def test_manifest_rejects_removed_boundaries_field() -> None:
+    data = _build_valid_manifest(num_dbs=3)
+    data["required"]["sharding"] = {
+        "strategy": "cel",
+        "cel_expr": "region",
+        "cel_columns": {"region": "string"},
+        "boundaries": ["eu", "us"],
+    }
+    payload = _to_yaml(data)
+    with pytest.raises(ManifestParseError, match="boundaries"):
+        parse_manifest(payload)
+
+
+def test_categorical_manifest_num_dbs_must_match_routing_values() -> None:
+    data = _build_valid_manifest(num_dbs=3)
+    data["required"]["format_version"] = 3
+    data["required"]["sharding"] = {
+        "strategy": "cel",
+        "cel_expr": "region",
+        "cel_columns": {"region": "string"},
+        "routing_values": ["ap", "eu"],
+    }
+    payload = _to_yaml(data)
+    with pytest.raises(ManifestParseError, match="routing_values cardinality"):
+        parse_manifest(payload)
+
+
 def test_not_a_yaml_object() -> None:
     payload = yaml.safe_dump([1, 2, 3]).encode()
     with pytest.raises(ManifestParseError):

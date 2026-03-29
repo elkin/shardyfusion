@@ -189,6 +189,35 @@ def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
     )
 
 
+def _categorical_manifest() -> ParsedManifest:
+    required = RequiredBuildMeta(
+        run_id="run-cel-cat",
+        created_at="2026-01-01T00:00:00+00:00",
+        num_dbs=3,
+        s3_prefix="s3://bucket/prefix",
+        key_col="id",
+        key_encoding=KeyEncoding.UTF8,
+        sharding=ManifestShardingSpec(
+            strategy=ShardingStrategy.CEL,
+            cel_expr="region",
+            cel_columns={"region": "string"},
+            routing_values=["ap", "eu", "us"],
+        ),
+        db_path_template="db={db_id:05d}",
+        shard_prefix="shards",
+        format_version=3,
+    )
+    return ParsedManifest(
+        required_build=required,
+        shards=[
+            RequiredShardMeta(db_id=0, db_url="mem://db/ap", attempt=0, row_count=1),
+            RequiredShardMeta(db_id=1, db_url="mem://db/eu", attempt=0, row_count=1),
+            RequiredShardMeta(db_id=2, db_url="mem://db/us", attempt=0, row_count=1),
+        ],
+        custom={},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -256,6 +285,71 @@ async def test_multi_get_with_concurrency_limit(tmp_path) -> None:
         got = await reader.multi_get([1, 6])
         assert got[1] == b"a"
         assert got[6] == b"b"
+
+
+@pytest.mark.asyncio
+async def test_categorical_get_unknown_token_returns_none(tmp_path) -> None:
+    pytest.importorskip("cel_expr_python")
+
+    manifests = {"mem://manifest/categorical": _categorical_manifest()}
+    store = _AsyncMutableManifestStore(manifests, "mem://manifest/categorical")
+    stores: dict[str, dict[bytes, bytes]] = {
+        "mem://db/ap": {b"k": b"ap"},
+        "mem://db/eu": {b"k": b"eu"},
+        "mem://db/us": {b"k": b"us"},
+    }
+
+    async with await AsyncShardedReader.open(
+        s3_prefix="s3://bucket/prefix",
+        local_root=str(tmp_path),
+        manifest_store=store,
+        reader_factory=_async_fake_reader_factory(stores),
+    ) as reader:
+        assert await reader.get("k", routing_context={"region": "latam"}) is None
+
+
+@pytest.mark.asyncio
+async def test_categorical_multi_get_unknown_token_returns_miss(tmp_path) -> None:
+    pytest.importorskip("cel_expr_python")
+
+    manifests = {"mem://manifest/categorical": _categorical_manifest()}
+    store = _AsyncMutableManifestStore(manifests, "mem://manifest/categorical")
+    stores: dict[str, dict[bytes, bytes]] = {
+        "mem://db/ap": {b"k": b"ap"},
+        "mem://db/eu": {b"k": b"eu"},
+        "mem://db/us": {b"k": b"us"},
+    }
+
+    async with await AsyncShardedReader.open(
+        s3_prefix="s3://bucket/prefix",
+        local_root=str(tmp_path),
+        manifest_store=store,
+        reader_factory=_async_fake_reader_factory(stores),
+    ) as reader:
+        got = await reader.multi_get(["k"], routing_context={"region": "latam"})
+        assert got["k"] is None
+
+
+@pytest.mark.asyncio
+async def test_categorical_route_key_unknown_token_raises(tmp_path) -> None:
+    pytest.importorskip("cel_expr_python")
+
+    manifests = {"mem://manifest/categorical": _categorical_manifest()}
+    store = _AsyncMutableManifestStore(manifests, "mem://manifest/categorical")
+    stores: dict[str, dict[bytes, bytes]] = {
+        "mem://db/ap": {b"k": b"ap"},
+        "mem://db/eu": {b"k": b"eu"},
+        "mem://db/us": {b"k": b"us"},
+    }
+
+    async with await AsyncShardedReader.open(
+        s3_prefix="s3://bucket/prefix",
+        local_root=str(tmp_path),
+        manifest_store=store,
+        reader_factory=_async_fake_reader_factory(stores),
+    ) as reader:
+        with pytest.raises(ValueError, match="not present"):
+            reader.route_key("k", routing_context={"region": "latam"})
 
 
 @pytest.mark.asyncio
