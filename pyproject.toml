@@ -180,6 +180,7 @@ shardyfusion = ["py.typed"]
 target-version = "py311"
 line-length = 88
 exclude = [
+  ".claude",
   ".git",
   ".mypy_cache",
   ".pytest_cache",
