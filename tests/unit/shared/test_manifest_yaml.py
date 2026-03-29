@@ -84,6 +84,23 @@ class TestYamlManifestBuilder:
         assert parsed.required_build.sharding.cel_columns == {"key": "int"}
         assert parsed.required_build.sharding.routing_values is None
 
+    def test_direct_cel_manifest_omits_null_routing_values_field(self) -> None:
+        builder = YamlManifestBuilder()
+        sharding = ManifestShardingSpec(
+            strategy=ShardingStrategy.CEL,
+            cel_expr="shard_hash(key) % 4u",
+            cel_columns={"key": "int"},
+        )
+        rb = self._make_required_build(sharding=sharding)
+        artifact = builder.build(
+            required_build=rb,
+            shards=[self._make_shard(0)],
+            custom_fields={},
+        )
+
+        payload = yaml.safe_load(artifact.payload)
+        assert "routing_values" not in payload["required"]["sharding"]
+
     def test_categorical_cel_fields_in_manifest(self) -> None:
         builder = YamlManifestBuilder()
         sharding = ManifestShardingSpec(

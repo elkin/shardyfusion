@@ -151,6 +151,20 @@ def test_manifest_rejects_removed_boundaries_field() -> None:
         parse_manifest(payload)
 
 
+def test_manifest_rejects_unsupported_categorical_token_types() -> None:
+    data = _build_valid_manifest(num_dbs=2)
+    data["required"]["format_version"] = 3
+    data["required"]["sharding"] = {
+        "strategy": "cel",
+        "cel_expr": "region",
+        "cel_columns": {"region": "string"},
+        "routing_values": [1.5, 2.5],
+    }
+    payload = _to_yaml(data)
+    with pytest.raises(ManifestParseError, match="routing_values"):
+        parse_manifest(payload)
+
+
 def test_categorical_manifest_num_dbs_must_match_routing_values() -> None:
     data = _build_valid_manifest(num_dbs=3)
     data["required"]["format_version"] = 3
