@@ -39,3 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Key encodings**: `u64be` (default, 8-byte) and `u32be` (4-byte) big-endian unsigned integer encodings.
 - **JSON schema validation** for manifest and CURRENT pointer formats.
 - **Metrics/observability**: `MetricsCollector` protocol with `MetricEvent` catalog for writer and reader lifecycle events.
+
+### Removed
+- **`ManifestBuilder`** protocol and **`YamlManifestBuilder`** class — `SqliteManifestBuilder` is now the sole manifest format, used internally by `S3ManifestStore`.
+- **`parse_manifest()`** function — replaced by `parse_manifest_payload()` which only accepts SQLite manifests.
+- **`ManifestOptions.manifest_builder`** parameter — manifest format is no longer pluggable via config.

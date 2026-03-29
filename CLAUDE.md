@@ -142,12 +142,12 @@ Key coercion: CLI keys are strings; when manifest uses integer encoding (`u64be`
 
 ### Manifest & CURRENT Data Formats
 
-**Manifest** (YAML, published to `s3_prefix/manifests/{timestamp}_run_id={run_id}/manifest`):
-```yaml
-required:  # RequiredBuildMeta: run_id, num_dbs, s3_prefix, sharding, key_encoding, ...
-shards:    # list of RequiredShardMeta: db_id, db_url, checkpoint_id, row_count, ...
-custom:    # user-defined fields from ManifestOptions.custom_manifest_fields
-```
+**Manifest** (SQLite, published to `s3_prefix/manifests/{timestamp}_run_id={run_id}/manifest`):
+
+A serialized SQLite database with two tables:
+- `build_meta` — single row with `RequiredBuildMeta` fields (`run_id`, `num_dbs`, `s3_prefix`, `sharding` as JSON, `key_encoding`, …)
+- `shards` — one row per non-empty shard (`db_id`, `db_url`, `checkpoint_id`, `row_count`, …)
+- `custom` — user-defined fields from `ManifestOptions.custom_manifest_fields` (JSON TEXT in `build_meta`)
 
 Manifest S3 keys are timestamp-prefixed (e.g., `2026-03-14T10:30:00.000000Z_run_id=abc123/manifest`) for chronological listing via S3 `CommonPrefixes`.
 

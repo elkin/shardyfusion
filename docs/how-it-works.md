@@ -334,7 +334,6 @@ Grouped options:
   - `run_registry_prefix`
   - `local_root`
 - `manifest: ManifestOptions`
-  - `manifest_builder`
   - `store`
   - `custom_manifest_fields`
   - `credential_provider`
