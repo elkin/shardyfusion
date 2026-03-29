@@ -1,6 +1,6 @@
 # shardyfusion
 
-`shardyfusion` builds and reads sharded [SlateDB](https://slatedb.io) snapshots. It lets you partition large datasets into independent shard databases during a write pipeline, then route point lookups to the correct shard at read time.
+`shardyfusion` builds and reads sharded snapshots backed by independent shard databases. The default backend uses [SlateDB](https://slatedb.io), and the project also supports SQLite shard databases. It lets you partition large datasets during a write pipeline, then route point lookups to the correct shard at read time.
 
 ## How the Pieces Fit Together
 
@@ -31,7 +31,7 @@ flowchart LR
     Obs -.-> Readers
 ```
 
-All four writer backends share the same core logic (`_writer_core.py`) for routing, winner selection, manifest building, and two-phase publishing. This guarantees that any backend produces a manifest readable by any reader variant.
+All four writer backends share the same core logic (`_writer_core.py`) for routing, winner selection, manifest building, and two-phase publishing. This guarantees that any backend produces a manifest readable by any reader variant, whether the shard storage uses the default SlateDB adapter or SQLite.
 
 ## Dependency Layers
 
@@ -44,7 +44,7 @@ flowchart TB
     L2["Layer 2 — Storage & Routing\nstorage, manifest, routing,\nmanifest_store, async_manifest_store,\ndb_manifest_store"]
     L3["Layer 3 — Writer Core\n_writer_core"]
     L4["Layer 4 — Entry Points\nwriter/{spark,dask,ray,python},\nreader, async_reader, CLI"]
-    L5["Layer 5 — Adapters & Testing\nslatedb_adapter, testing"]
+    L5["Layer 5 — Adapters & Testing\nslatedb_adapter, sqlite_adapter,\ntesting"]
 
     L0 --> L1 --> L2 --> L3 --> L4 --> L5
 
@@ -58,7 +58,7 @@ flowchart TB
 
 ## Writer Backends
 
-Four backends produce identical manifest formats. They differ in how they distribute work but share all core logic:
+Four backends produce identical manifest formats. They differ in how they distribute work but share all core logic, and can write either SlateDB or SQLite shards depending on the installed backend extra:
 
 | Feature | Spark | Dask | Ray | Python |
 |---|---|---|---|---|

@@ -13,7 +13,7 @@
 : Zero-based integer identifying a shard database. Range: `[0, num_dbs)`. Assigned by the sharding strategy (hash, range, or custom).
 
 **Key encoding**
-: How routing keys are serialized to bytes for SlateDB storage. `u64be` = 8-byte big-endian unsigned int (default). `u32be` = 4-byte variant. Stored in the manifest so readers use the same encoding.
+: How routing keys are serialized to bytes for shard storage. `u64be` = 8-byte big-endian unsigned int (default). `u32be` = 4-byte variant. Stored in the manifest so readers use the same encoding.
 
 **Manifest**
 : A JSON document describing a complete snapshot: which shards exist, where they are, how they were sharded, and metadata about the build. Published to `{s3_prefix}/manifests/run_id={run_id}/{manifest_name}`.
@@ -31,7 +31,7 @@
 : A unique identifier for a single write execution. Auto-generated (UUID hex) if not provided. Used in S3 paths and manifest references to isolate runs.
 
 **Shard**
-: A single SlateDB database within a snapshot. Identified by `db_id`. Contains all key-value pairs that route to that `db_id`.
+: A single shard database within a snapshot. Identified by `db_id`. Depending on the backend it may be a SlateDB database or a SQLite file, and it contains all key-value pairs that route to that `db_id`.
 
 **Snapshot**
 : The complete set of shards produced by a single `write_sharded` call, described by a manifest and pointed to by CURRENT. Readers load snapshots atomically.

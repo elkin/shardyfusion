@@ -2,7 +2,7 @@
 
 ## Overview
 
-`shardyfusion` builds a sharded snapshot into multiple independent SlateDB databases, writes metadata (manifest + CURRENT pointer), maintains a run-scoped writer record for deferred cleanup workflows, and provides service-side readers that route keys to the correct shard. Four writer backends are supported: Spark, Dask, Ray, and pure Python.
+`shardyfusion` builds a sharded snapshot into multiple independent shard databases, writes metadata (manifest + CURRENT pointer), maintains a run-scoped writer record for deferred cleanup workflows, and provides service-side readers that route keys to the correct shard. SlateDB is the default shard backend, and SQLite shard databases are also supported. Four writer backends are supported: Spark, Dask, Ray, and pure Python.
 
 Core behavior:
 
@@ -373,7 +373,7 @@ Primary classes: `ShardedReader`, `ConcurrentShardedReader`, `AsyncShardedReader
 2. Load CURRENT pointer.
 3. Load manifest from CURRENT’s `manifest_ref`. If the manifest is malformed, [cold-start fallback](reader.md#cold-start-fallback) attempts previous manifests.
 4. Build `SnapshotRouter`.
-5. Open one SlateDB reader handle per shard (lock mode or pool mode).
+5. Open one reader handle per shard (lock mode or pool mode).
 
 ### Lookup flow
 

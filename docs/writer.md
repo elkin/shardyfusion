@@ -9,7 +9,7 @@ Four writer backends are available, all producing the same manifest format:
 | Ray | `shardyfusion.writer.ray.write_sharded` | Ray `Dataset` | No |
 | Python | `shardyfusion.writer.python.write_sharded` | `Iterable[T]` | No |
 
-Each backend also has a `write_single_db` variant for single-shard writes (Spark, Dask, Ray).
+Each backend also has a `write_single_db` variant for single-shard writes (Spark, Dask, Ray). Depending on the installed extra, shard output can use the default SlateDB backend or the SQLite backend.
 
 **Deep dives:** For data flow diagrams and framework-specific behavior, see the per-writer docs:
 
@@ -123,7 +123,7 @@ The run record is intentionally separate from the manifest:
 
 ## Single-Shard Writers
 
-For datasets that don't need sharding (lookup tables, small reference data, configuration snapshots), use `write_single_db` to write everything into a single SlateDB database. Available for Spark, Dask, and Ray backends.
+For datasets that don't need sharding (lookup tables, small reference data, configuration snapshots), use `write_single_db` to write everything into a single shard database. Available for Spark, Dask, and Ray backends.
 
 ### When to Use
 
@@ -208,7 +208,7 @@ result = write_single_db(
 ## Rate Limiting
 
 All writer entry points accept an optional `max_writes_per_second` parameter
-to throttle writes to the underlying SlateDB shards.
+to throttle writes to the underlying shard databases.
 
 ```python
 max_writes_per_second: float | None = None  # default: unlimited

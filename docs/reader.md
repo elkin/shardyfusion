@@ -2,13 +2,13 @@
 
 ## Overview
 
-The reader side provides three classes for looking up keys across sharded SlateDB snapshots:
+The reader side provides three classes for looking up keys across sharded snapshots, whether the shard database is SlateDB or SQLite:
 
 - **`ShardedReader`** — non-thread-safe, for single-threaded services
 - **`ConcurrentShardedReader`** — thread-safe with lock or pool concurrency modes
 - **`AsyncShardedReader`** — for asyncio services (FastAPI, aiohttp, etc.)
 
-Both readers follow the same lifecycle:
+All reader variants follow the same lifecycle:
 
 1. Load the `_CURRENT` pointer from S3
 2. Dereference the manifest JSON it points to
@@ -143,7 +143,7 @@ In-flight reads always complete against the state they acquired. Old readers are
 
 ## Custom Reader Factory
 
-By default, readers use `SlateDbReaderFactory` which creates `SlateDBReader` instances. You can provide a custom factory for testing or alternative storage:
+By default, synchronous readers use `SlateDbReaderFactory`, which creates `SlateDBReader` instances. You can also pass a SQLite reader factory from `shardyfusion.sqlite_adapter`, or provide a custom factory for testing or alternative storage:
 
 ```python
 from pathlib import Path
