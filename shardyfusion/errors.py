@@ -164,3 +164,28 @@ class S3TransientError(ShardyfusionError):
     """
 
     retryable = True
+
+
+# ---------------------------------------------------------------------------
+# Vector search errors
+# ---------------------------------------------------------------------------
+
+
+class VectorIndexError(ShardyfusionError):
+    """Vector index construction or serialization failed.
+
+    Raised during HNSW graph building, SQLite serialization, or when
+    the index adapter encounters an unrecoverable error.
+    """
+
+    retryable = False
+
+
+class VectorSearchError(ShardyfusionError):
+    """Vector search operation failed.
+
+    Raised when per-shard search, cross-shard merge, or result assembly
+    encounters an error.
+    """
+
+    retryable = False

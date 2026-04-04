@@ -72,6 +72,11 @@ cli = ["shardyfusion[read]", "click>=8.0"]
 cel = ["cel-expr-python>=0.1"]
 metrics-prometheus = ["prometheus-client>=0.20"]
 metrics-otel = ["opentelemetry-api>=1.28"]
+vector-usearch = ["usearch>=2.0", "numpy>=1.24", "boto3>=1.28"]
+vector-faiss = ["faiss-cpu>=1.7", "numpy>=1.24", "boto3>=1.28"]
+vector = ["shardyfusion[vector-usearch]"]
+read-vector = ["shardyfusion[vector]"]
+writer-python-vector = ["shardyfusion[vector]"]
 all = [
   "shardyfusion[read-async]",
   "shardyfusion[read-sqlite]",
@@ -270,4 +275,5 @@ markers = [
   "ray: tests requiring writer-ray extras",
   "cel: tests requiring cel extra (cel-expr-python)",
   "e2e: end-to-end tests requiring a container engine (podman/docker)",
+  "vector: tests requiring vector extras (usearch, numpy)",
 ]
