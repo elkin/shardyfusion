@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .config import VectorIndexConfig, VectorShardingSpec, VectorWriteConfig
-from .reader import ShardedVectorReader
+from .reader import ShardedVectorReader, VectorReaderHealth
 from .types import (
     DistanceMetric,
     SearchResult,
@@ -26,6 +26,7 @@ __all__ = [
     "VectorIndexConfig",
     "VectorIndexWriter",
     "VectorIndexWriterFactory",
+    "VectorReaderHealth",
     "VectorRecord",
     "VectorSearchResponse",
     "VectorShardDetail",
