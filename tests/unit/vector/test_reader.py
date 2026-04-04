@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import threading
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -146,6 +147,32 @@ class MockManifestStore:
 
     def set_current(self, ref: str) -> None:
         pass
+
+    def update(self, manifest: ParsedManifest, run_id: str = "run-v2") -> None:
+        """Swap in a new manifest (for refresh tests)."""
+        self._manifest = manifest
+        self._ref = ManifestRef(
+            ref=f"s3://bucket/manifests/{run_id}/manifest",
+            run_id=run_id,
+            published_at=datetime.now(UTC),
+        )
+
+
+class MockRateLimiter:
+    """Tracks acquire() calls."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def acquire(self, tokens: int = 1) -> None:
+        self.calls += 1
+
+    def try_acquire(self, tokens: int = 1) -> object:
+        self.calls += 1
+        return True
+
+    async def acquire_async(self, tokens: int = 1) -> None:
+        self.calls += 1
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +339,7 @@ class TestShardedVectorReader:
             reader.route_vector(query)
         reader.close()
 
-    def test_refresh(self, tmp_path: Path):
+    def test_refresh_same_ref(self, tmp_path: Path):
         manifest = _make_manifest(num_dbs=2)
         store = MockManifestStore(manifest)
         factory = MockReaderFactory()
@@ -324,4 +351,177 @@ class TestShardedVectorReader:
         )
         # Same ref -> no change
         assert reader.refresh() is False
+        reader.close()
+
+    def test_refresh_changed_manifest(self, tmp_path: Path):
+        """refresh() swaps state when manifest ref changes."""
+        manifest_v1 = _make_manifest(num_dbs=2)
+        store = MockManifestStore(manifest_v1)
+        factory = MockReaderFactory()
+        reader = ShardedVectorReader(
+            s3_prefix="s3://bucket",
+            local_root=str(tmp_path),
+            reader_factory=factory,
+            manifest_store=store,
+        )
+
+        # Load a shard under v1
+        reader.search(np.zeros(32, dtype=np.float32), top_k=1, shard_ids=[0])
+        assert len(factory.created) == 1
+
+        # Update store to a new manifest
+        manifest_v2 = _make_manifest(num_dbs=3)
+        store.update(manifest_v2, run_id="run-v2")
+
+        assert reader.refresh() is True
+
+        # Old shard readers should be closed and cache cleared
+        info = reader.snapshot_info()
+        assert info.num_dbs == 3
+        assert info.run_id == "run-v2"
+
+        reader.close()
+
+    def test_refresh_closes_old_readers(self, tmp_path: Path):
+        """Old shard readers are closed on refresh."""
+        manifest = _make_manifest(num_dbs=2)
+        store = MockManifestStore(manifest)
+        factory = MockReaderFactory()
+        reader = ShardedVectorReader(
+            s3_prefix="s3://bucket",
+            local_root=str(tmp_path),
+            reader_factory=factory,
+            manifest_store=store,
+        )
+
+        # Load shard 0
+        reader.search(np.zeros(32, dtype=np.float32), top_k=1, shard_ids=[0])
+        old_shard_reader = list(factory.created.values())[0]
+        assert not old_shard_reader._closed
+
+        # Swap manifest
+        store.update(_make_manifest(num_dbs=2), run_id="run-v2")
+        reader.refresh()
+
+        # Old reader should be closed
+        assert old_shard_reader._closed
+        reader.close()
+
+    def test_thread_pool_fan_out(self, tmp_path: Path):
+        """Multi-threaded search with max_workers."""
+        manifest = _make_manifest(num_dbs=4, sharding_strategy="explicit")
+        store = MockManifestStore(manifest)
+        factory = MockReaderFactory()
+        reader = ShardedVectorReader(
+            s3_prefix="s3://bucket",
+            local_root=str(tmp_path),
+            reader_factory=factory,
+            manifest_store=store,
+            max_workers=3,
+        )
+
+        query = np.zeros(32, dtype=np.float32)
+        response = reader.search(query, top_k=5, shard_ids=[0, 1, 2])
+        assert response.num_shards_queried == 3
+        assert len(response.results) == 5
+        # All 3 shards should have been loaded
+        assert len(factory.created) == 3
+        reader.close()
+
+    def test_thread_pool_concurrent_searches(self, tmp_path: Path):
+        """Concurrent searches via thread pool don't corrupt state."""
+        manifest = _make_manifest(num_dbs=4, sharding_strategy="explicit")
+        store = MockManifestStore(manifest)
+        factory = MockReaderFactory()
+        reader = ShardedVectorReader(
+            s3_prefix="s3://bucket",
+            local_root=str(tmp_path),
+            reader_factory=factory,
+            manifest_store=store,
+            max_workers=2,
+        )
+
+        errors: list[Exception] = []
+
+        def search_worker() -> None:
+            try:
+                for _ in range(10):
+                    query = np.zeros(32, dtype=np.float32)
+                    response = reader.search(query, top_k=3, shard_ids=[0, 1])
+                    assert response.num_shards_queried == 2
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=search_worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == [], f"Concurrent search errors: {errors}"
+        reader.close()
+
+    def test_preload_shards(self, tmp_path: Path):
+        """preload_shards=True loads all shards at construction time."""
+        manifest = _make_manifest(num_dbs=3, sharding_strategy="explicit")
+        store = MockManifestStore(manifest)
+        factory = MockReaderFactory()
+        reader = ShardedVectorReader(
+            s3_prefix="s3://bucket",
+            local_root=str(tmp_path),
+            reader_factory=factory,
+            manifest_store=store,
+            preload_shards=True,
+        )
+
+        # All 3 shards should already be loaded
+        assert len(factory.created) == 3
+        assert len(reader._shard_readers) == 3
+        reader.close()
+
+    def test_rate_limiter_called_on_search(self, tmp_path: Path):
+        """Rate limiter acquire() is called for each search."""
+        manifest = _make_manifest(num_dbs=2, sharding_strategy="explicit")
+        store = MockManifestStore(manifest)
+        factory = MockReaderFactory()
+        limiter = MockRateLimiter()
+        reader = ShardedVectorReader(
+            s3_prefix="s3://bucket",
+            local_root=str(tmp_path),
+            reader_factory=factory,
+            manifest_store=store,
+            rate_limiter=limiter,
+        )
+
+        query = np.zeros(32, dtype=np.float32)
+        reader.search(query, top_k=3, shard_ids=[0])
+        assert limiter.calls == 1
+
+        reader.search(query, top_k=3, shard_ids=[0, 1])
+        assert limiter.calls == 2
+
+        reader.close()
+
+    def test_health_staleness_threshold(self, tmp_path: Path):
+        """health() returns degraded when manifest is stale."""
+        manifest = _make_manifest(num_dbs=2)
+        store = MockManifestStore(manifest)
+        # Backdate the manifest ref
+        store._ref = ManifestRef(
+            ref="s3://bucket/manifests/old/manifest",
+            run_id="old-run",
+            published_at=datetime(2020, 1, 1, tzinfo=UTC),
+        )
+        factory = MockReaderFactory()
+        reader = ShardedVectorReader(
+            s3_prefix="s3://bucket",
+            local_root=str(tmp_path),
+            reader_factory=factory,
+            manifest_store=store,
+        )
+
+        health = reader.health(staleness_threshold=timedelta(hours=1))
+        assert health.status == "degraded"
+        assert health.manifest_age_seconds is not None
+        assert health.manifest_age_seconds > 3600
         reader.close()
