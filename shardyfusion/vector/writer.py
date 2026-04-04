@@ -45,6 +45,9 @@ from .types import (
     VectorShardingStrategy,
 )
 
+# CEL support — lazy import to avoid hard dependency on cel extra
+_compiled_cel_cache: dict[str, Any] = {}
+
 _logger = get_logger(__name__)
 
 
@@ -146,9 +149,24 @@ def write_vector_sharded(
                 f"centroids count ({len(resolved_centroids)}) != num_dbs ({num_dbs})"
             )
 
+    # CEL: compile expression and resolve num_dbs from routing_values
+    compiled_cel: Any | None = None
+    cel_lookup: dict[int | str | bytes, int] | None = None
+    if sharding.strategy == VectorShardingStrategy.CEL:
+        from ..cel import build_categorical_routing_lookup, compile_cel
+
+        assert sharding.cel_expr is not None
+        assert sharding.cel_columns is not None
+        compiled_cel = compile_cel(sharding.cel_expr, sharding.cel_columns)
+        if sharding.routing_values is not None:
+            cel_lookup = build_categorical_routing_lookup(sharding.routing_values)
+            if num_dbs is None:
+                num_dbs = len(sharding.routing_values)
+
     if num_dbs is None:
         raise ConfigValidationError(
-            "num_dbs must be provided (or inferred from centroids for CLUSTER)"
+            "num_dbs must be provided (or inferred from centroids for CLUSTER "
+            "or routing_values for CEL)"
         )
 
     # Adapter factory
@@ -185,6 +203,8 @@ def write_vector_sharded(
         resolved_hyperplanes=resolved_hyperplanes,
         ops_limiter=ops_limiter,
         s3_client=s3_client,
+        compiled_cel=compiled_cel,
+        cel_lookup=cel_lookup,
     )
     shard_duration_ms = int((time.perf_counter() - shard_start) * 1000)
 
@@ -311,6 +331,8 @@ def _write_single_process(
     resolved_hyperplanes: np.ndarray | None,
     ops_limiter: TokenBucket | None,
     s3_client: Any | None,
+    compiled_cel: Any | None = None,
+    cel_lookup: dict[int | str | bytes, int] | None = None,
 ) -> dict[int, _ShardState]:
     """Write records to shards in a single process."""
     sharding = config.sharding
@@ -327,6 +349,9 @@ def _write_single_process(
                 metric=metric,
                 centroids=resolved_centroids,
                 hyperplanes=resolved_hyperplanes,
+                compiled_cel=compiled_cel,
+                routing_values=sharding.routing_values,
+                cel_lookup=cel_lookup,
             )
 
             # Ensure shard state
@@ -376,6 +401,9 @@ def _assign_shard(
     metric: DistanceMetric | None,
     centroids: np.ndarray | None,
     hyperplanes: np.ndarray | None,
+    compiled_cel: Any | None = None,
+    routing_values: list[int | str | bytes] | None = None,
+    cel_lookup: dict[int | str | bytes, int] | None = None,
 ) -> int:
     """Assign a record to a shard based on the sharding strategy."""
     if strategy == VectorShardingStrategy.EXPLICIT:
@@ -398,6 +426,22 @@ def _assign_shard(
         if hyperplanes is None:
             raise ConfigValidationError("LSH sharding requires hyperplanes")
         return lsh_assign(record.vector, hyperplanes, num_dbs)
+
+    if strategy == VectorShardingStrategy.CEL:
+        if compiled_cel is None:
+            raise ConfigValidationError("CEL sharding requires a compiled expression")
+        if record.routing_context is None:
+            raise ConfigValidationError(
+                "CEL sharding requires routing_context on every VectorRecord"
+            )
+        from ..cel import route_cel
+
+        return route_cel(
+            compiled_cel,
+            record.routing_context,
+            routing_values=routing_values,
+            lookup=cel_lookup,
+        )
 
     raise ConfigValidationError(f"Unknown sharding strategy: {strategy}")
 
@@ -437,6 +481,15 @@ def _validate_config(config: VectorWriteConfig) -> None:
         if sharding.centroids is None and not sharding.train_centroids:
             raise ConfigValidationError(
                 "CLUSTER sharding requires either centroids or train_centroids=True"
+            )
+    if sharding.strategy == VectorShardingStrategy.CEL:
+        if not sharding.cel_expr:
+            raise ConfigValidationError(
+                "CEL sharding requires cel_expr to be set"
+            )
+        if not sharding.cel_columns:
+            raise ConfigValidationError(
+                "CEL sharding requires cel_columns to be set"
             )
     if sharding.num_probes < 1:
         raise ConfigValidationError(
@@ -485,6 +538,14 @@ def _publish_vector_manifest(
     if hyperplanes_ref is not None:
         vector_custom["hyperplanes_ref"] = hyperplanes_ref
         vector_custom["num_hash_bits"] = sharding.num_hash_bits
+    if sharding.strategy == VectorShardingStrategy.CEL:
+        vector_custom["cel_expr"] = sharding.cel_expr
+        vector_custom["cel_columns"] = sharding.cel_columns
+        if sharding.routing_values is not None:
+            vector_custom["routing_values"] = [
+                v if isinstance(v, (int, str)) else v.hex()
+                for v in sharding.routing_values
+            ]
 
     custom_fields = dict(config.manifest.custom_manifest_fields)
     custom_fields["vector"] = vector_custom

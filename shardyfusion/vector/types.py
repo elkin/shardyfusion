@@ -35,6 +35,7 @@ class VectorShardingStrategy(str, Enum):
     CLUSTER = "cluster"
     LSH = "lsh"
     EXPLICIT = "explicit"
+    CEL = "cel"
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +51,7 @@ class VectorRecord:
     vector: np.ndarray  # shape: (dim,)
     payload: dict[str, Any] | None = None
     shard_id: int | None = None  # for EXPLICIT sharding
+    routing_context: dict[str, Any] | None = None  # for CEL sharding
 
 
 @dataclass(frozen=True, slots=True)

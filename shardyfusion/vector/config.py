@@ -49,6 +49,11 @@ class VectorShardingSpec:
         None  # shape (num_hash_bits, dim), loaded at read time
     )
 
+    # CEL: expression-based sharding (reuses the existing CEL module)
+    cel_expr: str | None = None
+    cel_columns: dict[str, str] | None = None  # column name -> CelType value
+    routing_values: list[int | str | bytes] | None = None  # categorical CEL
+
 
 @dataclass(slots=True)
 class VectorWriteConfig:
