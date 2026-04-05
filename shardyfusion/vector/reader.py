@@ -96,11 +96,26 @@ class ShardedVectorReader:
         else:
             from .adapters.usearch_adapter import USearchReaderFactory
 
-            self._reader_factory = USearchReaderFactory()
+            credentials = (
+                credential_provider.resolve() if credential_provider else None
+            )
+            from ..storage import create_s3_client
+
+            s3_client = create_s3_client(credentials, s3_connection_options)
+            self._reader_factory = USearchReaderFactory(s3_client=s3_client)
+
+        # S3 client for loading centroids/hyperplanes
+        credentials = (
+            credential_provider.resolve() if credential_provider else None
+        )
+        from ..storage import create_s3_client
+
+        self._s3_client = create_s3_client(credentials, s3_connection_options)
 
         # Shard reader cache (lazy loading)
         self._shard_readers: OrderedDict[int, VectorShardReader] = OrderedDict()
         self._shard_locks: dict[int, threading.Lock] = {}
+        self._cache_lock = threading.Lock()  # protects shard_locks creation + LRU eviction
 
         # State loaded from manifest
         self._manifest_ref: ManifestRef | None = None
@@ -383,11 +398,33 @@ class ShardedVectorReader:
 
     def _load_initial_manifest(self) -> None:
         """Load manifest on construction, with fallback."""
+        from ..errors import ManifestParseError
+
         ref = self._store.load_current()
         if ref is None:
             raise ReaderStateError("No CURRENT pointer found")
 
-        manifest = self._store.load_manifest(ref.ref)
+        # Try current, then fall back to previous manifests
+        try:
+            manifest = self._store.load_manifest(ref.ref)
+        except ManifestParseError:
+            if self._max_fallback_attempts <= 0:
+                raise
+            all_refs = self._store.list_manifests()
+            manifest = None
+            for fallback_ref in reversed(all_refs[: -1]):
+                if self._max_fallback_attempts <= 0:
+                    break
+                self._max_fallback_attempts -= 1
+                try:
+                    manifest = self._store.load_manifest(fallback_ref.ref)
+                    ref = fallback_ref
+                    break
+                except ManifestParseError:
+                    continue
+            if manifest is None:
+                raise
+
         self._apply_manifest(ref, manifest)
 
         if self._preload_shards:
@@ -428,15 +465,24 @@ class ShardedVectorReader:
             self._cel_expr = vector_meta.get("cel_expr")
             self._cel_columns = vector_meta.get("cel_columns")
             raw_rv = vector_meta.get("routing_values")
-            self._routing_values = raw_rv if raw_rv is not None else None
+            if raw_rv is not None:
+                self._routing_values = [
+                    bytes.fromhex(v["__bytes_hex__"])
+                    if isinstance(v, dict) and "__bytes_hex__" in v
+                    else v
+                    for v in raw_rv
+                ]
+            else:
+                self._routing_values = None
 
             # Load centroids/hyperplanes if referenced
             centroids_ref = vector_meta.get("centroids_ref")
             if centroids_ref:
                 try:
-                    data = get_bytes(centroids_ref)
+                    data = get_bytes(centroids_ref, s3_client=self._s3_client)
                     self._centroids = np.load(io.BytesIO(data))
                 except Exception:
+                    self._centroids = None  # clear stale data on failure
                     log_event(
                         "centroids_load_failed",
                         logger=_logger,
@@ -446,9 +492,10 @@ class ShardedVectorReader:
             hyperplanes_ref = vector_meta.get("hyperplanes_ref")
             if hyperplanes_ref:
                 try:
-                    data = get_bytes(hyperplanes_ref)
+                    data = get_bytes(hyperplanes_ref, s3_client=self._s3_client)
                     self._hyperplanes = np.load(io.BytesIO(data))
                 except Exception:
+                    self._hyperplanes = None  # clear stale data on failure
                     log_event(
                         "hyperplanes_load_failed",
                         logger=_logger,
@@ -494,11 +541,13 @@ class ShardedVectorReader:
         if meta is None or meta.db_url is None:
             return None
 
-        # Per-shard lock for one-at-a-time download
-        if shard_id not in self._shard_locks:
-            self._shard_locks[shard_id] = threading.Lock()
+        # Per-shard lock for one-at-a-time download — synchronized creation
+        with self._cache_lock:
+            if shard_id not in self._shard_locks:
+                self._shard_locks[shard_id] = threading.Lock()
+            lock = self._shard_locks[shard_id]
 
-        with self._shard_locks[shard_id]:
+        with lock:
             # Double-check after acquiring lock
             if shard_id in self._shard_readers:
                 self._shard_readers.move_to_end(shard_id)
@@ -510,18 +559,26 @@ class ShardedVectorReader:
                 local_dir=local_dir,
                 index_config=self._index_config or VectorIndexConfig(dim=0),
             )
-            self._shard_readers[shard_id] = reader
-            self._shard_readers.move_to_end(shard_id)
 
-            # LRU eviction
-            if (
-                self._max_cached_shards is not None
-                and len(self._shard_readers) > self._max_cached_shards
-            ):
-                evict_id, evict_reader = self._shard_readers.popitem(last=False)
-                try:
-                    evict_reader.close()
-                except Exception:
-                    pass
+            with self._cache_lock:
+                self._shard_readers[shard_id] = reader
+                self._shard_readers.move_to_end(shard_id)
+
+                # LRU eviction — skip if max_cached_shards is 0 or None
+                if (
+                    self._max_cached_shards is not None
+                    and self._max_cached_shards > 0
+                    and len(self._shard_readers) > self._max_cached_shards
+                ):
+                    evict_id, evict_reader = self._shard_readers.popitem(last=False)
+                    # Don't evict the reader we just created
+                    if evict_id == shard_id:
+                        self._shard_readers[shard_id] = evict_reader
+                        self._shard_readers.move_to_end(shard_id)
+                    else:
+                        try:
+                            evict_reader.close()
+                        except Exception:
+                            pass
 
             return reader

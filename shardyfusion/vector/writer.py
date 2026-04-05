@@ -238,7 +238,7 @@ def write_vector_sharded(
     hyperplanes_ref: str | None = None
 
     if resolved_centroids is not None:
-        centroids_ref = f"{config.s3_prefix}/vector_meta/centroids.npy"
+        centroids_ref = f"{config.s3_prefix}/vector_meta/run_id={run_id}/centroids.npy"
         buf = io.BytesIO()
         np.save(buf, resolved_centroids)
         put_bytes(
@@ -249,7 +249,7 @@ def write_vector_sharded(
         )
 
     if resolved_hyperplanes is not None:
-        hyperplanes_ref = f"{config.s3_prefix}/vector_meta/hyperplanes.npy"
+        hyperplanes_ref = f"{config.s3_prefix}/vector_meta/run_id={run_id}/hyperplanes.npy"
         buf = io.BytesIO()
         np.save(buf, resolved_hyperplanes)
         put_bytes(
@@ -450,7 +450,11 @@ def _flush_shard_batch(state: _ShardState) -> None:
     """Flush buffered records to the adapter."""
     if not state.ids or state.adapter is None:
         return
-    ids_arr = np.array(state.ids, dtype=np.int64)
+    # Preserve string IDs — only use int64 when all IDs are numeric
+    if all(isinstance(i, (int, np.integer)) for i in state.ids):
+        ids_arr = np.array(state.ids, dtype=np.int64)
+    else:
+        ids_arr = np.array(state.ids, dtype=object)
     vectors_arr = np.array(state.vectors, dtype=np.float32)
     payloads_list: list[dict[str, Any]] | None = None
     if any(p is not None for p in state.payloads):
@@ -539,7 +543,7 @@ def _publish_vector_manifest(
         vector_custom["cel_columns"] = sharding.cel_columns
         if sharding.routing_values is not None:
             vector_custom["routing_values"] = [
-                v if isinstance(v, (int, str)) else v.hex()
+                v if isinstance(v, (int, str)) else {"__bytes_hex__": v.hex()}
                 for v in sharding.routing_values
             ]
 

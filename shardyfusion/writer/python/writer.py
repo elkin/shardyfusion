@@ -835,11 +835,19 @@ def _wrap_factory_for_vector(
 
     from shardyfusion.composite_adapter import CompositeFactory
 
+    # Build S3 client for the vector writer factory
+    from shardyfusion.storage import create_s3_client
+
+    credentials = (
+        config.credential_provider.resolve() if config.credential_provider else None
+    )
+    s3_client = create_s3_client(credentials, config.s3_connection_options)
+
     # Lazy-import the default vector writer factory
     try:
         from shardyfusion.vector.adapters.usearch_adapter import USearchWriterFactory
 
-        vector_factory = USearchWriterFactory()
+        vector_factory = USearchWriterFactory(s3_client=s3_client)
     except ImportError as exc:
         raise ConfigValidationError(
             "Unified KV+vector mode with SlateDB requires the 'vector' extra "

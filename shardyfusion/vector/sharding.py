@@ -112,8 +112,14 @@ def train_centroids_kmeans(
             np.sum((vectors[:, None, :] - centroids[None, :i, :]) ** 2, axis=2),
             axis=1,
         )
-        probs = dists / dists.sum()
-        centroids[i] = vectors[rng.choice(n, p=probs)]
+        total = dists.sum()
+        if total == 0:
+            # All remaining points are co-located with existing centroids;
+            # fall back to uniform random selection.
+            centroids[i] = vectors[rng.integers(n)]
+        else:
+            probs = dists / total
+            centroids[i] = vectors[rng.choice(n, p=probs)]
 
     # Lloyd's algorithm
     for _ in range(max_iter):
@@ -175,6 +181,8 @@ def lsh_assign(
     num_dbs: int,
 ) -> int:
     """Assign a vector to a shard via LSH. Returns shard_id."""
+    if num_dbs <= 0:
+        raise ConfigValidationError(f"num_dbs must be > 0, got {num_dbs}")
     code = lsh_hash(vector, hyperplanes)
     return code % num_dbs
 

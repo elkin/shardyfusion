@@ -486,13 +486,21 @@ class SqliteRangeShardReader:
         s3_key_full = f"{db_url.rstrip('/')}/{_DB_FILENAME}"
         bucket, key = parse_s3_url(s3_key_full)
         creds = credential_provider.resolve() if credential_provider else None
-        self._s3_file = _S3ReadOnlyFile(
-            bucket=bucket,
-            key=key,
-            page_cache_pages=page_cache_pages,
-            s3_connection_options=s3_connection_options,
-            s3_credentials=creds,
-        )
+
+        try:
+            self._s3_file = _S3ReadOnlyFile(
+                bucket=bucket,
+                key=key,
+                page_cache_pages=page_cache_pages,
+                s3_connection_options=s3_connection_options,
+                s3_credentials=creds,
+            )
+        except Exception as exc:
+            from ._sqlite_vfs import S3VfsError
+
+            if isinstance(exc, S3VfsError):
+                raise SqliteAdapterError(str(exc)) from exc
+            raise
 
         # Register a unique VFS name for this reader instance
         import uuid

@@ -97,14 +97,21 @@ def _auto_reader_factory(
         # Use SlateDB reader for KV side, USearch for vector side
         from shardyfusion.reader._types import SlateDbReaderFactory
 
-        kv_factory = SlateDbReaderFactory()
+        kv_factory = SlateDbReaderFactory(
+            credential_provider=credential_provider,
+        )
 
         try:
+            from shardyfusion.storage import create_s3_client
             from shardyfusion.vector.adapters.usearch_adapter import (
                 USearchReaderFactory,
             )
 
-            vector_factory = USearchReaderFactory()
+            credentials = (
+                credential_provider.resolve() if credential_provider else None
+            )
+            s3_client = create_s3_client(credentials, s3_connection_options)
+            vector_factory = USearchReaderFactory(s3_client=s3_client)
         except ImportError as exc:
             raise ConfigValidationError(
                 "Unified KV+vector reader with usearch-sidecar backend requires "
