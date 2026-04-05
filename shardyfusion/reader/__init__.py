@@ -7,6 +7,7 @@ from .async_reader import (
 )
 from .concurrent_reader import ConcurrentShardedReader
 from .reader import ShardedReader
+from .unified_reader import UnifiedShardedReader
 
 __all__ = [
     "AsyncShardedReader",
@@ -19,4 +20,5 @@ __all__ = [
     "ShardReaderHandle",
     "SlateDbReaderFactory",
     "SnapshotInfo",
+    "UnifiedShardedReader",
 ]

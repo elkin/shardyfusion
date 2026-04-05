@@ -14,6 +14,7 @@ from .cel import CelColumn, CelType, cel_sharding, cel_sharding_by_columns
 from .config import (
     ManifestOptions,
     OutputOptions,
+    VectorSpec,
     WriteConfig,
 )
 from .credentials import (
@@ -82,6 +83,7 @@ from .reader import (
     ShardReaderHandle,
     SlateDbReaderFactory,
     SnapshotInfo,
+    UnifiedShardedReader,
 )
 from .routing import ShardLookup, SnapshotRouter
 from .run_registry import (
@@ -187,7 +189,9 @@ __all__ = [
     "StaticCredentialProvider",
     "ThreadSafeTokenBucket",
     "TokenBucket",
+    "UnifiedShardedReader",
     "ValueSpec",
+    "VectorSpec",
     "WriteConfig",
     "WriterInfo",
     "cel_sharding",

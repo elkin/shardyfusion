@@ -47,6 +47,39 @@ class ManifestOptions:
     s3_connection_options: S3ConnectionOptions | None = None
 
 
+_VALID_VECTOR_METRICS = frozenset({"cosine", "l2", "dot_product"})
+
+
+@dataclass(slots=True)
+class VectorSpec:
+    """Specifies how to extract and index vectors alongside KV data.
+
+    Enables unified KV + vector search mode when set on ``WriteConfig``.
+    Uses string literals for ``metric`` to avoid importing from the vector
+    module (which has heavier dependencies).  Adapters convert to
+    ``DistanceMetric`` internally.
+
+    Args:
+        dim: Dimensionality of the embedding vectors.
+        vector_col: Column name containing the vector in the routing context
+            dict (used when ``vector_fn`` is not provided to the writer).
+        metric: Distance metric — ``"cosine"``, ``"l2"``, or
+            ``"dot_product"``.
+        index_type: Index algorithm (default ``"hnsw"``).
+        index_params: Algorithm-specific parameters (e.g. ``M``,
+            ``ef_construction``).
+        quantization: Optional quantization — ``"fp16"``, ``"i8"``, or
+            ``None`` (full precision).
+    """
+
+    dim: int
+    vector_col: str | None = None
+    metric: str = "cosine"
+    index_type: str = "hnsw"
+    index_params: dict[str, object] = field(default_factory=dict)
+    quantization: str | None = None
+
+
 @dataclass(slots=True)
 class WriteConfig:
     """Top-level configuration for sharded snapshot writes.
@@ -102,6 +135,8 @@ class WriteConfig:
     credential_provider: CredentialProvider | None = None
     s3_connection_options: S3ConnectionOptions | None = None
 
+    vector_spec: VectorSpec | None = None
+
     def __post_init__(self) -> None:
         if not isinstance(self.sharding, ShardingSpec):
             raise ConfigValidationError("sharding must be ShardingSpec")
@@ -154,6 +189,23 @@ class WriteConfig:
             raise ConfigValidationError(
                 "output.db_path_template must support format(db_id=...)"
             ) from exc
+
+        if self.vector_spec is not None:
+            vs = self.vector_spec
+            if self.sharding.strategy != ShardingStrategy.CEL:
+                raise ConfigValidationError(
+                    "vector_spec requires CEL sharding strategy "
+                    "(unified KV+vector mode is CEL-only)"
+                )
+            if vs.dim <= 0:
+                raise ConfigValidationError(
+                    f"vector_spec.dim must be > 0, got {vs.dim}"
+                )
+            if vs.metric not in _VALID_VECTOR_METRICS:
+                raise ConfigValidationError(
+                    f"vector_spec.metric must be one of {sorted(_VALID_VECTOR_METRICS)}, "
+                    f"got {vs.metric!r}"
+                )
 
 
 # ---------------------------------------------------------------------------
