@@ -46,6 +46,7 @@ class UnifiedVectorMeta:
     index_type: str
     quantization: str | None
     index_params: dict[str, Any]
+    backend: str  # "sqlite-vec" or "usearch-sidecar"
 
 
 def _parse_vector_custom(custom: dict[str, Any]) -> UnifiedVectorMeta:
@@ -62,7 +63,59 @@ def _parse_vector_custom(custom: dict[str, Any]) -> UnifiedVectorMeta:
         index_type=str(vector.get("index_type", "hnsw")),
         quantization=vector.get("quantization"),
         index_params=vector.get("index_params", {}),
+        backend=str(vector.get("backend", "usearch-sidecar")),
     )
+
+
+def _auto_reader_factory(
+    meta: UnifiedVectorMeta,
+    *,
+    credential_provider: CredentialProvider | None = None,
+    s3_connection_options: S3ConnectionOptions | None = None,
+) -> ShardReaderFactory:
+    """Auto-select the reader factory based on the manifest backend field."""
+    if meta.backend == "sqlite-vec":
+        from shardyfusion.sqlite_vec_adapter import SqliteVecReaderFactory
+
+        return SqliteVecReaderFactory(
+            credential_provider=credential_provider,
+            s3_connection_options=s3_connection_options,
+        )
+    else:
+        # usearch-sidecar: compose KV reader + vector reader
+        from shardyfusion.composite_adapter import CompositeReaderFactory
+        from shardyfusion.config import VectorSpec
+
+        vs = VectorSpec(
+            dim=meta.dim,
+            metric=meta.metric,
+            index_type=meta.index_type,
+            index_params=meta.index_params,
+            quantization=meta.quantization,
+        )
+
+        # Use SlateDB reader for KV side, USearch for vector side
+        from shardyfusion.reader._types import SlateDbReaderFactory
+
+        kv_factory = SlateDbReaderFactory()
+
+        try:
+            from shardyfusion.vector.adapters.usearch_adapter import (
+                USearchReaderFactory,
+            )
+
+            vector_factory = USearchReaderFactory()
+        except ImportError as exc:
+            raise ConfigValidationError(
+                "Unified KV+vector reader with usearch-sidecar backend requires "
+                "the 'vector' extra. Install with: pip install shardyfusion[vector]"
+            ) from exc
+
+        return CompositeReaderFactory(
+            kv_factory=kv_factory,
+            vector_factory=vector_factory,
+            vector_spec=vs,
+        )
 
 
 class UnifiedShardedReader(ShardedReader):
@@ -94,8 +147,14 @@ class UnifiedShardedReader(ShardedReader):
         rate_limiter: RateLimiter | None = None,
     ) -> None:
         # _manifest_custom is set during _load_initial_state via
-        # the overridden _build_simple_state
+        # the overridden _build_simple_state.  On the first call
+        # (from super().__init__), the parent builds state from the
+        # manifest, which triggers _build_simple_state → captures custom.
         self._manifest_custom: dict[str, Any] = {}
+        # Store for deferred auto-dispatch
+        self._auto_reader_factory = reader_factory is None
+        self._credential_provider_for_auto = credential_provider
+        self._s3_conn_opts_for_auto = s3_connection_options
         super().__init__(
             s3_prefix=s3_prefix,
             local_root=local_root,
@@ -115,8 +174,17 @@ class UnifiedShardedReader(ShardedReader):
     def _build_simple_state(
         self, manifest_ref: str, manifest: ParsedManifest
     ) -> _SimpleReaderState:
-        """Override to capture manifest custom fields for vector metadata."""
+        """Override to capture custom fields and auto-select reader factory."""
         self._manifest_custom = manifest.custom
+        # Auto-dispatch reader factory from manifest backend on first load
+        if self._auto_reader_factory and manifest.custom.get("vector"):
+            meta = _parse_vector_custom(manifest.custom)
+            self._reader_factory = _auto_reader_factory(
+                meta,
+                credential_provider=self._credential_provider_for_auto,
+                s3_connection_options=self._s3_conn_opts_for_auto,
+            )
+            self._auto_reader_factory = False
         return super()._build_simple_state(manifest_ref, manifest)
 
     @property

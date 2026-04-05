@@ -278,4 +278,5 @@ markers = [
   "cel: tests requiring cel extra (cel-expr-python)",
   "e2e: end-to-end tests requiring a container engine (podman/docker)",
   "vector: tests requiring vector extras (usearch, numpy)",
+  "vector_sqlite: tests requiring vector-sqlite extra (sqlite-vec)",
 ]

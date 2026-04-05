@@ -135,9 +135,34 @@ def write_sharded(
     if vector_fn is not None and config.vector_spec is None:
         raise ConfigValidationError("vector_fn requires config.vector_spec to be set")
     if config.vector_spec is not None and vector_fn is None:
-        raise ConfigValidationError(
-            "config.vector_spec is set but no vector_fn was provided"
-        )
+        if config.vector_spec.vector_col is None:
+            raise ConfigValidationError(
+                "config.vector_spec is set but no vector_fn was provided "
+                "and vector_spec.vector_col is None. Either provide vector_fn "
+                "or set vector_spec.vector_col for auto-extraction via columns_fn."
+            )
+        if columns_fn is None:
+            raise ConfigValidationError(
+                "config.vector_spec.vector_col is set but columns_fn is None. "
+                "Provide columns_fn so vectors can be extracted from "
+                f"the {config.vector_spec.vector_col!r} column."
+            )
+        # Auto-build vector_fn from vector_col + columns_fn
+        _vector_col = config.vector_spec.vector_col
+        _columns_fn = columns_fn
+        _key_fn = key_fn
+
+        def _auto_vector_fn(
+            record: T,
+        ) -> tuple[int | str, Any, dict[str, Any] | None]:
+            cols = _columns_fn(record)  # type: ignore[misc]
+            vec = cols[_vector_col]  # type: ignore[index]
+            key = _key_fn(record)
+            # Vector IDs must be int|str; convert bytes keys to hex string
+            vec_id: int | str = key if isinstance(key, (int, str)) else key.hex()
+            return (vec_id, vec, None)
+
+        vector_fn = _auto_vector_fn
 
     _validate_parallel_shared_memory_limit(
         max_parallel_shared_memory_bytes,
@@ -260,7 +285,7 @@ def write_sharded(
 
         # Inject vector metadata into manifest custom fields
         if config.vector_spec is not None:
-            _inject_vector_manifest_fields(config)
+            _inject_vector_manifest_fields(config, factory)
 
         manifest_started = time.perf_counter()
         manifest_ref = publish_to_store(
@@ -793,11 +818,22 @@ def _write_single_process(
 def _wrap_factory_for_vector(
     factory: DbAdapterFactory, config: WriteConfig
 ) -> DbAdapterFactory:
-    """Wrap a KV factory to produce composite adapters when vector_spec is set."""
-    from shardyfusion.composite_adapter import CompositeFactory
+    """Wrap a KV factory to produce composite adapters when vector_spec is set.
+
+    If the factory is already a ``SqliteVecFactory``, it handles both KV and
+    vector natively — return it as-is.  Otherwise, wrap the KV factory with
+    ``CompositeFactory`` using ``USearchWriterFactory`` for the vector sidecar.
+    """
+    from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
 
     vs = config.vector_spec
     assert vs is not None
+
+    # SqliteVecFactory already produces unified KV+vector adapters
+    if isinstance(factory, SqliteVecFactory):
+        return factory
+
+    from shardyfusion.composite_adapter import CompositeFactory
 
     # Lazy-import the default vector writer factory
     try:
@@ -817,7 +853,18 @@ def _wrap_factory_for_vector(
     )
 
 
-def _inject_vector_manifest_fields(config: WriteConfig) -> None:
+def _detect_vector_backend(factory: DbAdapterFactory) -> str:
+    """Detect the vector backend from the adapter factory type."""
+    from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
+
+    if isinstance(factory, SqliteVecFactory):
+        return "sqlite-vec"
+    return "usearch-sidecar"
+
+
+def _inject_vector_manifest_fields(
+    config: WriteConfig, factory: DbAdapterFactory
+) -> None:
     """Add vector metadata to manifest custom fields for reader discovery."""
     vs = config.vector_spec
     assert vs is not None
@@ -827,6 +874,7 @@ def _inject_vector_manifest_fields(config: WriteConfig) -> None:
         "index_type": vs.index_type,
         "quantization": vs.quantization,
         "unified": True,
+        "backend": _detect_vector_backend(factory),
     }
     if vs.index_params:
         vector_meta["index_params"] = vs.index_params

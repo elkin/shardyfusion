@@ -27,6 +27,7 @@ class TestParseVectorCustom:
                 "quantization": None,
                 "index_params": {"M": 16},
                 "unified": True,
+                "backend": "usearch-sidecar",
             }
         }
         meta = _parse_vector_custom(custom)
@@ -35,6 +36,7 @@ class TestParseVectorCustom:
         assert meta.index_type == "hnsw"
         assert meta.quantization is None
         assert meta.index_params == {"M": 16}
+        assert meta.backend == "usearch-sidecar"
 
     def test_missing_vector_key(self) -> None:
         with pytest.raises(ConfigValidationError, match="vector metadata"):
@@ -52,6 +54,18 @@ class TestParseVectorCustom:
         assert meta.index_type == "hnsw"
         assert meta.quantization is None
         assert meta.index_params == {}
+        assert meta.backend == "usearch-sidecar"  # default
+
+    def test_sqlite_vec_backend(self) -> None:
+        custom = {
+            "vector": {
+                "dim": 32,
+                "metric": "cosine",
+                "backend": "sqlite-vec",
+            }
+        }
+        meta = _parse_vector_custom(custom)
+        assert meta.backend == "sqlite-vec"
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +118,7 @@ class TestUnifiedVectorMeta:
             index_type="hnsw",
             quantization=None,
             index_params={},
+            backend="usearch-sidecar",
         )
         with pytest.raises(AttributeError):
             meta.dim = 64  # type: ignore[misc]
