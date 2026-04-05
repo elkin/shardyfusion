@@ -484,13 +484,9 @@ def _validate_config(config: VectorWriteConfig) -> None:
             )
     if sharding.strategy == VectorShardingStrategy.CEL:
         if not sharding.cel_expr:
-            raise ConfigValidationError(
-                "CEL sharding requires cel_expr to be set"
-            )
+            raise ConfigValidationError("CEL sharding requires cel_expr to be set")
         if not sharding.cel_columns:
-            raise ConfigValidationError(
-                "CEL sharding requires cel_columns to be set"
-            )
+            raise ConfigValidationError("CEL sharding requires cel_columns to be set")
     if sharding.num_probes < 1:
         raise ConfigValidationError(
             f"num_probes must be >= 1, got {sharding.num_probes}"

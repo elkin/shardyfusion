@@ -112,6 +112,9 @@ class ShardedVectorReader:
         self._metric: DistanceMetric = DistanceMetric.COSINE
         self._centroids: np.ndarray | None = None
         self._hyperplanes: np.ndarray | None = None
+        self._cel_expr: str | None = None
+        self._cel_columns: dict[str, str] | None = None
+        self._routing_values: list[int | str | bytes] | None = None
         self._shard_meta: dict[int, RequiredShardMeta] = {}
 
         self._load_initial_manifest()
@@ -134,8 +137,14 @@ class ShardedVectorReader:
         ef: int = 50,
         shard_ids: list[int] | None = None,
         num_probes: int | None = None,
+        routing_context: dict[str, Any] | None = None,
     ) -> VectorSearchResponse:
-        """Search across shards and merge results."""
+        """Search across shards and merge results.
+
+        For CEL sharding, provide ``routing_context`` to route the query to
+        a specific shard via the CEL expression.  For CLUSTER/LSH, the query
+        vector itself determines the target shards.
+        """
         self._check_open()
         started = time.perf_counter()
 
@@ -149,6 +158,10 @@ class ShardedVectorReader:
             centroids=self._centroids,
             hyperplanes=self._hyperplanes,
             shard_ids=shard_ids,
+            routing_context=routing_context,
+            cel_expr=self._cel_expr,
+            cel_columns=self._cel_columns,
+            routing_values=self._routing_values,
         )
 
         # Filter to shards that actually have data
@@ -209,6 +222,7 @@ class ShardedVectorReader:
         query: np.ndarray,
         *,
         num_probes: int | None = None,
+        routing_context: dict[str, Any] | None = None,
     ) -> list[int]:
         """Return shard IDs that would be queried for this vector."""
         self._check_open()
@@ -221,6 +235,10 @@ class ShardedVectorReader:
             metric=self._metric,
             centroids=self._centroids,
             hyperplanes=self._hyperplanes,
+            routing_context=routing_context,
+            cel_expr=self._cel_expr,
+            cel_columns=self._cel_columns,
+            routing_values=self._routing_values,
         )
 
     def shard_for_id(self, shard_id: int) -> VectorShardDetail:
@@ -405,6 +423,12 @@ class ShardedVectorReader:
             strategy_str = vector_meta.get("sharding_strategy", "explicit")
             self._sharding_strategy = VectorShardingStrategy(strategy_str)
             self._num_probes = vector_meta.get("num_probes", 1)
+
+            # Load CEL metadata if present
+            self._cel_expr = vector_meta.get("cel_expr")
+            self._cel_columns = vector_meta.get("cel_columns")
+            raw_rv = vector_meta.get("routing_values")
+            self._routing_values = raw_rv if raw_rv is not None else None
 
             # Load centroids/hyperplanes if referenced
             centroids_ref = vector_meta.get("centroids_ref")

@@ -1,6 +1,8 @@
-"""Vector sharding: CLUSTER, LSH, and EXPLICIT strategies."""
+"""Vector sharding: CLUSTER, LSH, EXPLICIT, and CEL strategies."""
 
 from __future__ import annotations
+
+from typing import Any
 
 import numpy as np
 
@@ -236,6 +238,10 @@ def route_vector_to_shards(
     centroids: np.ndarray | None = None,
     hyperplanes: np.ndarray | None = None,
     shard_ids: list[int] | None = None,
+    routing_context: dict[str, Any] | None = None,
+    cel_expr: str | None = None,
+    cel_columns: dict[str, str] | None = None,
+    routing_values: list[int | str | bytes] | None = None,
 ) -> list[int]:
     """Determine which shards to query for a given vector.
 
@@ -258,5 +264,20 @@ def route_vector_to_shards(
         raise ConfigValidationError(
             "EXPLICIT sharding requires shard_ids to be provided at query time"
         )
+
+    if strategy == VectorShardingStrategy.CEL:
+        if routing_context is None:
+            raise ConfigValidationError(
+                "CEL sharding requires routing_context to be provided at query time"
+            )
+        if cel_expr is None or cel_columns is None:
+            raise ConfigValidationError(
+                "CEL sharding requires cel_expr and cel_columns"
+            )
+        from ..cel import compile_cel, route_cel
+
+        compiled = compile_cel(cel_expr, cel_columns)
+        db_id = route_cel(compiled, routing_context, routing_values=routing_values)
+        return [db_id]
 
     raise ConfigValidationError(f"Unknown vector sharding strategy: {strategy}")

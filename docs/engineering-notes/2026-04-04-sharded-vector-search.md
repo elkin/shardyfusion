@@ -6,6 +6,7 @@
 - Implementation commits:
   - `9ffdfe9` `feat: add sharded vector search (write HNSW indices, search across shards)`
   - `fcd5288` `fix: add VectorReaderHealth export, lazy adapter imports, remove faiss placeholder`
+  - `3b2efcc` `feat: add CEL sharding support to vector writer (types, config, assignment)`
 
 ## Summary
 
@@ -78,7 +79,22 @@ Cons:
 - puts all routing decisions on the user
 - no built-in multi-probe at query time
 
-**Chosen approach**: All three (B, C, D) are implemented as `VectorShardingStrategy.CLUSTER`, `LSH`, and `EXPLICIT`. Option A was rejected because it provides no geometric locality. The three strategies cover the common use cases: CLUSTER for best search quality, LSH for training-free deployment, and EXPLICIT for users who manage their own partitioning.
+#### Option E: CEL expression-based sharding
+
+Pros:
+- reuses the existing `shardyfusion.cel` module — compile, evaluate, route
+- enables attribute-based partitioning (e.g., route by `region` column) without geometric locality
+- at query time, `routing_context` resolves to a single shard — no multi-probe needed
+- categorical mode (routing_values) maps discrete tokens to dense shard IDs automatically
+- composable with point lookups — same CEL expression routes both KV `get()` and vector `search()` to the same shard (unified mode, future work)
+
+Cons:
+- no geometric locality — similar vectors may land on different shards if their routing attributes differ
+- requires `routing_context` on every `VectorRecord` at write time and on every `search()` call at read time
+- requires the `cel` extra (`cel-expr-python`)
+- `num_dbs` must be inferred from `routing_values` length (categorical) or provided explicitly (direct integer)
+
+**Chosen approach**: All four (B, C, D, E) are implemented as `VectorShardingStrategy.CLUSTER`, `LSH`, `EXPLICIT`, and `CEL`. Option A was rejected because it provides no geometric locality. The four strategies cover complementary use cases: CLUSTER for best search quality, LSH for training-free deployment, EXPLICIT for user-managed partitioning, and CEL for attribute-based routing (e.g., partition by region, tenant, or any discrete dimension). CEL is particularly useful when vector search will later be unified with KV point lookups on the same shards.
 
 ### Decision 2: How to store vector metadata in the manifest
 
@@ -228,7 +244,7 @@ The implementation creates a `shardyfusion/vector/` subpackage with the followin
 
 - `types.py` — Enums (`DistanceMetric`, `VectorShardingStrategy`), data classes (`VectorRecord`, `SearchResult`, `VectorSearchResponse`, `VectorShardDetail`, `VectorSnapshotInfo`), and protocols (`VectorIndexWriter`, `VectorIndexWriterFactory`, `VectorShardReader`, `VectorShardReaderFactory`).
 - `config.py` — `VectorIndexConfig` (dim, metric, HNSW params, quantization), `VectorShardingSpec` (strategy, num_probes, centroids/hyperplanes), `VectorWriteConfig` (top-level config mirroring `WriteConfig` structure).
-- `sharding.py` — Pure-numpy sharding implementations: k-means++ training (`train_centroids_kmeans`), cluster assignment and probing, LSH hyperplane generation, LSH hashing and probing, and a unified `route_vector_to_shards` dispatcher.
+- `sharding.py` — Pure-numpy sharding implementations: k-means++ training (`train_centroids_kmeans`), cluster assignment and probing, LSH hyperplane generation, LSH hashing and probing, CEL expression-based routing (delegates to `shardyfusion.cel`), and a unified `route_vector_to_shards` dispatcher.
 - `_merge.py` — Heap-based top-k merge across per-shard result lists, metric-aware.
 - `adapters/usearch_adapter.py` — `USearchWriter` (builds usearch.Index + SQLite payloads locally, uploads to S3 on close), `USearchShardReader` (downloads from S3, loads index and payloads), and corresponding factories. usearch is imported inside `_import_usearch()` to keep it optional.
 - `writer.py` — `write_vector_sharded()` function with single-process implementation. Buffers records by shard, flushes in batches to the adapter, handles centroid training and hyperplane generation, uploads sharding metadata to S3, and publishes a manifest with vector config in custom fields.
@@ -274,6 +290,17 @@ Vector metadata stored in `manifest.custom["vector"]`:
   "centroids_ref": "s3://bucket/prefix/vector_meta/centroids.npy",
   "num_hash_bits": 8,
   "hyperplanes_ref": "s3://bucket/prefix/vector_meta/hyperplanes.npy"
+}
+```
+
+For CEL sharding, the custom dict additionally contains:
+
+```json
+{
+  "sharding_strategy": "cel",
+  "cel_expr": "region",
+  "cel_columns": {"region": "string"},
+  "routing_values": ["us", "eu", "asia"]
 }
 ```
 
