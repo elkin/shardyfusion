@@ -205,9 +205,7 @@ class TestManifestFallbackIteration:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(
-    not _has_usearch(), reason="usearch not installed"
-)
+@pytest.mark.skipif(not _has_usearch(), reason="usearch not installed")
 class TestUSearchStringIds:
     """USearch add_batch should handle string IDs via id_map table."""
 
@@ -297,7 +295,9 @@ class TestParallelVectorSpecBlocked:
             vector_spec=VectorSpec(dim=8),
         )
 
-        with pytest.raises(ConfigValidationError, match="Parallel mode is not supported"):
+        with pytest.raises(
+            ConfigValidationError, match="Parallel mode is not supported"
+        ):
             write_sharded(
                 [],
                 config,

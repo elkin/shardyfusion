@@ -120,9 +120,7 @@ def _auto_reader_factory(
                 USearchReaderFactory,
             )
 
-            credentials = (
-                credential_provider.resolve() if credential_provider else None
-            )
+            credentials = credential_provider.resolve() if credential_provider else None
             s3_client = create_s3_client(credentials, s3_connection_options)
             vector_factory = USearchReaderFactory(s3_client=s3_client)
         except ImportError as exc:

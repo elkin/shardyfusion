@@ -341,7 +341,9 @@ class USearchShardReader:
                 if internal_ids[i] in id_map
                 else internal_ids[i]
             )
-            payload = payload_map.get(str(orig_id) if isinstance(orig_id, int) else orig_id)
+            payload = payload_map.get(
+                str(orig_id) if isinstance(orig_id, int) else orig_id
+            )
             results.append(
                 SearchResult(
                     id=orig_id,

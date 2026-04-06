@@ -249,7 +249,9 @@ def write_vector_sharded(
         )
 
     if resolved_hyperplanes is not None:
-        hyperplanes_ref = f"{config.s3_prefix}/vector_meta/run_id={run_id}/hyperplanes.npy"
+        hyperplanes_ref = (
+            f"{config.s3_prefix}/vector_meta/run_id={run_id}/hyperplanes.npy"
+        )
         buf = io.BytesIO()
         np.save(buf, resolved_hyperplanes)
         put_bytes(
