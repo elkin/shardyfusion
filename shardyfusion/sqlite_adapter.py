@@ -541,7 +541,7 @@ def _create_apsw_vfs(vfs_name: str, s3_file: _S3ReadOnlyFile) -> Any:
     """
     from ._sqlite_vfs import create_apsw_vfs
 
-    delegate = s3_file._delegate if hasattr(s3_file, "_delegate") else s3_file
+    delegate: Any = s3_file._delegate if hasattr(s3_file, "_delegate") else s3_file
     return create_apsw_vfs(vfs_name, delegate)
 
 
