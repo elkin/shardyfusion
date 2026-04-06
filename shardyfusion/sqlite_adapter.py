@@ -422,15 +422,18 @@ class _S3ReadOnlyFile:
         s3_connection_options: S3ConnectionOptions | None = None,
         s3_credentials: S3Credentials | None = None,
     ) -> None:
-        from ._sqlite_vfs import S3ReadOnlyFile
+        from ._sqlite_vfs import S3ReadOnlyFile, S3VfsError
 
-        self._delegate = S3ReadOnlyFile(
-            bucket=bucket,
-            key=key,
-            page_cache_pages=page_cache_pages,
-            s3_connection_options=s3_connection_options,
-            s3_credentials=s3_credentials,
-        )
+        try:
+            self._delegate = S3ReadOnlyFile(
+                bucket=bucket,
+                key=key,
+                page_cache_pages=page_cache_pages,
+                s3_connection_options=s3_connection_options,
+                s3_credentials=s3_credentials,
+            )
+        except S3VfsError as exc:
+            raise SqliteAdapterError(str(exc)) from exc
 
     @property
     def size(self) -> int:
@@ -538,7 +541,8 @@ def _create_apsw_vfs(vfs_name: str, s3_file: _S3ReadOnlyFile) -> Any:
     """
     from ._sqlite_vfs import create_apsw_vfs
 
-    return create_apsw_vfs(vfs_name, s3_file._delegate)
+    delegate = s3_file._delegate if hasattr(s3_file, "_delegate") else s3_file
+    return create_apsw_vfs(vfs_name, delegate)
 
 
 # ---------------------------------------------------------------------------
