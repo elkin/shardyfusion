@@ -47,6 +47,7 @@ class UnifiedVectorMeta:
     quantization: str | None
     index_params: dict[str, Any]
     backend: str  # "sqlite-vec" or "usearch-sidecar"
+    kv_backend: str  # "slatedb", "sqlite", or "sqlite-vec"
 
 
 def _parse_vector_custom(custom: dict[str, Any]) -> UnifiedVectorMeta:
@@ -64,6 +65,7 @@ def _parse_vector_custom(custom: dict[str, Any]) -> UnifiedVectorMeta:
         quantization=vector.get("quantization"),
         index_params=vector.get("index_params", {}),
         backend=str(vector.get("backend", "usearch-sidecar")),
+        kv_backend=str(vector.get("kv_backend", "slatedb")),
     )
 
 
@@ -94,12 +96,23 @@ def _auto_reader_factory(
             quantization=meta.quantization,
         )
 
-        # Use SlateDB reader for KV side, USearch for vector side
-        from shardyfusion.reader._types import SlateDbReaderFactory
+        # Select KV reader factory based on manifest kv_backend field
+        kv_backend = getattr(meta, "kv_backend", None) or "slatedb"
+        kv_factory: ShardReaderFactory
+        if kv_backend == "sqlite":
+            from shardyfusion.sqlite_adapter import SqliteReaderFactory
 
-        kv_factory = SlateDbReaderFactory(
-            credential_provider=credential_provider,
-        )
+            kv_factory = SqliteReaderFactory(
+                credential_provider=credential_provider,
+                s3_connection_options=s3_connection_options,
+            )
+        else:
+            # Default: SlateDB
+            from shardyfusion.reader._types import SlateDbReaderFactory
+
+            kv_factory = SlateDbReaderFactory(
+                credential_provider=credential_provider,
+            )
 
         try:
             from shardyfusion.storage import create_s3_client
@@ -158,8 +171,8 @@ class UnifiedShardedReader(ShardedReader):
         # (from super().__init__), the parent builds state from the
         # manifest, which triggers _build_simple_state → captures custom.
         self._manifest_custom: dict[str, Any] = {}
-        # Store for deferred auto-dispatch
-        self._auto_reader_factory = reader_factory is None
+        # Store for deferred auto-dispatch; None means "auto from manifest"
+        self._user_reader_factory = reader_factory
         self._credential_provider_for_auto = credential_provider
         self._s3_conn_opts_for_auto = s3_connection_options
         super().__init__(
@@ -183,15 +196,15 @@ class UnifiedShardedReader(ShardedReader):
     ) -> _SimpleReaderState:
         """Override to capture custom fields and auto-select reader factory."""
         self._manifest_custom = manifest.custom
-        # Auto-dispatch reader factory from manifest backend on first load
-        if self._auto_reader_factory and manifest.custom.get("vector"):
+        # Auto-dispatch reader factory from manifest backend — on first load
+        # and on every refresh (backend or index settings may change).
+        if self._user_reader_factory is None and manifest.custom.get("vector"):
             meta = _parse_vector_custom(manifest.custom)
             self._reader_factory = _auto_reader_factory(
                 meta,
                 credential_provider=self._credential_provider_for_auto,
                 s3_connection_options=self._s3_conn_opts_for_auto,
             )
-            self._auto_reader_factory = False
         return super()._build_simple_state(manifest_ref, manifest)
 
     @property
@@ -311,7 +324,9 @@ def _search_shard(
     top_k: int,
     ef: int,
 ) -> list[SearchResult]:
-    """Search a single shard reader."""
+    """Search a single shard reader. Returns empty list for null readers."""
+    if not hasattr(reader, "search"):
+        return []
     return reader.search(query, top_k, ef=ef)
 
 

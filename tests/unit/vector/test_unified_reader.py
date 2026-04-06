@@ -119,6 +119,7 @@ class TestUnifiedVectorMeta:
             quantization=None,
             index_params={},
             backend="usearch-sidecar",
+            kv_backend="slatedb",
         )
         with pytest.raises(AttributeError):
             meta.dim = 64  # type: ignore[misc]

@@ -162,8 +162,15 @@ class SqliteVecAdapter:
             "(rowid INTEGER PRIMARY KEY, payload TEXT NOT NULL)"
         )
 
+        # ID mapping table for non-integer vector IDs
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS vec_id_map "
+            "(internal_id INTEGER PRIMARY KEY, original_id TEXT NOT NULL)"
+        )
+
         conn.execute("BEGIN")
         self._conn: sqlite3.Connection | None = conn
+        self._next_vec_id = 0
 
         log_event(
             "sqlite_vec_adapter_opened",
@@ -208,8 +215,20 @@ class SqliteVecAdapter:
         if self._checkpointed:
             raise SqliteVecAdapterError("Cannot write after checkpoint")
 
+        all_int = all(isinstance(ids[i], (int, np.integer)) for i in range(len(ids)))
         for i in range(len(ids)):
-            row_id = int(ids[i])
+            if all_int:
+                row_id = int(ids[i])
+                # Track max for future string-ID batches
+                if row_id + 1 > self._next_vec_id:
+                    self._next_vec_id = row_id + 1
+            else:
+                row_id = self._next_vec_id
+                self._next_vec_id += 1
+                self._conn.execute(
+                    "INSERT INTO vec_id_map (internal_id, original_id) VALUES (?, ?)",
+                    (row_id, str(ids[i])),
+                )
             vec_bytes = vectors[i].astype(np.float32).tobytes()
             self._conn.execute(
                 "INSERT INTO vec_index (rowid, embedding) VALUES (?, ?)",
@@ -393,6 +412,18 @@ class SqliteVecShardReader:
 
         results: list[SearchResult] = []
         for row_id, distance in rows:
+            # Resolve original ID if an id_map entry exists
+            original_id: int | str = row_id
+            try:
+                id_row = self._conn.execute(
+                    "SELECT original_id FROM vec_id_map WHERE internal_id = ?",
+                    (row_id,),
+                ).fetchone()
+                if id_row is not None:
+                    original_id = id_row[0]
+            except sqlite3.OperationalError:
+                pass  # table doesn't exist (old format)
+
             payload: dict[str, Any] | None = None
             payload_row = self._conn.execute(
                 "SELECT payload FROM vec_payloads WHERE rowid = ?",
@@ -403,7 +434,7 @@ class SqliteVecShardReader:
 
             results.append(
                 SearchResult(
-                    id=row_id,
+                    id=original_id,
                     score=float(distance),
                     payload=payload,
                 )

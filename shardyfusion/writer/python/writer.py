@@ -876,6 +876,30 @@ def _detect_vector_backend(factory: DbAdapterFactory) -> str:
     return "usearch-sidecar"
 
 
+def _detect_kv_backend(factory: DbAdapterFactory) -> str:
+    """Detect the KV backend from the adapter factory type."""
+    from shardyfusion.composite_adapter import CompositeFactory
+
+    actual = factory
+    if isinstance(factory, CompositeFactory):
+        actual = factory.kv_factory
+
+    from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
+
+    if isinstance(actual, SqliteVecFactory):
+        return "sqlite-vec"
+
+    try:
+        from shardyfusion.sqlite_adapter import SqliteFactory
+
+        if isinstance(actual, SqliteFactory):
+            return "sqlite"
+    except ImportError:
+        pass
+
+    return "slatedb"
+
+
 def _inject_vector_manifest_fields(
     config: WriteConfig, factory: DbAdapterFactory
 ) -> None:
@@ -889,6 +913,7 @@ def _inject_vector_manifest_fields(
         "quantization": vs.quantization,
         "unified": True,
         "backend": _detect_vector_backend(factory),
+        "kv_backend": _detect_kv_backend(factory),
     }
     if vs.index_params:
         vector_meta["index_params"] = vs.index_params

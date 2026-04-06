@@ -122,9 +122,16 @@ class USearchWriter:
 
         # USearch only supports int64 keys. For string IDs, assign
         # sequential internal int64 keys and maintain a mapping table.
+        # Always advance _next_internal_id to prevent collisions when
+        # mixing int and string ID batches.
         all_int = all(isinstance(i, (int, np.integer)) for i in ids)
         if all_int:
             internal_ids = ids.astype(np.int64)
+            # Track the max to avoid collisions with future string-ID batches
+            if len(internal_ids) > 0:
+                max_seen = int(internal_ids.max()) + 1
+                if max_seen > self._next_internal_id:
+                    self._next_internal_id = max_seen
         else:
             n = len(ids)
             start = self._next_internal_id
