@@ -218,6 +218,12 @@ def write_sharded(
 
         # Wrap factory for unified KV + vector mode
         if config.vector_spec is not None:
+            if parallel:
+                raise ConfigValidationError(
+                    "Parallel mode is not supported with vector_spec. "
+                    "The parallel pipeline does not write vector batches. "
+                    "Use single-process mode (parallel=False) instead."
+                )
             factory = _wrap_factory_for_vector(factory, config)
 
         if parallel:

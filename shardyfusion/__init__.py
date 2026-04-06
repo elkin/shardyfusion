@@ -83,7 +83,6 @@ from .reader import (
     ShardReaderHandle,
     SlateDbReaderFactory,
     SnapshotInfo,
-    UnifiedShardedReader,
 )
 from .routing import ShardLookup, SnapshotRouter
 from .run_registry import (
@@ -202,3 +201,11 @@ __all__ = [
     "parse_manifest_payload",
     "parse_sqlite_manifest",
 ]
+
+
+def __getattr__(name: str):  # noqa: ANN202
+    if name == "UnifiedShardedReader":
+        from .reader.unified_reader import UnifiedShardedReader
+
+        return UnifiedShardedReader
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

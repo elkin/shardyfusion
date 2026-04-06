@@ -101,9 +101,15 @@ class USearchWriter:
             "CREATE TABLE IF NOT EXISTS payloads "
             "(id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
         )
+        # Map internal int64 keys → original string IDs (only for non-int IDs)
+        self._payload_conn.execute(
+            "CREATE TABLE IF NOT EXISTS id_map "
+            "(internal_id INTEGER PRIMARY KEY, original_id TEXT NOT NULL)"
+        )
         self._payload_conn.execute("PRAGMA journal_mode=WAL")
         self._closed = False
         self._count = 0
+        self._next_internal_id = 0
 
     def add_batch(
         self,
@@ -113,8 +119,25 @@ class USearchWriter:
     ) -> None:
         if self._closed:
             raise VectorIndexError("Writer is closed")
+
+        # USearch only supports int64 keys. For string IDs, assign
+        # sequential internal int64 keys and maintain a mapping table.
+        all_int = all(isinstance(i, (int, np.integer)) for i in ids)
+        if all_int:
+            internal_ids = ids.astype(np.int64)
+        else:
+            n = len(ids)
+            start = self._next_internal_id
+            internal_ids = np.arange(start, start + n, dtype=np.int64)
+            self._next_internal_id = start + n
+            id_rows = [(int(internal_ids[i]), str(ids[i])) for i in range(n)]
+            self._payload_conn.executemany(
+                "INSERT OR REPLACE INTO id_map (internal_id, original_id) VALUES (?, ?)",
+                id_rows,
+            )
+
         try:
-            self._index.add(ids.astype(np.int64), vectors.astype(np.float32))
+            self._index.add(internal_ids, vectors.astype(np.float32))
         except Exception as exc:
             raise VectorIndexError(f"Failed to add vectors to index: {exc}") from exc
 
@@ -277,23 +300,44 @@ class USearchShardReader:
         keys = matches.keys
         distances = matches.distances
 
-        id_list = [str(int(k)) for k in keys]
+        internal_ids = [int(k) for k in keys]
+
+        # Resolve internal int64 keys → original IDs via id_map (if present)
+        id_map: dict[int, str] = {}
+        if internal_ids:
+            placeholders = ",".join("?" for _ in internal_ids)
+            try:
+                cursor = self._payload_conn.execute(
+                    f"SELECT internal_id, original_id FROM id_map WHERE internal_id IN ({placeholders})",  # noqa: S608
+                    internal_ids,
+                )
+                for row in cursor:
+                    id_map[int(row[0])] = row[1]
+            except sqlite3.OperationalError:
+                pass  # id_map table doesn't exist (old index format)
+
+        # Look up payloads by the original (string) IDs
+        original_ids = [id_map.get(iid, str(iid)) for iid in internal_ids]
         payload_map: dict[str, dict[str, Any]] = {}
-        if id_list:
-            placeholders = ",".join("?" for _ in id_list)
+        if original_ids:
+            placeholders = ",".join("?" for _ in original_ids)
             cursor = self._payload_conn.execute(
                 f"SELECT id, payload FROM payloads WHERE id IN ({placeholders})",  # noqa: S608
-                id_list,
+                original_ids,
             )
             for row in cursor:
                 payload_map[row[0]] = json.loads(row[1])
 
         for i in range(len(keys)):
-            vec_id = int(keys[i])
-            payload = payload_map.get(str(vec_id))
+            orig_id: int | str = (
+                id_map[internal_ids[i]]
+                if internal_ids[i] in id_map
+                else internal_ids[i]
+            )
+            payload = payload_map.get(str(orig_id) if isinstance(orig_id, int) else orig_id)
             results.append(
                 SearchResult(
-                    id=vec_id,
+                    id=orig_id,
                     score=float(distances[i]),
                     payload=payload,
                 )

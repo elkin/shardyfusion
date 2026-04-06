@@ -412,10 +412,15 @@ class ShardedVectorReader:
                 raise
             all_refs = self._store.list_manifests()
             manifest = None
-            for fallback_ref in reversed(all_refs[: -1]):
-                if self._max_fallback_attempts <= 0:
+            # list_manifests() returns newest-first; skip the current
+            # (already-failed) ref and try progressively older ones.
+            attempts_left = self._max_fallback_attempts
+            for fallback_ref in all_refs:
+                if fallback_ref.ref == ref.ref:
+                    continue
+                if attempts_left <= 0:
                     break
-                self._max_fallback_attempts -= 1
+                attempts_left -= 1
                 try:
                     manifest = self._store.load_manifest(fallback_ref.ref)
                     ref = fallback_ref
