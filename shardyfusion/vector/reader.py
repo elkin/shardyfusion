@@ -96,18 +96,14 @@ class ShardedVectorReader:
         else:
             from .adapters.usearch_adapter import USearchReaderFactory
 
-            credentials = (
-                credential_provider.resolve() if credential_provider else None
-            )
+            credentials = credential_provider.resolve() if credential_provider else None
             from ..storage import create_s3_client
 
             s3_client = create_s3_client(credentials, s3_connection_options)
             self._reader_factory = USearchReaderFactory(s3_client=s3_client)
 
         # S3 client for loading centroids/hyperplanes
-        credentials = (
-            credential_provider.resolve() if credential_provider else None
-        )
+        credentials = credential_provider.resolve() if credential_provider else None
         from ..storage import create_s3_client
 
         self._s3_client = create_s3_client(credentials, s3_connection_options)
@@ -115,7 +111,9 @@ class ShardedVectorReader:
         # Shard reader cache (lazy loading)
         self._shard_readers: OrderedDict[int, VectorShardReader] = OrderedDict()
         self._shard_locks: dict[int, threading.Lock] = {}
-        self._cache_lock = threading.Lock()  # protects shard_locks creation + LRU eviction
+        self._cache_lock = (
+            threading.Lock()
+        )  # protects shard_locks creation + LRU eviction
 
         # State loaded from manifest
         self._manifest_ref: ManifestRef | None = None
@@ -469,14 +467,17 @@ class ShardedVectorReader:
             # Load CEL metadata if present
             self._cel_expr = vector_meta.get("cel_expr")
             self._cel_columns = vector_meta.get("cel_columns")
-            raw_rv = vector_meta.get("routing_values")
+            raw_rv: list[Any] | None = vector_meta.get("routing_values")
             if raw_rv is not None:
-                self._routing_values = [
-                    bytes.fromhex(v["__bytes_hex__"])
-                    if isinstance(v, dict) and "__bytes_hex__" in v
-                    else v
-                    for v in raw_rv
-                ]
+                decoded: list[int | str | bytes] = []
+                for v in raw_rv:
+                    if isinstance(v, dict) and "__bytes_hex__" in v:
+                        decoded.append(bytes.fromhex(v["__bytes_hex__"]))
+                    elif isinstance(v, (int, str, bytes)):
+                        decoded.append(v)
+                    else:
+                        decoded.append(v)  # type: ignore[arg-type]
+                self._routing_values = decoded
             else:
                 self._routing_values = None
 
