@@ -461,8 +461,6 @@ def _flush_single_process_shard(
     attempt: int,
     factory: DbAdapterFactory,
 ) -> None:
-    import numpy as np
-
     _ensure_single_process_adapter(
         state,
         db_id=db_id,
@@ -477,6 +475,8 @@ def _flush_single_process_shard(
 
     # Flush vector batch if present (unified KV+vector mode)
     if state.vector_ids[db_id] and hasattr(adapter, "write_vector_batch"):
+        import numpy as np  # pyright: ignore[reportMissingImports]
+
         ids_arr = np.array(state.vector_ids[db_id])
         vecs_arr = np.array(state.vector_vecs[db_id], dtype=np.float32)
         adapter.write_vector_batch(ids_arr, vecs_arr, state.vector_payloads[db_id])
