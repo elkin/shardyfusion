@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import types
+from pathlib import Path
 from typing import Any, Self
 
 import numpy as np
@@ -247,3 +248,125 @@ class TestCompositeShardReader:
             pass
         assert kv.closed
         assert vec.closed
+
+
+# ---------------------------------------------------------------------------
+# Exception safety in close()
+# ---------------------------------------------------------------------------
+
+
+class TestCompositeCloseExceptionSafety:
+    """Verify both adapters close even if one raises."""
+
+    def test_vec_close_failure_still_closes_kv(self) -> None:
+        kv = FakeKvAdapter()
+        vec = FakeVectorWriter()
+        vec.close = lambda: (_ for _ in ()).throw(RuntimeError("vec boom"))  # type: ignore[assignment]
+
+        adapter = CompositeAdapter(kv_adapter=kv, vector_writer=vec)
+        with pytest.raises(RuntimeError, match="vec boom"):
+            adapter.close()
+
+        assert kv.closed
+        assert adapter._closed
+
+    def test_kv_close_failure_still_marks_closed(self) -> None:
+        kv = FakeKvAdapter()
+        kv.close = lambda: (_ for _ in ()).throw(RuntimeError("kv boom"))  # type: ignore[assignment]
+        vec = FakeVectorWriter()
+
+        adapter = CompositeAdapter(kv_adapter=kv, vector_writer=vec)
+        with pytest.raises(RuntimeError, match="kv boom"):
+            adapter.close()
+
+        assert vec.closed
+        assert adapter._closed
+
+    def test_reader_vec_close_failure_still_closes_kv(self) -> None:
+        kv = FakeKvReader({})
+        vec = FakeVectorReader([])
+        vec.close = lambda: (_ for _ in ()).throw(RuntimeError("boom"))  # type: ignore[assignment]
+
+        reader = CompositeShardReader(kv_reader=kv, vector_reader=vec)
+        with pytest.raises(RuntimeError, match="boom"):
+            reader.close()
+
+        assert kv.closed
+
+
+# ---------------------------------------------------------------------------
+# CompositeFactory
+# ---------------------------------------------------------------------------
+
+
+class TestCompositeFactory:
+    def test_factory_wires_up_adapters(self, tmp_path: Path) -> None:
+        from shardyfusion.composite_adapter import CompositeFactory
+
+        kv_created: list[dict[str, Any]] = []
+        vec_created: list[dict[str, Any]] = []
+
+        def kv_factory(*, db_url: str, local_dir: Path) -> FakeKvAdapter:
+            kv_created.append({"db_url": db_url, "local_dir": local_dir})
+            return FakeKvAdapter()
+
+        def vec_factory(
+            *, db_url: str, local_dir: Path, index_config: Any
+        ) -> FakeVectorWriter:
+            vec_created.append(
+                {"db_url": db_url, "local_dir": local_dir, "config": index_config}
+            )
+            return FakeVectorWriter()
+
+        from shardyfusion.config import VectorSpec
+
+        vs = VectorSpec(dim=8, metric="cosine")
+        factory = CompositeFactory(
+            kv_factory=kv_factory,
+            vector_factory=vec_factory,
+            vector_spec=vs,
+        )
+        adapter = factory(db_url="s3://bucket/shard", local_dir=tmp_path)
+
+        assert isinstance(adapter, CompositeAdapter)
+        assert len(kv_created) == 1
+        assert kv_created[0]["db_url"] == "s3://bucket/shard"
+        assert len(vec_created) == 1
+        assert vec_created[0]["db_url"] == "s3://bucket/shard/vector"
+        assert vec_created[0]["config"].dim == 8
+
+        adapter.close()
+
+
+class TestCompositeReaderFactory:
+    def test_factory_creates_composite_reader(self, tmp_path: Path) -> None:
+        from shardyfusion.composite_adapter import CompositeReaderFactory
+
+        def kv_factory(
+            *, db_url: str, local_dir: Path, checkpoint_id: str | None = None
+        ) -> FakeKvReader:
+            return FakeKvReader({b"k": b"v"})
+
+        def vec_factory(
+            *, db_url: str, local_dir: Path, index_config: Any
+        ) -> FakeVectorReader:
+            return FakeVectorReader([SearchResult(id=1, score=0.5)])
+
+        from shardyfusion.config import VectorSpec
+
+        vs = VectorSpec(dim=8, metric="cosine")
+        factory = CompositeReaderFactory(
+            kv_factory=kv_factory,
+            vector_factory=vec_factory,
+            vector_spec=vs,
+        )
+        reader = factory(
+            db_url="s3://bucket/shard",
+            local_dir=tmp_path,
+            checkpoint_id="abc",
+        )
+
+        assert isinstance(reader, CompositeShardReader)
+        assert reader.get(b"k") == b"v"
+        assert len(reader.search(np.zeros(8), top_k=1)) == 1
+        reader.close()

@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
+import numpy as np
 import pytest
 
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.reader.unified_reader import (
     UnifiedVectorMeta,
+    _auto_reader_factory,
     _merge_top_k,
     _parse_vector_custom,
+    _search_shard,
 )
 from shardyfusion.vector.types import SearchResult
 
@@ -123,3 +128,124 @@ class TestUnifiedVectorMeta:
         )
         with pytest.raises(AttributeError):
             meta.dim = 64  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# _auto_reader_factory
+# ---------------------------------------------------------------------------
+
+
+class TestAutoReaderFactory:
+    def test_sqlite_vec_backend(self) -> None:
+        meta = UnifiedVectorMeta(
+            dim=32,
+            metric="cosine",
+            index_type="hnsw",
+            quantization=None,
+            index_params={},
+            backend="sqlite-vec",
+            kv_backend="sqlite-vec",
+        )
+        with patch(
+            "shardyfusion.sqlite_vec_adapter.SqliteVecReaderFactory"
+        ) as mock_cls:
+            _auto_reader_factory(meta)
+            mock_cls.assert_called_once()
+
+    def test_usearch_sidecar_default_slatedb(self) -> None:
+        meta = UnifiedVectorMeta(
+            dim=32,
+            metric="cosine",
+            index_type="hnsw",
+            quantization=None,
+            index_params={},
+            backend="usearch-sidecar",
+            kv_backend="slatedb",
+        )
+        with (
+            patch(
+                "shardyfusion.composite_adapter.CompositeReaderFactory"
+            ) as mock_composite,
+            patch("shardyfusion.reader._types.SlateDbReaderFactory"),
+            patch("shardyfusion.vector.adapters.usearch_adapter.USearchReaderFactory"),
+            patch("shardyfusion.storage.create_s3_client"),
+        ):
+            _auto_reader_factory(meta)
+            mock_composite.assert_called_once()
+            call_kwargs = mock_composite.call_args[1]
+            assert call_kwargs["kv_factory"] is not None
+
+    def test_usearch_sidecar_with_sqlite_kv(self) -> None:
+        meta = UnifiedVectorMeta(
+            dim=32,
+            metric="cosine",
+            index_type="hnsw",
+            quantization=None,
+            index_params={},
+            backend="usearch-sidecar",
+            kv_backend="sqlite",
+        )
+        with (
+            patch(
+                "shardyfusion.composite_adapter.CompositeReaderFactory"
+            ) as mock_composite,
+            patch("shardyfusion.sqlite_adapter.SqliteReaderFactory") as mock_sqlite_kv,
+            patch("shardyfusion.vector.adapters.usearch_adapter.USearchReaderFactory"),
+            patch("shardyfusion.storage.create_s3_client"),
+        ):
+            _auto_reader_factory(meta)
+            mock_sqlite_kv.assert_called_once()
+            call_kwargs = mock_composite.call_args[1]
+            assert call_kwargs["kv_factory"] is not None
+
+
+# ---------------------------------------------------------------------------
+# _search_shard
+# ---------------------------------------------------------------------------
+
+
+class TestSearchShard:
+    def test_null_reader_returns_empty(self) -> None:
+        """Readers without search() (e.g. _NullShardReader) return []."""
+
+        class NullReader:
+            def get(self, key: bytes) -> None:
+                return None
+
+        result = _search_shard(NullReader(), np.zeros(4), top_k=5, ef=50)
+        assert result == []
+
+    def test_searchable_reader(self) -> None:
+        expected = [SearchResult(id=1, score=0.5)]
+
+        class FakeReader:
+            def search(
+                self, query: np.ndarray, top_k: int, ef: int = 50
+            ) -> list[SearchResult]:
+                return expected
+
+        result = _search_shard(FakeReader(), np.zeros(4), top_k=5, ef=50)
+        assert result == expected
+
+
+# ---------------------------------------------------------------------------
+# _parse_vector_custom with kv_backend
+# ---------------------------------------------------------------------------
+
+
+class TestParseVectorCustomKvBackend:
+    def test_explicit_kv_backend(self) -> None:
+        custom = {
+            "vector": {
+                "dim": 32,
+                "metric": "cosine",
+                "kv_backend": "sqlite",
+            }
+        }
+        meta = _parse_vector_custom(custom)
+        assert meta.kv_backend == "sqlite"
+
+    def test_default_kv_backend(self) -> None:
+        custom = {"vector": {"dim": 32, "metric": "cosine"}}
+        meta = _parse_vector_custom(custom)
+        assert meta.kv_backend == "slatedb"
