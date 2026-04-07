@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import threading
+import time
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -524,4 +526,82 @@ class TestShardedVectorReader:
         assert health.status == "degraded"
         assert health.manifest_age_seconds is not None
         assert health.manifest_age_seconds > 3600
+        reader.close()
+
+    def test_refresh_search_consistency(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Concurrent refresh/search sees coherent old or new state snapshots."""
+
+        def _npy_bytes(array: np.ndarray) -> bytes:
+            buffer = BytesIO()
+            np.save(buffer, array)
+            return buffer.getvalue()
+
+        manifest_v1 = _make_manifest(
+            num_dbs=1,
+            sharding_strategy="cluster",
+            centroids_ref="s3://bucket/centroids/v1.npy",
+        )
+        manifest_v2 = _make_manifest(
+            num_dbs=2,
+            sharding_strategy="cluster",
+            centroids_ref="s3://bucket/centroids/v2.npy",
+        )
+        store = MockManifestStore(manifest_v1)
+        factory = MockReaderFactory()
+
+        centroids_payload = {
+            "s3://bucket/centroids/v1.npy": _npy_bytes(
+                np.array([[0.0, 0.0]], dtype=np.float32)
+            ),
+            "s3://bucket/centroids/v2.npy": _npy_bytes(
+                np.array([[10.0, 10.0], [1.0, 1.0]], dtype=np.float32)
+            ),
+        }
+
+        import shardyfusion.vector.reader as reader_module
+
+        monkeypatch.setattr(
+            reader_module,
+            "get_bytes",
+            lambda ref, *, s3_client: centroids_payload[ref],
+        )
+
+        reader = ShardedVectorReader(
+            s3_prefix="s3://bucket",
+            local_root=str(tmp_path),
+            reader_factory=factory,
+            manifest_store=store,
+        )
+        query = np.array([1.0, 1.0], dtype=np.float32)
+
+        stop = threading.Event()
+        failures: list[str] = []
+
+        def search_worker() -> None:
+            while not stop.is_set():
+                response = reader.search(query, top_k=1)
+                info = reader.snapshot_info()
+                if response.num_shards_queried != 1:
+                    failures.append(
+                        f"expected 1 queried shard, got {response.num_shards_queried}"
+                    )
+                    break
+                if info.num_dbs not in (1, 2):
+                    failures.append(f"unexpected num_dbs={info.num_dbs}")
+                    break
+
+        worker = threading.Thread(target=search_worker)
+        worker.start()
+        time.sleep(0.02)
+        store.update(manifest_v2, run_id="run-v2")
+        assert reader.refresh() is True
+        time.sleep(0.02)
+        stop.set()
+        worker.join()
+
+        assert failures == []
         reader.close()
