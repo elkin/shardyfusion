@@ -323,6 +323,33 @@ class TestShardedVectorReader:
         assert len(reader._shard_readers) == 2  # evicted oldest
         reader.close()
 
+    def test_lru_eviction_cleans_up_shard_locks(self, tmp_path: Path):
+        """Evicted shards remove lock entries so lock map does not grow forever."""
+        manifest = _make_manifest(num_dbs=8, sharding_strategy="explicit")
+        store = MockManifestStore(manifest)
+        factory = MockReaderFactory()
+        reader = ShardedVectorReader(
+            s3_prefix="s3://bucket",
+            local_root=str(tmp_path),
+            reader_factory=factory,
+            manifest_store=store,
+            max_cached_shards=2,
+        )
+        query = np.zeros(32, dtype=np.float32)
+
+        for shard_id in [0, 1, 2, 3, 4, 5, 6, 7]:
+            reader.search(query, top_k=1, shard_ids=[shard_id])
+            assert len(reader._shard_locks) <= 2
+            assert len(reader._shard_readers) <= 2
+
+        # Rotate back through earlier shards; lock map should remain bounded.
+        for shard_id in [0, 1, 2, 3]:
+            reader.search(query, top_k=1, shard_ids=[shard_id])
+            assert len(reader._shard_locks) <= 2
+            assert len(reader._shard_readers) <= 2
+
+        reader.close()
+
     def test_batch_search(self, tmp_path: Path):
         reader, _ = self._make_reader(tmp_path=tmp_path)
         queries = np.zeros((3, 32), dtype=np.float32)
@@ -406,6 +433,36 @@ class TestShardedVectorReader:
         # Old reader should be closed
         assert old_shard_reader._closed
         reader.close()
+
+    def test_refresh_clears_shard_locks(self, tmp_path: Path):
+        manifest = _make_manifest(num_dbs=3)
+        store = MockManifestStore(manifest)
+        factory = MockReaderFactory()
+        reader = ShardedVectorReader(
+            s3_prefix="s3://bucket",
+            local_root=str(tmp_path),
+            reader_factory=factory,
+            manifest_store=store,
+            max_cached_shards=2,
+        )
+        query = np.zeros(32, dtype=np.float32)
+        reader.search(query, top_k=1, shard_ids=[0])
+        reader.search(query, top_k=1, shard_ids=[1])
+        assert reader._shard_locks
+
+        store.update(_make_manifest(num_dbs=3), run_id="run-v2")
+        assert reader.refresh() is True
+        assert reader._shard_locks == {}
+        reader.close()
+
+    def test_close_clears_shard_locks(self, tmp_path: Path):
+        reader, _ = self._make_reader(tmp_path=tmp_path)
+        query = np.zeros(32, dtype=np.float32)
+        reader.search(query, top_k=1, shard_ids=[0])
+        assert reader._shard_locks
+
+        reader.close()
+        assert reader._shard_locks == {}
 
     def test_thread_pool_fan_out(self, tmp_path: Path):
         """Multi-threaded search with max_workers."""

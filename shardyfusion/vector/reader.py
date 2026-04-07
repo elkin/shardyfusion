@@ -347,9 +347,10 @@ class ShardedVectorReader:
             except Exception:
                 return False
 
-            old_readers = dict(self._shard_readers)
-            self._shard_readers = OrderedDict()
-            self._shard_locks = {}
+            with self._cache_lock:
+                old_readers = dict(self._shard_readers)
+                self._shard_readers = OrderedDict()
+                self._shard_locks = {}
             self._apply_manifest(new_ref, manifest)
 
             for reader in old_readers.values():
@@ -370,12 +371,15 @@ class ShardedVectorReader:
         if self._closed:
             return
         self._closed = True
-        for reader in self._shard_readers.values():
+        with self._cache_lock:
+            readers_to_close = list(self._shard_readers.values())
+            self._shard_readers.clear()
+            self._shard_locks = {}
+        for reader in readers_to_close:
             try:
                 reader.close()
             except Exception:
                 pass
-        self._shard_readers.clear()
 
         if self._mc is not None:
             self._mc.emit(MetricEvent.VECTOR_READER_CLOSED, {})
@@ -582,6 +586,7 @@ class ShardedVectorReader:
                         self._shard_readers[shard_id] = evict_reader
                         self._shard_readers.move_to_end(shard_id)
                     else:
+                        self._shard_locks.pop(evict_id, None)
                         try:
                             evict_reader.close()
                         except Exception:
