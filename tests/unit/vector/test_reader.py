@@ -79,6 +79,7 @@ def _make_manifest(
     dim: int = 32,
     centroids_ref: str | None = None,
     hyperplanes_ref: str | None = None,
+    url_tag: str = "default",
 ) -> ParsedManifest:
     """Build a ParsedManifest with vector metadata in custom fields."""
     shards = []
@@ -86,7 +87,7 @@ def _make_manifest(
         shards.append(
             RequiredShardMeta(
                 db_id=db_id,
-                db_url=f"s3://bucket/shards/db={db_id:05d}/attempt=00",
+                db_url=f"s3://bucket/{url_tag}/shards/db={db_id:05d}/attempt=00",
                 attempt=0,
                 row_count=100,
                 writer_info=WriterInfo(),
@@ -407,6 +408,39 @@ class TestShardedVectorReader:
 
         # Old reader should be closed
         assert old_shard_reader._closed
+        reader.close()
+
+    def test_refresh_does_not_reuse_old_manifest_reader(self, tmp_path: Path):
+        """A post-refresh search should load a reader built for the new manifest."""
+        manifest_v1 = _make_manifest(
+            num_dbs=1,
+            sharding_strategy="explicit",
+            url_tag="v1",
+        )
+        store = MockManifestStore(manifest_v1)
+        factory = MockReaderFactory()
+        reader = ShardedVectorReader(
+            s3_prefix="s3://bucket",
+            local_root=str(tmp_path),
+            reader_factory=factory,
+            manifest_store=store,
+        )
+        query = np.zeros(32, dtype=np.float32)
+
+        reader.search(query, top_k=1, shard_ids=[0])
+        old_reader = list(factory.created.values())[0]
+        assert len(factory.created) == 1
+
+        store.update(
+            _make_manifest(num_dbs=1, sharding_strategy="explicit", url_tag="v2"),
+            run_id="run-v2",
+        )
+        assert reader.refresh() is True
+
+        reader.search(query, top_k=1, shard_ids=[0])
+        assert len(factory.created) == 2
+        assert old_reader._closed
+        assert "s3://bucket/v2/shards/db=00000/attempt=00" in factory.created
         reader.close()
 
     def test_thread_pool_fan_out(self, tmp_path: Path):

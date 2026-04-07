@@ -71,6 +71,14 @@ class _VectorReaderState:
     shard_meta: dict[int, RequiredShardMeta] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class _CachedShardReader:
+    """Cached shard reader bound to the manifest snapshot it was created for."""
+
+    manifest_ref: str | None
+    reader: VectorShardReader
+
+
 class ShardedVectorReader:
     """Read-side router that loads a vector manifest and fans out searches."""
 
@@ -128,7 +136,7 @@ class ShardedVectorReader:
         self._s3_client = create_s3_client(credentials, s3_connection_options)
 
         # Shard reader cache (lazy loading)
-        self._shard_readers: OrderedDict[int, VectorShardReader] = OrderedDict()
+        self._shard_readers: OrderedDict[int, _CachedShardReader] = OrderedDict()
         self._shard_locks: dict[int, threading.Lock] = {}
         self._cache_lock = (
             threading.Lock()
@@ -381,12 +389,12 @@ class ShardedVectorReader:
                 return False
 
             self._apply_manifest(new_ref, manifest)
-            old_readers = dict(self._shard_readers)
             with self._cache_lock:
+                old_readers = [cached.reader for cached in self._shard_readers.values()]
                 self._shard_readers = OrderedDict()
                 self._shard_locks = {}
 
-            for reader in old_readers.values():
+            for reader in old_readers:
                 try:
                     reader.close()
                 except Exception:
@@ -404,9 +412,9 @@ class ShardedVectorReader:
         if self._closed:
             return
         self._closed = True
-        for reader in self._shard_readers.values():
+        for cached in self._shard_readers.values():
             try:
-                reader.close()
+                cached.reader.close()
             except Exception:
                 pass
         self._shard_readers.clear()
@@ -601,25 +609,45 @@ class ShardedVectorReader:
     ) -> VectorShardReader | None:
         """Get or lazily load a shard reader."""
         state_snapshot = state if state is not None else self._state
-        if shard_id in self._shard_readers:
-            self._shard_readers.move_to_end(shard_id)
-            return self._shard_readers[shard_id]
+        expected_manifest_ref = (
+            state_snapshot.manifest_ref.ref if state_snapshot.manifest_ref else None
+        )
+        stale_reader: VectorShardReader | None = None
 
-        meta = state_snapshot.shard_meta.get(shard_id)
-        if meta is None or meta.db_url is None:
-            return None
-
-        # Per-shard lock for one-at-a-time download — synchronized creation
         with self._cache_lock:
+            cached = self._shard_readers.get(shard_id)
+            if cached is not None and cached.manifest_ref == expected_manifest_ref:
+                self._shard_readers.move_to_end(shard_id)
+                return cached.reader
+            if cached is not None:
+                stale_reader = cached.reader
+                self._shard_readers.pop(shard_id, None)
             if shard_id not in self._shard_locks:
                 self._shard_locks[shard_id] = threading.Lock()
             lock = self._shard_locks[shard_id]
 
+        meta = state_snapshot.shard_meta.get(shard_id)
+        if meta is None or meta.db_url is None:
+            if stale_reader is not None:
+                try:
+                    stale_reader.close()
+                except Exception:
+                    pass
+            return None
+
         with lock:
             # Double-check after acquiring lock
-            if shard_id in self._shard_readers:
-                self._shard_readers.move_to_end(shard_id)
-                return self._shard_readers[shard_id]
+            with self._cache_lock:
+                cached = self._shard_readers.get(shard_id)
+                if cached is not None and cached.manifest_ref == expected_manifest_ref:
+                    self._shard_readers.move_to_end(shard_id)
+                    return cached.reader
+                if cached is not None:
+                    self._shard_readers.pop(shard_id, None)
+                    try:
+                        cached.reader.close()
+                    except Exception:
+                        pass
 
             local_dir = self._local_root / f"shard_{shard_id:05d}"
             reader = self._reader_factory(
@@ -629,7 +657,10 @@ class ShardedVectorReader:
             )
 
             with self._cache_lock:
-                self._shard_readers[shard_id] = reader
+                self._shard_readers[shard_id] = _CachedShardReader(
+                    manifest_ref=expected_manifest_ref,
+                    reader=reader,
+                )
                 self._shard_readers.move_to_end(shard_id)
 
                 # LRU eviction — skip if max_cached_shards is 0 or None
@@ -645,8 +676,13 @@ class ShardedVectorReader:
                         self._shard_readers.move_to_end(shard_id)
                     else:
                         try:
-                            evict_reader.close()
+                            evict_reader.reader.close()
                         except Exception:
                             pass
 
+            if stale_reader is not None:
+                try:
+                    stale_reader.close()
+                except Exception:
+                    pass
             return reader
