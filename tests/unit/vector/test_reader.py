@@ -499,7 +499,6 @@ class TestShardedVectorReader:
         assert old_reader._closed
         assert "s3://bucket/v2/shards/db=00000/attempt=00" in factory.created
         reader.close()
-
     def test_thread_pool_fan_out(self, tmp_path: Path):
         """Multi-threaded search with max_workers."""
         manifest = _make_manifest(num_dbs=4, sharding_strategy="explicit")
