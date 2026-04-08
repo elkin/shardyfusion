@@ -432,6 +432,62 @@ class ShardedVectorReader:
         self.close()
 
     # ------------------------------------------------------------------
+    # Backward-compatible state accessors (internal/test compatibility)
+    # ------------------------------------------------------------------
+
+    @property
+    def _manifest_ref(self) -> ManifestRef | None:
+        return self._state.manifest_ref
+
+    @property
+    def _manifest(self) -> ParsedManifest | None:
+        return self._state.manifest
+
+    @property
+    def _index_config(self) -> VectorIndexConfig | None:
+        return self._state.index_config
+
+    @property
+    def _sharding_strategy(self) -> VectorShardingStrategy | None:
+        return self._state.sharding_strategy
+
+    @property
+    def _num_dbs(self) -> int:
+        return self._state.num_dbs
+
+    @property
+    def _num_probes(self) -> int:
+        return self._state.num_probes
+
+    @property
+    def _metric(self) -> DistanceMetric:
+        return self._state.metric
+
+    @property
+    def _centroids(self) -> np.ndarray | None:
+        return self._state.centroids
+
+    @property
+    def _hyperplanes(self) -> np.ndarray | None:
+        return self._state.hyperplanes
+
+    @property
+    def _cel_expr(self) -> str | None:
+        return self._state.cel_expr
+
+    @property
+    def _cel_columns(self) -> dict[str, str] | None:
+        return self._state.cel_columns
+
+    @property
+    def _routing_values(self) -> list[int | str | bytes] | None:
+        return self._state.routing_values
+
+    @property
+    def _shard_meta(self) -> dict[int, RequiredShardMeta]:
+        return self._state.shard_meta
+
+    # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
