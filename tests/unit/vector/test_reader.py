@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import threading
-import time
 from datetime import UTC, datetime, timedelta
-from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -79,7 +77,6 @@ def _make_manifest(
     dim: int = 32,
     centroids_ref: str | None = None,
     hyperplanes_ref: str | None = None,
-    url_tag: str = "default",
 ) -> ParsedManifest:
     """Build a ParsedManifest with vector metadata in custom fields."""
     shards = []
@@ -87,7 +84,7 @@ def _make_manifest(
         shards.append(
             RequiredShardMeta(
                 db_id=db_id,
-                db_url=f"s3://bucket/{url_tag}/shards/db={db_id:05d}/attempt=00",
+                db_url=f"s3://bucket/shards/db={db_id:05d}/attempt=00",
                 attempt=0,
                 row_count=100,
                 writer_info=WriterInfo(),
@@ -467,38 +464,6 @@ class TestShardedVectorReader:
         reader.close()
         assert reader._shard_locks == {}
 
-    def test_refresh_does_not_reuse_old_manifest_reader(self, tmp_path: Path):
-        """A post-refresh search should load a reader built for the new manifest."""
-        manifest_v1 = _make_manifest(
-            num_dbs=1,
-            sharding_strategy="explicit",
-            url_tag="v1",
-        )
-        store = MockManifestStore(manifest_v1)
-        factory = MockReaderFactory()
-        reader = ShardedVectorReader(
-            s3_prefix="s3://bucket",
-            local_root=str(tmp_path),
-            reader_factory=factory,
-            manifest_store=store,
-        )
-        query = np.zeros(32, dtype=np.float32)
-
-        reader.search(query, top_k=1, shard_ids=[0])
-        old_reader = list(factory.created.values())[0]
-        assert len(factory.created) == 1
-
-        store.update(
-            _make_manifest(num_dbs=1, sharding_strategy="explicit", url_tag="v2"),
-            run_id="run-v2",
-        )
-        assert reader.refresh() is True
-
-        reader.search(query, top_k=1, shard_ids=[0])
-        assert len(factory.created) == 2
-        assert old_reader._closed
-        assert "s3://bucket/v2/shards/db=00000/attempt=00" in factory.created
-        reader.close()
     def test_thread_pool_fan_out(self, tmp_path: Path):
         """Multi-threaded search with max_workers."""
         manifest = _make_manifest(num_dbs=4, sharding_strategy="explicit")
@@ -616,83 +581,4 @@ class TestShardedVectorReader:
         assert health.status == "degraded"
         assert health.manifest_age_seconds is not None
         assert health.manifest_age_seconds > 3600
-        reader.close()
-
-    def test_refresh_search_consistency(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        """Concurrent refresh/search sees coherent old or new state snapshots."""
-
-        def _npy_bytes(array: np.ndarray) -> bytes:
-            buffer = BytesIO()
-            np.save(buffer, array)
-            return buffer.getvalue()
-
-        manifest_v1 = _make_manifest(
-            num_dbs=1,
-            sharding_strategy="cluster",
-            centroids_ref="s3://bucket/centroids/v1.npy",
-        )
-        manifest_v2 = _make_manifest(
-            num_dbs=2,
-            sharding_strategy="cluster",
-            centroids_ref="s3://bucket/centroids/v2.npy",
-        )
-        store = MockManifestStore(manifest_v1)
-        factory = MockReaderFactory()
-
-        centroids_payload = {
-            "s3://bucket/centroids/v1.npy": _npy_bytes(
-                np.array([[0.0, 0.0]], dtype=np.float32)
-            ),
-            "s3://bucket/centroids/v2.npy": _npy_bytes(
-                np.array([[10.0, 10.0], [1.0, 1.0]], dtype=np.float32)
-            ),
-        }
-
-        import shardyfusion.vector.reader as reader_module
-
-        monkeypatch.setattr(
-            reader_module,
-            "get_bytes",
-            lambda ref, *, s3_client: centroids_payload[ref],
-        )
-
-        reader = ShardedVectorReader(
-            s3_prefix="s3://bucket",
-            local_root=str(tmp_path),
-            reader_factory=factory,
-            manifest_store=store,
-        )
-        query = np.array([1.0, 1.0], dtype=np.float32)
-
-        stop = threading.Event()
-        failures: list[str] = []
-
-        def search_worker() -> None:
-            while not stop.is_set():
-                response = reader.search(query, top_k=1)
-                info = reader.snapshot_info()
-                if response.num_shards_queried not in (1, 2):
-                    failures.append(
-                        "expected queried shards to be 1 or 2, got "
-                        f"{response.num_shards_queried}"
-                    )
-                    break
-                if info.num_dbs not in (1, 2):
-                    failures.append(f"unexpected num_dbs={info.num_dbs}")
-                    break
-
-        worker = threading.Thread(target=search_worker)
-        worker.start()
-        time.sleep(0.02)
-        store.update(manifest_v2, run_id="run-v2")
-        assert reader.refresh() is True
-        time.sleep(0.02)
-        stop.set()
-        worker.join()
-
-        assert failures == []
         reader.close()

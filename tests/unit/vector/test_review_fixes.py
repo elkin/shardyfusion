@@ -209,20 +209,13 @@ class TestManifestFallbackIteration:
 class TestUSearchStringIds:
     """USearch add_batch should handle string IDs via id_map table."""
 
-    def test_string_ids_written_to_id_map(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
+    def test_string_ids_written_to_id_map(self, tmp_path: Path) -> None:
         """Writer stores string→int mapping when string IDs are used."""
-        import shardyfusion.vector.adapters.usearch_adapter as usearch_adapter
         from shardyfusion.vector.adapters.usearch_adapter import (
             PAYLOADS_FILENAME,
             USearchWriter,
         )
         from shardyfusion.vector.types import DistanceMetric
-
-        monkeypatch.setattr(usearch_adapter, "put_bytes", lambda *args, **kwargs: None)
 
         writer = USearchWriter(
             db_url="s3://b/test",
@@ -250,20 +243,13 @@ class TestUSearchStringIds:
 
         writer.close()
 
-    def test_int_ids_no_id_map_rows(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
+    def test_int_ids_no_id_map_rows(self, tmp_path: Path) -> None:
         """Writer does NOT create id_map rows for integer IDs."""
-        import shardyfusion.vector.adapters.usearch_adapter as usearch_adapter
         from shardyfusion.vector.adapters.usearch_adapter import (
             PAYLOADS_FILENAME,
             USearchWriter,
         )
         from shardyfusion.vector.types import DistanceMetric
-
-        monkeypatch.setattr(usearch_adapter, "put_bytes", lambda *args, **kwargs: None)
 
         writer = USearchWriter(
             db_url="s3://b/test",
