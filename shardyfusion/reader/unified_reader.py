@@ -11,7 +11,6 @@ Requires that the snapshot was built with ``vector_spec`` set on
 
 from __future__ import annotations
 
-import heapq
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -29,7 +28,8 @@ from shardyfusion.type_defs import (
     S3ConnectionOptions,
     ShardReaderFactory,
 )
-from shardyfusion.vector.types import SearchResult, VectorSearchResponse
+from shardyfusion.vector._merge import merge_results
+from shardyfusion.vector.types import DistanceMetric, SearchResult, VectorSearchResponse
 
 from ._state import _SimpleReaderState
 from .reader import ShardedReader
@@ -251,7 +251,7 @@ class UnifiedShardedReader(ShardedReader):
                 i for i, s in enumerate(state.router.shards) if s.db_url is not None
             ]
 
-        all_results: list[SearchResult] = []
+        per_shard_results: list[list[SearchResult]] = []
 
         if self._executor is not None and len(target_shards) > 1:
             futures = {
@@ -261,15 +261,15 @@ class UnifiedShardedReader(ShardedReader):
                 for db_id in target_shards
             }
             for _db_id, future in futures.items():
-                all_results.extend(future.result())
+                per_shard_results.append(future.result())
         else:
             for db_id in target_shards:
-                all_results.extend(
+                per_shard_results.append(
                     _search_shard(state.readers[db_id], query, top_k, ef)
                 )
 
-        # Merge: take top-k by lowest score (distance)
-        merged = _merge_top_k(all_results, top_k, self._vector_meta.metric)
+        metric = _distance_metric_from_str(self._vector_meta.metric)
+        merged = merge_results(per_shard_results, top_k, metric)
 
         latency_ms = (time.perf_counter() - t0) * 1000
         log_event(
@@ -328,22 +328,13 @@ def _search_shard(
     return reader.search(query, top_k, ef=ef)
 
 
-def _merge_top_k(
-    results: list[SearchResult],
-    top_k: int,
-    metric: str,
-) -> list[SearchResult]:
-    """Merge results from multiple shards, returning top-k.
-
-    For distance-based metrics (cosine, l2), lower is better.
-    For dot_product, higher is better.
-    """
-    if not results:
-        return []
-
-    if metric == "dot_product":
-        # Higher score = better match
-        return heapq.nlargest(top_k, results, key=lambda r: r.score)
-    else:
-        # Lower score = better match (cosine distance, L2 distance)
-        return heapq.nsmallest(top_k, results, key=lambda r: r.score)
+def _distance_metric_from_str(metric: str) -> DistanceMetric:
+    """Convert metric string to ``DistanceMetric`` with clear validation."""
+    try:
+        return DistanceMetric(metric)
+    except ValueError as exc:
+        valid_metrics = ", ".join(m.value for m in DistanceMetric)
+        raise ConfigValidationError(
+            f"Invalid vector metric '{metric}' in manifest metadata. "
+            f"Expected one of: {valid_metrics}."
+        ) from exc

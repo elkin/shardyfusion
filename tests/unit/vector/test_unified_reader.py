@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
@@ -9,13 +10,14 @@ import pytest
 
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.reader.unified_reader import (
+    UnifiedShardedReader,
     UnifiedVectorMeta,
     _auto_reader_factory,
-    _merge_top_k,
+    _distance_metric_from_str,
     _parse_vector_custom,
     _search_shard,
 )
-from shardyfusion.vector.types import SearchResult
+from shardyfusion.vector.types import DistanceMetric, SearchResult
 
 # ---------------------------------------------------------------------------
 # _parse_vector_custom
@@ -74,40 +76,19 @@ class TestParseVectorCustom:
 
 
 # ---------------------------------------------------------------------------
-# _merge_top_k
+# _distance_metric_from_str
 # ---------------------------------------------------------------------------
 
 
-class TestMergeTopK:
-    def _results(self, scores: list[float]) -> list[SearchResult]:
-        return [SearchResult(id=i, score=s) for i, s in enumerate(scores)]
+class TestDistanceMetricFromStr:
+    def test_valid_metric(self) -> None:
+        assert _distance_metric_from_str("cosine") is DistanceMetric.COSINE
 
-    def test_cosine_lower_is_better(self) -> None:
-        results = self._results([0.9, 0.1, 0.5, 0.3])
-        merged = _merge_top_k(results, top_k=2, metric="cosine")
-        assert len(merged) == 2
-        assert merged[0].score == 0.1
-        assert merged[1].score == 0.3
-
-    def test_l2_lower_is_better(self) -> None:
-        results = self._results([10.0, 1.0, 5.0])
-        merged = _merge_top_k(results, top_k=2, metric="l2")
-        assert merged[0].score == 1.0
-        assert merged[1].score == 5.0
-
-    def test_dot_product_higher_is_better(self) -> None:
-        results = self._results([0.1, 0.9, 0.5])
-        merged = _merge_top_k(results, top_k=2, metric="dot_product")
-        assert merged[0].score == 0.9
-        assert merged[1].score == 0.5
-
-    def test_empty_results(self) -> None:
-        assert _merge_top_k([], top_k=5, metric="cosine") == []
-
-    def test_top_k_larger_than_results(self) -> None:
-        results = self._results([0.5, 0.3])
-        merged = _merge_top_k(results, top_k=10, metric="cosine")
-        assert len(merged) == 2
+    def test_invalid_metric(self) -> None:
+        with pytest.raises(
+            ConfigValidationError, match="Invalid vector metric 'manhattan'"
+        ):
+            _distance_metric_from_str("manhattan")
 
 
 # ---------------------------------------------------------------------------
@@ -249,3 +230,63 @@ class TestParseVectorCustomKvBackend:
         custom = {"vector": {"dim": 32, "metric": "cosine"}}
         meta = _parse_vector_custom(custom)
         assert meta.kv_backend == "slatedb"
+
+
+class TestUnifiedReaderSearchMerge:
+    def _build_reader(self, metric: str) -> UnifiedShardedReader:
+        reader = object.__new__(UnifiedShardedReader)
+        reader._closed = False
+        reader._executor = None
+        reader._vector_meta = UnifiedVectorMeta(
+            dim=2,
+            metric=metric,
+            index_type="hnsw",
+            quantization=None,
+            index_params={},
+            backend="usearch-sidecar",
+            kv_backend="slatedb",
+        )
+        reader._state = SimpleNamespace(
+            readers=[object(), object()],
+            router=SimpleNamespace(
+                shards=[
+                    SimpleNamespace(db_url="s3://a"),
+                    SimpleNamespace(db_url="s3://b"),
+                ]
+            ),
+        )
+        return reader
+
+    def test_search_uses_shared_merge_utility(self) -> None:
+        reader = self._build_reader("cosine")
+        query = np.zeros(2, dtype=np.float32)
+        with (
+            patch("shardyfusion.reader.unified_reader._search_shard") as mock_search,
+            patch("shardyfusion.reader.unified_reader.merge_results") as mock_merge,
+        ):
+            mock_search.side_effect = [
+                [SearchResult(id=1, score=0.9)],
+                [SearchResult(id=2, score=0.1)],
+            ]
+            mock_merge.return_value = [SearchResult(id=2, score=0.1)]
+            response = reader.search(query, top_k=1)
+
+        assert response.results == [SearchResult(id=2, score=0.1)]
+        mock_merge.assert_called_once()
+        args = mock_merge.call_args.args
+        assert args[0] == [
+            [SearchResult(id=1, score=0.9)],
+            [SearchResult(id=2, score=0.1)],
+        ]
+        assert args[1] == 1
+        assert args[2] is DistanceMetric.COSINE
+
+    def test_search_rejects_invalid_metric_before_merge(self) -> None:
+        reader = self._build_reader("manhattan")
+        query = np.zeros(2, dtype=np.float32)
+        with patch("shardyfusion.reader.unified_reader.merge_results") as mock_merge:
+            with pytest.raises(
+                ConfigValidationError, match="Invalid vector metric 'manhattan'"
+            ):
+                reader.search(query, top_k=1)
+        mock_merge.assert_not_called()
