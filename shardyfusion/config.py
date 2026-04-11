@@ -56,7 +56,7 @@ if TYPE_CHECKING:
 VectorMetric: TypeAlias = "DistanceMetric | VectorMetricLiteral"
 
 
-def vector_metric_to_str(metric: VectorMetric) -> VectorMetricLiteral:
+def vector_metric_to_str(metric: VectorMetric | str) -> VectorMetricLiteral:
     """Normalize a vector metric to its stable manifest string value."""
     metric_str = getattr(metric, "value", metric)
     if not isinstance(metric_str, str) or metric_str not in _VALID_VECTOR_METRICS:
