@@ -260,26 +260,26 @@ class TestUnifiedReaderSearchMerge:
     def test_search_uses_shared_merge_utility(self) -> None:
         reader = self._build_reader("cosine")
         query = np.zeros(2, dtype=np.float32)
-        with (
-            patch("shardyfusion.reader.unified_reader._search_shard") as mock_search,
-            patch("shardyfusion.reader.unified_reader.merge_results") as mock_merge,
-        ):
+        with patch("shardyfusion.reader.unified_reader._search_shard") as mock_search:
             mock_search.side_effect = [
-                [SearchResult(id=1, score=0.9)],
-                [SearchResult(id=2, score=0.1)],
+                [SearchResult(id=1, score=0.9), SearchResult(id=2, score=0.3)],
+                [SearchResult(id=3, score=0.1), SearchResult(id=4, score=0.2)],
             ]
-            mock_merge.return_value = [SearchResult(id=2, score=0.1)]
             response = reader.search(query, top_k=1)
 
-        assert response.results == [SearchResult(id=2, score=0.1)]
-        mock_merge.assert_called_once()
-        args = mock_merge.call_args.args
-        assert args[0] == [
-            [SearchResult(id=1, score=0.9)],
-            [SearchResult(id=2, score=0.1)],
-        ]
-        assert args[1] == 1
-        assert args[2] is DistanceMetric.COSINE
+        assert response.results == [SearchResult(id=3, score=0.1)]
+
+    def test_search_dot_product_uses_higher_scores(self) -> None:
+        reader = self._build_reader("dot_product")
+        query = np.zeros(2, dtype=np.float32)
+        with patch("shardyfusion.reader.unified_reader._search_shard") as mock_search:
+            mock_search.side_effect = [
+                [SearchResult(id=1, score=0.1), SearchResult(id=2, score=0.3)],
+                [SearchResult(id=3, score=0.9), SearchResult(id=4, score=0.2)],
+            ]
+            response = reader.search(query, top_k=2)
+
+        assert [result.id for result in response.results] == [3, 2]
 
     def test_search_rejects_invalid_metric_before_merge(self) -> None:
         reader = self._build_reader("manhattan")
