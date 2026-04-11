@@ -18,7 +18,7 @@ from shardyfusion._writer_core import (
     select_winners,
     update_min_max,
 )
-from shardyfusion.config import WriteConfig
+from shardyfusion.config import WriteConfig, vector_metric_to_str
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.logging import get_logger, log_event
 from shardyfusion.manifest import BuildResult, WriterInfo
@@ -908,7 +908,7 @@ def _inject_vector_manifest_fields(
     assert vs is not None
     vector_meta: dict[str, Any] = {
         "dim": vs.dim,
-        "metric": vs.metric,
+        "metric": vector_metric_to_str(vs.metric),
         "index_type": vs.index_type,
         "quantization": vs.quantization,
         "unified": True,

@@ -40,7 +40,7 @@ class TestParseVectorCustom:
         }
         meta = _parse_vector_custom(custom)
         assert meta.dim == 128
-        assert meta.metric == "cosine"
+        assert meta.metric is DistanceMetric.COSINE
         assert meta.index_type == "hnsw"
         assert meta.quantization is None
         assert meta.index_params == {"M": 16}
@@ -58,7 +58,7 @@ class TestParseVectorCustom:
         custom = {"vector": {"dim": 64, "metric": "l2"}}
         meta = _parse_vector_custom(custom)
         assert meta.dim == 64
-        assert meta.metric == "l2"
+        assert meta.metric is DistanceMetric.L2
         assert meta.index_type == "hnsw"
         assert meta.quantization is None
         assert meta.index_params == {}
@@ -101,7 +101,7 @@ class TestUnifiedVectorMeta:
     def test_frozen(self) -> None:
         meta = UnifiedVectorMeta(
             dim=128,
-            metric="cosine",
+            metric=DistanceMetric.COSINE,
             index_type="hnsw",
             quantization=None,
             index_params={},
@@ -121,7 +121,7 @@ class TestAutoReaderFactory:
     def test_sqlite_vec_backend(self) -> None:
         meta = UnifiedVectorMeta(
             dim=32,
-            metric="cosine",
+            metric=DistanceMetric.COSINE,
             index_type="hnsw",
             quantization=None,
             index_params={},
@@ -137,7 +137,7 @@ class TestAutoReaderFactory:
     def test_usearch_sidecar_default_slatedb(self) -> None:
         meta = UnifiedVectorMeta(
             dim=32,
-            metric="cosine",
+            metric=DistanceMetric.COSINE,
             index_type="hnsw",
             quantization=None,
             index_params={},
@@ -160,7 +160,7 @@ class TestAutoReaderFactory:
     def test_usearch_sidecar_with_sqlite_kv(self) -> None:
         meta = UnifiedVectorMeta(
             dim=32,
-            metric="cosine",
+            metric=DistanceMetric.COSINE,
             index_type="hnsw",
             quantization=None,
             index_params={},
@@ -234,7 +234,7 @@ class TestParseVectorCustomKvBackend:
 
 
 class TestUnifiedReaderSearchMerge:
-    def _build_reader(self, metric: str) -> UnifiedShardedReader:
+    def _build_reader(self, metric: DistanceMetric) -> UnifiedShardedReader:
         reader = cast(Any, object.__new__(UnifiedShardedReader))
         reader._closed = False
         reader._executor = None
@@ -259,7 +259,7 @@ class TestUnifiedReaderSearchMerge:
         return cast(UnifiedShardedReader, reader)
 
     def test_search_uses_shared_merge_utility(self) -> None:
-        reader = self._build_reader("cosine")
+        reader = self._build_reader(DistanceMetric.COSINE)
         query = np.zeros(2, dtype=np.float32)
         with patch("shardyfusion.reader.unified_reader._search_shard") as mock_search:
             mock_search.side_effect = [
@@ -271,7 +271,7 @@ class TestUnifiedReaderSearchMerge:
         assert response.results == [SearchResult(id=3, score=0.1)]
 
     def test_search_dot_product_uses_higher_scores(self) -> None:
-        reader = self._build_reader("dot_product")
+        reader = self._build_reader(DistanceMetric.DOT_PRODUCT)
         query = np.zeros(2, dtype=np.float32)
         with patch("shardyfusion.reader.unified_reader._search_shard") as mock_search:
             mock_search.side_effect = [
@@ -283,7 +283,7 @@ class TestUnifiedReaderSearchMerge:
         assert [result.id for result in response.results] == [3, 2]
 
     def test_search_rejects_invalid_metric_before_merge(self) -> None:
-        reader = self._build_reader("manhattan")
+        reader = self._build_reader(cast(Any, "manhattan"))
         query = np.zeros(2, dtype=np.float32)
         with patch("shardyfusion.reader.unified_reader.merge_results") as mock_merge:
             with pytest.raises(

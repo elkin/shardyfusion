@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, TypeAlias
 from urllib.parse import urlparse
 
 from .credentials import CredentialProvider
@@ -49,6 +49,38 @@ class ManifestOptions:
 
 _VALID_VECTOR_METRICS = frozenset({"cosine", "l2", "dot_product"})
 
+VectorMetricLiteral: TypeAlias = Literal["cosine", "l2", "dot_product"]
+if TYPE_CHECKING:
+    from .vector.types import DistanceMetric
+
+VectorMetric: TypeAlias = "DistanceMetric | VectorMetricLiteral"
+
+
+def vector_metric_to_str(metric: VectorMetric | str) -> VectorMetricLiteral:
+    """Normalize a vector metric to its stable manifest string value."""
+    metric_str = getattr(metric, "value", metric)
+    if not isinstance(metric_str, str) or metric_str not in _VALID_VECTOR_METRICS:
+        raise ConfigValidationError(
+            f"vector_spec.metric must be one of {sorted(_VALID_VECTOR_METRICS)}, "
+            f"got {metric!r}"
+        )
+    return metric_str  # type: ignore[return-value]
+
+
+def _coerce_vector_metric(metric: VectorMetric | str) -> VectorMetric:
+    """Convert metric strings to ``DistanceMetric`` when available.
+
+    Falls back to constrained string literals when vector dependencies are
+    unavailable (lazy import behavior).
+    """
+    metric_str = vector_metric_to_str(metric)
+    try:
+        from .vector.types import DistanceMetric
+
+        return DistanceMetric(metric_str)
+    except ImportError:
+        return metric_str
+
 
 @dataclass(slots=True)
 class VectorSpec:
@@ -74,10 +106,13 @@ class VectorSpec:
 
     dim: int
     vector_col: str | None = None
-    metric: str = "cosine"
+    metric: VectorMetric = "cosine"
     index_type: str = "hnsw"
     index_params: dict[str, object] = field(default_factory=dict)
     quantization: str | None = None
+
+    def __post_init__(self) -> None:
+        self.metric = _coerce_vector_metric(self.metric)
 
 
 @dataclass(slots=True)
@@ -201,11 +236,7 @@ class WriteConfig:
                 raise ConfigValidationError(
                     f"vector_spec.dim must be > 0, got {vs.dim}"
                 )
-            if vs.metric not in _VALID_VECTOR_METRICS:
-                raise ConfigValidationError(
-                    f"vector_spec.metric must be one of {sorted(_VALID_VECTOR_METRICS)}, "
-                    f"got {vs.metric!r}"
-                )
+            vs.metric = _coerce_vector_metric(vs.metric)
 
 
 # ---------------------------------------------------------------------------
