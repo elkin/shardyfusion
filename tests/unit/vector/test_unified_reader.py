@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import patch
 
 import numpy as np
@@ -234,7 +235,7 @@ class TestParseVectorCustomKvBackend:
 
 class TestUnifiedReaderSearchMerge:
     def _build_reader(self, metric: str) -> UnifiedShardedReader:
-        reader = object.__new__(UnifiedShardedReader)
+        reader = cast(Any, object.__new__(UnifiedShardedReader))
         reader._closed = False
         reader._executor = None
         reader._vector_meta = UnifiedVectorMeta(
@@ -255,7 +256,7 @@ class TestUnifiedReaderSearchMerge:
                 ]
             ),
         )
-        return reader
+        return cast(UnifiedShardedReader, reader)
 
     def test_search_uses_shared_merge_utility(self) -> None:
         reader = self._build_reader("cosine")
