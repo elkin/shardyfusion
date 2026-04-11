@@ -268,7 +268,11 @@ class UnifiedShardedReader(ShardedReader):
                     _search_shard(state.readers[db_id], query, top_k, ef)
                 )
 
-        merged = merge_results(per_shard_results, top_k, self._vector_meta.metric)
+        metric = self._vector_meta.metric
+        if not isinstance(metric, DistanceMetric):
+            metric = _distance_metric_from_str(str(metric))
+
+        merged = merge_results(per_shard_results, top_k, metric)
 
         latency_ms = (time.perf_counter() - t0) * 1000
         log_event(
