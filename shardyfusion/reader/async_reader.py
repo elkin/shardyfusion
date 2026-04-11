@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Literal, Self
 
 from shardyfusion._rate_limiter import RateLimiter
+from shardyfusion._slatedb_symbols import get_slatedb_reader_class
 from shardyfusion.async_manifest_store import (
     AsyncManifestStore,
     AsyncS3ManifestStore,
@@ -168,8 +169,8 @@ class AsyncSlateDbReaderFactory:
         self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
     ) -> AsyncShardReader:
         try:
-            from slatedb import SlateDBReader
-        except ImportError as exc:  # pragma: no cover - runtime dependent
+            reader_cls = get_slatedb_reader_class()
+        except DbAdapterError as exc:  # pragma: no cover - runtime dependent
             raise DbAdapterError(
                 "slatedb package is required for reading shards"
             ) from exc
@@ -178,7 +179,7 @@ class AsyncSlateDbReaderFactory:
             kwargs: dict[str, Any] = {"url": db_url, "checkpoint_id": checkpoint_id}
             if env_path is not None:
                 kwargs["env_file"] = env_path
-            inner = await SlateDBReader.open_async(str(local_dir), **kwargs)
+            inner = await reader_cls.open_async(str(local_dir), **kwargs)
             return _SlateDbAsyncShardReader(inner)
 
 
