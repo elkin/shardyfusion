@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
 from shardyfusion.credentials import (
     CredentialProvider,
@@ -85,14 +85,17 @@ class SlateDbReaderFactory:
         self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
     ) -> ShardReader:
         try:
-            from slatedb import SlateDBReader
+            import slatedb
         except ImportError as exc:  # pragma: no cover - runtime dependent
             raise DbAdapterError(
                 "slatedb package is required for reading shards"
             ) from exc
+        reader_cls = cast(Any, getattr(slatedb, "SlateDBReader", None))
+        if reader_cls is None:
+            raise DbAdapterError("slatedb.SlateDBReader is unavailable at runtime")
 
         with resolve_env_file(self.env_file, self.credential_provider) as env_path:
-            return SlateDBReader(
+            return reader_cls(
                 str(local_dir),
                 url=db_url,
                 env_file=env_path,

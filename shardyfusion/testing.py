@@ -7,7 +7,7 @@ import types
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Self, TypedDict
+from typing import Any, Self, TypedDict, cast
 from urllib.parse import quote
 
 from .metrics import MetricEvent
@@ -224,12 +224,15 @@ class RealSlateDbFileAdapter:
         self._object_store_root = object_store_root
         _ = local_dir  # ignored; SlateDB requires a deterministic path
 
-        from slatedb import SlateDB
+        import slatedb
 
         mapped_url = map_s3_db_url_to_file_url(db_url, self._object_store_root)
         shard_local = local_dir_for_file_shard(self._object_store_root, db_url)
         kwargs: _SlateDbOpenKwargs = {"url": mapped_url}
-        self._db = SlateDB(str(shard_local), **kwargs)
+        slatedb_cls = cast(Any, getattr(slatedb, "SlateDB", None))
+        if slatedb_cls is None:
+            raise RuntimeError("slatedb.SlateDB is unavailable at runtime")
+        self._db = slatedb_cls(str(shard_local), **kwargs)
 
     @property
     def db(self) -> object:
@@ -247,9 +250,12 @@ class RealSlateDbFileAdapter:
         self.close()
 
     def write_batch(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
-        from slatedb import WriteBatch
+        import slatedb
 
-        wb = WriteBatch()
+        write_batch_cls = cast(Any, getattr(slatedb, "WriteBatch", None))
+        if write_batch_cls is None:
+            raise RuntimeError("slatedb.WriteBatch is unavailable at runtime")
+        wb = write_batch_cls()
         for key, value in pairs:
             wb.put(bytes(key), bytes(value))
         self._db.write(wb)
