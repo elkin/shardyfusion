@@ -6,8 +6,9 @@ import types
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, Self, cast
+from typing import Protocol, Self
 
+from ._slatedb_symbols import get_slatedb_writer_symbols
 from .credentials import CredentialProvider, resolve_env_file
 from .errors import DbAdapterError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
@@ -91,13 +92,7 @@ class DefaultSlateDbAdapter:
         env_file: str | None,
         settings: JsonObject | None,
     ) -> None:
-        try:
-            import slatedb
-        except ImportError as exc:
-            raise DbAdapterError("slatedb package is required at runtime") from exc
-        slatedb_cls = cast(Any, getattr(slatedb, "SlateDB", None))
-        if slatedb_cls is None:
-            raise DbAdapterError("slatedb.SlateDB is unavailable at runtime")
+        slatedb_cls, _ = get_slatedb_writer_symbols()
 
         settings_payload: str | None = None
         if settings is not None:
@@ -147,13 +142,7 @@ class DefaultSlateDbAdapter:
         if not batch:
             return
 
-        try:
-            import slatedb
-        except ImportError as exc:
-            raise DbAdapterError("slatedb package is required at runtime") from exc
-        write_batch_cls = cast(Any, getattr(slatedb, "WriteBatch", None))
-        if write_batch_cls is None:
-            raise DbAdapterError("slatedb.WriteBatch is unavailable at runtime")
+        _, write_batch_cls = get_slatedb_writer_symbols()
 
         wb = write_batch_cls()
         for key, value in batch:

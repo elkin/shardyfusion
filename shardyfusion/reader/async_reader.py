@@ -8,9 +8,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Literal, Self, cast
+from typing import Any, Literal, Self
 
 from shardyfusion._rate_limiter import RateLimiter
+from shardyfusion._slatedb_symbols import get_slatedb_reader_class
 from shardyfusion.async_manifest_store import (
     AsyncManifestStore,
     AsyncS3ManifestStore,
@@ -168,14 +169,11 @@ class AsyncSlateDbReaderFactory:
         self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
     ) -> AsyncShardReader:
         try:
-            import slatedb
-        except ImportError as exc:  # pragma: no cover - runtime dependent
+            reader_cls = get_slatedb_reader_class()
+        except DbAdapterError as exc:  # pragma: no cover - runtime dependent
             raise DbAdapterError(
                 "slatedb package is required for reading shards"
             ) from exc
-        reader_cls = cast(Any, getattr(slatedb, "SlateDBReader", None))
-        if reader_cls is None:
-            raise DbAdapterError("slatedb.SlateDBReader is unavailable at runtime")
 
         with resolve_env_file(self.env_file, self.credential_provider) as env_path:
             kwargs: dict[str, Any] = {"url": db_url, "checkpoint_id": checkpoint_id}
