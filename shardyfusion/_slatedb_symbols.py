@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib import import_module
 from typing import Any, cast
 
 from shardyfusion.errors import DbAdapterError
@@ -9,10 +10,9 @@ from shardyfusion.errors import DbAdapterError
 
 def _import_slatedb() -> Any:
     try:
-        import slatedb
+        return import_module("slatedb")
     except ImportError as exc:  # pragma: no cover - runtime dependent
         raise DbAdapterError("slatedb package is required at runtime") from exc
-    return slatedb
 
 
 def _get_symbol(module: Any, symbol: str) -> Any:

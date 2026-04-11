@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import builtins
+import sys
 import types
 
 import pytest
@@ -17,7 +17,7 @@ def test_get_slatedb_reader_class_returns_symbol(
 ) -> None:
     reader_cls = object()
     fake_module = types.SimpleNamespace(SlateDBReader=reader_cls)
-    monkeypatch.setitem(__import__("sys").modules, "slatedb", fake_module)
+    monkeypatch.setitem(sys.modules, "slatedb", fake_module)
 
     assert get_slatedb_reader_class() is reader_cls
 
@@ -28,7 +28,7 @@ def test_get_slatedb_writer_symbols_returns_both(
     db_cls = object()
     write_batch_cls = object()
     fake_module = types.SimpleNamespace(SlateDB=db_cls, WriteBatch=write_batch_cls)
-    monkeypatch.setitem(__import__("sys").modules, "slatedb", fake_module)
+    monkeypatch.setitem(sys.modules, "slatedb", fake_module)
 
     assert get_slatedb_writer_symbols() == (db_cls, write_batch_cls)
 
@@ -37,7 +37,7 @@ def test_get_slatedb_reader_class_raises_on_missing_symbol(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_module = types.SimpleNamespace()
-    monkeypatch.setitem(__import__("sys").modules, "slatedb", fake_module)
+    monkeypatch.setitem(sys.modules, "slatedb", fake_module)
 
     with pytest.raises(DbAdapterError, match="slatedb.SlateDBReader is unavailable"):
         get_slatedb_reader_class()
@@ -46,16 +46,15 @@ def test_get_slatedb_reader_class_raises_on_missing_symbol(
 def test_get_slatedb_writer_symbols_raises_when_import_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delitem(__import__("sys").modules, "slatedb", raising=False)
+    monkeypatch.delitem(sys.modules, "slatedb", raising=False)
 
-    original_import = builtins.__import__
+    def _raise_import_error(name: str) -> object:
+        raise ImportError(f"missing {name}")
 
-    def _import(name: str, *args: object, **kwargs: object) -> object:
-        if name == "slatedb":
-            raise ImportError("missing slatedb")
-        return original_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", _import)
+    monkeypatch.setattr(
+        "shardyfusion._slatedb_symbols.import_module",
+        _raise_import_error,
+    )
 
     with pytest.raises(DbAdapterError, match="slatedb package is required at runtime"):
         get_slatedb_writer_symbols()
