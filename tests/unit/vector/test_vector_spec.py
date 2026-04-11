@@ -7,6 +7,7 @@ import pytest
 from shardyfusion.config import VectorSpec, WriteConfig
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
+from shardyfusion.vector.types import DistanceMetric
 
 
 class TestVectorSpec:
@@ -14,7 +15,7 @@ class TestVectorSpec:
         vs = VectorSpec(dim=128)
         assert vs.dim == 128
         assert vs.vector_col is None
-        assert vs.metric == "cosine"
+        assert vs.metric is DistanceMetric.COSINE
         assert vs.index_type == "hnsw"
         assert vs.index_params == {}
         assert vs.quantization is None
@@ -29,7 +30,7 @@ class TestVectorSpec:
         )
         assert vs.dim == 64
         assert vs.vector_col == "embedding"
-        assert vs.metric == "l2"
+        assert vs.metric is DistanceMetric.L2
         assert vs.index_params == {"M": 32}
         assert vs.quantization == "fp16"
 
@@ -85,14 +86,18 @@ class TestWriteConfigVectorValidation:
             )
 
     def test_vector_spec_all_valid_metrics(self) -> None:
-        for metric in ("cosine", "l2", "dot_product"):
+        for metric, expected in (
+            ("cosine", DistanceMetric.COSINE),
+            ("l2", DistanceMetric.L2),
+            ("dot_product", DistanceMetric.DOT_PRODUCT),
+        ):
             config = WriteConfig(
                 s3_prefix="s3://bucket/prefix",
                 sharding=self._cel_sharding(),
                 vector_spec=VectorSpec(dim=128, metric=metric),
             )
             assert config.vector_spec is not None
-            assert config.vector_spec.metric == metric
+            assert config.vector_spec.metric is expected
 
     def test_no_vector_spec_is_valid(self) -> None:
         config = WriteConfig(

@@ -18,6 +18,7 @@ from typing import Any
 import numpy as np
 
 from shardyfusion._rate_limiter import RateLimiter
+from shardyfusion.config import vector_metric_to_str
 from shardyfusion.credentials import CredentialProvider
 from shardyfusion.errors import ConfigValidationError, ReaderStateError
 from shardyfusion.logging import get_logger, log_event
@@ -42,7 +43,7 @@ class UnifiedVectorMeta:
     """Vector metadata parsed from the manifest custom fields."""
 
     dim: int
-    metric: str
+    metric: DistanceMetric
     index_type: str
     quantization: str | None
     index_params: dict[str, Any]
@@ -60,7 +61,7 @@ def _parse_vector_custom(custom: dict[str, Any]) -> UnifiedVectorMeta:
         )
     return UnifiedVectorMeta(
         dim=int(vector["dim"]),
-        metric=str(vector["metric"]),
+        metric=_distance_metric_from_str(str(vector["metric"])),
         index_type=str(vector.get("index_type", "hnsw")),
         quantization=vector.get("quantization"),
         index_params=vector.get("index_params", {}),
@@ -268,8 +269,7 @@ class UnifiedShardedReader(ShardedReader):
                     _search_shard(state.readers[db_id], query, top_k, ef)
                 )
 
-        metric = _distance_metric_from_str(self._vector_meta.metric)
-        merged = merge_results(per_shard_results, top_k, metric)
+        merged = merge_results(per_shard_results, top_k, self._vector_meta.metric)
 
         latency_ms = (time.perf_counter() - t0) * 1000
         log_event(
@@ -331,7 +331,7 @@ def _search_shard(
 def _distance_metric_from_str(metric: str) -> DistanceMetric:
     """Convert metric string to ``DistanceMetric`` with clear validation."""
     try:
-        return DistanceMetric(metric)
+        return DistanceMetric(vector_metric_to_str(metric))
     except ValueError as exc:
         valid_metrics = ", ".join(m.value for m in DistanceMetric)
         raise ConfigValidationError(

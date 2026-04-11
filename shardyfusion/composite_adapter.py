@@ -26,7 +26,7 @@ from typing import Any, Self
 
 import numpy as np
 
-from .config import VectorSpec
+from .config import VectorSpec, vector_metric_to_str
 from .errors import ShardyfusionError
 from .logging import get_logger, log_event
 from .slatedb_adapter import DbAdapter, DbAdapterFactory
@@ -71,7 +71,7 @@ class CompositeFactory:
 
         index_config = VectorIndexConfig(
             dim=self.vector_spec.dim,
-            metric=DistanceMetric(self.vector_spec.metric),
+            metric=DistanceMetric(vector_metric_to_str(self.vector_spec.metric)),
             index_type=self.vector_spec.index_type,
             index_params=self.vector_spec.index_params,
             quantization=self.vector_spec.quantization,
@@ -204,7 +204,7 @@ class CompositeReaderFactory:
 
         index_config = VectorIndexConfig(
             dim=self.vector_spec.dim,
-            metric=DistanceMetric(self.vector_spec.metric),
+            metric=DistanceMetric(vector_metric_to_str(self.vector_spec.metric)),
             index_type=self.vector_spec.index_type,
             index_params=self.vector_spec.index_params,
             quantization=self.vector_spec.quantization,
