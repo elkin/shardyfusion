@@ -111,6 +111,9 @@ class VectorSpec:
     index_params: dict[str, object] = field(default_factory=dict)
     quantization: str | None = None
 
+    def __post_init__(self) -> None:
+        self.metric = _coerce_vector_metric(self.metric)
+
 
 @dataclass(slots=True)
 class WriteConfig:

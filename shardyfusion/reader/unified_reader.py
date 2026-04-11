@@ -18,7 +18,6 @@ from typing import Any
 import numpy as np
 
 from shardyfusion._rate_limiter import RateLimiter
-from shardyfusion.config import vector_metric_to_str
 from shardyfusion.credentials import CredentialProvider
 from shardyfusion.errors import ConfigValidationError, ReaderStateError
 from shardyfusion.logging import get_logger, log_event
@@ -331,7 +330,7 @@ def _search_shard(
 def _distance_metric_from_str(metric: str) -> DistanceMetric:
     """Convert metric string to ``DistanceMetric`` with clear validation."""
     try:
-        return DistanceMetric(vector_metric_to_str(metric))
+        return DistanceMetric(metric)
     except ValueError as exc:
         valid_metrics = ", ".join(m.value for m in DistanceMetric)
         raise ConfigValidationError(
