@@ -113,6 +113,8 @@ def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> 
         max_writes_per_second,
         max_write_bytes_per_second,
         verify_routing,
+        vector_fn,
+        vector_columns,
     ):
         _ = (
             started,
@@ -122,6 +124,8 @@ def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> 
             max_writes_per_second,
             max_write_bytes_per_second,
             verify_routing,
+            vector_fn,
+            vector_columns,
         )
         calls.append(("impl", (df, config, run_id)))
         return "result-sentinel"
@@ -181,6 +185,8 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
         max_writes_per_second,
         max_write_bytes_per_second,
         verify_routing,
+        vector_fn,
+        vector_columns,
     ):
         _ = (
             started,
@@ -190,6 +196,8 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
             max_writes_per_second,
             max_write_bytes_per_second,
             verify_routing,
+            vector_fn,
+            vector_columns,
         )
         calls.append(("impl", (df, config, run_id)))
         return "result-sentinel"
