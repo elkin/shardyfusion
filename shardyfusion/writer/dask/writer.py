@@ -1,7 +1,9 @@
 """Dask-based sharded writer (no Spark/Java dependency)."""
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 from uuid import uuid4
 
 import dask.dataframe as dd
@@ -11,13 +13,18 @@ from shardyfusion._shard_writer import (
     iter_pandas_rows,
     results_pdf_to_attempts,
     write_shard_with_retry,
+    write_shard_with_retry_distributed,
 )
 from shardyfusion._writer_core import (
+    VectorColumnMapping,
     assemble_build_result,
     cleanup_losers,
+    inject_vector_manifest_fields,
     publish_to_store,
+    resolve_distributed_vector_fn,
     route_key,
     select_winners,
+    wrap_factory_for_vector,
 )
 from shardyfusion.config import WriteConfig
 from shardyfusion.credentials import CredentialProvider
@@ -61,7 +68,7 @@ class _PartitionWriteRuntime:
     key_encoder: KeyEncoder
     value_spec: ValueSpec
     batch_size: int
-    adapter_factory: DbAdapterFactory | None
+    adapter_factory: DbAdapterFactory
     credential_provider: CredentialProvider | None
     max_writes_per_second: float | None
     max_write_bytes_per_second: float | None = None
@@ -69,6 +76,9 @@ class _PartitionWriteRuntime:
     metrics_collector: MetricsCollector | None = None  # must be picklable
     started: float = 0.0
     shard_retry: RetryConfig | None = None
+    vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None = (
+        None
+    )
 
 
 # Meta schema for result DataFrames returned by partition writers.
@@ -109,6 +119,10 @@ def write_sharded(
     max_writes_per_second: float | None = None,
     max_write_bytes_per_second: float | None = None,
     verify_routing: bool = True,
+    vector_fn: (
+        Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None
+    ) = None,
+    vector_columns: VectorColumnMapping | None = None,
 ) -> BuildResult:
     """Write a Dask DataFrame into N independent sharded databases and publish manifest.
 
@@ -163,6 +177,12 @@ def write_sharded(
         if mc is not None:
             mc.emit(MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
 
+        distributed_vector_fn = resolve_distributed_vector_fn(
+            config=config,
+            key_col=key_col,
+            vector_fn=vector_fn,
+            vector_columns=vector_columns,
+        )
         # --- Phase 1: Sharding ---
         shard_started = time.perf_counter()
         from shardyfusion._writer_core import discover_cel_num_dbs
@@ -220,6 +240,7 @@ def write_sharded(
             max_write_bytes_per_second=max_write_bytes_per_second,
             sort_within_partitions=sort_within_partitions,
             started=started,
+            vector_fn=distributed_vector_fn,
         )
 
         write_started = time.perf_counter()
@@ -256,6 +277,9 @@ def write_sharded(
         winners, num_attempts, all_attempt_urls = select_winners(
             attempts, num_dbs=num_dbs
         )
+
+        if config.vector_spec is not None:
+            inject_vector_manifest_fields(config, runtime.adapter_factory)
 
         manifest_started = time.perf_counter()
         manifest_ref = publish_to_store(
@@ -388,8 +412,15 @@ def _build_partition_write_runtime(
     max_write_bytes_per_second: float | None,
     sort_within_partitions: bool,
     started: float,
+    vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
 ) -> _PartitionWriteRuntime:
     """Construct picklable runtime config for Dask partition writers."""
+
+    factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory(
+        credential_provider=config.credential_provider
+    )
+    if config.vector_spec is not None:
+        factory = wrap_factory_for_vector(factory, config)
 
     return _PartitionWriteRuntime(
         run_id=run_id,
@@ -402,7 +433,7 @@ def _build_partition_write_runtime(
         key_encoder=make_key_encoder(config.key_encoding),
         value_spec=value_spec,
         batch_size=config.batch_size,
-        adapter_factory=config.adapter_factory,
+        adapter_factory=factory,
         credential_provider=config.credential_provider,
         max_writes_per_second=max_writes_per_second,
         max_write_bytes_per_second=max_write_bytes_per_second,
@@ -410,6 +441,7 @@ def _build_partition_write_runtime(
         metrics_collector=config.metrics_collector,
         started=started,
         shard_retry=config.shard_retry,
+        vector_fn=vector_fn,
     )
 
 
@@ -424,33 +456,59 @@ def _write_partition(
 
     results: list[dict[str, object]] = []
 
-    factory: DbAdapterFactory = runtime.adapter_factory or SlateDbFactory(
-        credential_provider=runtime.credential_provider
-    )
+    factory: DbAdapterFactory = runtime.adapter_factory
 
     for db_id, group_pdf in pdf.groupby(DB_ID_COL):
         if runtime.sort_within_partitions:
             group_pdf = group_pdf.sort_values(runtime.key_col)
 
-        attempt_result = write_shard_with_retry(
-            db_id=int(db_id),  # type: ignore[invalid-argument-type]  # pandas groupby key
-            rows_fn=lambda pdf=group_pdf: iter_pandas_rows(
-                pdf, runtime.key_col, runtime.value_spec
-            ),
-            run_id=runtime.run_id,
-            s3_prefix=runtime.s3_prefix,
-            shard_prefix=runtime.shard_prefix,
-            db_path_template=runtime.db_path_template,
-            local_root=runtime.local_root,
-            key_encoder=runtime.key_encoder,
-            batch_size=runtime.batch_size,
-            factory=factory,
-            max_writes_per_second=runtime.max_writes_per_second,
-            max_write_bytes_per_second=runtime.max_write_bytes_per_second,
-            metrics_collector=runtime.metrics_collector,
-            started=runtime.started,
-            retry_config=runtime.shard_retry,
-        )
+        if runtime.vector_fn is None:
+            attempt_result = write_shard_with_retry(
+                db_id=int(db_id),  # type: ignore[invalid-argument-type]
+                rows_fn=lambda pdf=group_pdf: iter_pandas_rows(
+                    pdf, runtime.key_col, runtime.value_spec
+                ),
+                run_id=runtime.run_id,
+                s3_prefix=runtime.s3_prefix,
+                shard_prefix=runtime.shard_prefix,
+                db_path_template=runtime.db_path_template,
+                local_root=runtime.local_root,
+                key_encoder=runtime.key_encoder,
+                batch_size=runtime.batch_size,
+                factory=factory,
+                max_writes_per_second=runtime.max_writes_per_second,
+                max_write_bytes_per_second=runtime.max_write_bytes_per_second,
+                metrics_collector=runtime.metrics_collector,
+                started=runtime.started,
+                retry_config=runtime.shard_retry,
+            )
+        else:
+            vec_fn = runtime.vector_fn
+            assert vec_fn is not None
+            attempt_result = write_shard_with_retry_distributed(
+                db_id=int(db_id),  # type: ignore[invalid-argument-type]
+                rows_fn=lambda pdf=group_pdf, vec_fn=vec_fn: (
+                    (
+                        row[runtime.key_col],
+                        runtime.value_spec.encode(row),
+                        vec_fn(row),
+                    )
+                    for _, row in pdf.iterrows()
+                ),
+                run_id=runtime.run_id,
+                s3_prefix=runtime.s3_prefix,
+                shard_prefix=runtime.shard_prefix,
+                db_path_template=runtime.db_path_template,
+                local_root=runtime.local_root,
+                key_encoder=runtime.key_encoder,
+                batch_size=runtime.batch_size,
+                factory=factory,
+                max_writes_per_second=runtime.max_writes_per_second,
+                max_write_bytes_per_second=runtime.max_write_bytes_per_second,
+                metrics_collector=runtime.metrics_collector,
+                started=runtime.started,
+                retry_config=runtime.shard_retry,
+            )
         results.append(
             {
                 "db_id": attempt_result.db_id,

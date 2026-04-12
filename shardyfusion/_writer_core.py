@@ -6,9 +6,9 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
-from .config import WriteConfig
+from .config import WriteConfig, vector_metric_to_str
 from .errors import (
     ConfigValidationError,
     PublishCurrentError,
@@ -43,6 +43,19 @@ from .type_defs import KeyInput, RetryConfig
 _logger = get_logger(__name__)
 
 _PUBLISH_CURRENT_MAX_RETRIES = 3
+
+
+class _RowLike(Protocol):
+    def __getitem__(self, key: str) -> object: ...
+
+
+@dataclass(slots=True, frozen=True)
+class VectorColumnMapping:
+    """Column-based vector extraction config for distributed writers."""
+
+    vector_col: str
+    id_col: str | None = None
+    payload_cols: Sequence[str] | None = None
 
 
 @dataclass(slots=True)
@@ -161,6 +174,57 @@ def resolve_num_dbs(config: WriteConfig, count_fn: Callable[[], int]) -> int | N
 
     # CEL: will discover after add_db_id_column
     return None
+
+
+def resolve_distributed_vector_fn(
+    *,
+    config: WriteConfig,
+    key_col: str,
+    vector_fn: Callable[[_RowLike], tuple[int | str, Any, dict[str, Any] | None]]
+    | None,
+    vector_columns: VectorColumnMapping | None,
+) -> Callable[[_RowLike], tuple[int | str, Any, dict[str, Any] | None]] | None:
+    """Resolve vector extraction for DataFrame-based writers.
+
+    Matches Python writer validation semantics:
+    - ``vector_fn`` requires ``config.vector_spec``.
+    - ``config.vector_spec`` requires either ``vector_fn`` or vector column mapping.
+    """
+    if vector_fn is not None and config.vector_spec is None:
+        raise ConfigValidationError("vector_fn requires config.vector_spec to be set")
+
+    if config.vector_spec is None:
+        return None
+
+    if vector_fn is not None:
+        return vector_fn
+
+    mapping = vector_columns
+    vector_col = (
+        mapping.vector_col if mapping is not None else config.vector_spec.vector_col
+    )
+    if vector_col is None:
+        raise ConfigValidationError(
+            "config.vector_spec is set but no vector_fn was provided "
+            "and no vector column mapping is available. Either provide vector_fn, "
+            "vector_columns, or set vector_spec.vector_col."
+        )
+
+    id_col = mapping.id_col if mapping is not None else key_col
+    if id_col is None:
+        id_col = key_col
+    payload_cols = tuple(mapping.payload_cols or ()) if mapping is not None else ()
+
+    def _auto_vector_fn(
+        row: _RowLike,
+    ) -> tuple[int | str, Any, dict[str, Any] | None]:
+        raw_id = row[id_col]
+        vec_id: int | str = raw_id if isinstance(raw_id, (int, str)) else str(raw_id)
+        vector = row[vector_col]
+        payload = {col: row[col] for col in payload_cols} if payload_cols else None
+        return (vec_id, vector, payload)
+
+    return _auto_vector_fn
 
 
 def discover_cel_num_dbs(
@@ -287,6 +351,87 @@ def _winner_sort_key(item: ShardAttemptResult) -> tuple[int, int, str]:
     tid = item.writer_info.task_attempt_id
     normalized = tid if tid is not None else 2**63 - 1
     return (item.attempt, normalized, item.db_url or "")
+
+
+def wrap_factory_for_vector(factory: Any, config: WriteConfig) -> Any:
+    """Wrap KV factory for unified KV+vector mode when needed."""
+    from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
+
+    vs = config.vector_spec
+    assert vs is not None
+
+    if getattr(factory, "supports_vector_writes", False) is True:
+        return factory
+    if isinstance(factory, SqliteVecFactory):
+        return factory
+
+    from shardyfusion.composite_adapter import CompositeFactory
+    from shardyfusion.storage import create_s3_client
+
+    credentials = (
+        config.credential_provider.resolve() if config.credential_provider else None
+    )
+    s3_client = create_s3_client(credentials, config.s3_connection_options)
+
+    try:
+        from shardyfusion.vector.adapters.usearch_adapter import USearchWriterFactory
+
+        vector_factory = USearchWriterFactory(s3_client=s3_client)
+    except ImportError as exc:
+        raise ConfigValidationError(
+            "Unified KV+vector mode with SlateDB requires the 'vector' extra "
+            "(usearch). Install with: pip install shardyfusion[vector]"
+        ) from exc
+
+    return CompositeFactory(
+        kv_factory=factory,
+        vector_factory=vector_factory,
+        vector_spec=vs,
+    )
+
+
+def detect_vector_backend(factory: Any) -> str:
+    from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
+
+    if isinstance(factory, SqliteVecFactory):
+        return "sqlite-vec"
+    return "usearch-sidecar"
+
+
+def detect_kv_backend(factory: Any) -> str:
+    from shardyfusion.composite_adapter import CompositeFactory
+
+    actual = factory.kv_factory if isinstance(factory, CompositeFactory) else factory
+    from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
+
+    if isinstance(actual, SqliteVecFactory):
+        return "sqlite-vec"
+    try:
+        from shardyfusion.sqlite_adapter import SqliteFactory
+
+        if isinstance(actual, SqliteFactory):
+            return "sqlite"
+    except ImportError:
+        pass
+    return "slatedb"
+
+
+def inject_vector_manifest_fields(config: WriteConfig, factory: Any) -> None:
+    """Add unified vector metadata to manifest custom fields."""
+    vs = config.vector_spec
+    assert vs is not None
+    vector_meta: dict[str, Any] = {
+        "dim": vs.dim,
+        "metric": vector_metric_to_str(vs.metric),
+        "index_type": vs.index_type,
+        "quantization": vs.quantization,
+        "unified": True,
+        "backend": detect_vector_backend(factory),
+        "kv_backend": detect_kv_backend(factory),
+    }
+    if vs.index_params:
+        vector_meta["index_params"] = vs.index_params
+    config.manifest.custom_manifest_fields["vector"] = vector_meta
 
 
 def publish_to_store(
