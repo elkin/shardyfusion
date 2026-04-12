@@ -340,6 +340,38 @@ class TestSqliteVecIdMapping:
         assert checkpoint_a == checkpoint_b
         assert id_map_a == id_map_b == [(5, "doc_a"), (9, "doc_b"), (10, "doc_c")]
 
+    def test_write_vector_batch_uses_executemany_for_all_staged_tables(
+        self, tmp_path: Path
+    ) -> None:
+        adapter = SqliteVecAdapter(
+            db_url="s3://bucket/shard",
+            local_dir=tmp_path / "shard",
+            vector_spec=MagicMock(dim=4),
+        )
+
+        real_conn = adapter._conn
+        assert real_conn is not None
+        real_conn.close()
+
+        conn_mock = MagicMock()
+        adapter._conn = conn_mock
+
+        ids = np.array([5, "doc_a", 7], dtype=object)
+        vecs = np.random.randn(3, 4).astype(np.float32)
+        payloads: list[dict[str, Any] | None] = [
+            {"kind": "int"},
+            {"kind": "string"},
+            None,
+        ]
+
+        adapter.write_vector_batch(ids, vecs, payloads)
+
+        sql_calls = [call.args[0] for call in conn_mock.executemany.call_args_list]
+        assert any("vec_id_map" in sql for sql in sql_calls)
+        assert any("vec_index" in sql for sql in sql_calls)
+        assert any("vec_payloads" in sql for sql in sql_calls)
+        conn_mock.execute.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Reader (search + KV)
