@@ -240,6 +240,106 @@ class TestSqliteVecIdMapping:
         assert len(rows) == 1
         assert rows[0][0] == 1
 
+    def test_mixed_ids_allocate_deterministic_string_rowids(
+        self, tmp_path: Path
+    ) -> None:
+        shard_dir = tmp_path / "shard"
+        adapter = SqliteVecAdapter(
+            db_url="s3://bucket/shard",
+            local_dir=shard_dir,
+            vector_spec=MagicMock(dim=4),
+        )
+        ids = np.array([10, "doc_a", 2, "doc_b"], dtype=object)
+        vecs = np.random.randn(4, 4).astype(np.float32)
+        adapter.write_vector_batch(ids, vecs)
+        adapter.checkpoint()
+
+        conn = sqlite3.connect(str(shard_dir / "shard.db"))
+        sqlite_vec.load(conn)
+        rows = conn.execute(
+            "SELECT internal_id, original_id FROM vec_id_map ORDER BY internal_id"
+        ).fetchall()
+        conn.close()
+
+        assert rows == [(11, "doc_a"), (12, "doc_b")]
+
+    def test_mixed_ids_payloads_persist_on_assigned_rowids(
+        self, tmp_path: Path
+    ) -> None:
+        shard_dir = tmp_path / "shard"
+        adapter = SqliteVecAdapter(
+            db_url="s3://bucket/shard",
+            local_dir=shard_dir,
+            vector_spec=MagicMock(dim=4),
+        )
+        ids = np.array([5, "doc_a", 7, "doc_b"], dtype=object)
+        vecs = np.random.randn(4, 4).astype(np.float32)
+        payloads: list[dict[str, Any] | None] = [
+            {"kind": "int"},
+            {"kind": "string_a"},
+            None,
+            {"kind": "string_b"},
+        ]
+        adapter.write_vector_batch(ids, vecs, payloads)
+        adapter.checkpoint()
+
+        conn = sqlite3.connect(str(shard_dir / "shard.db"))
+        sqlite_vec.load(conn)
+        id_map = dict(
+            conn.execute("SELECT internal_id, original_id FROM vec_id_map").fetchall()
+        )
+        payload_rows = conn.execute(
+            "SELECT rowid, payload FROM vec_payloads ORDER BY rowid"
+        ).fetchall()
+        conn.close()
+
+        assert id_map == {6: "doc_a", 8: "doc_b"}
+        assert [(rowid, json.loads(payload)) for rowid, payload in payload_rows] == [
+            (5, {"kind": "int"}),
+            (6, {"kind": "string_a"}),
+            (8, {"kind": "string_b"}),
+        ]
+
+    def test_mixed_ids_across_batches_checkpoint_is_reproducible(
+        self, tmp_path: Path
+    ) -> None:
+        def build_checkpoint(shard_name: str) -> tuple[str, list[tuple[int, str]]]:
+            shard_dir = tmp_path / shard_name
+            adapter = SqliteVecAdapter(
+                db_url=f"s3://bucket/{shard_name}",
+                local_dir=shard_dir,
+                vector_spec=MagicMock(dim=4),
+            )
+
+            batch1_ids = np.array([4, "doc_a", 8], dtype=object)
+            batch1_vecs = np.array(
+                [[1.0, 0.0, 0.0, 0.0], [0.9, 0.1, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]],
+                dtype=np.float32,
+            )
+            batch2_ids = np.array(["doc_b", 6, "doc_c"], dtype=object)
+            batch2_vecs = np.array(
+                [[0.8, 0.2, 0.0, 0.0], [0.0, 0.9, 0.1, 0.0], [0.7, 0.3, 0.0, 0.0]],
+                dtype=np.float32,
+            )
+
+            adapter.write_vector_batch(batch1_ids, batch1_vecs)
+            adapter.write_vector_batch(batch2_ids, batch2_vecs)
+            checkpoint = adapter.checkpoint()
+
+            conn = sqlite3.connect(str(shard_dir / "shard.db"))
+            sqlite_vec.load(conn)
+            id_map_rows = conn.execute(
+                "SELECT internal_id, original_id FROM vec_id_map ORDER BY internal_id"
+            ).fetchall()
+            conn.close()
+            return checkpoint, id_map_rows
+
+        checkpoint_a, id_map_a = build_checkpoint("shard_a")
+        checkpoint_b, id_map_b = build_checkpoint("shard_b")
+
+        assert checkpoint_a == checkpoint_b
+        assert id_map_a == id_map_b == [(5, "doc_a"), (9, "doc_b"), (10, "doc_c")]
+
 
 # ---------------------------------------------------------------------------
 # Reader (search + KV)
@@ -320,6 +420,40 @@ class TestSqliteVecShardReader:
 
         assert results[0].id == "doc_a"
         assert results[1].id == "doc_b"
+        reader.close()
+
+    def test_search_with_mixed_ids_unchanged_correctness(self, tmp_path: Path) -> None:
+        shard_dir = tmp_path / "build"
+        adapter = SqliteVecAdapter(
+            db_url="s3://bucket/shard",
+            local_dir=shard_dir,
+            vector_spec=MagicMock(dim=4),
+        )
+        ids = np.array([42, "doc_a", 11], dtype=object)
+        vecs = np.array(
+            [
+                [0.0, 1.0, 0.0, 0.0],  # int id
+                [1.0, 0.0, 0.0, 0.0],  # string id: nearest to query
+                [0.0, 0.0, 1.0, 0.0],  # int id
+            ],
+            dtype=np.float32,
+        )
+        payloads = [{"kind": "int"}, {"kind": "string"}, {"kind": "int2"}]
+        adapter.write_vector_batch(ids, vecs, payloads)
+        adapter.checkpoint()
+        db_bytes = (shard_dir / "shard.db").read_bytes()
+
+        with patch("shardyfusion.sqlite_vec_adapter.get_bytes", return_value=db_bytes):
+            reader = SqliteVecShardReader(
+                db_url="s3://bucket/shard",
+                local_dir=tmp_path / "read",
+            )
+
+        query = np.array([0.95, 0.05, 0.0, 0.0], dtype=np.float32)
+        results = reader.search(query, top_k=3)
+
+        assert [r.id for r in results] == ["doc_a", 42, 11]
+        assert results[0].payload == {"kind": "string"}
         reader.close()
 
     def test_search_after_close_raises(self, tmp_path: Path) -> None:

@@ -215,30 +215,49 @@ class SqliteVecAdapter:
         if self._checkpointed:
             raise SqliteVecAdapterError("Cannot write after checkpoint")
 
-        all_int = all(isinstance(ids[i], (int, np.integer)) for i in range(len(ids)))
+        reserved_int_ids = {
+            int(ids[i])
+            for i in range(len(ids))
+            if isinstance(ids[i], (int, np.integer))
+        }
+        next_row_id = self._next_vec_id
+        vec_rows: list[tuple[int, bytes]] = []
+        payload_rows: list[tuple[int, str]] = []
+        id_map_rows: list[tuple[int, str]] = []
+
         for i in range(len(ids)):
-            if all_int:
-                row_id = int(ids[i])
-                # Track max for future string-ID batches
-                if row_id + 1 > self._next_vec_id:
-                    self._next_vec_id = row_id + 1
+            raw_id = ids[i]
+            if isinstance(raw_id, (int, np.integer)):
+                row_id = int(raw_id)
+                if row_id + 1 > next_row_id:
+                    next_row_id = row_id + 1
             else:
-                row_id = self._next_vec_id
-                self._next_vec_id += 1
-                self._conn.execute(
-                    "INSERT INTO vec_id_map (internal_id, original_id) VALUES (?, ?)",
-                    (row_id, str(ids[i])),
-                )
-            vec_bytes = vectors[i].astype(np.float32).tobytes()
-            self._conn.execute(
-                "INSERT INTO vec_index (rowid, embedding) VALUES (?, ?)",
-                (row_id, vec_bytes),
-            )
+                while next_row_id in reserved_int_ids:
+                    next_row_id += 1
+                row_id = next_row_id
+                next_row_id += 1
+                id_map_rows.append((row_id, str(raw_id)))
+
+            vec_rows.append((row_id, vectors[i].astype(np.float32).tobytes()))
             if payloads is not None and payloads[i] is not None:
-                self._conn.execute(
-                    "INSERT OR REPLACE INTO vec_payloads (rowid, payload) VALUES (?, ?)",
-                    (row_id, json.dumps(payloads[i], default=str)),
-                )
+                payload_rows.append((row_id, json.dumps(payloads[i], default=str)))
+
+        if id_map_rows:
+            self._conn.executemany(
+                "INSERT INTO vec_id_map (internal_id, original_id) VALUES (?, ?)",
+                id_map_rows,
+            )
+        self._conn.executemany(
+            "INSERT INTO vec_index (rowid, embedding) VALUES (?, ?)",
+            vec_rows,
+        )
+        if payload_rows:
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO vec_payloads (rowid, payload) VALUES (?, ?)",
+                payload_rows,
+            )
+
+        self._next_vec_id = next_row_id
 
     # -- Lifecycle --
 

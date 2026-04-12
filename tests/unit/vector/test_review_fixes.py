@@ -9,7 +9,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -241,7 +241,11 @@ class TestUSearchStringIds:
         assert rows[1] == (1, "def")
         assert rows[2] == (2, "ghi")
 
-        writer.close()
+        with patch(
+            "shardyfusion.vector.adapters.usearch_adapter.put_bytes",
+            return_value=None,
+        ):
+            writer.close()
 
     def test_int_ids_no_id_map_rows(self, tmp_path: Path) -> None:
         """Writer does NOT create id_map rows for integer IDs."""
@@ -268,7 +272,11 @@ class TestUSearchStringIds:
         conn.close()
         assert rows[0] == 0
 
-        writer.close()
+        with patch(
+            "shardyfusion.vector.adapters.usearch_adapter.put_bytes",
+            return_value=None,
+        ):
+            writer.close()
 
 
 # ---------------------------------------------------------------------------

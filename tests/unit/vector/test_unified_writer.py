@@ -116,6 +116,18 @@ class TestWrapFactoryForVector:
         assert isinstance(result, CompositeFactory)
         assert result.kv_factory is mock_factory
 
+    def test_custom_vector_capable_factory_passthrough(self) -> None:
+        from shardyfusion.writer.python.writer import _wrap_factory_for_vector
+
+        vs = VectorSpec(dim=8)
+        config = _cel_config(vector_spec=vs)
+        mock_factory = MagicMock()
+        mock_factory.supports_vector_writes = True
+
+        result = _wrap_factory_for_vector(mock_factory, config)
+
+        assert result is mock_factory
+
 
 # ---------------------------------------------------------------------------
 # _detect_vector_backend
