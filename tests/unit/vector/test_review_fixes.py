@@ -14,7 +14,11 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from shardyfusion.errors import ConfigValidationError, ManifestParseError, VectorIndexError
+from shardyfusion.errors import (
+    ConfigValidationError,
+    ManifestParseError,
+    VectorIndexError,
+)
 from shardyfusion.manifest import (
     ManifestRef,
     ManifestShardingSpec,
