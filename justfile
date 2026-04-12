@@ -174,13 +174,6 @@ quality p="2": _check-venv _check-java
 unit n="4" p="2": _check-venv _check-java
     PYTEST_WORKERS={{n}} uv run tox p -m unit -p {{p}}
 
-# Alias for unit tests (common expectation: `just test`)
-[group('test')]
-[arg('n', short='n', help='pytest-xdist workers')]
-[arg('p', short='p', help='tox parallel envs')]
-test n="4" p="2":
-    just unit -n {{n}} -p {{p}}
-
 # Integration tests
 [group('test')]
 [arg('p', short='p', help='tox parallel envs')]
