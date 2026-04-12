@@ -28,7 +28,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Backend extras — storage engine deps only
-slatedb = ["slatedb", "boto3>=1.28"]
+slatedb = ["slatedb<0.12", "boto3>=1.28"]
 sqlite = ["boto3>=1.28"]
 sqlite-range = ["apsw>=3.44", "boto3>=1.28"]
 
@@ -72,6 +72,13 @@ cli = ["shardyfusion[read]", "click>=8.0"]
 cel = ["cel-expr-python>=0.1"]
 metrics-prometheus = ["prometheus-client>=0.20"]
 metrics-otel = ["opentelemetry-api>=1.28"]
+vector-usearch = ["usearch>=2.0", "numpy>=1.24", "boto3>=1.28"]
+vector = ["shardyfusion[vector-usearch]"]
+vector-sqlite = ["sqlite-vec>=0.1", "numpy>=1.24", "boto3>=1.28"]
+read-vector = ["shardyfusion[vector]"]
+writer-python-vector = ["shardyfusion[vector]"]
+unified-vector = ["shardyfusion[vector]", "shardyfusion[cel]"]
+unified-vector-sqlite = ["shardyfusion[vector-sqlite]", "shardyfusion[cel]"]
 all = [
   "shardyfusion[read-async]",
   "shardyfusion[read-sqlite]",
@@ -124,7 +131,7 @@ shardy = "shardyfusion.cli.app:main"
 
 [dependency-groups]
 backend-slatedb = [
-  "slatedb",
+  "slatedb<0.12",
   "boto3>=1.28",
 ]
 backend-sqlite = [
@@ -270,4 +277,6 @@ markers = [
   "ray: tests requiring writer-ray extras",
   "cel: tests requiring cel extra (cel-expr-python)",
   "e2e: end-to-end tests requiring a container engine (podman/docker)",
+  "vector: tests requiring vector extras (usearch, numpy)",
+  "vector_sqlite: tests requiring vector-sqlite extra (sqlite-vec)",
 ]

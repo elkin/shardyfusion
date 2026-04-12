@@ -18,7 +18,7 @@ from shardyfusion._writer_core import (
     select_winners,
     update_min_max,
 )
-from shardyfusion.config import WriteConfig
+from shardyfusion.config import WriteConfig, vector_metric_to_str
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.logging import get_logger, log_event
 from shardyfusion.manifest import BuildResult, WriterInfo
@@ -54,6 +54,12 @@ class _SingleProcessState:
     checkpoint_ids: dict[int, str | None] = field(default_factory=dict)
     total_batched_items: int = 0
     total_batched_bytes: int = 0
+    # Vector batches (unified KV+vector mode)
+    vector_ids: dict[int, list[int | str]] = field(default_factory=dict)
+    vector_vecs: dict[int, list[Any]] = field(default_factory=dict)
+    vector_payloads: dict[int, list[dict[str, Any] | None]] = field(
+        default_factory=dict
+    )
 
 
 def write_sharded(
@@ -63,6 +69,8 @@ def write_sharded(
     key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
     columns_fn: Callable[[T], dict[str, Any]] | None = None,
+    vector_fn: Callable[[T], tuple[int | str, Any, dict[str, Any] | None]]
+    | None = None,
     parallel: bool = False,
     max_queue_size: int = 100,
     max_parallel_shared_memory_bytes: int | None = (
@@ -85,6 +93,10 @@ def write_sharded(
             HASH and CEL sharding strategies are supported.
         key_fn: Callable that extracts the routing key from each record.
         value_fn: Callable that serializes each record to value bytes.
+        vector_fn: Optional callable that extracts ``(id, vector, payload)``
+            from each record for unified KV + vector mode.  Requires
+            ``config.vector_spec`` to be set.  The vector should be an
+            array-like of floats with shape ``(dim,)``.
         parallel: If True, use one subprocess per shard (``multiprocessing.spawn``).
             If False (default), all shard adapters are open simultaneously in
             a single process.
@@ -119,6 +131,38 @@ def write_sharded(
     """
 
     from shardyfusion.logging import LogContext
+
+    if vector_fn is not None and config.vector_spec is None:
+        raise ConfigValidationError("vector_fn requires config.vector_spec to be set")
+    if config.vector_spec is not None and vector_fn is None:
+        if config.vector_spec.vector_col is None:
+            raise ConfigValidationError(
+                "config.vector_spec is set but no vector_fn was provided "
+                "and vector_spec.vector_col is None. Either provide vector_fn "
+                "or set vector_spec.vector_col for auto-extraction via columns_fn."
+            )
+        if columns_fn is None:
+            raise ConfigValidationError(
+                "config.vector_spec.vector_col is set but columns_fn is None. "
+                "Provide columns_fn so vectors can be extracted from "
+                f"the {config.vector_spec.vector_col!r} column."
+            )
+        # Auto-build vector_fn from vector_col + columns_fn
+        _vector_col = config.vector_spec.vector_col
+        _columns_fn = columns_fn
+        _key_fn = key_fn
+
+        def _auto_vector_fn(
+            record: T,
+        ) -> tuple[int | str, Any, dict[str, Any] | None]:
+            cols = _columns_fn(record)  # type: ignore[misc]
+            vec = cols[_vector_col]  # type: ignore[index]
+            key = _key_fn(record)
+            # Vector IDs must be int|str; convert bytes keys to hex string
+            vec_id: int | str = key if isinstance(key, (int, str)) else key.hex()
+            return (vec_id, vec, None)
+
+        vector_fn = _auto_vector_fn
 
     _validate_parallel_shared_memory_limit(
         max_parallel_shared_memory_bytes,
@@ -172,6 +216,16 @@ def write_sharded(
             credential_provider=config.credential_provider
         )
 
+        # Wrap factory for unified KV + vector mode
+        if config.vector_spec is not None:
+            if parallel:
+                raise ConfigValidationError(
+                    "Parallel mode is not supported with vector_spec. "
+                    "The parallel pipeline does not write vector batches. "
+                    "Use single-process mode (parallel=False) instead."
+                )
+            factory = _wrap_factory_for_vector(factory, config)
+
         if parallel:
             if num_dbs is None:
                 raise ConfigValidationError(
@@ -205,6 +259,7 @@ def write_sharded(
                 key_fn=key_fn,
                 value_fn=value_fn,
                 columns_fn=columns_fn,
+                vector_fn=vector_fn,
                 max_writes_per_second=max_writes_per_second,
                 max_write_bytes_per_second=max_write_bytes_per_second,
                 max_total_batched_items=max_total_batched_items,
@@ -233,6 +288,10 @@ def write_sharded(
         winners, num_attempts, all_attempt_urls = select_winners(
             attempts, num_dbs=num_dbs
         )
+
+        # Inject vector metadata into manifest custom fields
+        if config.vector_spec is not None:
+            _inject_vector_manifest_fields(config, factory)
 
         manifest_started = time.perf_counter()
         manifest_ref = publish_to_store(
@@ -366,6 +425,9 @@ def _ensure_single_process_shard(state: _SingleProcessState, *, db_id: int) -> N
     state.row_counts[db_id] = 0
     state.min_keys[db_id] = None
     state.max_keys[db_id] = None
+    state.vector_ids[db_id] = []
+    state.vector_vecs[db_id] = []
+    state.vector_payloads[db_id] = []
 
 
 def _ensure_single_process_adapter(
@@ -408,7 +470,20 @@ def _flush_single_process_shard(
         attempt=attempt,
         factory=factory,
     )
-    state.adapters[db_id].write_batch(state.batches[db_id])
+    adapter = state.adapters[db_id]
+    adapter.write_batch(state.batches[db_id])
+
+    # Flush vector batch if present (unified KV+vector mode)
+    if state.vector_ids[db_id] and hasattr(adapter, "write_vector_batch"):
+        import numpy as np  # pyright: ignore[reportMissingImports]
+
+        ids_arr = np.array(state.vector_ids[db_id])
+        vecs_arr = np.array(state.vector_vecs[db_id], dtype=np.float32)
+        adapter.write_vector_batch(ids_arr, vecs_arr, state.vector_payloads[db_id])
+        state.vector_ids[db_id].clear()
+        state.vector_vecs[db_id].clear()
+        state.vector_payloads[db_id].clear()
+
     state.total_batched_items -= len(state.batches[db_id])
     state.total_batched_bytes -= state.batch_byte_sizes[db_id]
     state.batches[db_id].clear()
@@ -629,6 +704,8 @@ def _write_single_process(
     key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
     columns_fn: Callable[[T], dict[str, Any]] | None = None,
+    vector_fn: Callable[[T], tuple[int | str, Any, dict[str, Any] | None]]
+    | None = None,
     max_writes_per_second: float | None,
     max_write_bytes_per_second: float | None,
     max_total_batched_items: int | None,
@@ -684,6 +761,12 @@ def _write_single_process(
                 key_bytes=key_bytes,
                 value_bytes=value_bytes,
             )
+            # Buffer vector data if unified mode
+            if vector_fn is not None:
+                vec_id, vec_data, vec_payload = vector_fn(record)
+                state.vector_ids[db_id].append(vec_id)
+                state.vector_vecs[db_id].append(vec_data)
+                state.vector_payloads[db_id].append(vec_payload)
             _maybe_flush_single_process_batch(
                 state,
                 db_id=db_id,
@@ -731,3 +814,113 @@ def _write_single_process(
     return _build_single_process_results(
         state, attempt=attempt, num_dbs=num_dbs
     ), num_dbs
+
+
+# ---------------------------------------------------------------------------
+# Unified KV + vector helpers
+# ---------------------------------------------------------------------------
+
+
+def _wrap_factory_for_vector(
+    factory: DbAdapterFactory, config: WriteConfig
+) -> DbAdapterFactory:
+    """Wrap a KV factory to produce composite adapters when vector_spec is set.
+
+    If the factory is already a ``SqliteVecFactory``, it handles both KV and
+    vector natively — return it as-is.  Otherwise, wrap the KV factory with
+    ``CompositeFactory`` using ``USearchWriterFactory`` for the vector sidecar.
+    """
+    from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
+
+    vs = config.vector_spec
+    assert vs is not None
+
+    # Some custom factories already return adapters that implement
+    # ``write_vector_batch`` natively. Allow them to opt out of sidecar
+    # wrapping via an explicit marker attribute.
+    if getattr(factory, "supports_vector_writes", False) is True:
+        return factory
+
+    # SqliteVecFactory already produces unified KV+vector adapters
+    if isinstance(factory, SqliteVecFactory):
+        return factory
+
+    from shardyfusion.composite_adapter import CompositeFactory
+
+    # Build S3 client for the vector writer factory
+    from shardyfusion.storage import create_s3_client
+
+    credentials = (
+        config.credential_provider.resolve() if config.credential_provider else None
+    )
+    s3_client = create_s3_client(credentials, config.s3_connection_options)
+
+    # Lazy-import the default vector writer factory
+    try:
+        from shardyfusion.vector.adapters.usearch_adapter import USearchWriterFactory
+
+        vector_factory = USearchWriterFactory(s3_client=s3_client)
+    except ImportError as exc:
+        raise ConfigValidationError(
+            "Unified KV+vector mode with SlateDB requires the 'vector' extra "
+            "(usearch). Install with: pip install shardyfusion[vector]"
+        ) from exc
+
+    return CompositeFactory(
+        kv_factory=factory,
+        vector_factory=vector_factory,
+        vector_spec=vs,
+    )
+
+
+def _detect_vector_backend(factory: DbAdapterFactory) -> str:
+    """Detect the vector backend from the adapter factory type."""
+    from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
+
+    if isinstance(factory, SqliteVecFactory):
+        return "sqlite-vec"
+    return "usearch-sidecar"
+
+
+def _detect_kv_backend(factory: DbAdapterFactory) -> str:
+    """Detect the KV backend from the adapter factory type."""
+    from shardyfusion.composite_adapter import CompositeFactory
+
+    actual = factory
+    if isinstance(factory, CompositeFactory):
+        actual = factory.kv_factory
+
+    from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
+
+    if isinstance(actual, SqliteVecFactory):
+        return "sqlite-vec"
+
+    try:
+        from shardyfusion.sqlite_adapter import SqliteFactory
+
+        if isinstance(actual, SqliteFactory):
+            return "sqlite"
+    except ImportError:
+        pass
+
+    return "slatedb"
+
+
+def _inject_vector_manifest_fields(
+    config: WriteConfig, factory: DbAdapterFactory
+) -> None:
+    """Add vector metadata to manifest custom fields for reader discovery."""
+    vs = config.vector_spec
+    assert vs is not None
+    vector_meta: dict[str, Any] = {
+        "dim": vs.dim,
+        "metric": vector_metric_to_str(vs.metric),
+        "index_type": vs.index_type,
+        "quantization": vs.quantization,
+        "unified": True,
+        "backend": _detect_vector_backend(factory),
+        "kv_backend": _detect_kv_backend(factory),
+    }
+    if vs.index_params:
+        vector_meta["index_params"] = vs.index_params
+    config.manifest.custom_manifest_fields["vector"] = vector_meta

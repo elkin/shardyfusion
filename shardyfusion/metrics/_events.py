@@ -39,3 +39,15 @@ class MetricEvent(str, Enum):
     S3_RETRY_EXHAUSTED = "s3.retry_exhausted"
     RATE_LIMITER_THROTTLED = "rate_limiter.throttled"
     RATE_LIMITER_DENIED = "rate_limiter.denied"
+
+    # Vector writer lifecycle
+    VECTOR_WRITE_STARTED = "vector.write.started"
+    VECTOR_SHARD_WRITE_COMPLETED = "vector.write.shard.completed"
+    VECTOR_WRITE_COMPLETED = "vector.write.completed"
+
+    # Vector reader lifecycle
+    VECTOR_READER_INITIALIZED = "vector.reader.initialized"
+    VECTOR_SEARCH = "vector.reader.search"
+    VECTOR_SHARD_SEARCH = "vector.reader.shard_search"
+    VECTOR_READER_REFRESHED = "vector.reader.refreshed"
+    VECTOR_READER_CLOSED = "vector.reader.closed"

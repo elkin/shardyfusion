@@ -23,14 +23,27 @@ class LocalS3Service(TypedDict):
 
 @pytest.fixture(scope="session")
 def spark() -> Generator[SparkSession, None, None]:
+    import pandas as pd
     from pyspark.sql import SparkSession
 
     session = (
         SparkSession.builder.master("local[2]")
         .appName("shardyfusion_tests")
         .config("spark.ui.enabled", "false")
+        .config("spark.sql.execution.arrow.pyspark.enabled", "false")
         .getOrCreate()
     )
+    try:
+        # Spark 4 mapInPandas paths require Arrow runtime support. Some
+        # environments ship incompatible Arrow/Netty binaries; skip Spark
+        # suites in that case instead of failing unrelated tests.
+        session.range(1).mapInPandas(
+            lambda batches: (pd.DataFrame({"id": b["id"]}) for b in batches),
+            "id long",
+        ).count()
+    except Exception as exc:
+        session.stop()
+        pytest.skip(f"Spark Arrow runtime unavailable in this environment: {exc}")
     yield session
     session.stop()
 

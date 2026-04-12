@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
+from shardyfusion._slatedb_symbols import get_slatedb_reader_class
 from shardyfusion.credentials import (
     CredentialProvider,
     resolve_env_file,
@@ -85,14 +86,14 @@ class SlateDbReaderFactory:
         self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
     ) -> ShardReader:
         try:
-            from slatedb import SlateDBReader
-        except ImportError as exc:  # pragma: no cover - runtime dependent
+            reader_cls = get_slatedb_reader_class()
+        except DbAdapterError as exc:  # pragma: no cover - runtime dependent
             raise DbAdapterError(
                 "slatedb package is required for reading shards"
             ) from exc
 
         with resolve_env_file(self.env_file, self.credential_provider) as env_path:
-            return SlateDBReader(
+            return reader_cls(
                 str(local_dir),
                 url=db_url,
                 env_file=env_path,

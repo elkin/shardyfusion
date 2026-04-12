@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, TypeAlias
 from urllib.parse import urlparse
 
 from .credentials import CredentialProvider
@@ -45,6 +45,74 @@ class ManifestOptions:
     custom_manifest_fields: JsonObject = field(default_factory=dict)
     credential_provider: CredentialProvider | None = None
     s3_connection_options: S3ConnectionOptions | None = None
+
+
+_VALID_VECTOR_METRICS = frozenset({"cosine", "l2", "dot_product"})
+
+VectorMetricLiteral: TypeAlias = Literal["cosine", "l2", "dot_product"]
+if TYPE_CHECKING:
+    from .vector.types import DistanceMetric
+
+VectorMetric: TypeAlias = "DistanceMetric | VectorMetricLiteral"
+
+
+def vector_metric_to_str(metric: VectorMetric | str) -> VectorMetricLiteral:
+    """Normalize a vector metric to its stable manifest string value."""
+    metric_str = getattr(metric, "value", metric)
+    if not isinstance(metric_str, str) or metric_str not in _VALID_VECTOR_METRICS:
+        raise ConfigValidationError(
+            f"vector_spec.metric must be one of {sorted(_VALID_VECTOR_METRICS)}, "
+            f"got {metric!r}"
+        )
+    return metric_str  # type: ignore[return-value]
+
+
+def _coerce_vector_metric(metric: VectorMetric | str) -> VectorMetric:
+    """Convert metric strings to ``DistanceMetric`` when available.
+
+    Falls back to constrained string literals when vector dependencies are
+    unavailable (lazy import behavior).
+    """
+    metric_str = vector_metric_to_str(metric)
+    try:
+        from .vector.types import DistanceMetric
+
+        return DistanceMetric(metric_str)
+    except ImportError:
+        return metric_str
+
+
+@dataclass(slots=True)
+class VectorSpec:
+    """Specifies how to extract and index vectors alongside KV data.
+
+    Enables unified KV + vector search mode when set on ``WriteConfig``.
+    Uses string literals for ``metric`` to avoid importing from the vector
+    module (which has heavier dependencies).  Adapters convert to
+    ``DistanceMetric`` internally.
+
+    Args:
+        dim: Dimensionality of the embedding vectors.
+        vector_col: Column name containing the vector in the routing context
+            dict (used when ``vector_fn`` is not provided to the writer).
+        metric: Distance metric — ``"cosine"``, ``"l2"``, or
+            ``"dot_product"``.
+        index_type: Index algorithm (default ``"hnsw"``).
+        index_params: Algorithm-specific parameters (e.g. ``M``,
+            ``ef_construction``).
+        quantization: Optional quantization — ``"fp16"``, ``"i8"``, or
+            ``None`` (full precision).
+    """
+
+    dim: int
+    vector_col: str | None = None
+    metric: VectorMetric = "cosine"
+    index_type: str = "hnsw"
+    index_params: dict[str, object] = field(default_factory=dict)
+    quantization: str | None = None
+
+    def __post_init__(self) -> None:
+        self.metric = _coerce_vector_metric(self.metric)
 
 
 @dataclass(slots=True)
@@ -102,6 +170,8 @@ class WriteConfig:
     credential_provider: CredentialProvider | None = None
     s3_connection_options: S3ConnectionOptions | None = None
 
+    vector_spec: VectorSpec | None = None
+
     def __post_init__(self) -> None:
         if not isinstance(self.sharding, ShardingSpec):
             raise ConfigValidationError("sharding must be ShardingSpec")
@@ -154,6 +224,19 @@ class WriteConfig:
             raise ConfigValidationError(
                 "output.db_path_template must support format(db_id=...)"
             ) from exc
+
+        if self.vector_spec is not None:
+            vs = self.vector_spec
+            if self.sharding.strategy != ShardingStrategy.CEL:
+                raise ConfigValidationError(
+                    "vector_spec requires CEL sharding strategy "
+                    "(unified KV+vector mode is CEL-only)"
+                )
+            if vs.dim <= 0:
+                raise ConfigValidationError(
+                    f"vector_spec.dim must be > 0, got {vs.dim}"
+                )
+            vs.metric = _coerce_vector_metric(vs.metric)
 
 
 # ---------------------------------------------------------------------------
