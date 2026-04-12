@@ -176,7 +176,6 @@ class USearchWriter:
     def close(self) -> None:
         if self._closed:
             return
-        self._closed = True
         self.flush()
         self._payload_conn.close()
 
@@ -201,6 +200,8 @@ class USearchWriter:
             raise VectorIndexError(
                 f"Failed to upload index/payloads to S3: {exc}"
             ) from exc
+
+        self._closed = True
 
         log_event(
             "usearch_shard_uploaded",

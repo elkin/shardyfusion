@@ -9,12 +9,16 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
-from shardyfusion.errors import ConfigValidationError, ManifestParseError
+from shardyfusion.errors import (
+    ConfigValidationError,
+    ManifestParseError,
+    VectorIndexError,
+)
 from shardyfusion.manifest import (
     ManifestRef,
     ManifestShardingSpec,
@@ -241,7 +245,11 @@ class TestUSearchStringIds:
         assert rows[1] == (1, "def")
         assert rows[2] == (2, "ghi")
 
-        writer.close()
+        with patch(
+            "shardyfusion.vector.adapters.usearch_adapter.put_bytes",
+            return_value=None,
+        ):
+            writer.close()
 
     def test_int_ids_no_id_map_rows(self, tmp_path: Path) -> None:
         """Writer does NOT create id_map rows for integer IDs."""
@@ -268,7 +276,62 @@ class TestUSearchStringIds:
         conn.close()
         assert rows[0] == 0
 
-        writer.close()
+        with patch(
+            "shardyfusion.vector.adapters.usearch_adapter.put_bytes",
+            return_value=None,
+        ):
+            writer.close()
+
+    def test_close_marks_writer_closed_after_successful_upload(
+        self, tmp_path: Path
+    ) -> None:
+        from shardyfusion.vector.adapters.usearch_adapter import USearchWriter
+        from shardyfusion.vector.types import DistanceMetric
+
+        writer = USearchWriter(
+            db_url="s3://b/test",
+            local_dir=tmp_path,
+            dim=4,
+            metric=DistanceMetric.COSINE,
+        )
+        writer.add_batch(
+            np.array([1], dtype=np.int64),
+            np.random.default_rng(7).standard_normal((1, 4)).astype(np.float32),
+        )
+
+        with patch(
+            "shardyfusion.vector.adapters.usearch_adapter.put_bytes",
+            return_value=None,
+        ):
+            writer.close()
+
+        assert writer._closed is True
+
+    def test_close_upload_failure_does_not_mark_writer_closed(
+        self, tmp_path: Path
+    ) -> None:
+        from shardyfusion.vector.adapters.usearch_adapter import USearchWriter
+        from shardyfusion.vector.types import DistanceMetric
+
+        writer = USearchWriter(
+            db_url="s3://b/test",
+            local_dir=tmp_path,
+            dim=4,
+            metric=DistanceMetric.COSINE,
+        )
+        writer.add_batch(
+            np.array([1], dtype=np.int64),
+            np.random.default_rng(9).standard_normal((1, 4)).astype(np.float32),
+        )
+
+        with patch(
+            "shardyfusion.vector.adapters.usearch_adapter.put_bytes",
+            side_effect=RuntimeError("upload failed"),
+        ):
+            with pytest.raises(VectorIndexError, match="Failed to upload"):
+                writer.close()
+
+        assert writer._closed is False
 
 
 # ---------------------------------------------------------------------------

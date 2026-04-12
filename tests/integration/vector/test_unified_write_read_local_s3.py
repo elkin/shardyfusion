@@ -92,6 +92,8 @@ class FakeUnifiedAdapter:
 class FakeUnifiedFactory:
     """Factory for FakeUnifiedAdapter — satisfies DbAdapterFactory protocol."""
 
+    supports_vector_writes = True
+
     def __call__(self, *, db_url: str, local_dir: Path) -> FakeUnifiedAdapter:
         local_dir.mkdir(parents=True, exist_ok=True)
         return FakeUnifiedAdapter(db_url=db_url, local_dir=local_dir)

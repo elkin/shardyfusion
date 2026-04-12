@@ -27,6 +27,16 @@ def get_slatedb_reader_class() -> Any:
     return _get_symbol(module, "SlateDBReader")
 
 
+def get_slatedb_writer_class() -> Any:
+    module = _import_slatedb()
+    return _get_symbol(module, "SlateDB")
+
+
+def get_slatedb_write_batch_class() -> Any:
+    module = _import_slatedb()
+    return _get_symbol(module, "WriteBatch")
+
+
 def get_slatedb_writer_symbols() -> tuple[Any, Any]:
     module = _import_slatedb()
     return _get_symbol(module, "SlateDB"), _get_symbol(module, "WriteBatch")

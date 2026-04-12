@@ -835,6 +835,12 @@ def _wrap_factory_for_vector(
     vs = config.vector_spec
     assert vs is not None
 
+    # Some custom factories already return adapters that implement
+    # ``write_vector_batch`` natively. Allow them to opt out of sidecar
+    # wrapping via an explicit marker attribute.
+    if getattr(factory, "supports_vector_writes", False) is True:
+        return factory
+
     # SqliteVecFactory already produces unified KV+vector adapters
     if isinstance(factory, SqliteVecFactory):
         return factory
