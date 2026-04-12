@@ -209,7 +209,13 @@ class SqliteVecAdapter:
         vectors: np.ndarray,
         payloads: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Write vectors to the vec_index table."""
+        """Write vectors using batched inserts across vector tables.
+
+        The batch is preprocessed first so we can:
+        - deterministically allocate internal row IDs for mixed int/string IDs,
+        - stage rows for ``vec_index``, ``vec_payloads``, and ``vec_id_map``,
+        - persist each table with ``executemany`` (no per-row execute calls).
+        """
         if self._conn is None:
             raise SqliteVecAdapterError("Adapter already closed")
         if self._checkpointed:
@@ -242,6 +248,7 @@ class SqliteVecAdapter:
             if payloads is not None and payloads[i] is not None:
                 payload_rows.append((row_id, json.dumps(payloads[i], default=str)))
 
+        # Persist staged rows in batches for write throughput.
         if id_map_rows:
             self._conn.executemany(
                 "INSERT INTO vec_id_map (internal_id, original_id) VALUES (?, ?)",
