@@ -56,6 +56,20 @@ class _FakeAdapter:
         pass
 
 
+class _FakeVectorAdapter(_FakeAdapter):
+    def __init__(self, checkpoint_id: str | None = None) -> None:
+        super().__init__(checkpoint_id=checkpoint_id)
+        self.vector_calls: list[tuple[object, object, list[dict[str, object] | None]]] = []
+
+    def write_vector_batch(
+        self,
+        ids: object,
+        vectors: object,
+        payloads: list[dict[str, object] | None] | None = None,
+    ) -> None:
+        self.vector_calls.append((ids, vectors, list(payloads or [])))
+
+
 def _make_factory(adapter: _FakeAdapter) -> DbAdapterFactory:
     def factory(
         *,
@@ -234,6 +248,21 @@ def test_rate_limited_partition_write(tmp_path) -> None:
     assert result.row_count == 5
     total_pairs = sum(len(call) for call in adapter.write_calls)
     assert total_pairs == 5
+
+
+def test_vector_partition_uses_distributed_shard_writer(tmp_path) -> None:
+    adapter = _FakeVectorAdapter()
+    runtime = _make_runtime(tmp_path, adapter=adapter, batch_size=2)
+    runtime = replace(
+        runtime,
+        vector_fn=lambda row: (int(row["key"]), [0.1, 0.2], {"kind": "spark"}),
+    )
+
+    result = _run(0, _rows(1, 2, 3), runtime)
+
+    assert result.row_count == 3
+    assert len(adapter.write_calls) == 2
+    assert len(adapter.vector_calls) == 2
 
 
 # ---------------------------------------------------------------------------

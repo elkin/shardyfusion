@@ -24,6 +24,7 @@ from shardyfusion.metrics import MetricEvent
 from shardyfusion.run_registry import InMemoryRunRegistry
 from shardyfusion.serde import ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import (
+    DB_ID_COL,
     KeyEncoding,
     ShardingSpec,
 )
@@ -269,6 +270,61 @@ def test_batch_flushing() -> None:
     total_pairs = sum(len(call) for call in adapter.write_calls)
     assert total_pairs == 7
     assert len(adapter.write_calls) >= 3  # at least 2 full + 1 final
+
+
+def test_write_partition_vector_fn_uses_distributed_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from shardyfusion.writer.dask import writer as dask_writer
+
+    captured_rows: list[tuple[object, bytes, tuple[int | str, object, dict[str, object] | None]]] = []
+
+    def _fake_distributed(*, db_id: int, rows_fn, **kwargs):  # type: ignore[no-untyped-def]
+        _ = kwargs
+        captured_rows.extend(list(rows_fn()))
+        return results_pdf_to_attempts(
+            pd.DataFrame(
+                [
+                    {
+                        "db_id": db_id,
+                        "db_url": f"s3://bucket/prefix/db={db_id:05d}/attempt=00",
+                        "attempt": 0,
+                        "row_count": len(captured_rows),
+                        "min_key": 0,
+                        "max_key": 0,
+                        "checkpoint_id": "ckpt",
+                        "writer_info": WriterInfo(),
+                        "all_attempt_urls": (),
+                    }
+                ]
+            )
+        )[0]
+
+    monkeypatch.setattr(dask_writer, "write_shard_with_retry_distributed", _fake_distributed)
+
+    runtime = dask_writer._PartitionWriteRuntime(
+        run_id="run-test",
+        s3_prefix="s3://bucket/prefix",
+        shard_prefix="shards",
+        db_path_template="db={db_id:05d}",
+        local_root="/tmp/shardyfusion",
+        key_col="id",
+        key_encoding=KeyEncoding.U64BE,
+        key_encoder=make_key_encoder(KeyEncoding.U64BE),
+        value_spec=ValueSpec.callable_encoder(lambda row: f"v{row['id']}".encode()),
+        batch_size=2,
+        adapter_factory=_TrackingFactory(),  # type: ignore[arg-type]
+        credential_provider=None,
+        max_writes_per_second=None,
+        vector_fn=lambda row: (int(row["id"]), [0.1, 0.2], {"src": "dask"}),
+    )
+    pdf = pd.DataFrame({DB_ID_COL: [0, 0], "id": [1, 2]})
+
+    out = dask_writer._write_partition(pdf, runtime)
+
+    assert len(out) == 1
+    assert captured_rows[0][0] == 1
+    assert captured_rows[0][2][0] == 1
 
 
 def test_min_max_key_tracking() -> None:
