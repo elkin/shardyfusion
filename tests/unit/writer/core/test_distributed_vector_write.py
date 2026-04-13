@@ -235,6 +235,7 @@ def test_write_shard_with_retry_distributed_retries_and_tracks_attempt_urls(
             call_count += 1
             adapter = _VectorAdapter()
             if call_count == 1:
+
                 def _fail_write_batch(_batch: list[tuple[bytes, bytes]]) -> None:
                     raise OSError("transient")
 
