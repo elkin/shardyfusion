@@ -126,3 +126,165 @@ class TestS3VfsError:
     def test_not_retryable(self) -> None:
         err = S3VfsError("test")
         assert err.retryable is False
+
+
+# ---------------------------------------------------------------------------
+# create_apsw_vfs — mocked apsw
+# ---------------------------------------------------------------------------
+
+
+class TestCreateApswVfs:
+    """Test create_apsw_vfs by mocking the apsw module."""
+
+    def _make_mock_apsw(self) -> MagicMock:
+        """Create a mock apsw module with VFS and VFSFile base classes."""
+        mock_apsw = MagicMock()
+
+        class _MockVFS:
+            def __init__(self, name: str, base: str) -> None:
+                self.name = name
+                self.base = base
+
+        class _MockVFSFile:
+            pass
+
+        mock_apsw.VFS = _MockVFS
+        mock_apsw.VFSFile = _MockVFSFile
+        mock_apsw.URIFilename = str
+        return mock_apsw
+
+    def test_creates_vfs_instance(self) -> None:
+        import sys
+
+        mock_apsw = self._make_mock_apsw()
+        # Temporarily inject mock apsw into sys.modules
+        original = sys.modules.get("apsw")
+        sys.modules["apsw"] = mock_apsw
+        try:
+            # Force re-import of the function to pick up our mock
+            from shardyfusion._sqlite_vfs import create_apsw_vfs
+
+            mock_s3_file = MagicMock()
+            mock_s3_file.size = 1000
+            mock_s3_file.read.return_value = b"x" * 100
+
+            vfs = create_apsw_vfs("test-vfs", mock_s3_file)
+            assert vfs is not None
+            assert vfs.name == "test-vfs"
+        finally:
+            if original is None:
+                sys.modules.pop("apsw", None)
+            else:
+                sys.modules["apsw"] = original
+
+    def test_vfs_xopen_returns_file(self) -> None:
+        import sys
+
+        mock_apsw = self._make_mock_apsw()
+        original = sys.modules.get("apsw")
+        sys.modules["apsw"] = mock_apsw
+        try:
+            from shardyfusion._sqlite_vfs import create_apsw_vfs
+
+            mock_s3_file = MagicMock()
+            mock_s3_file.size = 500
+            mock_s3_file.read.return_value = b"d" * 100
+
+            vfs = create_apsw_vfs("test-vfs-open", mock_s3_file)
+            vfs_file = vfs.xOpen("test.db", [0])
+            assert vfs_file is not None
+        finally:
+            if original is None:
+                sys.modules.pop("apsw", None)
+            else:
+                sys.modules["apsw"] = original
+
+    def test_vfs_file_operations(self) -> None:
+        import sys
+
+        mock_apsw = self._make_mock_apsw()
+        original = sys.modules.get("apsw")
+        sys.modules["apsw"] = mock_apsw
+        try:
+            from shardyfusion._sqlite_vfs import create_apsw_vfs
+
+            mock_s3_file = MagicMock()
+            mock_s3_file.size = 500
+            mock_s3_file.read.return_value = b"x" * 100
+
+            vfs = create_apsw_vfs("test-vfs-ops", mock_s3_file)
+            vfs_file = vfs.xOpen("test.db", [0])
+
+            # Test xFileSize
+            assert vfs_file.xFileSize() == 500
+
+            # Test xRead
+            data = vfs_file.xRead(100, 0)
+            assert len(data) == 100
+            mock_s3_file.read.assert_called()
+
+            # Test xRead with short read (padding)
+            mock_s3_file.read.return_value = b"x" * 50
+            data = vfs_file.xRead(100, 0)
+            assert len(data) == 100
+            assert data[50:] == b"\x00" * 50
+
+            # Test xClose (no-op)
+            vfs_file.xClose()
+
+            # Test xLock / xUnlock (no-op)
+            vfs_file.xLock(1)
+            vfs_file.xUnlock(1)
+
+            # Test xCheckReservedLock
+            assert vfs_file.xCheckReservedLock() is False
+
+            # Test xFileControl
+            assert vfs_file.xFileControl(0, 0) is False
+
+            # Test xSectorSize
+            assert vfs_file.xSectorSize() == 4096
+
+            # Test xDeviceCharacteristics
+            assert vfs_file.xDeviceCharacteristics() == 0
+        finally:
+            if original is None:
+                sys.modules.pop("apsw", None)
+            else:
+                sys.modules["apsw"] = original
+
+    def test_vfs_xaccess_returns_false(self) -> None:
+        import sys
+
+        mock_apsw = self._make_mock_apsw()
+        original = sys.modules.get("apsw")
+        sys.modules["apsw"] = mock_apsw
+        try:
+            from shardyfusion._sqlite_vfs import create_apsw_vfs
+
+            mock_s3_file = MagicMock()
+            vfs = create_apsw_vfs("test-vfs-access", mock_s3_file)
+            assert vfs.xAccess("/path", 0) is False
+        finally:
+            if original is None:
+                sys.modules.pop("apsw", None)
+            else:
+                sys.modules["apsw"] = original
+
+    def test_vfs_xfullpathname(self) -> None:
+        import sys
+
+        mock_apsw = self._make_mock_apsw()
+        original = sys.modules.get("apsw")
+        sys.modules["apsw"] = mock_apsw
+        try:
+            from shardyfusion._sqlite_vfs import create_apsw_vfs
+
+            mock_s3_file = MagicMock()
+            vfs = create_apsw_vfs("test-vfs-path", mock_s3_file)
+            assert vfs.xFullPathname("test.db") == "test.db"
+        finally:
+            if original is None:
+                sys.modules.pop("apsw", None)
+            else:
+                sys.modules["apsw"] = original

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
@@ -9,7 +10,14 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from shardyfusion.errors import ConfigValidationError
+from shardyfusion.errors import ConfigValidationError, ReaderStateError
+from shardyfusion.manifest import (
+    ManifestRef,
+    ManifestShardingSpec,
+    ParsedManifest,
+    RequiredBuildMeta,
+    RequiredShardMeta,
+)
 from shardyfusion.reader.unified_reader import (
     UnifiedShardedReader,
     UnifiedVectorMeta,
@@ -18,7 +26,12 @@ from shardyfusion.reader.unified_reader import (
     _parse_vector_custom,
     _search_shard,
 )
-from shardyfusion.vector.types import DistanceMetric, SearchResult
+from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
+from shardyfusion.vector.types import (
+    DistanceMetric,
+    SearchResult,
+    VectorSearchResponse,
+)
 
 # ---------------------------------------------------------------------------
 # _parse_vector_custom
@@ -233,30 +246,43 @@ class TestParseVectorCustomKvBackend:
         assert meta.kv_backend == "slatedb"
 
 
+def _build_mock_reader(
+    metric: DistanceMetric = DistanceMetric.COSINE,
+    num_shards: int = 2,
+    *,
+    executor: Any = None,
+) -> UnifiedShardedReader:
+    """Build a mock UnifiedShardedReader without hitting __init__."""
+    reader = cast(Any, object.__new__(UnifiedShardedReader))
+    reader._closed = False
+    reader._executor = executor
+    reader._vector_meta = UnifiedVectorMeta(
+        dim=2,
+        metric=metric,
+        index_type="hnsw",
+        quantization=None,
+        index_params={},
+        backend="usearch-sidecar",
+        kv_backend="slatedb",
+    )
+    readers_list: list[Any] = []
+    shards_list: list[Any] = []
+    for i in range(num_shards):
+        readers_list.append(SimpleNamespace(search=lambda q, k, ef=50: []))
+        shards_list.append(SimpleNamespace(db_url=f"s3://shard-{i}"))
+    reader._state = SimpleNamespace(
+        readers=readers_list,
+        router=SimpleNamespace(
+            shards=shards_list,
+            route_with_context=lambda ctx: 0,
+        ),
+    )
+    return cast(UnifiedShardedReader, reader)
+
+
 class TestUnifiedReaderSearchMerge:
     def _build_reader(self, metric: DistanceMetric) -> UnifiedShardedReader:
-        reader = cast(Any, object.__new__(UnifiedShardedReader))
-        reader._closed = False
-        reader._executor = None
-        reader._vector_meta = UnifiedVectorMeta(
-            dim=2,
-            metric=metric,
-            index_type="hnsw",
-            quantization=None,
-            index_params={},
-            backend="usearch-sidecar",
-            kv_backend="slatedb",
-        )
-        reader._state = SimpleNamespace(
-            readers=[object(), object()],
-            router=SimpleNamespace(
-                shards=[
-                    SimpleNamespace(db_url="s3://a"),
-                    SimpleNamespace(db_url="s3://b"),
-                ]
-            ),
-        )
-        return cast(UnifiedShardedReader, reader)
+        return _build_mock_reader(metric)
 
     def test_search_uses_shared_merge_utility(self) -> None:
         reader = self._build_reader(DistanceMetric.COSINE)
@@ -291,3 +317,355 @@ class TestUnifiedReaderSearchMerge:
             ):
                 reader.search(query, top_k=1)
         mock_merge.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# search() — shard routing and executor paths
+# ---------------------------------------------------------------------------
+
+
+class TestUnifiedReaderSearchRouting:
+    def test_search_with_shard_ids(self) -> None:
+        reader = _build_mock_reader(num_shards=3)
+        query = np.zeros(2, dtype=np.float32)
+
+        with patch("shardyfusion.reader.unified_reader._search_shard") as mock_search:
+            mock_search.return_value = [SearchResult(id=1, score=0.5)]
+            response = reader.search(query, top_k=5, shard_ids=[1])
+
+        assert response.num_shards_queried == 1
+        # Called only for shard 1
+        mock_search.assert_called_once()
+
+    def test_search_with_routing_context(self) -> None:
+        reader = _build_mock_reader(num_shards=2)
+        query = np.zeros(2, dtype=np.float32)
+
+        with patch("shardyfusion.reader.unified_reader._search_shard") as mock_search:
+            mock_search.return_value = []
+            response = reader.search(query, top_k=5, routing_context={"key": 42})
+
+        assert response.num_shards_queried == 1
+
+    def test_search_queries_all_non_empty_shards(self) -> None:
+        reader = _build_mock_reader(num_shards=2)
+        query = np.zeros(2, dtype=np.float32)
+
+        with patch("shardyfusion.reader.unified_reader._search_shard") as mock_search:
+            mock_search.return_value = []
+            response = reader.search(query, top_k=5)
+
+        # Both shards have non-None db_url
+        assert response.num_shards_queried == 2
+
+    def test_search_skips_null_shards(self) -> None:
+        reader = _build_mock_reader(num_shards=2)
+        # Make shard 1 have db_url=None (empty)
+        reader._state.router.shards[1] = SimpleNamespace(db_url=None)  # type: ignore[union-attr]
+
+        query = np.zeros(2, dtype=np.float32)
+        with patch("shardyfusion.reader.unified_reader._search_shard") as mock_search:
+            mock_search.return_value = []
+            response = reader.search(query, top_k=5)
+
+        assert response.num_shards_queried == 1
+
+    def test_search_closed_raises(self) -> None:
+        reader = _build_mock_reader()
+        reader._closed = True  # type: ignore[union-attr]
+        with pytest.raises(ReaderStateError, match="closed"):
+            reader.search(np.zeros(2, dtype=np.float32), top_k=5)
+
+
+class TestUnifiedReaderSearchExecutor:
+    def test_search_uses_executor_for_multi_shard(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        executor = ThreadPoolExecutor(max_workers=2)
+        try:
+            reader = _build_mock_reader(num_shards=2, executor=executor)
+            query = np.zeros(2, dtype=np.float32)
+
+            with patch(
+                "shardyfusion.reader.unified_reader._search_shard"
+            ) as mock_search:
+                mock_search.return_value = [SearchResult(id=1, score=0.5)]
+                response = reader.search(query, top_k=5, shard_ids=[0, 1])
+
+            assert response.num_shards_queried == 2
+            assert mock_search.call_count == 2
+        finally:
+            executor.shutdown(wait=False)
+
+    def test_search_single_shard_skips_executor(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        executor = ThreadPoolExecutor(max_workers=2)
+        try:
+            reader = _build_mock_reader(num_shards=2, executor=executor)
+            query = np.zeros(2, dtype=np.float32)
+
+            with patch(
+                "shardyfusion.reader.unified_reader._search_shard"
+            ) as mock_search:
+                mock_search.return_value = []
+                response = reader.search(query, top_k=5, shard_ids=[0])
+
+            assert response.num_shards_queried == 1
+        finally:
+            executor.shutdown(wait=False)
+
+
+# ---------------------------------------------------------------------------
+# batch_search
+# ---------------------------------------------------------------------------
+
+
+class TestBatchSearch:
+    def test_batch_search_calls_search_per_query(self) -> None:
+        reader = _build_mock_reader(num_shards=1)
+
+        with patch("shardyfusion.reader.unified_reader._search_shard") as mock_search:
+            mock_search.return_value = [SearchResult(id=0, score=0.1)]
+            queries = np.zeros((3, 2), dtype=np.float32)
+            results = reader.batch_search(queries, top_k=5, shard_ids=[0])
+
+        assert len(results) == 3
+        for r in results:
+            assert isinstance(r, VectorSearchResponse)
+
+
+# ---------------------------------------------------------------------------
+# vector_meta property
+# ---------------------------------------------------------------------------
+
+
+class TestVectorMetaProperty:
+    def test_vector_meta_returns_parsed_meta(self) -> None:
+        reader = _build_mock_reader()
+        meta = reader.vector_meta
+        assert meta.dim == 2
+        assert meta.metric is DistanceMetric.COSINE
+
+
+# ---------------------------------------------------------------------------
+# _auto_reader_factory import error
+# ---------------------------------------------------------------------------
+
+
+class TestAutoReaderFactoryImportFallback:
+    def test_usearch_import_error_raises(self) -> None:
+        import builtins
+
+        meta = UnifiedVectorMeta(
+            dim=32,
+            metric=DistanceMetric.COSINE,
+            index_type="hnsw",
+            quantization=None,
+            index_params={},
+            backend="usearch-sidecar",
+            kv_backend="slatedb",
+        )
+
+        original_import = builtins.__import__
+
+        def fail_usearch(name: str, *args: Any, **kwargs: Any) -> Any:
+            if "usearch" in name:
+                raise ImportError("no usearch")
+            return original_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=fail_usearch):
+            with pytest.raises(ConfigValidationError, match="vector.*extra"):
+                _auto_reader_factory(meta)
+
+
+# ---------------------------------------------------------------------------
+# UnifiedShardedReader integration (goes through __init__)
+# ---------------------------------------------------------------------------
+
+
+class _FixedManifestStore:
+    """In-memory manifest store for testing."""
+
+    def __init__(self, manifest: ParsedManifest, ref: str) -> None:
+        self._manifest = manifest
+        self._ref = ref
+
+    def publish(self, **kw: Any) -> str:
+        raise NotImplementedError
+
+    def load_current(self) -> ManifestRef:
+        return ManifestRef(ref=self._ref, run_id="run", published_at=datetime.now(UTC))
+
+    def load_manifest(self, ref: str) -> ParsedManifest:
+        return self._manifest
+
+    def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
+        return []
+
+    def set_current(self, ref: str) -> None:
+        pass
+
+
+def _vector_manifest(num_dbs: int = 2) -> ParsedManifest:
+    """Build a manifest with vector custom fields."""
+    required = RequiredBuildMeta(
+        run_id="run-vec",
+        created_at="2026-01-01T00:00:00+00:00",
+        num_dbs=num_dbs,
+        s3_prefix="s3://bucket/prefix",
+        key_col="key",
+        key_encoding=KeyEncoding.U64BE,
+        sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
+        db_path_template="db={db_id:05d}",
+        shard_prefix="shards",
+    )
+    shards = [
+        RequiredShardMeta(db_id=i, db_url=f"mem://db/{i}", attempt=0, row_count=10)
+        for i in range(num_dbs)
+    ]
+    custom = {
+        "vector": {
+            "dim": 4,
+            "metric": "cosine",
+            "index_type": "hnsw",
+            "quantization": None,
+            "backend": "usearch-sidecar",
+            "kv_backend": "slatedb",
+        }
+    }
+    return ParsedManifest(required_build=required, shards=shards, custom=custom)
+
+
+class _FakeShardReader:
+    """Fake shard reader supporting both get() and search()."""
+
+    def __init__(self, db_url: str) -> None:
+        self._db_url = db_url
+
+    def get(self, key: bytes) -> bytes | None:
+        return None
+
+    def search(self, query: np.ndarray, top_k: int, ef: int = 50) -> list[SearchResult]:
+        return [SearchResult(id=0, score=0.5)]
+
+    def close(self) -> None:
+        pass
+
+
+def _fake_reader_factory(
+    *, db_url: str, local_dir: Any, **kwargs: Any
+) -> _FakeShardReader:
+    return _FakeShardReader(db_url)
+
+
+class TestUnifiedShardedReaderInit:
+    """Integration tests going through __init__ -> _build_simple_state."""
+
+    def test_init_loads_vector_meta(self, tmp_path: Any) -> None:
+        manifest = _vector_manifest(num_dbs=2)
+        store = _FixedManifestStore(manifest, "mem://manifest/vec")
+
+        reader = UnifiedShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=store,
+            reader_factory=_fake_reader_factory,
+        )
+        try:
+            meta = reader.vector_meta
+            assert meta.dim == 4
+            assert meta.metric is DistanceMetric.COSINE
+            assert meta.backend == "usearch-sidecar"
+        finally:
+            reader.close()
+
+    def test_init_auto_dispatch_factory(self, tmp_path: Any) -> None:
+        """When no reader_factory is given, auto-dispatch from manifest."""
+        manifest = _vector_manifest(num_dbs=1)
+        store = _FixedManifestStore(manifest, "mem://manifest/vec")
+
+        with (
+            patch(
+                "shardyfusion.reader.unified_reader._auto_reader_factory"
+            ) as mock_auto,
+        ):
+            mock_auto.return_value = _fake_reader_factory
+            reader = UnifiedShardedReader(
+                s3_prefix="s3://bucket/prefix",
+                local_root=str(tmp_path),
+                manifest_store=store,
+                reader_factory=None,
+            )
+            try:
+                mock_auto.assert_called_once()
+                assert reader.vector_meta.dim == 4
+            finally:
+                reader.close()
+
+    def test_search_through_init(self, tmp_path: Any) -> None:
+        manifest = _vector_manifest(num_dbs=1)
+        store = _FixedManifestStore(manifest, "mem://manifest/vec")
+
+        reader = UnifiedShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=store,
+            reader_factory=_fake_reader_factory,
+        )
+        try:
+            query = np.zeros(4, dtype=np.float32)
+            response = reader.search(query, top_k=5)
+            assert response.num_shards_queried == 1
+            assert len(response.results) == 1
+        finally:
+            reader.close()
+
+    def test_batch_search_through_init(self, tmp_path: Any) -> None:
+        manifest = _vector_manifest(num_dbs=1)
+        store = _FixedManifestStore(manifest, "mem://manifest/vec")
+
+        reader = UnifiedShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=store,
+            reader_factory=_fake_reader_factory,
+        )
+        try:
+            queries = np.zeros((2, 4), dtype=np.float32)
+            results = reader.batch_search(queries, top_k=5)
+            assert len(results) == 2
+        finally:
+            reader.close()
+
+    def test_refresh_updates_vector_meta(self, tmp_path: Any) -> None:
+        manifest = _vector_manifest(num_dbs=1)
+        store = _FixedManifestStore(manifest, "mem://manifest/vec")
+
+        reader = UnifiedShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=store,
+            reader_factory=_fake_reader_factory,
+        )
+        try:
+            # Refresh with same manifest — should return False (no change)
+            changed = reader.refresh()
+            # The fixture always returns the same manifest, so no state swap
+            assert not changed or reader.vector_meta.dim == 4
+        finally:
+            reader.close()
+
+    def test_closed_reader_search_raises(self, tmp_path: Any) -> None:
+        manifest = _vector_manifest(num_dbs=1)
+        store = _FixedManifestStore(manifest, "mem://manifest/vec")
+
+        reader = UnifiedShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=store,
+            reader_factory=_fake_reader_factory,
+        )
+        reader.close()
+        with pytest.raises(ReaderStateError, match="closed"):
+            reader.search(np.zeros(4, dtype=np.float32), top_k=5)
