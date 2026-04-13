@@ -70,9 +70,7 @@ class TestAutoVectorFn:
                 "shardyfusion.writer.python.writer._wrap_factory_for_vector",
                 side_effect=lambda f, c: f,
             ),
-            patch(
-                "shardyfusion.writer.python.writer._inject_vector_manifest_fields"
-            ),
+            patch("shardyfusion.writer.python.writer._inject_vector_manifest_fields"),
             patch(
                 "shardyfusion.writer.python.writer.publish_to_store",
                 return_value="s3://manifest",
@@ -119,9 +117,7 @@ class TestAutoVectorFn:
                 "shardyfusion.writer.python.writer._wrap_factory_for_vector",
                 side_effect=lambda f, c: f,
             ),
-            patch(
-                "shardyfusion.writer.python.writer._inject_vector_manifest_fields"
-            ),
+            patch("shardyfusion.writer.python.writer._inject_vector_manifest_fields"),
             patch(
                 "shardyfusion.writer.python.writer.publish_to_store",
                 return_value="s3://manifest",
@@ -268,9 +264,7 @@ class TestFlushSingleProcessShardVectorBatch:
             def write_batch(self, pairs: Any) -> None:
                 self.kv_written.extend(pairs)
 
-            def write_vector_batch(
-                self, ids: Any, vecs: Any, payloads: Any
-            ) -> None:
+            def write_vector_batch(self, ids: Any, vecs: Any, payloads: Any) -> None:
                 vector_batches.append((list(ids), vecs.tolist(), payloads))
 
         adapter = VectorAdapter()
@@ -332,9 +326,7 @@ class TestFlushSingleProcessShardVectorBatch:
             def write_batch(self, pairs: Any) -> None:
                 self.kv_written.extend(pairs)
 
-            def write_vector_batch(
-                self, ids: Any, vecs: Any, payloads: Any
-            ) -> None:
+            def write_vector_batch(self, ids: Any, vecs: Any, payloads: Any) -> None:
                 vector_batches.append((list(ids), payloads))
 
             def flush(self) -> None:
