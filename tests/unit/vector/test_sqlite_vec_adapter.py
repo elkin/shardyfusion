@@ -535,7 +535,15 @@ class TestCacheValidation:
     def test_valid_cache(self, tmp_path: Path) -> None:
         path = tmp_path / "identity.json"
         path.write_text(json.dumps({"db_url": "s3://b/k", "checkpoint_id": "ckpt1"}))
+        # DB file must also exist for the cache to be considered valid
+        (tmp_path / "shard.db").write_bytes(b"fake-db")
         assert _is_cached_snapshot_current(path, "s3://b/k", "ckpt1")
+
+    def test_missing_db_file(self, tmp_path: Path) -> None:
+        """Identity file exists but DB file is missing — cache is invalid."""
+        path = tmp_path / "identity.json"
+        path.write_text(json.dumps({"db_url": "s3://b/k", "checkpoint_id": "ckpt1"}))
+        assert not _is_cached_snapshot_current(path, "s3://b/k", "ckpt1")
 
     def test_stale_checkpoint(self, tmp_path: Path) -> None:
         path = tmp_path / "identity.json"

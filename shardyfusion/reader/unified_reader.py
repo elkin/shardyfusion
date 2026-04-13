@@ -312,10 +312,28 @@ class UnifiedShardedReader(ShardedReader):
         ]
 
     def refresh(self) -> bool:
-        """Refresh manifest and update vector metadata if changed."""
+        """Refresh manifest and update vector metadata if changed.
+
+        Parses vector metadata *before* committing the new state so that
+        a bad manifest doesn't leave the reader in a split-brain state
+        (new shard state + old vector metadata).
+        """
+        # Capture the current custom fields so we can detect whether the
+        # parent refresh actually changed them.
+        prev_custom = self._manifest_custom
         changed = super().refresh()
         if changed:
-            self._vector_meta = _parse_vector_custom(self._manifest_custom)
+            try:
+                self._vector_meta = _parse_vector_custom(self._manifest_custom)
+            except Exception:
+                # Parsing failed — roll back to previous vector metadata
+                # so subsequent searches don't use stale/mismatched settings.
+                self._manifest_custom = prev_custom
+                log_event(
+                    "unified_reader_vector_meta_parse_failed",
+                    logger=_logger,
+                )
+                raise
         return changed
 
 

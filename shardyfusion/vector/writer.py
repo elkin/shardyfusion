@@ -119,6 +119,10 @@ def write_vector_sharded(
             raise ConfigValidationError(
                 "num_dbs must be provided for CLUSTER sharding with train_centroids"
             )
+        if not records_list:
+            raise ConfigValidationError(
+                "Cannot train centroids from an empty record set"
+            )
         sample_size = min(len(records_list), sharding.centroids_training_sample_size)
         sample_vectors = np.array(
             [r.vector for r in records_list[:sample_size]], dtype=np.float32
@@ -168,6 +172,8 @@ def write_vector_sharded(
             "num_dbs must be provided (or inferred from centroids for CLUSTER "
             "or routing_values for CEL)"
         )
+    if num_dbs <= 0:
+        raise ConfigValidationError(f"num_dbs must be > 0, got {num_dbs}")
 
     # Adapter factory
     adapter_factory: VectorIndexWriterFactory

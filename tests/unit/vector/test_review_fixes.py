@@ -233,7 +233,9 @@ class TestUSearchStringIds:
         writer.add_batch(ids, vecs)
         writer.flush()
 
-        # Check id_map table has the mappings
+        # Check id_map table has the mappings (typed JSON format)
+        import json
+
         conn = sqlite3.connect(str(tmp_path / PAYLOADS_FILENAME))
         rows = conn.execute(
             "SELECT internal_id, original_id FROM id_map ORDER BY internal_id"
@@ -241,9 +243,12 @@ class TestUSearchStringIds:
         conn.close()
 
         assert len(rows) == 3
-        assert rows[0] == (0, "abc")
-        assert rows[1] == (1, "def")
-        assert rows[2] == (2, "ghi")
+        assert rows[0][0] == 0
+        assert json.loads(rows[0][1]) == {"v": "abc", "t": "str"}
+        assert rows[1][0] == 1
+        assert json.loads(rows[1][1]) == {"v": "def", "t": "str"}
+        assert rows[2][0] == 2
+        assert json.loads(rows[2][1]) == {"v": "ghi", "t": "str"}
 
         with patch(
             "shardyfusion.vector.adapters.usearch_adapter.put_bytes",
@@ -251,8 +256,10 @@ class TestUSearchStringIds:
         ):
             writer.close()
 
-    def test_int_ids_no_id_map_rows(self, tmp_path: Path) -> None:
-        """Writer does NOT create id_map rows for integer IDs."""
+    def test_int_ids_have_typed_id_map_rows(self, tmp_path: Path) -> None:
+        """Writer creates typed id_map rows for integer IDs too."""
+        import json
+
         from shardyfusion.vector.adapters.usearch_adapter import (
             PAYLOADS_FILENAME,
             USearchWriter,
@@ -272,9 +279,14 @@ class TestUSearchStringIds:
         writer.flush()
 
         conn = sqlite3.connect(str(tmp_path / PAYLOADS_FILENAME))
-        rows = conn.execute("SELECT COUNT(*) FROM id_map").fetchone()
+        rows = conn.execute(
+            "SELECT internal_id, original_id FROM id_map ORDER BY internal_id"
+        ).fetchall()
         conn.close()
-        assert rows[0] == 0
+        assert len(rows) == 3
+        assert json.loads(rows[0][1]) == {"v": 10, "t": "int"}
+        assert json.loads(rows[1][1]) == {"v": 20, "t": "int"}
+        assert json.loads(rows[2][1]) == {"v": 30, "t": "int"}
 
         with patch(
             "shardyfusion.vector.adapters.usearch_adapter.put_bytes",

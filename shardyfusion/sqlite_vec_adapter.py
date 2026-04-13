@@ -48,6 +48,15 @@ _SQLITE_VEC_IMPORT_ERROR = (
     "Install it with: pip install shardyfusion[vector-sqlite]"
 )
 
+# Mapping from VectorSpec metric strings to sqlite-vec distance_metric values.
+# sqlite-vec supports "cosine" and "l2"; dot_product is not natively supported
+# so we fall back to cosine and document the limitation.
+_SQLITE_VEC_METRIC_MAP: dict[str, str] = {
+    "cosine": "cosine",
+    "l2": "l2",
+    "dot_product": "cosine",  # best-effort: sqlite-vec has no ip/dot metric
+}
+
 
 def _load_sqlite_vec(conn: sqlite3.Connection) -> None:
     """Load the sqlite-vec extension into the given connection."""
@@ -149,11 +158,15 @@ class SqliteVecAdapter:
             "(k BLOB PRIMARY KEY, v BLOB NOT NULL) WITHOUT ROWID"
         )
 
-        # Vector index table (sqlite-vec)
+        # Vector index table (sqlite-vec) with configured distance metric
         dim = vector_spec.dim
+        metric_str = _SQLITE_VEC_METRIC_MAP.get(
+            str(getattr(vector_spec.metric, "value", vector_spec.metric)),
+            "cosine",
+        )
         conn.execute(
             f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_index "
-            f"USING vec0(embedding float[{dim}])"
+            f"USING vec0(embedding float[{dim}] distance_metric={metric_str})"
         )
 
         # Payload table for vector metadata
@@ -491,6 +504,10 @@ def _is_cached_snapshot_current(
 ) -> bool:
     """Check if the local cached DB matches the expected identity."""
     if not identity_path.exists():
+        return False
+    # Also verify the actual DB file exists alongside the identity
+    db_path = identity_path.parent / _DB_FILENAME
+    if not db_path.exists():
         return False
     try:
         identity = json.loads(identity_path.read_text())

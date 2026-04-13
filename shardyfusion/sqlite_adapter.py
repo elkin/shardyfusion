@@ -444,9 +444,13 @@ class _S3ReadOnlyFile:
 
 
 def _normalize_page_cache_pages(page_cache_pages: int) -> int:
+    from ._sqlite_vfs import S3VfsError
     from ._sqlite_vfs import _normalize_page_cache_pages as _normalize
 
-    return _normalize(page_cache_pages)
+    try:
+        return _normalize(page_cache_pages)
+    except S3VfsError as exc:
+        raise SqliteAdapterError(str(exc)) from exc
 
 
 class SqliteRangeShardReader:

@@ -489,7 +489,9 @@ def _write_partition(
                 db_id=int(db_id),  # type: ignore[invalid-argument-type]
                 rows_fn=lambda pdf=group_pdf, vec_fn=vec_fn: (
                     (
-                        row[runtime.key_col],
+                        row[runtime.key_col].item()
+                        if hasattr(row[runtime.key_col], "item")
+                        else row[runtime.key_col],
                         runtime.value_spec.encode(row),
                         vec_fn(row),
                     )

@@ -193,6 +193,8 @@ def lsh_assign_batch(
     num_dbs: int,
 ) -> np.ndarray:
     """Assign a batch of vectors to shards via LSH."""
+    if num_dbs <= 0:
+        raise ConfigValidationError(f"num_dbs must be > 0, got {num_dbs}")
     # projections: (N, num_hash_bits)
     projections = vectors @ hyperplanes.T
     bits = (projections > 0).astype(np.uint64)
@@ -212,6 +214,8 @@ def lsh_probe_shards(
 
     Primary bucket + neighbors found by flipping individual bits.
     """
+    if num_dbs <= 0:
+        raise ConfigValidationError(f"num_dbs must be > 0, got {num_dbs}")
     code = lsh_hash(query, hyperplanes)
     num_bits = len(hyperplanes)
 

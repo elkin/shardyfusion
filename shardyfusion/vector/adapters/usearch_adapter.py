@@ -120,28 +120,32 @@ class USearchWriter:
         if self._closed:
             raise VectorIndexError("Writer is closed")
 
-        # USearch only supports int64 keys. For string IDs, assign
-        # sequential internal int64 keys and maintain a mapping table.
-        # Always advance _next_internal_id to prevent collisions when
-        # mixing int and string ID batches.
-        all_int = all(isinstance(i, (int, np.integer)) for i in ids)
-        if all_int:
-            internal_ids = ids.astype(np.int64)
-            # Track the max to avoid collisions with future string-ID batches
-            if len(internal_ids) > 0:
-                max_seen = int(internal_ids.max()) + 1
-                if max_seen > self._next_internal_id:
-                    self._next_internal_id = max_seen
-        else:
-            n = len(ids)
-            start = self._next_internal_id
-            internal_ids = np.arange(start, start + n, dtype=np.int64)
-            self._next_internal_id = start + n
-            id_rows = [(int(internal_ids[i]), str(ids[i])) for i in range(n)]
-            self._payload_conn.executemany(
-                "INSERT OR REPLACE INTO id_map (internal_id, original_id) VALUES (?, ?)",
-                id_rows,
+        # USearch only supports int64 keys internally.  We always use
+        # monotonically increasing synthetic internal IDs to prevent
+        # collisions between batches (regardless of whether caller IDs
+        # are ints or strings), and store the original IDs in id_map to
+        # preserve type fidelity on read.
+        n = len(ids)
+        start = self._next_internal_id
+        internal_ids = np.arange(start, start + n, dtype=np.int64)
+        self._next_internal_id = start + n
+
+        # Store the mapping from internal → original, preserving the
+        # original type representation (int stays as str(int) in SQLite
+        # TEXT, but we tag ints so the reader can reconstruct them).
+        id_rows = [
+            (
+                int(internal_ids[i]),
+                json.dumps({"v": ids[i], "t": "int"})
+                if isinstance(ids[i], (int, np.integer))
+                else json.dumps({"v": str(ids[i]), "t": "str"}),
             )
+            for i in range(n)
+        ]
+        self._payload_conn.executemany(
+            "INSERT OR REPLACE INTO id_map (internal_id, original_id) VALUES (?, ?)",
+            id_rows,
+        )
 
         try:
             self._index.add(internal_ids, vectors.astype(np.float32))
@@ -241,6 +245,22 @@ class USearchWriterFactory:
         )
 
 
+def _decode_id_map_value(raw: str) -> int | str:
+    """Decode an id_map original_id value, handling both new typed JSON
+    format (``{"v": ..., "t": "int"|"str"}``) and legacy plain-string format.
+    """
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict) and "v" in obj:
+            if obj.get("t") == "int":
+                return int(obj["v"])
+            return str(obj["v"])
+    except (json.JSONDecodeError, ValueError, TypeError):
+        pass
+    # Legacy format: plain string
+    return raw
+
+
 # ---------------------------------------------------------------------------
 # Reader
 # ---------------------------------------------------------------------------
@@ -311,7 +331,7 @@ class USearchShardReader:
         internal_ids = [int(k) for k in keys]
 
         # Resolve internal int64 keys → original IDs via id_map (if present)
-        id_map: dict[int, str] = {}
+        id_map: dict[int, int | str] = {}
         if internal_ids:
             placeholders = ",".join("?" for _ in internal_ids)
             try:
@@ -320,31 +340,26 @@ class USearchShardReader:
                     internal_ids,
                 )
                 for row in cursor:
-                    id_map[int(row[0])] = row[1]
+                    id_map[int(row[0])] = _decode_id_map_value(row[1])
             except sqlite3.OperationalError:
                 pass  # id_map table doesn't exist (old index format)
 
-        # Look up payloads by the original (string) IDs
-        original_ids = [id_map.get(iid, str(iid)) for iid in internal_ids]
+        # Look up payloads by the original IDs (stored as string keys)
+        original_ids: list[int | str] = [id_map.get(iid, iid) for iid in internal_ids]
         payload_map: dict[str, dict[str, Any]] = {}
-        if original_ids:
-            placeholders = ",".join("?" for _ in original_ids)
+        str_keys = [str(oid) for oid in original_ids]
+        if str_keys:
+            placeholders = ",".join("?" for _ in str_keys)
             cursor = self._payload_conn.execute(
                 f"SELECT id, payload FROM payloads WHERE id IN ({placeholders})",  # noqa: S608
-                original_ids,
+                str_keys,
             )
             for row in cursor:
                 payload_map[row[0]] = json.loads(row[1])
 
         for i in range(len(keys)):
-            orig_id: int | str = (
-                id_map[internal_ids[i]]
-                if internal_ids[i] in id_map
-                else internal_ids[i]
-            )
-            payload = payload_map.get(
-                str(orig_id) if isinstance(orig_id, int) else orig_id
-            )
+            orig_id = original_ids[i]
+            payload = payload_map.get(str(orig_id))
             results.append(
                 SearchResult(
                     id=orig_id,

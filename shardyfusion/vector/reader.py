@@ -347,11 +347,24 @@ class ShardedVectorReader:
             except Exception:
                 return False
 
+            # Validate the new manifest before discarding current state.
+            # If _apply_manifest raises (e.g. unknown metric), we keep the
+            # old readers and return False rather than leaving a half-updated
+            # reader.
+            try:
+                self._apply_manifest(new_ref, manifest)
+            except Exception:
+                log_event(
+                    "vector_reader_refresh_apply_failed",
+                    logger=_logger,
+                    manifest_ref=new_ref.ref,
+                )
+                return False
+
             with self._cache_lock:
                 old_readers = dict(self._shard_readers)
                 self._shard_readers = OrderedDict()
                 self._shard_locks = {}
-            self._apply_manifest(new_ref, manifest)
 
             for reader in old_readers.values():
                 try:
