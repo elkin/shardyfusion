@@ -1,9 +1,10 @@
 """Public sharded snapshot writer entrypoint."""
 
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from itertools import chain
+from typing import Any
 from uuid import uuid4
 
 from pyspark import RDD, StorageLevel, TaskContext
@@ -15,15 +16,20 @@ from shardyfusion._shard_writer import (
     make_shard_local_dir,
     make_shard_url,
     write_shard_core,
+    write_shard_core_distributed,
 )
 from shardyfusion._writer_core import (
     PartitionWriteOutcome,
     ShardAttemptResult,
+    VectorColumnMapping,
     assemble_build_result,
     cleanup_losers,
     empty_shard_result,
+    inject_vector_manifest_fields,
     publish_to_store,
+    resolve_distributed_vector_fn,
     select_winners,
+    wrap_factory_for_vector,
 )
 from shardyfusion.config import WriteConfig
 from shardyfusion.credentials import CredentialProvider
@@ -63,12 +69,15 @@ class PartitionWriteConfig:
     key_encoder: KeyEncoder
     value_spec: ValueSpec
     batch_size: int
-    adapter_factory: DbAdapterFactory | None
+    adapter_factory: DbAdapterFactory
     credential_provider: CredentialProvider | None
     max_writes_per_second: float | None
     max_write_bytes_per_second: float | None = None
     metrics_collector: MetricsCollector | None = None  # must be picklable
     started: float = 0.0
+    vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None = (
+        None
+    )
 
 
 @dataclass(slots=True)
@@ -92,6 +101,10 @@ def write_sharded(
     max_writes_per_second: float | None = None,
     max_write_bytes_per_second: float | None = None,
     verify_routing: bool = True,
+    vector_fn: (
+        Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None
+    ) = None,
+    vector_columns: VectorColumnMapping | None = None,
 ) -> BuildResult:
     """Write a DataFrame into N independent sharded databases and publish manifest metadata.
 
@@ -141,6 +154,8 @@ def write_sharded(
                 max_writes_per_second=max_writes_per_second,
                 max_write_bytes_per_second=max_write_bytes_per_second,
                 verify_routing=verify_routing,
+                vector_fn=vector_fn,
+                vector_columns=vector_columns,
             )
 
 
@@ -156,6 +171,8 @@ def _write_sharded_impl(
     max_writes_per_second: float | None,
     max_write_bytes_per_second: float | None,
     verify_routing: bool,
+    vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
+    vector_columns: VectorColumnMapping | None,
 ) -> BuildResult:
     """Implementation assuming Spark conf already prepared."""
     from shardyfusion.logging import LogContext
@@ -182,6 +199,12 @@ def _write_sharded_impl(
         if mc is not None:
             mc.emit(MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
 
+        distributed_vector_fn = resolve_distributed_vector_fn(
+            config=config,
+            key_col=key_col,
+            vector_fn=vector_fn,
+            vector_columns=vector_columns,
+        )
         prepared_rows = _prepare_partitioned_rows(
             df=df,
             config=config,
@@ -211,6 +234,7 @@ def _write_sharded_impl(
             max_writes_per_second=max_writes_per_second,
             max_write_bytes_per_second=max_write_bytes_per_second,
             started=started,
+            vector_fn=distributed_vector_fn,
         )
         num_dbs = prepared_rows.resolved_num_dbs
         write_outcome = _run_partition_writes(
@@ -237,6 +261,8 @@ def _write_sharded_impl(
                 },
             )
 
+        if config.vector_spec is not None:
+            inject_vector_manifest_fields(config, runtime.adapter_factory)
         manifest_started = time.perf_counter()
         manifest_ref = publish_to_store(
             config=config,
@@ -424,8 +450,16 @@ def _build_partition_write_runtime(
     max_writes_per_second: float | None,
     max_write_bytes_per_second: float | None,
     started: float = 0.0,
+    vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]]
+    | None = None,
 ) -> PartitionWriteConfig:
     """Construct immutable worker-side runtime config for partition shard writers."""
+
+    factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory(
+        credential_provider=config.credential_provider
+    )
+    if config.vector_spec is not None:
+        factory = wrap_factory_for_vector(factory, config)
 
     return PartitionWriteConfig(
         run_id=run_id,
@@ -438,12 +472,13 @@ def _build_partition_write_runtime(
         key_encoder=make_key_encoder(config.key_encoding),
         value_spec=value_spec,
         batch_size=config.batch_size,
-        adapter_factory=config.adapter_factory,
+        adapter_factory=factory,
         credential_provider=config.credential_provider,
         max_writes_per_second=max_writes_per_second,
         max_write_bytes_per_second=max_write_bytes_per_second,
         metrics_collector=config.metrics_collector,
         started=started,
+        vector_fn=vector_fn,
     )
 
 
@@ -513,9 +548,7 @@ def write_one_shard_partition(
     )
     local_dir = make_shard_local_dir(runtime.local_root, runtime.run_id, db_id, attempt)
 
-    factory: DbAdapterFactory = runtime.adapter_factory or SlateDbFactory(
-        credential_provider=runtime.credential_provider
-    )
+    factory: DbAdapterFactory = runtime.adapter_factory
 
     ops_limiter: RateLimiter | None = None
     if runtime.max_writes_per_second is not None:
@@ -549,13 +582,37 @@ def write_one_shard_partition(
         for _, row in rows_iter:
             yield row[runtime.key_col], runtime.value_spec.encode(row)
 
-    result = write_shard_core(
-        params,
-        _iter_spark_rows(),
-        writer_info_base=WriterInfo(
-            stage_id=stage_id,
-            task_attempt_id=task_attempt_id,
-            attempt=attempt,
-        ),
-    )
+    if runtime.vector_fn is None:
+        result = write_shard_core(
+            params,
+            _iter_spark_rows(),
+            writer_info_base=WriterInfo(
+                stage_id=stage_id,
+                task_attempt_id=task_attempt_id,
+                attempt=attempt,
+            ),
+        )
+    else:
+        vec_fn = runtime.vector_fn
+        assert vec_fn is not None
+
+        def _iter_spark_rows_with_vector() -> Iterable[
+            tuple[object, bytes, tuple[int | str, Any, dict[str, Any] | None]]
+        ]:
+            for _, row in rows_iter:
+                yield (
+                    row[runtime.key_col],
+                    runtime.value_spec.encode(row),
+                    vec_fn(row),
+                )
+
+        result = write_shard_core_distributed(
+            params,
+            _iter_spark_rows_with_vector(),
+            writer_info_base=WriterInfo(
+                stage_id=stage_id,
+                task_attempt_id=task_attempt_id,
+                attempt=attempt,
+            ),
+        )
     yield result

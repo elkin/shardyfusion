@@ -18,7 +18,19 @@ from shardyfusion._writer_core import (
     select_winners,
     update_min_max,
 )
-from shardyfusion.config import WriteConfig, vector_metric_to_str
+from shardyfusion._writer_core import (
+    detect_kv_backend as _core_detect_kv_backend,
+)
+from shardyfusion._writer_core import (
+    detect_vector_backend as _core_detect_vector_backend,
+)
+from shardyfusion._writer_core import (
+    inject_vector_manifest_fields as _core_inject_vector_manifest_fields,
+)
+from shardyfusion._writer_core import (
+    wrap_factory_for_vector as _core_wrap_factory_for_vector,
+)
+from shardyfusion.config import WriteConfig
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.logging import get_logger, log_event
 from shardyfusion.manifest import BuildResult, WriterInfo
@@ -824,103 +836,18 @@ def _write_single_process(
 def _wrap_factory_for_vector(
     factory: DbAdapterFactory, config: WriteConfig
 ) -> DbAdapterFactory:
-    """Wrap a KV factory to produce composite adapters when vector_spec is set.
-
-    If the factory is already a ``SqliteVecFactory``, it handles both KV and
-    vector natively — return it as-is.  Otherwise, wrap the KV factory with
-    ``CompositeFactory`` using ``USearchWriterFactory`` for the vector sidecar.
-    """
-    from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-
-    vs = config.vector_spec
-    assert vs is not None
-
-    # Some custom factories already return adapters that implement
-    # ``write_vector_batch`` natively. Allow them to opt out of sidecar
-    # wrapping via an explicit marker attribute.
-    if getattr(factory, "supports_vector_writes", False) is True:
-        return factory
-
-    # SqliteVecFactory already produces unified KV+vector adapters
-    if isinstance(factory, SqliteVecFactory):
-        return factory
-
-    from shardyfusion.composite_adapter import CompositeFactory
-
-    # Build S3 client for the vector writer factory
-    from shardyfusion.storage import create_s3_client
-
-    credentials = (
-        config.credential_provider.resolve() if config.credential_provider else None
-    )
-    s3_client = create_s3_client(credentials, config.s3_connection_options)
-
-    # Lazy-import the default vector writer factory
-    try:
-        from shardyfusion.vector.adapters.usearch_adapter import USearchWriterFactory
-
-        vector_factory = USearchWriterFactory(s3_client=s3_client)
-    except ImportError as exc:
-        raise ConfigValidationError(
-            "Unified KV+vector mode with SlateDB requires the 'vector' extra "
-            "(usearch). Install with: pip install shardyfusion[vector]"
-        ) from exc
-
-    return CompositeFactory(
-        kv_factory=factory,
-        vector_factory=vector_factory,
-        vector_spec=vs,
-    )
+    return _core_wrap_factory_for_vector(factory, config)
 
 
 def _detect_vector_backend(factory: DbAdapterFactory) -> str:
-    """Detect the vector backend from the adapter factory type."""
-    from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-
-    if isinstance(factory, SqliteVecFactory):
-        return "sqlite-vec"
-    return "usearch-sidecar"
+    return _core_detect_vector_backend(factory)
 
 
 def _detect_kv_backend(factory: DbAdapterFactory) -> str:
-    """Detect the KV backend from the adapter factory type."""
-    from shardyfusion.composite_adapter import CompositeFactory
-
-    actual = factory
-    if isinstance(factory, CompositeFactory):
-        actual = factory.kv_factory
-
-    from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-
-    if isinstance(actual, SqliteVecFactory):
-        return "sqlite-vec"
-
-    try:
-        from shardyfusion.sqlite_adapter import SqliteFactory
-
-        if isinstance(actual, SqliteFactory):
-            return "sqlite"
-    except ImportError:
-        pass
-
-    return "slatedb"
+    return _core_detect_kv_backend(factory)
 
 
 def _inject_vector_manifest_fields(
     config: WriteConfig, factory: DbAdapterFactory
 ) -> None:
-    """Add vector metadata to manifest custom fields for reader discovery."""
-    vs = config.vector_spec
-    assert vs is not None
-    vector_meta: dict[str, Any] = {
-        "dim": vs.dim,
-        "metric": vector_metric_to_str(vs.metric),
-        "index_type": vs.index_type,
-        "quantization": vs.quantization,
-        "unified": True,
-        "backend": _detect_vector_backend(factory),
-        "kv_backend": _detect_kv_backend(factory),
-    }
-    if vs.index_params:
-        vector_meta["index_params"] = vs.index_params
-    config.manifest.custom_manifest_fields["vector"] = vector_meta
+    _core_inject_vector_manifest_fields(config, factory)

@@ -10,7 +10,7 @@ import ray
 import ray.data
 
 from shardyfusion._shard_writer import results_pdf_to_attempts
-from shardyfusion._writer_core import route_key
+from shardyfusion._writer_core import ShardAttemptResult, route_key
 from shardyfusion.config import (
     ManifestOptions,
     OutputOptions,
@@ -22,6 +22,7 @@ from shardyfusion.metrics import MetricEvent
 from shardyfusion.run_registry import InMemoryRunRegistry
 from shardyfusion.serde import ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import (
+    DB_ID_COL,
     KeyEncoding,
     ShardingSpec,
 )
@@ -223,6 +224,61 @@ def test_batch_flushing(tmp_path: pathlib.Path) -> None:
     # Verify all records actually landed in the shard
     shard_data = file_backed_load_db(root_dir, result.winners[0].db_url)
     assert len(shard_data) == 7
+
+
+def test_write_partition_vector_fn_uses_distributed_writer(monkeypatch) -> None:
+    from shardyfusion.writer.ray import writer as ray_writer
+
+    captured_rows: list[
+        tuple[object, bytes, tuple[int | str, object, dict[str, object] | None]]
+    ] = []
+
+    def _fake_distributed(*, db_id: int, rows_fn, **kwargs):  # type: ignore[no-untyped-def]
+        _ = kwargs
+        rows = list(rows_fn())
+        captured_rows.extend(rows)
+        return ShardAttemptResult(
+            db_id=db_id,
+            db_url=f"s3://bucket/prefix/db={db_id:05d}/attempt=00",
+            attempt=0,
+            row_count=len(rows),
+            min_key=rows[0][0] if rows else None,
+            max_key=rows[-1][0] if rows else None,
+            checkpoint_id="ckpt",
+            writer_info=WriterInfo(),
+            all_attempt_urls=(),
+        )
+
+    monkeypatch.setattr(
+        ray_writer, "write_shard_with_retry_distributed", _fake_distributed
+    )
+
+    runtime = ray_writer._PartitionWriteRuntime(
+        run_id="run-test",
+        s3_prefix="s3://bucket/prefix",
+        shard_prefix="shards",
+        db_path_template="db={db_id:05d}",
+        local_root="/tmp/shardyfusion",
+        key_col="id",
+        key_encoding=KeyEncoding.U64BE,
+        key_encoder=make_key_encoder(KeyEncoding.U64BE),
+        value_spec=ValueSpec.callable_encoder(lambda row: f"v{row['id']}".encode()),
+        batch_size=2,
+        adapter_factory=_TrackingFactory(),  # type: ignore[arg-type]
+        credential_provider=None,
+        max_writes_per_second=None,
+        vector_fn=lambda row: (int(row["id"]), [0.1, 0.2], {"src": "ray"}),
+    )
+    pdf = ray.data.from_items(
+        [{DB_ID_COL: 0, "id": 1}, {DB_ID_COL: 0, "id": 2}]
+    ).to_pandas()
+
+    out = ray_writer._write_partition(pdf, runtime)
+
+    assert len(out) == 1
+    assert captured_rows[0][0] == 1
+    assert captured_rows[0][2][0] == 1
+    assert captured_rows[0][2][2] == {"src": "ray"}
 
 
 def test_min_max_key_tracking() -> None:
