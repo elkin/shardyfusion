@@ -263,6 +263,10 @@ def test_vector_partition_uses_distributed_shard_writer(tmp_path) -> None:
     assert result.row_count == 3
     assert len(adapter.write_calls) == 2
     assert len(adapter.vector_calls) == 2
+    first_ids, first_vectors, first_payloads = adapter.vector_calls[0]
+    assert first_ids.shape == (2,)
+    assert first_vectors.shape == (2, 2)
+    assert first_payloads[0] == {"kind": "spark"}
 
 
 # ---------------------------------------------------------------------------

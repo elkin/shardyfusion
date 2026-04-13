@@ -10,7 +10,7 @@ import ray
 import ray.data
 
 from shardyfusion._shard_writer import results_pdf_to_attempts
-from shardyfusion._writer_core import route_key
+from shardyfusion._writer_core import ShardAttemptResult, route_key
 from shardyfusion.config import (
     ManifestOptions,
     OutputOptions,
@@ -237,25 +237,21 @@ def test_write_partition_vector_fn_uses_distributed_writer(monkeypatch) -> None:
         _ = kwargs
         rows = list(rows_fn())
         captured_rows.extend(rows)
-        return results_pdf_to_attempts(
-            ray.data.from_items(
-                [
-                    {
-                        "db_id": db_id,
-                        "db_url": f"s3://bucket/prefix/db={db_id:05d}/attempt=00",
-                        "attempt": 0,
-                        "row_count": len(rows),
-                        "min_key": 1,
-                        "max_key": 2,
-                        "checkpoint_id": "ckpt",
-                        "writer_info": WriterInfo(),
-                        "all_attempt_urls": (),
-                    }
-                ]
-            ).to_pandas()
-        )[0]
+        return ShardAttemptResult(
+            db_id=db_id,
+            db_url=f"s3://bucket/prefix/db={db_id:05d}/attempt=00",
+            attempt=0,
+            row_count=len(rows),
+            min_key=rows[0][0] if rows else None,
+            max_key=rows[-1][0] if rows else None,
+            checkpoint_id="ckpt",
+            writer_info=WriterInfo(),
+            all_attempt_urls=(),
+        )
 
-    monkeypatch.setattr(ray_writer, "write_shard_with_retry_distributed", _fake_distributed)
+    monkeypatch.setattr(
+        ray_writer, "write_shard_with_retry_distributed", _fake_distributed
+    )
 
     runtime = ray_writer._PartitionWriteRuntime(
         run_id="run-test",
@@ -280,6 +276,7 @@ def test_write_partition_vector_fn_uses_distributed_writer(monkeypatch) -> None:
     assert len(out) == 1
     assert captured_rows[0][0] == 1
     assert captured_rows[0][2][0] == 1
+    assert captured_rows[0][2][2] == {"src": "ray"}
 
 
 def test_min_max_key_tracking() -> None:
