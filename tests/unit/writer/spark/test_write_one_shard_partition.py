@@ -59,7 +59,9 @@ class _FakeAdapter:
 class _FakeVectorAdapter(_FakeAdapter):
     def __init__(self, checkpoint_id: str | None = None) -> None:
         super().__init__(checkpoint_id=checkpoint_id)
-        self.vector_calls: list[tuple[object, object, list[dict[str, object] | None]]] = []
+        self.vector_calls: list[
+            tuple[object, object, list[dict[str, object] | None]]
+        ] = []
 
     def write_vector_batch(
         self,

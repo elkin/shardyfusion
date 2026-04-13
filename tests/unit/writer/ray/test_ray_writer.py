@@ -269,7 +269,9 @@ def test_write_partition_vector_fn_uses_distributed_writer(monkeypatch) -> None:
         max_writes_per_second=None,
         vector_fn=lambda row: (int(row["id"]), [0.1, 0.2], {"src": "ray"}),
     )
-    pdf = ray.data.from_items([{DB_ID_COL: 0, "id": 1}, {DB_ID_COL: 0, "id": 2}]).to_pandas()
+    pdf = ray.data.from_items(
+        [{DB_ID_COL: 0, "id": 1}, {DB_ID_COL: 0, "id": 2}]
+    ).to_pandas()
 
     out = ray_writer._write_partition(pdf, runtime)
 
