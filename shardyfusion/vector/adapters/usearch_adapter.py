@@ -348,7 +348,8 @@ class USearchShardReader:
             except sqlite3.OperationalError:
                 pass  # id_map table doesn't exist (old index format)
 
-        # Look up payloads by internal IDs (keyed by internal ID since v2)
+        # Look up payloads by the internal IDs to avoid collisions between
+        # distinct original IDs like ``1`` and ``"1"``.
         original_ids: list[int | str] = [id_map.get(iid, iid) for iid in internal_ids]
         payload_map: dict[str, dict[str, Any]] = {}
         str_iids = [str(iid) for iid in internal_ids]

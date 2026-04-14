@@ -294,6 +294,46 @@ class TestUSearchStringIds:
         ):
             writer.close()
 
+    def test_payload_rows_use_internal_ids_to_avoid_type_collisions(
+        self, tmp_path: Path
+    ) -> None:
+        """Integer and string IDs with the same text should keep distinct payload rows."""
+        import json
+
+        from shardyfusion.vector.adapters.usearch_adapter import (
+            PAYLOADS_FILENAME,
+            USearchWriter,
+        )
+        from shardyfusion.vector.types import DistanceMetric
+
+        writer = USearchWriter(
+            db_url="s3://b/test",
+            local_dir=tmp_path,
+            dim=4,
+            metric=DistanceMetric.COSINE,
+        )
+
+        ids = np.array([1, "1"], dtype=object)
+        vecs = np.random.default_rng(21).standard_normal((2, 4)).astype(np.float32)
+        payloads = [{"kind": "int"}, {"kind": "str"}]
+        writer.add_batch(ids, vecs, payloads)
+        writer.flush()
+
+        conn = sqlite3.connect(str(tmp_path / PAYLOADS_FILENAME))
+        rows = conn.execute("SELECT id, payload FROM payloads ORDER BY id").fetchall()
+        conn.close()
+
+        assert rows == [
+            ("0", json.dumps({"kind": "int"})),
+            ("1", json.dumps({"kind": "str"})),
+        ]
+
+        with patch(
+            "shardyfusion.vector.adapters.usearch_adapter.put_bytes",
+            return_value=None,
+        ):
+            writer.close()
+
     def test_close_marks_writer_closed_after_successful_upload(
         self, tmp_path: Path
     ) -> None:
