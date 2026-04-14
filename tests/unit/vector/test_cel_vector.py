@@ -147,6 +147,30 @@ class TestAssignShardCel:
             )
             assert db_id == 2
 
+    def test_cel_out_of_range_shard_raises(self):
+        """Writer rejects CEL shard IDs outside the configured shard count."""
+        compiled = FakeCompiledCel(key_field="shard")
+        record = VectorRecord(
+            id=1,
+            vector=np.zeros(8, dtype=np.float32),
+            routing_context={"shard": 3},
+        )
+
+        with patch("shardyfusion.cel.route_cel") as mock_route_cel:
+            mock_route_cel.return_value = 3
+            with pytest.raises(ConfigValidationError, match="outside \\[0, 3\\)"):
+                _assign_shard(
+                    record=record,
+                    strategy=VectorShardingStrategy.CEL,
+                    num_dbs=3,
+                    metric=None,
+                    centroids=None,
+                    hyperplanes=None,
+                    compiled_cel=compiled,
+                    routing_values=None,
+                    cel_lookup=None,
+                )
+
     def test_cel_missing_compiled_raises(self):
         record = VectorRecord(
             id=1,

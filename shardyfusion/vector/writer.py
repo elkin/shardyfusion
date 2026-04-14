@@ -67,6 +67,15 @@ class _ShardState:
     checkpoint_id: str | None = None
 
 
+def _validate_routed_shard_id(db_id: int, *, num_dbs: int, strategy: str) -> int:
+    """Reject shard IDs that fall outside the configured shard count."""
+    if db_id < 0 or db_id >= num_dbs:
+        raise ConfigValidationError(
+            f"{strategy} sharding produced shard_id {db_id} outside [0, {num_dbs})"
+        )
+    return db_id
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -428,12 +437,20 @@ def _assign_shard(
     if strategy == VectorShardingStrategy.CLUSTER:
         if centroids is None:
             raise ConfigValidationError("CLUSTER sharding requires centroids")
-        return cluster_assign(record.vector, centroids, metric or DistanceMetric.COSINE)
+        return _validate_routed_shard_id(
+            cluster_assign(record.vector, centroids, metric or DistanceMetric.COSINE),
+            num_dbs=num_dbs,
+            strategy="CLUSTER",
+        )
 
     if strategy == VectorShardingStrategy.LSH:
         if hyperplanes is None:
             raise ConfigValidationError("LSH sharding requires hyperplanes")
-        return lsh_assign(record.vector, hyperplanes, num_dbs)
+        return _validate_routed_shard_id(
+            lsh_assign(record.vector, hyperplanes, num_dbs),
+            num_dbs=num_dbs,
+            strategy="LSH",
+        )
 
     if strategy == VectorShardingStrategy.CEL:
         if compiled_cel is None:
@@ -444,11 +461,15 @@ def _assign_shard(
             )
         from ..cel import route_cel
 
-        return route_cel(
-            compiled_cel,
-            record.routing_context,
-            routing_values=routing_values,
-            lookup=cel_lookup,
+        return _validate_routed_shard_id(
+            route_cel(
+                compiled_cel,
+                record.routing_context,
+                routing_values=routing_values,
+                lookup=cel_lookup,
+            ),
+            num_dbs=num_dbs,
+            strategy="CEL",
         )
 
     raise ConfigValidationError(f"Unknown sharding strategy: {strategy}")
