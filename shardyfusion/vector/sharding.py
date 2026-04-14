@@ -61,15 +61,24 @@ def cluster_assign_batch(
     metric: DistanceMetric = DistanceMetric.COSINE,
 ) -> np.ndarray:
     """Assign a batch of vectors to nearest centroids. Returns array of shard_ids."""
-    dist_fn = _DISTANCE_FNS[metric]
-    # vectors: (N, dim), centroids: (K, dim)
-    # Compute distances from each vector to each centroid
-    n = len(vectors)
-    assignments = np.empty(n, dtype=np.int64)
-    for i in range(n):
-        dists = dist_fn(vectors[i], centroids)
-        assignments[i] = np.argmin(dists)
-    return assignments
+    if metric == DistanceMetric.L2:
+        diff = vectors[:, None, :] - centroids[None, :, :]
+        dists = np.sum(diff * diff, axis=2)
+    elif metric == DistanceMetric.COSINE:
+        vector_norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        centroid_norms = np.linalg.norm(centroids, axis=1, keepdims=True).T
+        dots = vectors @ centroids.T
+        sims = dots / (vector_norms * centroid_norms + 1e-10)
+        dists = 1.0 - sims
+    elif metric == DistanceMetric.DOT_PRODUCT:
+        dists = -(vectors @ centroids.T)
+    else:
+        dist_fn = _DISTANCE_FNS[metric]
+        return np.array(
+            [np.argmin(dist_fn(v, centroids)) for v in vectors], dtype=np.int64
+        )
+
+    return np.argmin(dists, axis=1).astype(np.int64)
 
 
 def cluster_probe_shards(
@@ -286,9 +295,10 @@ def route_vector_to_shards(
             raise ConfigValidationError(
                 "CEL sharding requires cel_expr and cel_columns"
             )
-        from ..cel import compile_cel, route_cel
+        from ..cel import _compile_cel_cached, route_cel
 
-        compiled = compile_cel(cel_expr, cel_columns)
+        columns_key = tuple(sorted(cel_columns.items()))
+        compiled = _compile_cel_cached(cel_expr, columns_key)
         db_id = route_cel(compiled, routing_context, routing_values=routing_values)
         return [db_id]
 

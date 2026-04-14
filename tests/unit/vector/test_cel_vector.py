@@ -189,6 +189,16 @@ class TestAssignShardCel:
 
 
 class TestRouteVectorToShardsCel:
+    def setup_method(self) -> None:
+        from shardyfusion.cel import _compile_cel_cached
+
+        _compile_cel_cached.cache_clear()
+
+    def teardown_method(self) -> None:
+        from shardyfusion.cel import _compile_cel_cached
+
+        _compile_cel_cached.cache_clear()
+
     def test_cel_routes_to_single_shard(self):
         """CEL routing via routing_context resolves to a single shard."""
         with (
@@ -213,6 +223,32 @@ class TestRouteVectorToShardsCel:
             assert result == [1]
             mock_compile.assert_called_once_with("region", {"region": "string"})
             mock_route.assert_called_once()
+
+    def test_cel_reuses_cached_compilation(self):
+        with (
+            patch("shardyfusion.cel.compile_cel") as mock_compile,
+            patch("shardyfusion.cel.route_cel") as mock_route,
+        ):
+            mock_compile.return_value = MagicMock()
+            mock_route.return_value = 1
+
+            from shardyfusion.vector.sharding import route_vector_to_shards
+
+            for _ in range(2):
+                result = route_vector_to_shards(
+                    np.zeros(8, dtype=np.float32),
+                    strategy=VectorShardingStrategy.CEL,
+                    num_dbs=3,
+                    num_probes=1,
+                    routing_context={"region": "eu"},
+                    cel_expr="region",
+                    cel_columns={"region": "string"},
+                    routing_values=["us", "eu", "asia"],
+                )
+                assert result == [1]
+
+            mock_compile.assert_called_once_with("region", {"region": "string"})
+            assert mock_route.call_count == 2
 
     def test_cel_missing_routing_context_raises(self):
         from shardyfusion.vector.sharding import route_vector_to_shards

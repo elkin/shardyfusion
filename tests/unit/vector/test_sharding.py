@@ -35,6 +35,27 @@ class TestClusterAssign:
         assert assignments[1] == 1
         assert len(assignments) == 3
 
+    @pytest.mark.parametrize(
+        "metric",
+        [
+            DistanceMetric.L2,
+            DistanceMetric.COSINE,
+            DistanceMetric.DOT_PRODUCT,
+        ],
+    )
+    def test_assign_batch_matches_scalar_assignment(self, metric: DistanceMetric):
+        rng = np.random.default_rng(42)
+        centroids = rng.standard_normal((4, 6)).astype(np.float32)
+        vectors = rng.standard_normal((12, 6)).astype(np.float32)
+
+        expected = np.array(
+            [cluster_assign(vector, centroids, metric) for vector in vectors],
+            dtype=np.int64,
+        )
+        assignments = cluster_assign_batch(vectors, centroids, metric)
+
+        np.testing.assert_array_equal(assignments, expected)
+
     def test_probe_shards_returns_correct_count(self):
         rng = np.random.default_rng(42)
         centroids = rng.standard_normal((10, 32)).astype(np.float32)
