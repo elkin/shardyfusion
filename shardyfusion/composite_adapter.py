@@ -30,7 +30,14 @@ from .config import VectorSpec, vector_metric_to_str
 from .errors import ShardyfusionError
 from .logging import get_logger, log_event
 from .slatedb_adapter import DbAdapter, DbAdapterFactory
-from .vector.types import SearchResult, VectorIndexWriter, VectorIndexWriterFactory
+from .type_defs import ShardReader, ShardReaderFactory
+from .vector.types import (
+    SearchResult,
+    VectorIndexWriter,
+    VectorIndexWriterFactory,
+    VectorShardReader,
+    VectorShardReaderFactory,
+)
 
 _logger = get_logger(__name__)
 
@@ -188,8 +195,8 @@ class CompositeReaderFactory:
         vector_spec: Vector configuration.
     """
 
-    kv_factory: Any  # ShardReaderFactory protocol
-    vector_factory: Any  # VectorShardReaderFactory protocol
+    kv_factory: ShardReaderFactory
+    vector_factory: VectorShardReaderFactory
     vector_spec: VectorSpec
 
     def __call__(
@@ -240,8 +247,8 @@ class CompositeShardReader:
     def __init__(
         self,
         *,
-        kv_reader: Any,  # ShardReader protocol (get + close)
-        vector_reader: Any,  # VectorShardReader protocol (search + close)
+        kv_reader: ShardReader,
+        vector_reader: VectorShardReader,
     ) -> None:
         self._kv = kv_reader
         self._vec = vector_reader
