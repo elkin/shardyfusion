@@ -508,6 +508,10 @@ class _FixedManifestStore:
     def set_current(self, ref: str) -> None:
         pass
 
+    def update(self, manifest: ParsedManifest, ref: str) -> None:
+        self._manifest = manifest
+        self._ref = ref
+
 
 def _vector_manifest(num_dbs: int = 2) -> ParsedManifest:
     """Build a manifest with vector custom fields."""
@@ -537,6 +541,16 @@ def _vector_manifest(num_dbs: int = 2) -> ParsedManifest:
         }
     }
     return ParsedManifest(required_build=required, shards=shards, custom=custom)
+
+
+def _invalid_vector_manifest(num_dbs: int = 2) -> ParsedManifest:
+    """Build a manifest missing valid vector custom fields."""
+    manifest = _vector_manifest(num_dbs=num_dbs)
+    return ParsedManifest(
+        required_build=manifest.required_build,
+        shards=manifest.shards,
+        custom={},
+    )
 
 
 class _FakeShardReader:
@@ -655,6 +669,35 @@ class TestUnifiedShardedReaderInit:
             changed = reader.refresh()
             # The fixture always returns the same manifest, so no state swap
             assert not changed or reader.vector_meta.dim == 4
+        finally:
+            reader.close()
+
+    def test_refresh_with_invalid_vector_manifest_keeps_old_state(
+        self, tmp_path: Any
+    ) -> None:
+        store = _FixedManifestStore(_vector_manifest(num_dbs=1), "mem://manifest/v1")
+
+        reader = UnifiedShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=store,
+            reader_factory=_fake_reader_factory,
+        )
+        try:
+            original_meta = reader.vector_meta
+            original_ref = reader.snapshot_info().manifest_ref
+
+            store.update(_invalid_vector_manifest(num_dbs=1), "mem://manifest/v2")
+
+            with pytest.raises(ConfigValidationError, match="vector metadata"):
+                reader.refresh()
+
+            assert reader.vector_meta == original_meta
+            assert reader.snapshot_info().manifest_ref == original_ref
+
+            response = reader.search(np.zeros(4, dtype=np.float32), top_k=5)
+            assert response.num_shards_queried == 1
+            assert len(response.results) == 1
         finally:
             reader.close()
 
