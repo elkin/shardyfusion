@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from shardyfusion._writer_core import VectorColumnMapping, resolve_distributed_vector_fn
@@ -96,6 +97,29 @@ class TestResolveDistributedVectorFn:
         vec_id, _, _ = fn({"k": 3.14, "v": [1.0, 2.0]})
         assert isinstance(vec_id, str)
         assert vec_id == "3.14"
+
+    def test_auto_fn_normalizes_numpy_integer_scalars(self) -> None:
+        config = _cel_config(VectorSpec(dim=2, vector_col="v"))
+        fn = resolve_distributed_vector_fn(
+            config=config, key_col="k", vector_fn=None, vector_columns=None
+        )
+        assert fn is not None
+        vec_id, _, _ = fn({"k": np.int64(7), "v": [1.0, 2.0]})
+        assert isinstance(vec_id, int)
+        assert vec_id == 7
+
+    def test_auto_fn_keeps_numpy_string_scalars_as_strings(self) -> None:
+        config = _cel_config(VectorSpec(dim=2, vector_col="v"))
+        mapping = VectorColumnMapping(
+            vector_col="v", id_col="doc_id", payload_cols=None
+        )
+        fn = resolve_distributed_vector_fn(
+            config=config, key_col="k", vector_fn=None, vector_columns=mapping
+        )
+        assert fn is not None
+        vec_id, _, _ = fn({"k": 1, "doc_id": np.str_("doc-7"), "v": [1.0, 2.0]})
+        assert isinstance(vec_id, str)
+        assert vec_id == "doc-7"
 
     def test_auto_fn_payload_cols_from_mapping(self) -> None:
         config = _cel_config(VectorSpec(dim=2, vector_col="v"))

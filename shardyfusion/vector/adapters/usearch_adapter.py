@@ -129,6 +129,10 @@ class USearchWriter:
         start = self._next_internal_id
         internal_ids = np.arange(start, start + n, dtype=np.int64)
         self._next_internal_id = start + n
+        normalized_ids: list[int | str] = [
+            int(raw_id) if isinstance(raw_id, (int, np.integer)) else str(raw_id)
+            for raw_id in ids
+        ]
 
         # Store the mapping from internal → original, preserving the
         # original type representation (int stays as str(int) in SQLite
@@ -136,9 +140,9 @@ class USearchWriter:
         id_rows = [
             (
                 int(internal_ids[i]),
-                json.dumps({"v": ids[i], "t": "int"})
-                if isinstance(ids[i], (int, np.integer))
-                else json.dumps({"v": str(ids[i]), "t": "str"}),
+                json.dumps({"v": normalized_ids[i], "t": "int"})
+                if isinstance(normalized_ids[i], int)
+                else json.dumps({"v": normalized_ids[i], "t": "str"}),
             )
             for i in range(n)
         ]

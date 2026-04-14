@@ -6,7 +6,8 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol
+from operator import index as operator_index
+from typing import Any, Literal, Protocol, SupportsIndex, cast
 
 from .config import WriteConfig, vector_metric_to_str
 from .errors import (
@@ -47,6 +48,16 @@ _PUBLISH_CURRENT_MAX_RETRIES = 3
 
 class _RowLike(Protocol):
     def __getitem__(self, key: str) -> object: ...
+
+
+def _normalize_vector_id(raw_id: object) -> int | str:
+    """Normalize framework scalar wrappers to the logical vector ID contract."""
+    if isinstance(raw_id, (int, str)):
+        return raw_id
+    try:
+        return operator_index(cast(SupportsIndex, raw_id))
+    except TypeError:
+        return str(raw_id)
 
 
 @dataclass(slots=True, frozen=True)
@@ -219,7 +230,9 @@ def resolve_distributed_vector_fn(
         row: _RowLike,
     ) -> tuple[int | str, Any, dict[str, Any] | None]:
         raw_id = row[id_col]
-        vec_id: int | str = raw_id if isinstance(raw_id, (int, str)) else str(raw_id)
+        # Distributed row APIs often surface numpy/pandas scalar wrappers; normalize
+        # them once here so lower-level vector adapters only see logical int|str IDs.
+        vec_id = _normalize_vector_id(raw_id)
         vector = row[vector_col]
         payload = {col: row[col] for col in payload_cols} if payload_cols else None
         return (vec_id, vector, payload)
