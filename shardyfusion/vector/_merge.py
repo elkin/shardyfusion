@@ -14,13 +14,11 @@ def merge_results(
 ) -> list[SearchResult]:
     """Merge per-shard results into a single top-k list.
 
-    For L2 and COSINE distance: lower score = better (use nsmallest).
-    For DOT_PRODUCT similarity: higher score = better (use nlargest).
+    All backends store distances in ``SearchResult.score`` where lower is
+    better, including dot-product (negated so lower = higher similarity).
     """
     all_results = [r for shard in per_shard_results for r in shard]
     if not all_results:
         return []
 
-    if metric == DistanceMetric.DOT_PRODUCT:
-        return heapq.nlargest(top_k, all_results, key=lambda r: r.score)
     return heapq.nsmallest(top_k, all_results, key=lambda r: r.score)

@@ -34,14 +34,15 @@ class TestMergeResults:
         assert merged[0].id == 3  # 0.05
         assert merged[1].id == 1  # 0.1
 
-    def test_dot_product_higher_is_better(self):
-        shard1 = [_r(1, 10.0), _r(2, 5.0)]
-        shard2 = [_r(3, 15.0), _r(4, 1.0)]
+    def test_dot_product_lower_distance_is_better(self):
+        # Backends return negated dot product as distance: lower = more similar
+        shard1 = [_r(1, -10.0), _r(2, -5.0)]
+        shard2 = [_r(3, -15.0), _r(4, -1.0)]
         merged = merge_results([shard1, shard2], 3, DistanceMetric.DOT_PRODUCT)
         assert len(merged) == 3
-        assert merged[0].id == 3  # 15.0
-        assert merged[1].id == 1  # 10.0
-        assert merged[2].id == 2  # 5.0
+        assert merged[0].id == 3  # -15.0 (most similar)
+        assert merged[1].id == 1  # -10.0
+        assert merged[2].id == 2  # -5.0
 
     def test_top_k_limits_output(self):
         shard1 = [_r(i, float(i)) for i in range(20)]

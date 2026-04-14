@@ -296,17 +296,19 @@ class TestUnifiedReaderSearchMerge:
 
         assert response.results == [SearchResult(id=3, score=0.1)]
 
-    def test_search_dot_product_uses_higher_scores(self) -> None:
+    def test_search_dot_product_uses_distance_ordering(self) -> None:
+        """Dot-product scores are distances (negated dot), lower = better."""
         reader = self._build_reader(DistanceMetric.DOT_PRODUCT)
         query = np.zeros(2, dtype=np.float32)
         with patch("shardyfusion.reader.unified_reader._search_shard") as mock_search:
             mock_search.side_effect = [
-                [SearchResult(id=1, score=0.1), SearchResult(id=2, score=0.3)],
-                [SearchResult(id=3, score=0.9), SearchResult(id=4, score=0.2)],
+                [SearchResult(id=1, score=-0.9), SearchResult(id=2, score=-0.3)],
+                [SearchResult(id=3, score=-0.1), SearchResult(id=4, score=-0.2)],
             ]
             response = reader.search(query, top_k=2)
 
-        assert [result.id for result in response.results] == [3, 2]
+        # Lower distance = more similar; -0.9 is best, then -0.3
+        assert [result.id for result in response.results] == [1, 2]
 
     def test_search_rejects_invalid_metric_before_merge(self) -> None:
         reader = self._build_reader(cast(Any, "manhattan"))

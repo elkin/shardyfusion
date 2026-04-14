@@ -154,7 +154,7 @@ class USearchWriter:
 
         if payloads is not None:
             rows = [
-                (str(ids[i]), json.dumps(payloads[i], default=str))
+                (str(int(internal_ids[i])), json.dumps(payloads[i], default=str))
                 for i in range(len(ids))
             ]
             self._payload_conn.executemany(
@@ -344,22 +344,22 @@ class USearchShardReader:
             except sqlite3.OperationalError:
                 pass  # id_map table doesn't exist (old index format)
 
-        # Look up payloads by the original IDs (stored as string keys)
+        # Look up payloads by internal IDs (keyed by internal ID since v2)
         original_ids: list[int | str] = [id_map.get(iid, iid) for iid in internal_ids]
         payload_map: dict[str, dict[str, Any]] = {}
-        str_keys = [str(oid) for oid in original_ids]
-        if str_keys:
-            placeholders = ",".join("?" for _ in str_keys)
+        str_iids = [str(iid) for iid in internal_ids]
+        if str_iids:
+            placeholders = ",".join("?" for _ in str_iids)
             cursor = self._payload_conn.execute(
                 f"SELECT id, payload FROM payloads WHERE id IN ({placeholders})",  # noqa: S608
-                str_keys,
+                str_iids,
             )
             for row in cursor:
                 payload_map[row[0]] = json.loads(row[1])
 
         for i in range(len(keys)):
             orig_id = original_ids[i]
-            payload = payload_map.get(str(orig_id))
+            payload = payload_map.get(str(internal_ids[i]))
             results.append(
                 SearchResult(
                     id=orig_id,
