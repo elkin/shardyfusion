@@ -158,14 +158,19 @@ class TestSqliteVecIdMapping:
         adapter.checkpoint()
         return shard_dir / "shard.db"
 
-    def test_integer_ids_no_id_map(self, tmp_path: Path) -> None:
+    def test_integer_ids_have_typed_id_map_rows(self, tmp_path: Path) -> None:
         db_path = self._build_db(tmp_path, np.array([10, 20, 30]))
 
         conn = sqlite3.connect(str(db_path))
         sqlite_vec.load(conn)
-        rows = conn.execute("SELECT * FROM vec_id_map").fetchall()
+        rows = conn.execute(
+            "SELECT internal_id, original_id FROM vec_id_map ORDER BY internal_id"
+        ).fetchall()
         conn.close()
-        assert rows == []
+        assert len(rows) == 3
+        assert json.loads(rows[0][1]) == {"v": 10, "t": "int"}
+        assert json.loads(rows[1][1]) == {"v": 20, "t": "int"}
+        assert json.loads(rows[2][1]) == {"v": 30, "t": "int"}
 
     def test_string_ids_populate_id_map(self, tmp_path: Path) -> None:
         db_path = self._build_db(tmp_path, np.array(["a", "b", "c"], dtype=object))
@@ -177,12 +182,15 @@ class TestSqliteVecIdMapping:
         ).fetchall()
         conn.close()
         assert len(rows) == 3
-        assert rows[0] == (0, "a")
-        assert rows[1] == (1, "b")
-        assert rows[2] == (2, "c")
+        assert rows[0][0] == 0
+        assert json.loads(rows[0][1]) == {"v": "a", "t": "str"}
+        assert rows[1][0] == 1
+        assert json.loads(rows[1][1]) == {"v": "b", "t": "str"}
+        assert rows[2][0] == 2
+        assert json.loads(rows[2][1]) == {"v": "c", "t": "str"}
 
-    def test_int_ids_advance_next_vec_id(self, tmp_path: Path) -> None:
-        """After writing int IDs [10, 20], _next_vec_id should be 21."""
+    def test_synthetic_ids_advance_next_vec_id(self, tmp_path: Path) -> None:
+        """After writing 2 IDs, _next_vec_id should be 2 (synthetic monotonic)."""
         shard_dir = tmp_path / "shard"
         adapter = SqliteVecAdapter(
             db_url="s3://bucket/shard",
@@ -191,9 +199,9 @@ class TestSqliteVecIdMapping:
         )
         vecs = np.random.randn(2, 4).astype(np.float32)
         adapter.write_vector_batch(np.array([10, 20]), vecs)
-        assert adapter._next_vec_id == 21
+        assert adapter._next_vec_id == 2
 
-        # Now write strings — should start at 21, no collision
+        # Now write strings — should start at 2, no collision
         adapter.write_vector_batch(
             np.array(["x", "y"], dtype=object),
             np.random.randn(2, 4).astype(np.float32),
@@ -202,11 +210,16 @@ class TestSqliteVecIdMapping:
 
         conn = sqlite3.connect(str(shard_dir / "shard.db"))
         sqlite_vec.load(conn)
-        id_map = dict(
-            conn.execute("SELECT internal_id, original_id FROM vec_id_map").fetchall()
-        )
+        rows = conn.execute(
+            "SELECT internal_id, original_id FROM vec_id_map ORDER BY internal_id"
+        ).fetchall()
         conn.close()
-        assert id_map == {21: "x", 22: "y"}
+        # All 4 entries with synthetic rowids 0-3
+        assert len(rows) == 4
+        assert json.loads(rows[0][1]) == {"v": 10, "t": "int"}
+        assert json.loads(rows[1][1]) == {"v": 20, "t": "int"}
+        assert json.loads(rows[2][1]) == {"v": "x", "t": "str"}
+        assert json.loads(rows[3][1]) == {"v": "y", "t": "str"}
 
     def test_payloads_stored(self, tmp_path: Path) -> None:
         db_path = self._build_db(
@@ -236,13 +249,12 @@ class TestSqliteVecIdMapping:
         sqlite_vec.load(conn)
         rows = conn.execute("SELECT rowid FROM vec_payloads").fetchall()
         conn.close()
-        # Only rowid=1 should have a payload
+        # Only synthetic rowid=0 (first entry) should have a payload
         assert len(rows) == 1
-        assert rows[0][0] == 1
+        assert rows[0][0] == 0
 
-    def test_mixed_ids_allocate_deterministic_string_rowids(
-        self, tmp_path: Path
-    ) -> None:
+    def test_mixed_ids_allocate_synthetic_rowids(self, tmp_path: Path) -> None:
+        """All IDs (int and string) get synthetic monotonic rowids."""
         shard_dir = tmp_path / "shard"
         adapter = SqliteVecAdapter(
             db_url="s3://bucket/shard",
@@ -261,9 +273,13 @@ class TestSqliteVecIdMapping:
         ).fetchall()
         conn.close()
 
-        assert rows == [(11, "doc_a"), (12, "doc_b")]
+        assert len(rows) == 4
+        assert json.loads(rows[0][1]) == {"v": 10, "t": "int"}
+        assert json.loads(rows[1][1]) == {"v": "doc_a", "t": "str"}
+        assert json.loads(rows[2][1]) == {"v": 2, "t": "int"}
+        assert json.loads(rows[3][1]) == {"v": "doc_b", "t": "str"}
 
-    def test_mixed_ids_payloads_persist_on_assigned_rowids(
+    def test_mixed_ids_payloads_persist_on_synthetic_rowids(
         self, tmp_path: Path
     ) -> None:
         shard_dir = tmp_path / "shard"
@@ -285,19 +301,25 @@ class TestSqliteVecIdMapping:
 
         conn = sqlite3.connect(str(shard_dir / "shard.db"))
         sqlite_vec.load(conn)
-        id_map = dict(
-            conn.execute("SELECT internal_id, original_id FROM vec_id_map").fetchall()
-        )
+        id_map_rows = conn.execute(
+            "SELECT internal_id, original_id FROM vec_id_map ORDER BY internal_id"
+        ).fetchall()
         payload_rows = conn.execute(
             "SELECT rowid, payload FROM vec_payloads ORDER BY rowid"
         ).fetchall()
         conn.close()
 
-        assert id_map == {6: "doc_a", 8: "doc_b"}
+        # All 4 IDs get synthetic rowids 0-3
+        assert len(id_map_rows) == 4
+        assert json.loads(id_map_rows[0][1]) == {"v": 5, "t": "int"}
+        assert json.loads(id_map_rows[1][1]) == {"v": "doc_a", "t": "str"}
+        assert json.loads(id_map_rows[2][1]) == {"v": 7, "t": "int"}
+        assert json.loads(id_map_rows[3][1]) == {"v": "doc_b", "t": "str"}
+        # Payloads at synthetic rowids: 0, 1, 3 (index 2 has None payload)
         assert [(rowid, json.loads(payload)) for rowid, payload in payload_rows] == [
-            (5, {"kind": "int"}),
-            (6, {"kind": "string_a"}),
-            (8, {"kind": "string_b"}),
+            (0, {"kind": "int"}),
+            (1, {"kind": "string_a"}),
+            (3, {"kind": "string_b"}),
         ]
 
     def test_mixed_ids_across_batches_checkpoint_is_reproducible(
@@ -338,7 +360,18 @@ class TestSqliteVecIdMapping:
         checkpoint_b, id_map_b = build_checkpoint("shard_b")
 
         assert checkpoint_a == checkpoint_b
-        assert id_map_a == id_map_b == [(5, "doc_a"), (9, "doc_b"), (10, "doc_c")]
+        assert id_map_a == id_map_b
+        # All 6 entries with synthetic rowids 0-5
+        assert len(id_map_a) == 6
+        decoded = [(r[0], json.loads(r[1])) for r in id_map_a]
+        assert decoded == [
+            (0, {"v": 4, "t": "int"}),
+            (1, {"v": "doc_a", "t": "str"}),
+            (2, {"v": 8, "t": "int"}),
+            (3, {"v": "doc_b", "t": "str"}),
+            (4, {"v": 6, "t": "int"}),
+            (5, {"v": "doc_c", "t": "str"}),
+        ]
 
     def test_write_vector_batch_uses_executemany_for_all_staged_tables(
         self, tmp_path: Path

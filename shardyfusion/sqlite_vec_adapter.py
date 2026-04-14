@@ -224,49 +224,41 @@ class SqliteVecAdapter:
     ) -> None:
         """Write vectors using batched inserts across vector tables.
 
-        The batch is preprocessed first so we can:
-        - deterministically allocate internal row IDs for mixed int/string IDs,
-        - stage rows for ``vec_index``, ``vec_payloads``, and ``vec_id_map``,
-        - persist each table with ``executemany`` (no per-row execute calls).
+        All IDs are mapped to monotonically increasing synthetic rowids
+        to prevent cross-batch collisions between integer and string IDs.
+        A typed JSON entry in ``vec_id_map`` preserves the original type
+        so that integer IDs come back as ``int`` and string IDs as ``str``.
         """
         if self._conn is None:
             raise SqliteVecAdapterError("Adapter already closed")
         if self._checkpointed:
             raise SqliteVecAdapterError("Cannot write after checkpoint")
 
-        reserved_int_ids = {
-            int(ids[i])
-            for i in range(len(ids))
-            if isinstance(ids[i], (int, np.integer))
-        }
-        next_row_id = self._next_vec_id
+        n = len(ids)
+        start = self._next_vec_id
         vec_rows: list[tuple[int, bytes]] = []
         payload_rows: list[tuple[int, str]] = []
         id_map_rows: list[tuple[int, str]] = []
 
-        for i in range(len(ids)):
+        for i in range(n):
+            row_id = start + i
             raw_id = ids[i]
             if isinstance(raw_id, (int, np.integer)):
-                row_id = int(raw_id)
-                if row_id + 1 > next_row_id:
-                    next_row_id = row_id + 1
+                id_map_rows.append((row_id, json.dumps({"v": int(raw_id), "t": "int"})))
             else:
-                while next_row_id in reserved_int_ids:
-                    next_row_id += 1
-                row_id = next_row_id
-                next_row_id += 1
-                id_map_rows.append((row_id, str(raw_id)))
+                id_map_rows.append((row_id, json.dumps({"v": str(raw_id), "t": "str"})))
 
             vec_rows.append((row_id, vectors[i].astype(np.float32).tobytes()))
             if payloads is not None and payloads[i] is not None:
                 payload_rows.append((row_id, json.dumps(payloads[i], default=str)))
 
+        self._next_vec_id = start + n
+
         # Persist staged rows in batches for write throughput.
-        if id_map_rows:
-            self._conn.executemany(
-                "INSERT INTO vec_id_map (internal_id, original_id) VALUES (?, ?)",
-                id_map_rows,
-            )
+        self._conn.executemany(
+            "INSERT INTO vec_id_map (internal_id, original_id) VALUES (?, ?)",
+            id_map_rows,
+        )
         self._conn.executemany(
             "INSERT INTO vec_index (rowid, embedding) VALUES (?, ?)",
             vec_rows,
@@ -276,8 +268,6 @@ class SqliteVecAdapter:
                 "INSERT OR REPLACE INTO vec_payloads (rowid, payload) VALUES (?, ?)",
                 payload_rows,
             )
-
-        self._next_vec_id = next_row_id
 
     # -- Lifecycle --
 
@@ -459,7 +449,7 @@ class SqliteVecShardReader:
                     (row_id,),
                 ).fetchone()
                 if id_row is not None:
-                    original_id = id_row[0]
+                    original_id = _decode_id_map_value(id_row[0])
             except sqlite3.OperationalError:
                 pass  # table doesn't exist (old format)
 
@@ -495,6 +485,22 @@ class SqliteVecShardReader:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _decode_id_map_value(raw: str) -> int | str:
+    """Decode an id_map original_id value, handling both new typed JSON
+    format (``{"v": ..., "t": "int"|"str"}``) and legacy plain-string format.
+    """
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict) and "v" in obj:
+            if obj.get("t") == "int":
+                return int(obj["v"])
+            return str(obj["v"])
+    except (json.JSONDecodeError, ValueError, TypeError):
+        pass
+    # Legacy format: plain string
+    return raw
 
 
 def _is_cached_snapshot_current(
