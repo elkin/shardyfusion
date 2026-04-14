@@ -52,6 +52,15 @@ class VectorReaderHealth:
     is_closed: bool
 
 
+@dataclass(slots=True)
+class _CachedShardReader:
+    """Cache entry that defers close until in-flight searches release it."""
+
+    reader: VectorShardReader
+    borrow_count: int = 0
+    retired: bool = False
+
+
 class ShardedVectorReader:
     """Read-side router that loads a vector manifest and fans out searches."""
 
@@ -109,8 +118,9 @@ class ShardedVectorReader:
         self._s3_client = create_s3_client(credentials, s3_connection_options)
 
         # Shard reader cache (lazy loading)
-        self._shard_readers: OrderedDict[int, VectorShardReader] = OrderedDict()
+        self._shard_readers: OrderedDict[int, _CachedShardReader] = OrderedDict()
         self._shard_locks: dict[int, threading.Lock] = {}
+        self._cache_generation = 0
         self._cache_lock = (
             threading.Lock()
         )  # protects shard_locks creation + LRU eviction
@@ -362,15 +372,13 @@ class ShardedVectorReader:
                 return False
 
             with self._cache_lock:
-                old_readers = dict(self._shard_readers)
+                old_readers = list(self._shard_readers.values())
+                self._cache_generation += 1
                 self._shard_readers = OrderedDict()
                 self._shard_locks = {}
 
-            for reader in old_readers.values():
-                try:
-                    reader.close()
-                except Exception:
-                    pass
+            for cache_entry in old_readers:
+                self._retire_reader(cache_entry)
 
             if self._mc is not None:
                 self._mc.emit(
@@ -386,13 +394,11 @@ class ShardedVectorReader:
         self._closed = True
         with self._cache_lock:
             readers_to_close = list(self._shard_readers.values())
+            self._cache_generation += 1
             self._shard_readers.clear()
             self._shard_locks = {}
-        for reader in readers_to_close:
-            try:
-                reader.close()
-            except Exception:
-                pass
+        for cache_entry in readers_to_close:
+            self._retire_reader(cache_entry)
 
         if self._mc is not None:
             self._mc.emit(MetricEvent.VECTOR_READER_CLOSED, {})
@@ -449,7 +455,9 @@ class ShardedVectorReader:
 
         if self._preload_shards:
             for db_id in self._shard_meta:
-                self._get_or_load_reader(db_id)
+                cache_entry = self._get_or_load_reader(db_id)
+                if cache_entry is not None:
+                    self._release_reader(cache_entry)
 
     def _apply_manifest(
         self,
@@ -533,76 +541,124 @@ class ShardedVectorReader:
         ef: int,
     ) -> list[SearchResult]:
         """Search a single shard, loading it lazily if needed."""
-        reader = self._get_or_load_reader(shard_id)
-        if reader is None:
+        cache_entry = self._get_or_load_reader(shard_id)
+        if cache_entry is None:
             return []
 
-        started = time.perf_counter()
-        results = reader.search(query, top_k, ef=ef)
-        elapsed_ms = (time.perf_counter() - started) * 1000
+        try:
+            started = time.perf_counter()
+            results = cache_entry.reader.search(query, top_k, ef=ef)
+            elapsed_ms = (time.perf_counter() - started) * 1000
 
-        if self._mc is not None:
-            self._mc.emit(
-                MetricEvent.VECTOR_SHARD_SEARCH,
-                {
-                    "shard_id": shard_id,
-                    "top_k": top_k,
-                    "num_results": len(results),
-                    "elapsed_ms": elapsed_ms,
-                },
-            )
+            if self._mc is not None:
+                self._mc.emit(
+                    MetricEvent.VECTOR_SHARD_SEARCH,
+                    {
+                        "shard_id": shard_id,
+                        "top_k": top_k,
+                        "num_results": len(results),
+                        "elapsed_ms": elapsed_ms,
+                    },
+                )
 
-        return results
+            return results
+        finally:
+            self._release_reader(cache_entry)
 
-    def _get_or_load_reader(self, shard_id: int) -> VectorShardReader | None:
+    def _get_or_load_reader(self, shard_id: int) -> _CachedShardReader | None:
         """Get or lazily load a shard reader."""
-        if shard_id in self._shard_readers:
-            self._shard_readers.move_to_end(shard_id)
-            return self._shard_readers[shard_id]
-
-        meta = self._shard_meta.get(shard_id)
-        if meta is None or meta.db_url is None:
-            return None
-
-        # Per-shard lock for one-at-a-time download — synchronized creation
         with self._cache_lock:
+            cache_entry = self._shard_readers.get(shard_id)
+            if cache_entry is not None:
+                cache_entry.borrow_count += 1
+                self._shard_readers.move_to_end(shard_id)
+                return cache_entry
+
+            meta = self._shard_meta.get(shard_id)
+            if meta is None or meta.db_url is None:
+                return None
+
             if shard_id not in self._shard_locks:
                 self._shard_locks[shard_id] = threading.Lock()
             lock = self._shard_locks[shard_id]
+            generation = self._cache_generation
+            db_url = meta.db_url
+            index_config = self._index_config or VectorIndexConfig(dim=0)
 
         with lock:
-            # Double-check after acquiring lock
-            if shard_id in self._shard_readers:
-                self._shard_readers.move_to_end(shard_id)
-                return self._shard_readers[shard_id]
+            with self._cache_lock:
+                cache_entry = self._shard_readers.get(shard_id)
+                if cache_entry is not None:
+                    cache_entry.borrow_count += 1
+                    self._shard_readers.move_to_end(shard_id)
+                    return cache_entry
 
             local_dir = self._local_root / f"shard_{shard_id:05d}"
             reader = self._reader_factory(
-                db_url=meta.db_url,
+                db_url=db_url,
                 local_dir=local_dir,
-                index_config=self._index_config or VectorIndexConfig(dim=0),
+                index_config=index_config,
             )
+            new_entry = _CachedShardReader(reader=reader, borrow_count=1)
+            stale_reader_to_close: VectorShardReader | None = None
+            reader_to_retire: _CachedShardReader | None = None
 
             with self._cache_lock:
-                self._shard_readers[shard_id] = reader
-                self._shard_readers.move_to_end(shard_id)
+                cache_entry = self._shard_readers.get(shard_id)
+                if cache_entry is not None:
+                    cache_entry.borrow_count += 1
+                    self._shard_readers.move_to_end(shard_id)
+                    stale_reader_to_close = reader
+                elif generation != self._cache_generation:
+                    new_entry.retired = True
+                    cache_entry = new_entry
+                else:
+                    self._shard_readers[shard_id] = new_entry
+                    self._shard_readers.move_to_end(shard_id)
+                    cache_entry = new_entry
 
-                # LRU eviction — skip if max_cached_shards is 0 or None
-                if (
-                    self._max_cached_shards is not None
-                    and self._max_cached_shards > 0
-                    and len(self._shard_readers) > self._max_cached_shards
-                ):
-                    evict_id, evict_reader = self._shard_readers.popitem(last=False)
-                    # Don't evict the reader we just created
-                    if evict_id == shard_id:
-                        self._shard_readers[shard_id] = evict_reader
-                        self._shard_readers.move_to_end(shard_id)
-                    else:
-                        self._shard_locks.pop(evict_id, None)
-                        try:
-                            evict_reader.close()
-                        except Exception:
-                            pass
+                    if (
+                        self._max_cached_shards is not None
+                        and self._max_cached_shards > 0
+                        and len(self._shard_readers) > self._max_cached_shards
+                    ):
+                        evict_id, evict_entry = self._shard_readers.popitem(last=False)
+                        if evict_id == shard_id:
+                            self._shard_readers[shard_id] = evict_entry
+                            self._shard_readers.move_to_end(shard_id)
+                        else:
+                            self._shard_locks.pop(evict_id, None)
+                            reader_to_retire = evict_entry
 
-            return reader
+            if stale_reader_to_close is not None:
+                try:
+                    stale_reader_to_close.close()
+                except Exception:
+                    pass
+            if reader_to_retire is not None:
+                self._retire_reader(reader_to_retire)
+            return cache_entry
+
+    def _release_reader(self, cache_entry: _CachedShardReader) -> None:
+        reader_to_close: VectorShardReader | None = None
+        with self._cache_lock:
+            cache_entry.borrow_count -= 1
+            if cache_entry.retired and cache_entry.borrow_count == 0:
+                reader_to_close = cache_entry.reader
+        if reader_to_close is not None:
+            try:
+                reader_to_close.close()
+            except Exception:
+                pass
+
+    def _retire_reader(self, cache_entry: _CachedShardReader) -> None:
+        reader_to_close: VectorShardReader | None = None
+        with self._cache_lock:
+            cache_entry.retired = True
+            if cache_entry.borrow_count == 0:
+                reader_to_close = cache_entry.reader
+        if reader_to_close is not None:
+            try:
+                reader_to_close.close()
+            except Exception:
+                pass

@@ -53,6 +53,27 @@ class MockShardReader:
         self._closed = True
 
 
+class BlockingShardReader(MockShardReader):
+    """Mock reader that blocks search until the test releases it."""
+
+    def __init__(
+        self,
+        shard_id: int,
+        search_started: threading.Event,
+        release_search: threading.Event,
+        num_results: int = 5,
+    ) -> None:
+        super().__init__(shard_id, num_results=num_results)
+        self._search_started = search_started
+        self._release_search = release_search
+
+    def search(self, query: np.ndarray, top_k: int, ef: int = 50) -> list[SearchResult]:
+        self._search_started.set()
+        if not self._release_search.wait(timeout=5):
+            raise TimeoutError("timed out waiting to release blocking vector search")
+        return super().search(query, top_k, ef=ef)
+
+
 class MockReaderFactory:
     """Factory that creates MockShardReaders."""
 
@@ -66,6 +87,34 @@ class MockReaderFactory:
         # Extract shard_id from db_url pattern
         shard_id = len(self.created)
         reader = MockShardReader(shard_id, self._num_results)
+        self.created[db_url] = reader
+        return reader
+
+
+class BlockingReaderFactory(MockReaderFactory):
+    """Factory that produces readers with externally controlled search blocking."""
+
+    def __init__(
+        self,
+        *,
+        search_started: threading.Event,
+        release_search: threading.Event,
+        num_results: int = 5,
+    ) -> None:
+        super().__init__(num_results=num_results)
+        self._search_started = search_started
+        self._release_search = release_search
+
+    def __call__(
+        self, *, db_url: str, local_dir: Path, index_config: Any
+    ) -> MockShardReader:
+        shard_id = len(self.created)
+        reader = BlockingShardReader(
+            shard_id,
+            search_started=self._search_started,
+            release_search=self._release_search,
+            num_results=self._num_results,
+        )
         self.created[db_url] = reader
         return reader
 
@@ -432,6 +481,51 @@ class TestShardedVectorReader:
 
         # Old reader should be closed
         assert old_shard_reader._closed
+        reader.close()
+
+    def test_refresh_defers_closing_reader_until_inflight_search_finishes(
+        self, tmp_path: Path
+    ):
+        """refresh() should retire active readers without closing them mid-search."""
+        manifest = _make_manifest(num_dbs=2)
+        store = MockManifestStore(manifest)
+        search_started = threading.Event()
+        release_search = threading.Event()
+        factory = BlockingReaderFactory(
+            search_started=search_started,
+            release_search=release_search,
+        )
+        reader = ShardedVectorReader(
+            s3_prefix="s3://bucket",
+            local_root=str(tmp_path),
+            reader_factory=factory,
+            manifest_store=store,
+        )
+
+        errors: list[Exception] = []
+
+        def do_search() -> None:
+            try:
+                reader.search(np.zeros(32, dtype=np.float32), top_k=1, shard_ids=[0])
+            except Exception as exc:  # pragma: no cover - defensive capture
+                errors.append(exc)
+
+        worker = threading.Thread(target=do_search)
+        worker.start()
+        assert search_started.wait(timeout=5)
+
+        old_reader = next(iter(factory.created.values()))
+        assert old_reader._closed is False
+
+        store.update(_make_manifest(num_dbs=2), run_id="run-v2")
+        assert reader.refresh() is True
+        assert old_reader._closed is False
+
+        release_search.set()
+        worker.join(timeout=5)
+
+        assert errors == []
+        assert old_reader._closed is True
         reader.close()
 
     def test_refresh_clears_shard_locks(self, tmp_path: Path):
