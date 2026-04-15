@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 
 import pandas as pd
 import pytest
@@ -94,7 +95,7 @@ def test_dask_unified_vector_write(local_s3_service):
         {
             "key": [0, 1, 2, 3],
             "value": ["v0", "v1", "v2", "v3"],
-            "embedding": [[0.0, 0.1, 0.2, 0.3]] * 4,
+            "embedding": [json.dumps([0.0, 0.1, 0.2, 0.3])] * 4,
         }
     )
     ddf = dd.from_pandas(pdf, npartitions=2)
@@ -103,7 +104,7 @@ def test_dask_unified_vector_write(local_s3_service):
         config,
         key_col="key",
         value_spec=ValueSpec.callable_encoder(lambda row: row["value"].encode()),
-        vector_columns=VectorColumnMapping(vector_col="embedding"),
+        vector_fn=lambda row: (int(row["key"]), json.loads(row["embedding"]), None),
     )
     assert result.stats.rows_written == 4
     _assert_vector_manifest(local_s3_service, result.manifest_ref)
