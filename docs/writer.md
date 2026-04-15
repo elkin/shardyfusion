@@ -1,5 +1,36 @@
 # Writer Side
 
+## Vector Writer
+To write sharded vector indices, use `write_vector_sharded`. This pipeline handles vector routing setup (like training centroids or generating hyperplanes) and writes the indices to S3.
+
+```python
+from shardyfusion.vector.config import VectorWriteConfig, VectorIndexConfig, VectorShardingSpec
+from shardyfusion.vector.writer import write_vector_sharded
+from shardyfusion.vector.types import VectorRecord, VectorShardingStrategy
+import numpy as np
+
+# Configuration for the vector index
+config = VectorWriteConfig(
+    s3_prefix="s3://bucket/prefix",
+    num_dbs=8,
+    index_config=VectorIndexConfig(dim=128, metric="cosine"),
+    sharding=VectorShardingSpec(
+        strategy=VectorShardingStrategy.CLUSTER,
+        train_centroids=True, # Automatically train centroids from sample
+    ),
+)
+
+# Data to write
+records = [
+    VectorRecord(id=i, vector=np.random.randn(128), payload={"attr": "val"}) 
+    for i in range(1000)
+]
+
+# Execute write
+result = write_vector_sharded(records, config)
+```
+
+
 Four writer backends are available, all producing the same manifest format:
 
 | Backend | Entrypoint | Input Type | Requires Java |

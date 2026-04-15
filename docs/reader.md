@@ -1,5 +1,48 @@
 # Reader Side
 
+## Vector Search Readers
+For datasets that include vector indices, use the specialized vector readers.
+
+### ShardedVectorReader
+The `ShardedVectorReader` is a standalone reader for vector-only datasets. It handles the "double-dip" routing (finding target shards via centroids/hyperplanes) and concurrently fans out the search.
+
+```python
+from shardyfusion.vector.reader import ShardedVectorReader
+import numpy as np
+
+reader = ShardedVectorReader(
+    s3_prefix="s3://bucket/prefix",
+    local_root="/tmp/vectors",
+)
+
+query = np.random.randn(128).astype(np.float32)
+results = reader.search(query, top_k=10)
+
+for res in results.results:
+    print(f"ID: {res.id}, Score: {res.score}")
+```
+
+### UnifiedShardedReader
+The `UnifiedShardedReader` provides both KV point lookups and vector search on the same snapshot. It wraps a standard `ShardedReader` and auto-dispatches the vector backend based on the manifest.
+
+```python
+from shardyfusion import UnifiedShardedReader
+
+reader = UnifiedShardedReader(
+    s3_prefix="s3://bucket/prefix",
+    local_root="/tmp/unified",
+)
+
+# KV lookup
+val = reader.get(123)
+
+# Vector search
+import numpy as np
+query = np.random.randn(128).astype(np.float32)
+results = reader.search(query, top_k=10, routing_context={"tenant_id": "abc"})
+```
+
+
 ## Overview
 
 The reader side provides three classes for looking up keys across sharded snapshots, whether the shard database is SlateDB or SQLite:
