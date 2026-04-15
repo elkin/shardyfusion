@@ -4,23 +4,31 @@ from __future__ import annotations
 
 import importlib.util
 
-import dask
-import dask.dataframe as dd
 import pandas as pd
 import pytest
-import ray.data
 
-from shardyfusion._writer_core import VectorColumnMapping
-from shardyfusion.config import ManifestOptions, OutputOptions, VectorSpec, WriteConfig
-from shardyfusion.credentials import StaticCredentialProvider
-from shardyfusion.manifest_store import parse_manifest_payload
-from shardyfusion.serde import ValueSpec
-from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
-from shardyfusion.type_defs import S3ConnectionOptions
-from shardyfusion.writer.dask import write_sharded as write_dask_sharded
-from shardyfusion.writer.ray import write_sharded as write_ray_sharded
-from shardyfusion.writer.spark import write_sharded as write_spark_sharded
-from tests.integration.vector.test_unified_write_read_local_s3 import FakeUnifiedFactory
+dask = pytest.importorskip("dask")
+dd = pytest.importorskip("dask.dataframe")
+ray_data = pytest.importorskip("ray.data")
+
+from shardyfusion._writer_core import VectorColumnMapping  # noqa: E402
+from shardyfusion.config import (  # noqa: E402
+    ManifestOptions,
+    OutputOptions,
+    VectorSpec,
+    WriteConfig,
+)
+from shardyfusion.credentials import StaticCredentialProvider  # noqa: E402
+from shardyfusion.manifest_store import parse_manifest_payload  # noqa: E402
+from shardyfusion.serde import ValueSpec  # noqa: E402
+from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy  # noqa: E402
+from shardyfusion.type_defs import S3ConnectionOptions  # noqa: E402
+from shardyfusion.writer.dask import write_sharded as write_dask_sharded  # noqa: E402
+from shardyfusion.writer.ray import write_sharded as write_ray_sharded  # noqa: E402
+from shardyfusion.writer.spark import write_sharded as write_spark_sharded  # noqa: E402
+from tests.integration.vector.test_unified_write_read_local_s3 import (  # noqa: E402
+    FakeUnifiedFactory,
+)
 
 pytestmark = [
     pytest.mark.cel,
@@ -103,7 +111,7 @@ def test_dask_unified_vector_write(local_s3_service):
 
 def test_ray_unified_vector_write(local_s3_service):
     config = _base_config(local_s3_service, prefix="ray-unified-vectors")
-    ds = ray.data.from_items(
+    ds = ray_data.from_items(
         [
             {"key": i, "value": f"v{i}", "embedding": [0.1, 0.2, 0.3, 0.4]}
             for i in range(4)
