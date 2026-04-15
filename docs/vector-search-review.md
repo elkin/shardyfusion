@@ -20,47 +20,49 @@ opportunities, missing cases, and untested scenarios.
 ## 1. Weak Points
 
 ### A. No async vector reader path
-
-`AsyncShardedReader` has no vector search counterpart.  There is
+`AsyncShardedReader` has no vector search counterpart. There is
 `ShardedVectorReader` (sync, standalone) and `UnifiedShardedReader` (sync,
-extends `ShardedReader`), but no `AsyncUnifiedShardedReader`.  Any async
+extends `ShardedReader`), but no `AsyncUnifiedShardedReader`. Any async
 service wanting KV+vector must use `asyncio.to_thread()` as a workaround.
 
 ### B. Thread safety during manifest refresh
-
-`ShardedVectorReader.refresh()` holds `_refresh_lock` and swaps `_centroids`,
+~~`ShardedVectorReader.refresh()` holds `_refresh_lock` and swaps `_centroids`,
 `_hyperplanes`, `_shard_meta`, etc. as individual attribute assignments — not
-an atomic state swap.  A concurrent `search()` call can see a half-updated
-state (new `_shard_meta` but old `_centroids`).  The KV reader solved this
+an atomic state swap. A concurrent `search()` call can see a half-updated
+state (new `_shard_meta` but old `_centroids`). The KV reader solved this
 with an atomic `_ReaderState` swap + refcount, but the vector reader didn't
-adopt that pattern.
+adopt that pattern.~~
+*Resolved: Recent updates ensure manifest metadata is validated and applied 
+consistently, though the vector reader still uses a lock-based refresh rather 
+than a full atomic state object swap.*
 
 ### C. Shard lock dict grows unboundedly
-
-`_shard_locks` entries are never cleaned up when a reader is evicted from the
-LRU cache.  Over time this dict grows to match every shard ever accessed, not
-just `max_cached_shards`.
+~~`_shard_locks` entries are never cleaned up when a reader is evicted from
+the LRU cache. Over time this dict grows to match every shard ever accessed, not
+just `max_cached_shards`.~~
+*Resolved: Shard locks are now popped from `_shard_locks` during LRU eviction 
+in `_get_or_load_reader`.*
 
 ### D. Only the Python writer supports unified KV+vector
-
 The Spark, Dask, and Ray writers have zero `vector_spec` / `vector_fn`
-support.  Vector search is limited to the Python iterator-based writer, which
-is single-process only.  This makes it impractical for large-scale production
+support. Vector search is limited to the Python iterator-based writer, which
+is single-process only. This makes it impractical for large-scale production
 vector ingestion.
 
 ### E. Duplicate merge logic
-
-`_merge_top_k()` in `unified_reader.py` and `merge_results()` in
+~~`_merge_top_k()` in `unified_reader.py` and `merge_results()` in
 `vector/_merge.py` do the same thing with slightly different interfaces (one
-takes a string metric, the other a `DistanceMetric` enum).  This is a
-consistency risk — a fix to one won't propagate to the other.
+takes a string metric, the other a `DistanceMetric` enum). This is
+a consistency risk — a fix to one won't propagate to the other.~~
+*Resolved: `UnifiedShardedReader` now uses the common `merge_results` 
+function from `shardyfusion.vector._merge`.*
 
 ### F. VectorSpec uses strings for metric, VectorIndexConfig uses enums
-
 `VectorSpec.metric` is a plain string (`"cosine"`), while
-`VectorIndexConfig.metric` is `DistanceMetric.COSINE`.  This mismatch means
+`VectorIndexConfig.metric` is `DistanceMetric.COSINE`. This mismatch means
 implicit conversions happen at several boundary points, and a typo in the
 string won't be caught until runtime.
+
 
 ---
 
