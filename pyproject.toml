@@ -75,8 +75,6 @@ metrics-otel = ["opentelemetry-api>=1.28"]
 vector-usearch = ["usearch>=2.0", "numpy>=1.24", "boto3>=1.28"]
 vector = ["shardyfusion[vector-usearch]"]
 vector-sqlite = ["sqlite-vec>=0.1", "numpy>=1.24", "boto3>=1.28"]
-read-vector = ["shardyfusion[vector]"]
-writer-python-vector = ["shardyfusion[vector]"]
 unified-vector = ["shardyfusion[vector]", "shardyfusion[cel]"]
 unified-vector-sqlite = ["shardyfusion[vector-sqlite]", "shardyfusion[cel]"]
 all = [
@@ -137,18 +135,19 @@ backend-slatedb = [
 backend-sqlite = [
   "boto3>=1.28",
 ]
+backend-sqlite-vec = [
+  "sqlite-vec>=0.1",
+]
+backend-vector-usearch = [
+  "usearch>=2.0",
+]
 backend-sqlite-range = [
   "apsw>=3.44",
   "boto3>=1.28",
 ]
-# Capability groups carry no extra deps — the backend group (e.g.
-# backend-slatedb) supplies storage-engine deps separately.  These
-# exist as tox env-name fragments for composing dependency sets.
-cap-read = []
 cap-read-async = [
   "aiobotocore>=2.12",
 ]
-cap-writer-python = []
 cap-writer-spark = [
   "pyspark>=3.3",
   "pandas>=2.2",

@@ -20,7 +20,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Tooling
 
-**Package manager**: uv. Extras: `read`, `read-async` (adds aiobotocore for native async S3), `read-sqlite`, `read-sqlite-range` (adds apsw), `sqlite-async`, `writer-spark` (requires Java), `writer-spark-sqlite`, `writer-python`, `writer-python-sqlite`, `writer-dask`, `writer-dask-sqlite`, `writer-ray`, `writer-ray-sqlite`, `cli`, `cel` (adds cel-expr-python), `metrics-prometheus`, `metrics-otel`, `vector` (USearch + numpy + boto3), `vector-usearch`, `vector-sqlite` (sqlite-vec + numpy + boto3), `read-vector`, `writer-python-vector`, `unified-vector` (vector + cel), `unified-vector-sqlite`. Core dependency: `pyyaml>=6.0`. Full dev: `uv sync --all-extras --dev`.
+**Package manager**: uv. Extras: `read`, `read-async` (adds aiobotocore for native async S3), `read-sqlite`, `read-sqlite-range` (adds apsw), `sqlite-async`, `writer-spark` (requires Java), `writer-spark-sqlite`, `writer-python`, `writer-python-sqlite`, `writer-dask`, `writer-dask-sqlite`, `writer-ray`, `writer-ray-sqlite`, `cli`, `cel` (adds cel-expr-python), `metrics-prometheus`, `metrics-otel`, `vector` (USearch + numpy + boto3), `vector-usearch`, `vector-sqlite` (sqlite-vec + numpy + boto3), `unified-vector` (vector + cel), `unified-vector-sqlite`. Core dependency: `pyyaml>=6.0`. Full dev: `uv sync --all-extras --dev`.
 
 **Workflows**: Run `just --list` for all local and container (`d-*`) targets. Key entry points: `just setup` (bootstrap a fresh clone), `just doctor` (verify environment), `just fix` (auto-format), `just ci` (quality + unit + integration), `just clean` / `just clean-all` (remove caches/artifacts). Container default engine is Podman; override with `CONTAINER_ENGINE=docker`.
 
