@@ -261,10 +261,9 @@ class CompositeShardReader:
         self,
         query: np.ndarray,
         top_k: int,
-        ef: int = 50,
     ) -> list[SearchResult]:
         """Vector similarity search."""
-        return self._vec.search(query, top_k, ef=ef)
+        return self._vec.search(query, top_k)
 
     def close(self) -> None:
         try:

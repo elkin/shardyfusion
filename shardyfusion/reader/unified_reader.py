@@ -32,6 +32,7 @@ from shardyfusion.vector._merge import merge_results
 from shardyfusion.vector.types import DistanceMetric, SearchResult, VectorSearchResponse
 
 from ._state import _SimpleReaderState
+from ._types import _NullShardReader
 from .reader import ShardedReader
 
 _logger = get_logger(__name__)
@@ -227,7 +228,6 @@ class UnifiedShardedReader(ShardedReader):
         query: np.ndarray,
         top_k: int = 10,
         *,
-        ef: int = 50,
         routing_context: dict[str, object] | None = None,
         shard_ids: list[int] | None = None,
     ) -> VectorSearchResponse:
@@ -236,7 +236,6 @@ class UnifiedShardedReader(ShardedReader):
         Args:
             query: Query vector of shape ``(dim,)``.
             top_k: Number of results to return.
-            ef: Expansion factor for HNSW search.
             routing_context: CEL routing context to scope the search
                 to a specific shard.  When provided, only that shard
                 is queried.
@@ -268,7 +267,7 @@ class UnifiedShardedReader(ShardedReader):
         if self._executor is not None and len(target_shards) > 1:
             futures = {
                 db_id: self._executor.submit(
-                    _search_shard, state.readers[db_id], query, top_k, ef
+                    _search_shard, state.readers[db_id], query, top_k
                 )
                 for db_id in target_shards
             }
@@ -277,7 +276,7 @@ class UnifiedShardedReader(ShardedReader):
         else:
             for db_id in target_shards:
                 per_shard_results.append(
-                    _search_shard(state.readers[db_id], query, top_k, ef)
+                    _search_shard(state.readers[db_id], query, top_k)
                 )
 
         metric = self._vector_meta.metric
@@ -307,7 +306,6 @@ class UnifiedShardedReader(ShardedReader):
         queries: np.ndarray,
         top_k: int = 10,
         *,
-        ef: int = 50,
         routing_context: dict[str, object] | None = None,
         shard_ids: list[int] | None = None,
     ) -> list[VectorSearchResponse]:
@@ -316,7 +314,6 @@ class UnifiedShardedReader(ShardedReader):
             self.search(
                 queries[i],
                 top_k,
-                ef=ef,
                 routing_context=routing_context,
                 shard_ids=shard_ids,
             )
@@ -332,12 +329,15 @@ def _search_shard(
     reader: Any,
     query: np.ndarray,
     top_k: int,
-    ef: int,
 ) -> list[SearchResult]:
-    """Search a single shard reader. Returns empty list for null readers."""
+    """Search a single shard reader."""
     if not hasattr(reader, "search"):
-        return []
-    return reader.search(query, top_k, ef=ef)
+        if isinstance(reader, _NullShardReader):
+            return []
+        raise ReaderStateError(
+            "Shard reader does not support vector search for this unified snapshot"
+        )
+    return reader.search(query, top_k)
 
 
 def _distance_metric_from_str(metric: str) -> DistanceMetric:

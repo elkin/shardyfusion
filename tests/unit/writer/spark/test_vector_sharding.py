@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 from pyspark.sql import functions as F
 
+from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.vector._distributed import ResolvedVectorRouting
 from shardyfusion.vector.types import DistanceMetric, VectorShardingStrategy
 
@@ -14,6 +15,9 @@ pytest.importorskip("pyspark", reason="requires writer-spark extra")
 from shardyfusion.writer.spark.sharding import (  # noqa: E402
     VECTOR_DB_ID_COL,
     add_vector_db_id_column,
+)
+from shardyfusion.writer.spark.writer import (
+    verify_vector_routing_agreement,  # noqa: E402
 )
 
 
@@ -242,3 +246,172 @@ class TestCelVectorSharding:
         rows = df_with_id.collect()
         assert len(rows) == 20
         assert all(0 <= row[VECTOR_DB_ID_COL] < 4 for row in rows)
+
+
+class TestVerifyVectorRoutingAgreement:
+    def test_explicit_matches_python_routing(self, spark) -> None:
+        df = spark.createDataFrame(
+            [
+                (1, [1.0, 0.0], 0),
+                (2, [0.0, 1.0], 1),
+                (3, [0.5, 0.5], 2),
+            ],
+            ["id", "embedding", "shard_id"],
+        )
+        routing = ResolvedVectorRouting(
+            strategy=VectorShardingStrategy.EXPLICIT,
+            num_dbs=4,
+            metric=DistanceMetric.COSINE,
+        )
+
+        df_with_id, _ = add_vector_db_id_column(
+            df,
+            vector_col="embedding",
+            routing=routing,
+            shard_id_col="shard_id",
+        )
+
+        verify_vector_routing_agreement(
+            df_with_id,
+            id_col="id",
+            vector_col="embedding",
+            routing=routing,
+            shard_id_col="shard_id",
+        )
+
+    def test_cluster_matches_python_routing(self, spark) -> None:
+        centroids = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+        df = spark.createDataFrame(
+            [
+                (1, [0.9, 0.1]),
+                (2, [0.1, 0.9]),
+                (3, [0.8, 0.2]),
+            ],
+            ["id", "embedding"],
+        )
+        routing = ResolvedVectorRouting(
+            strategy=VectorShardingStrategy.CLUSTER,
+            num_dbs=2,
+            metric=DistanceMetric.COSINE,
+            centroids=centroids,
+        )
+
+        df_with_id, _ = add_vector_db_id_column(
+            df,
+            vector_col="embedding",
+            routing=routing,
+        )
+
+        verify_vector_routing_agreement(
+            df_with_id,
+            id_col="id",
+            vector_col="embedding",
+            routing=routing,
+        )
+
+    def test_lsh_matches_python_routing(self, spark) -> None:
+        hyperplanes = np.array(
+            [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [-1.0, 1.0]],
+            dtype=np.float32,
+        )
+        df = spark.createDataFrame(
+            [
+                (1, [1.0, 0.0]),
+                (2, [0.0, 1.0]),
+                (3, [-1.0, 1.0]),
+            ],
+            ["id", "embedding"],
+        )
+        routing = ResolvedVectorRouting(
+            strategy=VectorShardingStrategy.LSH,
+            num_dbs=4,
+            metric=DistanceMetric.COSINE,
+            hyperplanes=hyperplanes,
+        )
+
+        df_with_id, _ = add_vector_db_id_column(
+            df,
+            vector_col="embedding",
+            routing=routing,
+        )
+
+        verify_vector_routing_agreement(
+            df_with_id,
+            id_col="id",
+            vector_col="embedding",
+            routing=routing,
+        )
+
+    def test_cel_matches_python_routing(self, spark) -> None:
+        from shardyfusion.cel import compile_cel
+
+        cel_expr = "shard_hash(region) % 4u"
+        cel_cols = {"region": "string"}
+        df = spark.createDataFrame(
+            [
+                (1, [0.1, 0.2], "us-east"),
+                (2, [0.2, 0.3], "eu-west"),
+                (3, [0.3, 0.4], "ap-south"),
+            ],
+            ["id", "embedding", "region"],
+        )
+        routing = ResolvedVectorRouting(
+            strategy=VectorShardingStrategy.CEL,
+            num_dbs=4,
+            metric=DistanceMetric.COSINE,
+            compiled_cel=compile_cel(cel_expr, cel_cols),
+            cel_expr=cel_expr,
+        )
+
+        df_with_id, _ = add_vector_db_id_column(
+            df,
+            vector_col="embedding",
+            routing=routing,
+            routing_context_cols=cel_cols,
+        )
+
+        verify_vector_routing_agreement(
+            df_with_id,
+            id_col="id",
+            vector_col="embedding",
+            routing=routing,
+            routing_context_cols=cel_cols,
+        )
+
+    def test_catches_wrong_vector_db_ids(self, spark) -> None:
+        df = spark.createDataFrame(
+            [
+                (1, [1.0, 0.0], 0),
+                (2, [0.0, 1.0], 1),
+                (3, [0.5, 0.5], 2),
+            ],
+            ["id", "embedding", "shard_id"],
+        )
+        routing = ResolvedVectorRouting(
+            strategy=VectorShardingStrategy.EXPLICIT,
+            num_dbs=4,
+            metric=DistanceMetric.COSINE,
+        )
+
+        df_with_id, _ = add_vector_db_id_column(
+            df,
+            vector_col="embedding",
+            routing=routing,
+            shard_id_col="shard_id",
+        )
+        wrong_df = df_with_id.withColumn(
+            VECTOR_DB_ID_COL,
+            ((F.col(VECTOR_DB_ID_COL) + F.lit(1)) % F.lit(4)).cast("int"),
+        )
+
+        with pytest.raises(
+            ShardAssignmentError,
+            match="Spark/Python vector routing mismatch",
+        ):
+            verify_vector_routing_agreement(
+                wrong_df,
+                id_col="id",
+                vector_col="embedding",
+                routing=routing,
+                shard_id_col="shard_id",
+            )

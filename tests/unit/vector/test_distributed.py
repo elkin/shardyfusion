@@ -144,6 +144,34 @@ class TestValidateVectorConfig:
         with pytest.raises(ConfigValidationError, match="num_probes"):
             validate_vector_config(cfg)
 
+    def test_explicit_num_probes_must_be_one(self) -> None:
+        cfg = VectorWriteConfig(
+            num_dbs=4,
+            s3_prefix="s3://bucket/prefix",
+            index_config=VectorIndexConfig(dim=128),
+            sharding=VectorShardingSpec(
+                strategy=VectorShardingStrategy.EXPLICIT,
+                num_probes=2,
+            ),
+        )
+        with pytest.raises(ConfigValidationError, match="only supported"):
+            validate_vector_config(cfg)
+
+    def test_cel_num_probes_must_be_one(self) -> None:
+        cfg = VectorWriteConfig(
+            s3_prefix="s3://bucket/prefix",
+            index_config=VectorIndexConfig(dim=128),
+            sharding=VectorShardingSpec(
+                strategy=VectorShardingStrategy.CEL,
+                num_probes=2,
+                cel_expr="shard_hash(region) % 2u",
+                cel_columns={"region": "string"},
+                routing_values=[0, 1],
+            ),
+        )
+        with pytest.raises(ConfigValidationError, match="only supported"):
+            validate_vector_config(cfg)
+
     def test_invalid_batch_size(self) -> None:
         cfg = VectorWriteConfig(
             s3_prefix="s3://bucket/prefix",

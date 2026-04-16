@@ -329,7 +329,6 @@ class USearchShardReader:
         self,
         query: np.ndarray,
         top_k: int,
-        ef: int = 50,
     ) -> list[SearchResult]:
         if self._closed:
             raise VectorSearchError("Reader is closed")

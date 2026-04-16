@@ -382,6 +382,73 @@ def verify_routing_agreement(
         )
 
 
+def verify_vector_routing_agreement(
+    df_with_db_id: DataFrame,
+    *,
+    id_col: str,
+    vector_col: str,
+    routing: Any,
+    shard_id_col: str | None = None,
+    routing_context_cols: dict[str, str] | None = None,
+    sample_size: int = 20,
+) -> None:
+    """Sample rows and verify Spark-computed vector db ids match Python routing."""
+    from shardyfusion.vector._distributed import (
+        assign_vector_shard,
+        coerce_vector_value,
+    )
+    from shardyfusion.vector.types import VectorShardingStrategy
+
+    sample_cols = [id_col, vector_col, VECTOR_DB_ID_COL]
+    if (
+        routing.strategy == VectorShardingStrategy.EXPLICIT
+        and shard_id_col is not None
+        and shard_id_col not in sample_cols
+    ):
+        sample_cols.append(shard_id_col)
+    if routing.strategy == VectorShardingStrategy.CEL:
+        assert routing_context_cols is not None, (
+            "routing_context_cols required for CEL verification"
+        )
+        sample_cols.extend(c for c in routing_context_cols if c not in sample_cols)
+
+    sampled = df_with_db_id.select(*sample_cols).limit(sample_size).collect()
+    if not sampled:
+        return
+
+    mismatches: list[tuple[object, int, int]] = []
+    for row in sampled:
+        shard_id: int | None = None
+        if routing.strategy == VectorShardingStrategy.EXPLICIT:
+            assert shard_id_col is not None, "shard_id_col required for EXPLICIT"
+            shard_id = int(row[shard_id_col])
+
+        routing_context: dict[str, Any] | None = None
+        if routing.strategy == VectorShardingStrategy.CEL:
+            assert routing_context_cols is not None
+            routing_context = {col: row[col] for col in routing_context_cols}
+
+        expected_db_id = assign_vector_shard(
+            vector=coerce_vector_value(row[vector_col]),
+            routing=routing,
+            shard_id=shard_id,
+            routing_context=routing_context,
+        )
+        spark_db_id = int(row[VECTOR_DB_ID_COL])
+        if expected_db_id != spark_db_id:
+            mismatches.append((row[id_col], spark_db_id, expected_db_id))
+
+    if mismatches:
+        details = "; ".join(
+            f"id={vector_id}, spark={spark_db_id}, python={python_db_id}"
+            for vector_id, spark_db_id, python_db_id in mismatches[:5]
+        )
+        raise ShardAssignmentError(
+            f"Spark/Python vector routing mismatch in {len(mismatches)}/{len(sampled)} "
+            f"sampled rows. First mismatches: {details}"
+        )
+
+
 def _resolve_num_dbs_before_sharding(df: DataFrame, config: WriteConfig) -> int | None:
     """Resolve num_dbs that can be determined before add_db_id_column."""
     from shardyfusion._writer_core import resolve_num_dbs
@@ -642,6 +709,7 @@ def write_vector_sharded(
     shard_id_col: str | None = None,
     routing_context_cols: dict[str, str] | None = None,
     max_writes_per_second: float | None = None,
+    verify_routing: bool = True,
 ) -> BuildResult:
     """Write vectors from a DataFrame into N sharded vector indices and publish manifest.
 
@@ -654,6 +722,8 @@ def write_vector_sharded(
         shard_id_col: Column with explicit shard IDs (EXPLICIT strategy only).
         routing_context_cols: Columns for CEL expression evaluation (CEL strategy only).
         max_writes_per_second: Optional rate limit.
+        verify_routing: If True (default), spot-check that Spark-assigned vector
+            shard IDs match ``assign_vector_shard()``.
 
     Returns:
         BuildResult with manifest reference and stats.
@@ -670,26 +740,6 @@ def write_vector_sharded(
 
     started = time.perf_counter()
     mc = config.metrics_collector
-
-    sample_vectors: np.ndarray | None = None
-    if (
-        config.vector_spec.sharding.strategy == "cluster"
-        and config.vector_spec.sharding.train_centroids
-    ):
-        sample_df = df.select(vector_col).sample(fraction=0.1, seed=42)
-        sample_rows = sample_df.collect()
-        sample_vectors = np.array(
-            [row[vector_col] for row in sample_rows if row[vector_col] is not None],
-            dtype=np.float32,
-        )
-        if (
-            sample_vectors.shape[0]
-            > config.vector_spec.sharding.centroids_training_sample_size
-        ):
-            sample_vectors = sample_vectors[
-                : config.vector_spec.sharding.centroids_training_sample_size
-            ]
-
     from shardyfusion.vector._distributed import (
         publish_vector_manifest,
         resolve_adapter_factory,
@@ -699,127 +749,159 @@ def write_vector_sharded(
 
     run_id = config.output.run_id or uuid4().hex
 
-    credentials = (
-        config.credential_provider.resolve() if config.credential_provider else None
-    )
-    from shardyfusion.storage import create_s3_client
+    with managed_run_record(
+        config=config,
+        run_id=run_id,
+        writer_type="vector-spark",
+    ) as run_record:
+        sample_vectors: np.ndarray | None = None
+        if (
+            config.vector_spec.sharding.strategy == "cluster"
+            and config.vector_spec.sharding.train_centroids
+        ):
+            sample_limit = config.vector_spec.sharding.centroids_training_sample_size
+            sample_df = (
+                df.select(vector_col).sample(fraction=0.1, seed=42).limit(sample_limit)
+            )
+            sample_rows = sample_df.collect()
+            sample_vectors = np.array(
+                [row[vector_col] for row in sample_rows if row[vector_col] is not None],
+                dtype=np.float32,
+            )
 
-    s3_client = create_s3_client(credentials, config.s3_connection_options)
-
-    resolved_vector_factory: VectorIndexWriterFactory | None = None
-    if config.adapter_factory is not None:
-        candidate_factory: Any = config.adapter_factory
-        if getattr(candidate_factory, "supports_vector_writes", False) is True:
-            resolved_vector_factory = candidate_factory
-
-    vec_config = VectorWriteConfig(
-        num_dbs=config.num_dbs,
-        s3_prefix=config.s3_prefix,
-        index_config=config.vector_spec.to_vector_index_config(),
-        sharding=config.vector_spec.to_vector_sharding_spec(),
-        output=config.output,
-        adapter_factory=resolved_vector_factory,
-        batch_size=config.batch_size,
-        credential_provider=config.credential_provider,
-        s3_connection_options=config.s3_connection_options,
-        max_writes_per_second=max_writes_per_second,
-        metrics_collector=mc,
-        manifest=config.manifest,
-    )
-
-    routing = resolve_vector_routing(vec_config, sample_vectors=sample_vectors)
-
-    adapter_factory = resolve_adapter_factory(vec_config, s3_client)
-
-    df_with_id, num_dbs = add_vector_db_id_column(
-        df,
-        vector_col=vector_col,
-        routing=routing,
-        shard_id_col=shard_id_col,
-        routing_context_cols=routing_context_cols,
-    )
-
-    _id_col = id_col
-    _vector_col = vector_col
-    _payload_cols = payload_cols
-    _max_writes_per_second = max_writes_per_second
-    _metrics_collector = mc
-    _s3_prefix = vec_config.s3_prefix
-    _shard_prefix = vec_config.output.shard_prefix
-    _db_path_template = vec_config.output.db_path_template
-    _local_root = vec_config.output.local_root
-    _index_config = vec_config.index_config
-    _batch_size = vec_config.batch_size
-
-    df_shuffled = df_with_id.repartition(num_dbs, VECTOR_DB_ID_COL)
-
-    results_rdd = df_shuffled.rdd.mapPartitionsWithIndex(
-        lambda db_id, rows: _write_vector_partition(
-            db_id,
-            rows,
-            run_id,
-            adapter_factory,
-            _max_writes_per_second,
-            _id_col,
-            _vector_col,
-            _payload_cols,
-            write_vector_shard_core,
-            _metrics_collector,
-            _s3_prefix,
-            _shard_prefix,
-            _db_path_template,
-            _local_root,
-            _index_config,
-            _batch_size,
+        credentials = (
+            config.credential_provider.resolve() if config.credential_provider else None
         )
-    )
+        from shardyfusion.storage import create_s3_client
 
-    results = list(results_rdd.toLocalIterator())
-    winners = results
-    num_attempts = len(results)
+        s3_client = create_s3_client(credentials, config.s3_connection_options)
 
-    total_vectors = sum(w.row_count for w in winners)
-    total_duration_ms = int((time.perf_counter() - started) * 1000)
+        resolved_vector_factory: VectorIndexWriterFactory | None = None
+        if config.adapter_factory is not None:
+            candidate_factory: Any = config.adapter_factory
+            if getattr(candidate_factory, "supports_vector_writes", False) is True:
+                resolved_vector_factory = candidate_factory
 
-    centroids_ref, hyperplanes_ref = upload_routing_metadata(
-        s3_prefix=config.s3_prefix,
-        run_id=run_id,
-        centroids=routing.centroids,
-        hyperplanes=routing.hyperplanes,
-        s3_client=s3_client,
-    )
+        vec_config = VectorWriteConfig(
+            num_dbs=config.num_dbs,
+            s3_prefix=config.s3_prefix,
+            index_config=config.vector_spec.to_vector_index_config(),
+            sharding=config.vector_spec.to_vector_sharding_spec(),
+            output=config.output,
+            adapter_factory=resolved_vector_factory,
+            batch_size=config.batch_size,
+            credential_provider=config.credential_provider,
+            s3_connection_options=config.s3_connection_options,
+            max_writes_per_second=max_writes_per_second,
+            metrics_collector=mc,
+            manifest=config.manifest,
+        )
 
-    manifest_start = time.perf_counter()
-    manifest_ref = publish_vector_manifest(
-        config=vec_config,
-        run_id=run_id,
-        num_dbs=num_dbs,
-        winners=winners,
-        total_vectors=total_vectors,
-        centroids_ref=centroids_ref,
-        hyperplanes_ref=hyperplanes_ref,
-    )
-    manifest_duration_ms = int((time.perf_counter() - manifest_start) * 1000)
+        routing = resolve_vector_routing(vec_config, sample_vectors=sample_vectors)
 
-    stats = BuildStats(
-        durations=BuildDurations(
-            sharding_ms=0,
-            write_ms=total_duration_ms - manifest_duration_ms,
-            manifest_ms=manifest_duration_ms,
-            total_ms=total_duration_ms,
-        ),
-        num_attempt_results=num_attempts,
-        num_winners=len(winners),
-        rows_written=total_vectors,
-    )
+        adapter_factory = resolve_adapter_factory(vec_config, s3_client)
 
-    return BuildResult(
-        run_id=run_id,
-        winners=winners,
-        manifest_ref=manifest_ref,
-        stats=stats,
-        run_record_ref=None,
-    )
+        df_with_id, num_dbs = add_vector_db_id_column(
+            df,
+            vector_col=vector_col,
+            routing=routing,
+            shard_id_col=shard_id_col,
+            routing_context_cols=routing_context_cols,
+        )
+
+        if verify_routing and num_dbs > 0:
+            verify_vector_routing_agreement(
+                df_with_id,
+                id_col=id_col,
+                vector_col=vector_col,
+                routing=routing,
+                shard_id_col=shard_id_col,
+                routing_context_cols=routing_context_cols,
+            )
+
+        _id_col = id_col
+        _vector_col = vector_col
+        _payload_cols = payload_cols
+        _max_writes_per_second = max_writes_per_second
+        _metrics_collector = mc
+        _s3_prefix = vec_config.s3_prefix
+        _shard_prefix = vec_config.output.shard_prefix
+        _db_path_template = vec_config.output.db_path_template
+        _local_root = vec_config.output.local_root
+        _index_config = vec_config.index_config
+        _batch_size = vec_config.batch_size
+
+        df_shuffled = df_with_id.repartition(num_dbs, VECTOR_DB_ID_COL)
+
+        results_rdd = df_shuffled.rdd.mapPartitionsWithIndex(
+            lambda db_id, rows: _write_vector_partition(
+                db_id,
+                rows,
+                run_id,
+                adapter_factory,
+                _max_writes_per_second,
+                _id_col,
+                _vector_col,
+                _payload_cols,
+                write_vector_shard_core,
+                _metrics_collector,
+                _s3_prefix,
+                _shard_prefix,
+                _db_path_template,
+                _local_root,
+                _index_config,
+                _batch_size,
+            )
+        )
+
+        results = list(results_rdd.toLocalIterator())
+        winners = results
+        num_attempts = len(results)
+
+        total_vectors = sum(w.row_count for w in winners)
+        total_duration_ms = int((time.perf_counter() - started) * 1000)
+
+        centroids_ref, hyperplanes_ref = upload_routing_metadata(
+            s3_prefix=config.s3_prefix,
+            run_id=run_id,
+            centroids=routing.centroids,
+            hyperplanes=routing.hyperplanes,
+            s3_client=s3_client,
+        )
+
+        manifest_start = time.perf_counter()
+        manifest_ref = publish_vector_manifest(
+            config=vec_config,
+            run_id=run_id,
+            num_dbs=num_dbs,
+            winners=winners,
+            total_vectors=total_vectors,
+            centroids_ref=centroids_ref,
+            hyperplanes_ref=hyperplanes_ref,
+        )
+        manifest_duration_ms = int((time.perf_counter() - manifest_start) * 1000)
+        run_record.set_manifest_ref(manifest_ref)
+        run_record.mark_succeeded()
+
+        stats = BuildStats(
+            durations=BuildDurations(
+                sharding_ms=0,
+                write_ms=total_duration_ms - manifest_duration_ms,
+                manifest_ms=manifest_duration_ms,
+                total_ms=total_duration_ms,
+            ),
+            num_attempt_results=num_attempts,
+            num_winners=len(winners),
+            rows_written=total_vectors,
+        )
+
+        return BuildResult(
+            run_id=run_id,
+            winners=winners,
+            manifest_ref=manifest_ref,
+            stats=stats,
+            run_record_ref=run_record.run_record_ref,
+        )
 
 
 def _write_vector_partition(

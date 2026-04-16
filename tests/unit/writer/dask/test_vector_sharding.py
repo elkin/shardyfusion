@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.vector._distributed import ResolvedVectorRouting
 from shardyfusion.vector.types import DistanceMetric, VectorShardingStrategy
 
@@ -16,6 +17,9 @@ import pandas as pd
 from shardyfusion.writer.dask.sharding import (  # noqa: E402
     VECTOR_DB_ID_COL,
     add_vector_db_id_column,
+)
+from shardyfusion.writer.dask.writer import (
+    _verify_vector_routing_agreement,  # noqa: E402
 )
 
 
@@ -177,3 +181,169 @@ class TestAddVectorDbIdColumnDask:
         ids = result[VECTOR_DB_ID_COL].tolist()
         assert num_dbs == 4
         assert all(0 <= db_id < 4 for db_id in ids)
+
+
+class TestVerifyVectorRoutingAgreementDask:
+    def test_explicit_matches_python_routing(self) -> None:
+        pdf = pd.DataFrame(
+            {
+                "id": [1, 2, 3],
+                "embedding": [[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]],
+                "shard_id": [0, 1, 2],
+            }
+        )
+        ddf = dd.from_pandas(pdf, npartitions=2)
+        routing = ResolvedVectorRouting(
+            strategy=VectorShardingStrategy.EXPLICIT,
+            num_dbs=4,
+            metric=DistanceMetric.COSINE,
+        )
+
+        ddf_with_id, _ = add_vector_db_id_column(
+            ddf,
+            vector_col="embedding",
+            routing=routing,
+            shard_id_col="shard_id",
+        )
+
+        _verify_vector_routing_agreement(
+            ddf_with_id,
+            id_col="id",
+            vector_col="embedding",
+            routing=routing,
+            shard_id_col="shard_id",
+        )
+
+    def test_cluster_matches_python_routing(self) -> None:
+        centroids = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+        pdf = pd.DataFrame(
+            {
+                "id": [1, 2, 3],
+                "embedding": [[0.9, 0.1], [0.1, 0.9], [0.8, 0.2]],
+            }
+        )
+        ddf = dd.from_pandas(pdf, npartitions=2)
+        routing = ResolvedVectorRouting(
+            strategy=VectorShardingStrategy.CLUSTER,
+            num_dbs=2,
+            metric=DistanceMetric.COSINE,
+            centroids=centroids,
+        )
+
+        ddf_with_id, _ = add_vector_db_id_column(
+            ddf,
+            vector_col="embedding",
+            routing=routing,
+        )
+
+        _verify_vector_routing_agreement(
+            ddf_with_id,
+            id_col="id",
+            vector_col="embedding",
+            routing=routing,
+        )
+
+    def test_lsh_matches_python_routing(self) -> None:
+        hyperplanes = np.array(
+            [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [-1.0, 1.0]],
+            dtype=np.float32,
+        )
+        pdf = pd.DataFrame(
+            {
+                "id": [1, 2, 3],
+                "embedding": [[1.0, 0.0], [0.0, 1.0], [-1.0, 1.0]],
+            }
+        )
+        ddf = dd.from_pandas(pdf, npartitions=2)
+        routing = ResolvedVectorRouting(
+            strategy=VectorShardingStrategy.LSH,
+            num_dbs=4,
+            metric=DistanceMetric.COSINE,
+            hyperplanes=hyperplanes,
+        )
+
+        ddf_with_id, _ = add_vector_db_id_column(
+            ddf,
+            vector_col="embedding",
+            routing=routing,
+        )
+
+        _verify_vector_routing_agreement(
+            ddf_with_id,
+            id_col="id",
+            vector_col="embedding",
+            routing=routing,
+        )
+
+    def test_cel_matches_python_routing(self) -> None:
+        from shardyfusion.cel import compile_cel
+
+        cel_expr = "shard_hash(region) % 4u"
+        cel_cols = {"region": "string"}
+        pdf = pd.DataFrame(
+            {
+                "id": [1, 2, 3],
+                "embedding": [[0.1, 0.2], [0.2, 0.3], [0.3, 0.4]],
+                "region": ["us-east", "eu-west", "ap-south"],
+            }
+        )
+        ddf = dd.from_pandas(pdf, npartitions=2)
+        routing = ResolvedVectorRouting(
+            strategy=VectorShardingStrategy.CEL,
+            num_dbs=4,
+            metric=DistanceMetric.COSINE,
+            compiled_cel=compile_cel(cel_expr, cel_cols),
+            cel_expr=cel_expr,
+        )
+
+        ddf_with_id, _ = add_vector_db_id_column(
+            ddf,
+            vector_col="embedding",
+            routing=routing,
+            routing_context_cols=cel_cols,
+        )
+
+        _verify_vector_routing_agreement(
+            ddf_with_id,
+            id_col="id",
+            vector_col="embedding",
+            routing=routing,
+            routing_context_cols=cel_cols,
+        )
+
+    def test_catches_wrong_vector_db_ids(self) -> None:
+        pdf = pd.DataFrame(
+            {
+                "id": [1, 2, 3],
+                "embedding": [[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]],
+                "shard_id": [0, 1, 2],
+            }
+        )
+        ddf = dd.from_pandas(pdf, npartitions=2)
+        routing = ResolvedVectorRouting(
+            strategy=VectorShardingStrategy.EXPLICIT,
+            num_dbs=4,
+            metric=DistanceMetric.COSINE,
+        )
+
+        ddf_with_id, _ = add_vector_db_id_column(
+            ddf,
+            vector_col="embedding",
+            routing=routing,
+            shard_id_col="shard_id",
+        )
+        wrong_pdf = ddf_with_id.compute()
+        wrong_pdf[VECTOR_DB_ID_COL] = (wrong_pdf[VECTOR_DB_ID_COL] + 1) % 4
+        wrong_ddf = dd.from_pandas(wrong_pdf, npartitions=2)
+
+        with pytest.raises(
+            ShardAssignmentError,
+            match="Dask/Python vector routing mismatch",
+        ):
+            _verify_vector_routing_agreement(
+                wrong_ddf,
+                id_col="id",
+                vector_col="embedding",
+                routing=routing,
+                shard_id_col="shard_id",
+            )

@@ -16,6 +16,7 @@ try:
 except ImportError:
     sqlite_vec = None  # type: ignore[assignment]
 
+from shardyfusion.errors import ConfigValidationError  # noqa: E402
 from shardyfusion.sqlite_vec_adapter import (  # noqa: E402
     SqliteVecAdapter,
     SqliteVecAdapterError,
@@ -157,6 +158,17 @@ class TestSqliteVecAdapterLifecycle:
             ) as adapter:
                 adapter.write_batch([(b"k", b"v")])
             assert adapter._closed
+
+    def test_dot_product_metric_rejected(self, tmp_path: Path) -> None:
+        vector_spec = MagicMock(dim=4)
+        vector_spec.metric = "dot_product"
+
+        with pytest.raises(ConfigValidationError, match="does not support dot_product"):
+            SqliteVecAdapter(
+                db_url="s3://bucket/shard",
+                local_dir=tmp_path / "shard",
+                vector_spec=vector_spec,
+            )
 
 
 # ---------------------------------------------------------------------------

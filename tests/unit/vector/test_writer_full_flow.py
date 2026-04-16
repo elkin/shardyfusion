@@ -12,6 +12,7 @@ import pytest
 
 from shardyfusion.config import OutputOptions
 from shardyfusion.errors import ConfigValidationError
+from shardyfusion.run_registry import InMemoryRunRegistry
 from shardyfusion.vector.config import (
     VectorIndexConfig,
     VectorShardingSpec,
@@ -187,6 +188,27 @@ class TestWriteVectorShardedExplicit:
 
         assert result.stats.rows_written == 0
         assert len(result.winners) == 0
+
+    @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
+    def test_run_registry_populated(self, mock_s3: Any, tmp_path: Path) -> None:
+        from shardyfusion.vector.writer import write_vector_sharded
+
+        factory = _MockFactory()
+        registry = InMemoryRunRegistry()
+        config = _explicit_config(tmp_path, num_dbs=1)
+        config.adapter_factory = factory
+        config.run_registry = registry
+
+        mock_store = MagicMock()
+        mock_store.publish.return_value = "s3://manifest"
+        config.manifest.store = mock_store
+
+        result = write_vector_sharded(_make_records(1, shard_id=0), config)
+
+        assert result.run_record_ref is not None
+        record = registry.load(result.run_record_ref)
+        assert record.status == "succeeded"
+        assert record.manifest_ref == "s3://manifest"
 
     @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
     def test_metrics_collector_emits_events(self, mock_s3: Any, tmp_path: Path) -> None:

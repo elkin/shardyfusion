@@ -198,3 +198,16 @@ class TestInjectVectorManifestFields:
 
         vec = config.manifest.custom_manifest_fields["vector"]
         assert "index_params" not in vec
+
+    def test_copies_custom_manifest_fields_before_injecting(self) -> None:
+        from shardyfusion.writer.python.writer import _inject_vector_manifest_fields
+
+        original_custom = {"existing": {"keep": True}}
+        config = _cel_config(vector_spec=VectorSpec(dim=64))
+        config.manifest.custom_manifest_fields = original_custom
+
+        _inject_vector_manifest_fields(config, MagicMock())
+
+        assert config.manifest.custom_manifest_fields is not original_custom
+        assert original_custom == {"existing": {"keep": True}}
+        assert config.manifest.custom_manifest_fields["existing"] == {"keep": True}

@@ -429,6 +429,7 @@ class ShardedReader(_BaseShardedReader):
     def _build_simple_state(
         self, manifest_ref: str, manifest: ParsedManifest
     ) -> _SimpleReaderState:
+        self._validate_manifest_compatibility(manifest)
         router = SnapshotRouter(manifest.required_build, manifest.shards)
         readers: dict[int, ShardReader] = {}
         try:

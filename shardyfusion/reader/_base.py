@@ -9,13 +9,13 @@ from typing import Any, Self
 
 from shardyfusion._rate_limiter import RateLimiter
 from shardyfusion.credentials import CredentialProvider
-from shardyfusion.errors import ReaderStateError
+from shardyfusion.errors import ConfigValidationError, ReaderStateError
 from shardyfusion.logging import (
     FailureSeverity,
     get_logger,
     log_failure,
 )
-from shardyfusion.manifest import ManifestRef, RequiredShardMeta
+from shardyfusion.manifest import ManifestRef, ParsedManifest, RequiredShardMeta
 from shardyfusion.manifest_store import ManifestStore, S3ManifestStore
 from shardyfusion.metrics import MetricEvent, MetricsCollector
 from shardyfusion.type_defs import (
@@ -101,6 +101,15 @@ class _BaseShardedReader:
             )
             raise ReaderStateError("CURRENT pointer not found")
         return current
+
+    def _validate_manifest_compatibility(self, manifest: ParsedManifest) -> None:
+        """Reject manifest shapes unsupported by generic KV readers."""
+        vector_meta = manifest.custom.get("vector")
+        if isinstance(vector_meta, dict) and not bool(vector_meta.get("unified")):
+            raise ConfigValidationError(
+                "This manifest contains vector-only metadata and cannot be opened "
+                "with a generic KV reader. Use ShardedVectorReader instead."
+            )
 
     def _open_one_reader(self, shard: RequiredShardMeta) -> ShardReader:
         """Create local dir and open a single shard reader.

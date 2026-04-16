@@ -103,6 +103,17 @@ def validate_vector_config(config: VectorWriteConfig) -> None:
         raise ConfigValidationError(
             f"num_probes must be >= 1, got {sharding.num_probes}"
         )
+    if (
+        sharding.strategy
+        in {
+            VectorShardingStrategy.EXPLICIT,
+            VectorShardingStrategy.CEL,
+        }
+        and sharding.num_probes != 1
+    ):
+        raise ConfigValidationError(
+            f"num_probes is only supported for CLUSTER and LSH sharding, got {sharding.num_probes} for {sharding.strategy.value}"
+        )
 
 
 # ---------------------------------------------------------------------------

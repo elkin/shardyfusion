@@ -18,6 +18,7 @@ from shardyfusion.manifest import (
     RequiredBuildMeta,
     RequiredShardMeta,
 )
+from shardyfusion.reader._types import _NullShardReader
 from shardyfusion.reader.unified_reader import (
     UnifiedShardedReader,
     UnifiedVectorMeta,
@@ -201,25 +202,26 @@ class TestAutoReaderFactory:
 
 class TestSearchShard:
     def test_null_reader_returns_empty(self) -> None:
-        """Readers without search() (e.g. _NullShardReader) return []."""
+        """Null shard readers without vector data return an empty result."""
 
-        class NullReader:
-            def get(self, key: bytes) -> None:
-                return None
-
-        result = _search_shard(NullReader(), np.zeros(4), top_k=5, ef=50)
+        result = _search_shard(_NullShardReader(), np.zeros(4), top_k=5)
         assert result == []
+
+    def test_reader_without_search_or_get_raises(self) -> None:
+        class WrongReader:
+            pass
+
+        with pytest.raises(ReaderStateError, match="does not support vector search"):
+            _search_shard(WrongReader(), np.zeros(4), top_k=5)
 
     def test_searchable_reader(self) -> None:
         expected = [SearchResult(id=1, score=0.5)]
 
         class FakeReader:
-            def search(
-                self, query: np.ndarray, top_k: int, ef: int = 50
-            ) -> list[SearchResult]:
+            def search(self, query: np.ndarray, top_k: int) -> list[SearchResult]:
                 return expected
 
-        result = _search_shard(FakeReader(), np.zeros(4), top_k=5, ef=50)
+        result = _search_shard(FakeReader(), np.zeros(4), top_k=5)
         assert result == expected
 
 
@@ -268,7 +270,7 @@ def _build_mock_reader(
     readers_list: list[Any] = []
     shards_list: list[Any] = []
     for i in range(num_shards):
-        readers_list.append(SimpleNamespace(search=lambda q, k, ef=50: []))
+        readers_list.append(SimpleNamespace(search=lambda q, k: []))
         shards_list.append(SimpleNamespace(db_url=f"s3://shard-{i}"))
     reader._state = SimpleNamespace(
         readers=readers_list,
@@ -536,6 +538,7 @@ def _vector_manifest(num_dbs: int = 2) -> ParsedManifest:
             "metric": "cosine",
             "index_type": "hnsw",
             "quantization": None,
+            "unified": True,
             "backend": "usearch-sidecar",
             "kv_backend": "slatedb",
         }
@@ -714,3 +717,34 @@ class TestUnifiedShardedReaderInit:
         reader.close()
         with pytest.raises(ReaderStateError, match="closed"):
             reader.search(np.zeros(4, dtype=np.float32), top_k=5)
+
+    def test_search_raises_for_non_searchable_non_null_reader(
+        self, tmp_path: Any
+    ) -> None:
+        manifest = _vector_manifest(num_dbs=1)
+        store = _FixedManifestStore(manifest, "mem://manifest/vec")
+
+        class WrongShardReader:
+            def get(self, key: bytes) -> bytes | None:
+                return None
+
+            def close(self) -> None:
+                pass
+
+        def wrong_reader_factory(*, db_url: str, local_dir: Any, **kwargs: Any) -> Any:
+            _ = (db_url, local_dir, kwargs)
+            return WrongShardReader()
+
+        reader = UnifiedShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=store,
+            reader_factory=wrong_reader_factory,
+        )
+        try:
+            with pytest.raises(
+                ReaderStateError, match="does not support vector search"
+            ):
+                reader.search(np.zeros(4, dtype=np.float32), top_k=5)
+        finally:
+            reader.close()

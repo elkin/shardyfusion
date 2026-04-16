@@ -444,7 +444,9 @@ def inject_vector_manifest_fields(config: WriteConfig, factory: Any) -> None:
     }
     if vs.index_params:
         vector_meta["index_params"] = vs.index_params
-    config.manifest.custom_manifest_fields["vector"] = vector_meta
+    custom_fields = dict(config.manifest.custom_manifest_fields)
+    custom_fields["vector"] = vector_meta
+    config.manifest.custom_manifest_fields = custom_fields
 
 
 def publish_to_store(

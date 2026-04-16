@@ -318,7 +318,7 @@ The `VectorIndexWriter` protocol mirrors the existing `DbAdapter` pattern:
 
 The `VectorShardReader` protocol:
 
-- `search(query, top_k, ef) -> list[SearchResult]` — search the shard
+- `search(query, top_k) -> list[SearchResult]` — search the shard
 - `close()` — release resources
 
 ### Payload Storage
@@ -334,7 +334,6 @@ The reader downloads both files, loads the index, and joins search results with 
 
 ### Not Yet Implemented
 
-- **Parallel writer mode**: `write_vector_sharded(..., parallel=True)` raises `ConfigValidationError`. Multi-process writing would require the same spool-file approach as the KV Python parallel writer.
 - **Async reader**: No `AsyncShardedVectorReader` yet. The sync reader with thread-pool fan-out covers the initial use case.
 - **FAISS adapter**: The adapter protocol supports it, but no implementation exists.
 - **Dask/Ray/Spark writers**: Only the Python iterator-based writer is implemented. Framework writers would follow the same pattern as existing KV framework writers.

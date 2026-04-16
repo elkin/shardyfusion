@@ -511,24 +511,6 @@ class TestValidateConfigAdditional:
 
 
 # ---------------------------------------------------------------------------
-# write_vector_sharded — parallel not supported
-# ---------------------------------------------------------------------------
-
-
-class TestWriteVectorShardedEntryPoint:
-    def test_parallel_raises(self):
-        from shardyfusion.vector.writer import write_vector_sharded
-
-        cfg = VectorWriteConfig(
-            num_dbs=2,
-            s3_prefix="s3://bucket/prefix",
-            index_config=VectorIndexConfig(dim=4),
-        )
-        with pytest.raises(ConfigValidationError, match="Parallel"):
-            write_vector_sharded([], cfg, parallel=True)
-
-
-# ---------------------------------------------------------------------------
 # parallel=True + vector_spec in Python KV writer
 # ---------------------------------------------------------------------------
 

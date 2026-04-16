@@ -171,7 +171,6 @@ class VectorShardReader(Protocol):
         self,
         query: np.ndarray,
         top_k: int,
-        ef: int = 50,
     ) -> list[SearchResult]: ...
 
     def close(self) -> None: ...

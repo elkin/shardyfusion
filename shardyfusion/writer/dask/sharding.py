@@ -235,7 +235,6 @@ def add_vector_db_id_column(
         _cel_expr = routing.cel_expr
         _cel_cols = dict(routing_context_cols)
         _routing_values = routing.routing_values
-        _compiled = compile_cel(_cel_expr, _cel_cols)
         _cel_lookup = (
             build_categorical_routing_lookup(_routing_values)
             if _routing_values is not None
@@ -243,6 +242,7 @@ def add_vector_db_id_column(
         )
 
         def _apply_cel(pdf: pd.DataFrame) -> pd.DataFrame:
+            _compiled = compile_cel(_cel_expr, _cel_cols)
             contexts = pandas_rows_to_contexts(pdf, _cel_cols)
             db_ids = [
                 route_cel(

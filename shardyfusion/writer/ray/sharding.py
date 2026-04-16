@@ -232,9 +232,9 @@ def add_vector_db_id_column(
         _cel_expr = routing.cel_expr
         _cel_cols = dict(routing_context_cols)
         _routing_values = routing.routing_values
-        _compiled = compile_cel(_cel_expr, _cel_cols)
 
         def _apply_cel(table: pa.Table) -> pa.Table:
+            _compiled = compile_cel(_cel_expr, _cel_cols)
             db_ids = route_cel_batch(_compiled, table, _routing_values)
             return table.append_column(
                 VECTOR_DB_ID_COL, pa.array(db_ids, type=pa.int64())

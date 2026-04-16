@@ -32,7 +32,7 @@ import numpy as np
 
 from .config import VectorSpec
 from .credentials import CredentialProvider, S3Credentials
-from .errors import ShardyfusionError
+from .errors import ConfigValidationError, ShardyfusionError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
 from .storage import create_s3_client, get_bytes, put_bytes
 from .type_defs import S3ConnectionOptions
@@ -49,13 +49,28 @@ _SQLITE_VEC_IMPORT_ERROR = (
 )
 
 # Mapping from VectorSpec metric strings to sqlite-vec distance_metric values.
-# sqlite-vec supports "cosine" and "l2"; dot_product is not natively supported
-# so we fall back to cosine and document the limitation.
+# sqlite-vec supports "cosine" and "l2"; dot_product is rejected explicitly.
 _SQLITE_VEC_METRIC_MAP: dict[str, str] = {
     "cosine": "cosine",
     "l2": "l2",
-    "dot_product": "cosine",  # best-effort: sqlite-vec has no ip/dot metric
 }
+
+
+def _sqlite_vec_metric(metric: object) -> str:
+    metric_value = getattr(metric, "value", None)
+    if isinstance(metric_value, str):
+        metric_str = metric_value
+    elif isinstance(metric, str):
+        metric_str = metric
+    else:
+        metric_str = "cosine"
+    if metric_str == "dot_product":
+        raise ConfigValidationError(
+            "sqlite-vec does not support dot_product metric; use cosine or l2"
+        )
+    if metric_str not in _SQLITE_VEC_METRIC_MAP:
+        raise ConfigValidationError(f"Unsupported sqlite-vec metric: {metric_str!r}")
+    return _SQLITE_VEC_METRIC_MAP[str(metric_str)]
 
 
 def _load_sqlite_vec(conn: sqlite3.Connection) -> None:
@@ -169,10 +184,7 @@ class SqliteVecAdapter:
 
         # Vector index table (sqlite-vec) with configured distance metric
         dim = vector_spec.dim
-        metric_str = _SQLITE_VEC_METRIC_MAP.get(
-            str(getattr(vector_spec.metric, "value", vector_spec.metric)),
-            "cosine",
-        )
+        metric_str = _sqlite_vec_metric(vector_spec.metric)
         conn.execute(
             f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_index "
             f"USING vec0(embedding float[{dim}] distance_metric={metric_str})"
@@ -444,7 +456,6 @@ class SqliteVecShardReader:
         self,
         query: np.ndarray,
         top_k: int,
-        ef: int = 50,
     ) -> list[SearchResult]:
         """Vector similarity search via sqlite-vec."""
         if self._conn is None:
@@ -457,27 +468,36 @@ class SqliteVecShardReader:
             (query_bytes, top_k),
         ).fetchall()
 
+        row_ids = [int(row_id) for row_id, _distance in rows]
+        id_map: dict[int, int | str] = {}
+        if row_ids:
+            placeholders = ",".join("?" for _ in row_ids)
+            try:
+                id_rows = self._conn.execute(
+                    f"SELECT internal_id, original_id FROM vec_id_map WHERE internal_id IN ({placeholders})",  # noqa: S608
+                    row_ids,
+                ).fetchall()
+            except sqlite3.OperationalError:
+                id_rows = []
+            for internal_id, original_id in id_rows:
+                id_map[int(internal_id)] = _decode_id_map_value(original_id)
+
+        payload_map: dict[int, dict[str, Any]] = {}
+        if row_ids:
+            placeholders = ",".join("?" for _ in row_ids)
+            payload_rows = self._conn.execute(
+                f"SELECT rowid, payload FROM vec_payloads WHERE rowid IN ({placeholders})",  # noqa: S608
+                row_ids,
+            ).fetchall()
+            payload_map = {
+                int(payload_row_id): json.loads(payload)
+                for payload_row_id, payload in payload_rows
+            }
+
         results: list[SearchResult] = []
         for row_id, distance in rows:
-            # Resolve original ID if an id_map entry exists
-            original_id: int | str = row_id
-            try:
-                id_row = self._conn.execute(
-                    "SELECT original_id FROM vec_id_map WHERE internal_id = ?",
-                    (row_id,),
-                ).fetchone()
-                if id_row is not None:
-                    original_id = _decode_id_map_value(id_row[0])
-            except sqlite3.OperationalError:
-                pass  # table doesn't exist (old format)
-
-            payload: dict[str, Any] | None = None
-            payload_row = self._conn.execute(
-                "SELECT payload FROM vec_payloads WHERE rowid = ?",
-                (row_id,),
-            ).fetchone()
-            if payload_row is not None:
-                payload = json.loads(payload_row[0])
+            original_id = id_map.get(int(row_id), int(row_id))
+            payload = payload_map.get(int(row_id))
 
             results.append(
                 SearchResult(

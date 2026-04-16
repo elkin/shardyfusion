@@ -403,7 +403,7 @@ class TestReaderCelSearch:
             def __init__(self, shard_id):
                 self._shard_id = shard_id
 
-            def search(self, query, top_k, ef=50):
+            def search(self, query, top_k):
                 return [
                     SearchResult(id=self._shard_id * 100 + i, score=float(i) * 0.1)
                     for i in range(min(top_k, 3))

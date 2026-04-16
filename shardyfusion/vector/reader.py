@@ -92,6 +92,11 @@ class ShardedVectorReader:
         self._s3_connection_options = s3_connection_options
         self._closed = False
         self._refresh_lock = threading.Lock()
+        self._executor = (
+            ThreadPoolExecutor(max_workers=max_workers)
+            if max_workers is not None and max_workers > 1
+            else None
+        )
 
         self._store = manifest_store or S3ManifestStore(
             s3_prefix,
@@ -157,7 +162,6 @@ class ShardedVectorReader:
         query: np.ndarray,
         top_k: int = 10,
         *,
-        ef: int = 50,
         shard_ids: list[int] | None = None,
         num_probes: int | None = None,
         routing_context: dict[str, Any] | None = None,
@@ -195,17 +199,16 @@ class ShardedVectorReader:
 
         # Fan out to shards
         per_shard_results: list[list[SearchResult]] = []
-        if self._max_workers and len(target_shards) > 1:
-            with ThreadPoolExecutor(max_workers=self._max_workers) as pool:
-                futures = {
-                    pool.submit(self._search_shard, sid, query, top_k, ef): sid
-                    for sid in target_shards
-                }
-                for future in futures:
-                    per_shard_results.append(future.result())
+        if self._executor is not None and len(target_shards) > 1:
+            futures = {
+                self._executor.submit(self._search_shard, sid, query, top_k): sid
+                for sid in target_shards
+            }
+            for future in futures:
+                per_shard_results.append(future.result())
         else:
             for sid in target_shards:
-                per_shard_results.append(self._search_shard(sid, query, top_k, ef))
+                per_shard_results.append(self._search_shard(sid, query, top_k))
 
         merged = merge_results(per_shard_results, top_k, self._metric)
         elapsed_ms = (time.perf_counter() - started) * 1000
@@ -399,6 +402,9 @@ class ShardedVectorReader:
             self._shard_locks = {}
         for cache_entry in readers_to_close:
             self._retire_reader(cache_entry)
+        if self._executor is not None:
+            self._executor.shutdown(wait=False)
+            self._executor = None
 
         if self._mc is not None:
             self._mc.emit(MetricEvent.VECTOR_READER_CLOSED, {})
@@ -465,80 +471,85 @@ class ShardedVectorReader:
         manifest: ParsedManifest,
     ) -> None:
         """Apply a parsed manifest to reader state."""
+        vector_meta = manifest.custom.get("vector", {})
+        if not isinstance(vector_meta, dict) or not vector_meta:
+            raise ReaderStateError(
+                "Manifest does not contain vector metadata. Use a generic KV reader "
+                "for non-vector snapshots."
+            )
+
+        dim = int(vector_meta.get("dim", 0))
+        metric = DistanceMetric(vector_meta.get("metric", "cosine"))
+        strategy = VectorShardingStrategy(
+            vector_meta.get("sharding_strategy", "explicit")
+        )
+        num_probes = int(vector_meta.get("num_probes", 1))
+
+        cel_expr = vector_meta.get("cel_expr")
+        cel_columns = vector_meta.get("cel_columns")
+        raw_routing_values: list[Any] | None = vector_meta.get("routing_values")
+        routing_values: list[int | str | bytes] | None = None
+        if raw_routing_values is not None:
+            decoded: list[int | str | bytes] = []
+            for v in raw_routing_values:
+                if isinstance(v, dict) and "__bytes_hex__" in v:
+                    decoded.append(bytes.fromhex(v["__bytes_hex__"]))
+                elif isinstance(v, (int, str, bytes)):
+                    decoded.append(v)
+                else:
+                    decoded.append(v)  # type: ignore[arg-type]
+            routing_values = decoded
+
+        centroids: np.ndarray | None = None
+        centroids_ref = vector_meta.get("centroids_ref")
+        if centroids_ref:
+            try:
+                data = get_bytes(centroids_ref, s3_client=self._s3_client)
+                centroids = np.load(io.BytesIO(data))
+            except Exception:
+                log_event(
+                    "centroids_load_failed",
+                    logger=_logger,
+                    centroids_ref=centroids_ref,
+                )
+
+        hyperplanes: np.ndarray | None = None
+        hyperplanes_ref = vector_meta.get("hyperplanes_ref")
+        if hyperplanes_ref:
+            try:
+                data = get_bytes(hyperplanes_ref, s3_client=self._s3_client)
+                hyperplanes = np.load(io.BytesIO(data))
+            except Exception:
+                log_event(
+                    "hyperplanes_load_failed",
+                    logger=_logger,
+                    hyperplanes_ref=hyperplanes_ref,
+                )
+
         self._manifest_ref = ref
         self._manifest = manifest
         self._num_dbs = manifest.required_build.num_dbs
-
-        # Build shard metadata map
         self._shard_meta = {s.db_id: s for s in manifest.shards}
-
-        # Parse vector metadata from custom fields
-        vector_meta = manifest.custom.get("vector", {})
-        if vector_meta:
-            dim = vector_meta.get("dim", 0)
-            metric_str = vector_meta.get("metric", "cosine")
-            metric = DistanceMetric(metric_str)
-            self._metric = metric
-            self._index_config = VectorIndexConfig(
-                dim=dim,
-                metric=metric,
-                index_type=vector_meta.get("index_type", "hnsw"),
-                quantization=vector_meta.get("quantization"),
-            )
-            strategy_str = vector_meta.get("sharding_strategy", "explicit")
-            self._sharding_strategy = VectorShardingStrategy(strategy_str)
-            self._num_probes = vector_meta.get("num_probes", 1)
-
-            # Load CEL metadata if present
-            self._cel_expr = vector_meta.get("cel_expr")
-            self._cel_columns = vector_meta.get("cel_columns")
-            raw_rv: list[Any] | None = vector_meta.get("routing_values")
-            if raw_rv is not None:
-                decoded: list[int | str | bytes] = []
-                for v in raw_rv:
-                    if isinstance(v, dict) and "__bytes_hex__" in v:
-                        decoded.append(bytes.fromhex(v["__bytes_hex__"]))
-                    elif isinstance(v, (int, str, bytes)):
-                        decoded.append(v)
-                    else:
-                        decoded.append(v)  # type: ignore[arg-type]
-                self._routing_values = decoded
-            else:
-                self._routing_values = None
-
-            # Load centroids/hyperplanes if referenced
-            centroids_ref = vector_meta.get("centroids_ref")
-            if centroids_ref:
-                try:
-                    data = get_bytes(centroids_ref, s3_client=self._s3_client)
-                    self._centroids = np.load(io.BytesIO(data))
-                except Exception:
-                    self._centroids = None  # clear stale data on failure
-                    log_event(
-                        "centroids_load_failed",
-                        logger=_logger,
-                        centroids_ref=centroids_ref,
-                    )
-
-            hyperplanes_ref = vector_meta.get("hyperplanes_ref")
-            if hyperplanes_ref:
-                try:
-                    data = get_bytes(hyperplanes_ref, s3_client=self._s3_client)
-                    self._hyperplanes = np.load(io.BytesIO(data))
-                except Exception:
-                    self._hyperplanes = None  # clear stale data on failure
-                    log_event(
-                        "hyperplanes_load_failed",
-                        logger=_logger,
-                        hyperplanes_ref=hyperplanes_ref,
-                    )
+        self._metric = metric
+        self._index_config = VectorIndexConfig(
+            dim=dim,
+            metric=metric,
+            index_type=vector_meta.get("index_type", "hnsw"),
+            quantization=vector_meta.get("quantization"),
+        )
+        self._sharding_strategy = strategy
+        self._num_probes = num_probes
+        self._centroids = centroids
+        self._hyperplanes = hyperplanes
+        self._cel_expr = cel_expr
+        self._cel_columns = cel_columns
+        self._routing_values = routing_values
 
     def _search_shard(
         self,
         shard_id: int,
         query: np.ndarray,
         top_k: int,
-        ef: int,
     ) -> list[SearchResult]:
         """Search a single shard, loading it lazily if needed."""
         cache_entry = self._get_or_load_reader(shard_id)
@@ -547,7 +558,7 @@ class ShardedVectorReader:
 
         try:
             started = time.perf_counter()
-            results = cache_entry.reader.search(query, top_k, ef=ef)
+            results = cache_entry.reader.search(query, top_k)
             elapsed_ms = (time.perf_counter() - started) * 1000
 
             if self._mc is not None:

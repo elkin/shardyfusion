@@ -6,7 +6,7 @@ import threading
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 from uuid import uuid4
 
 import yaml
@@ -17,9 +17,6 @@ from .logging import FailureSeverity, get_logger, log_failure
 from .metrics import MetricsCollector
 from .storage import create_s3_client, get_bytes, join_s3, put_bytes
 from .type_defs import S3ConnectionOptions
-
-if TYPE_CHECKING:
-    from .config import WriteConfig
 
 _logger = get_logger(__name__)
 
@@ -72,6 +69,16 @@ class RunRegistry(Protocol):
     def load(self, ref: str) -> RunRecord:
         """Load a run record by reference."""
         ...
+
+
+class _RunRecordConfig(Protocol):
+    s3_prefix: str
+    output: Any
+    manifest: Any
+    run_registry: Any
+    credential_provider: CredentialProvider | None
+    s3_connection_options: S3ConnectionOptions | None
+    metrics_collector: MetricsCollector | None
 
 
 def _utc_now() -> datetime:
@@ -162,7 +169,7 @@ class InMemoryRunRegistry:
         return self._records[ref].model_copy(deep=True)
 
 
-def resolve_run_registry(config: WriteConfig) -> RunRegistry:
+def resolve_run_registry(config: _RunRecordConfig) -> RunRegistry:
     """Resolve the run registry for this write configuration."""
 
     if config.run_registry is not None:
@@ -222,7 +229,7 @@ class RunRecordLifecycle:
     def start(
         cls,
         *,
-        config: WriteConfig,
+        config: _RunRecordConfig,
         run_id: str,
         writer_type: str,
         lease_duration: timedelta = DEFAULT_RUN_LEASE_DURATION,
@@ -336,7 +343,7 @@ class RunRecordLifecycle:
 @contextmanager
 def managed_run_record(
     *,
-    config: WriteConfig,
+    config: _RunRecordConfig,
     run_id: str,
     writer_type: str,
 ) -> Any:
