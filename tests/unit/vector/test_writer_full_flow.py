@@ -144,7 +144,7 @@ class TestWriteVectorShardedExplicit:
 
     @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
     @patch(
-        "shardyfusion.vector.writer.put_bytes",
+        "shardyfusion.vector._distributed.put_bytes",
     )
     def test_basic_flow(self, mock_put: Any, mock_s3: Any, tmp_path: Path) -> None:
         from shardyfusion.vector.writer import write_vector_sharded
@@ -290,7 +290,7 @@ class TestWriteVectorShardedCluster:
     """Test write_vector_sharded with CLUSTER sharding."""
 
     @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    @patch("shardyfusion.vector.writer.put_bytes")
+    @patch("shardyfusion.vector._distributed.put_bytes")
     def test_cluster_with_centroids(
         self, mock_put: Any, mock_s3: Any, tmp_path: Path
     ) -> None:
@@ -316,7 +316,7 @@ class TestWriteVectorShardedCluster:
         assert any("centroids.npy" in str(call) for call in mock_put.call_args_list)
 
     @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    @patch("shardyfusion.vector.writer.put_bytes")
+    @patch("shardyfusion.vector._distributed.put_bytes")
     def test_cluster_with_training(
         self, mock_put: Any, mock_s3: Any, tmp_path: Path
     ) -> None:
@@ -344,7 +344,7 @@ class TestWriteVectorShardedCluster:
         assert result.stats.rows_written == 20
 
     @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    @patch("shardyfusion.vector.writer.put_bytes")
+    @patch("shardyfusion.vector._distributed.put_bytes")
     def test_cluster_infers_num_dbs_from_centroids(
         self, mock_put: Any, mock_s3: Any, tmp_path: Path
     ) -> None:
@@ -423,7 +423,7 @@ class TestWriteVectorShardedLSH:
     """Test write_vector_sharded with LSH sharding."""
 
     @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    @patch("shardyfusion.vector.writer.put_bytes")
+    @patch("shardyfusion.vector._distributed.put_bytes")
     def test_lsh_auto_generates_hyperplanes(
         self, mock_put: Any, mock_s3: Any, tmp_path: Path
     ) -> None:
@@ -519,7 +519,6 @@ class TestPublishVectorManifest:
             total_vectors=5,
             centroids_ref=centroids_ref,
             hyperplanes_ref=None,
-            s3_client=MagicMock(),
         )
 
         assert ref == "s3://bucket/manifests/test/manifest"
@@ -550,7 +549,6 @@ class TestPublishVectorManifest:
             total_vectors=0,
             centroids_ref=None,
             hyperplanes_ref=hp_ref,
-            s3_client=MagicMock(),
         )
 
         call_kwargs = mock_store.publish.call_args[1]
@@ -565,7 +563,9 @@ class TestPublishVectorManifest:
         config = _explicit_config(tmp_path, num_dbs=1)
         config.manifest.store = None
 
-        with patch("shardyfusion.vector.writer.S3ManifestStore") as mock_s3_store_cls:
+        with patch(
+            "shardyfusion.vector._distributed.S3ManifestStore"
+        ) as mock_s3_store_cls:
             mock_instance = MagicMock()
             mock_instance.publish.return_value = "s3://manifest"
             mock_s3_store_cls.return_value = mock_instance
@@ -578,7 +578,6 @@ class TestPublishVectorManifest:
                 total_vectors=0,
                 centroids_ref=None,
                 hyperplanes_ref=None,
-                s3_client=MagicMock(),
             )
 
         assert ref == "s3://manifest"

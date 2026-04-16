@@ -6,11 +6,16 @@ import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
-from shardyfusion.errors import ConfigValidationError, ReaderStateError
+from shardyfusion.errors import (
+    ConfigValidationError,
+    ManifestParseError,
+    ReaderStateError,
+)
 from shardyfusion.manifest import (
     ManifestRef,
     ManifestShardingSpec,
@@ -676,3 +681,115 @@ class TestShardedVectorReader:
         assert health.manifest_age_seconds is not None
         assert health.manifest_age_seconds > 3600
         reader.close()
+
+
+# ---------------------------------------------------------------------------
+# Manifest fallback iteration — _load_initial_manifest
+# ---------------------------------------------------------------------------
+
+
+def _make_manifest_ref(
+    *, ref: str = "s3://bucket/manifests/test/manifest", run_id: str = "run-1"
+) -> ManifestRef:
+    return ManifestRef(ref=ref, run_id=run_id, published_at=datetime.now(UTC))
+
+
+class TestManifestFallbackIteration:
+    """_load_initial_manifest should skip the failed ref and try older ones."""
+
+    def test_fallback_skips_current_and_loads_previous(self, tmp_path: Path) -> None:
+        good_manifest = _make_manifest(num_dbs=2)
+        good_ref = _make_manifest_ref(
+            ref="s3://bucket/manifests/old/manifest", run_id="run-old"
+        )
+        bad_ref = _make_manifest_ref(
+            ref="s3://bucket/manifests/new/manifest", run_id="run-new"
+        )
+
+        class FallbackStore:
+            def load_current(self) -> ManifestRef:
+                return bad_ref
+
+            def load_manifest(self, ref: str) -> ParsedManifest:
+                if ref == bad_ref.ref:
+                    raise ManifestParseError("corrupt")
+                return good_manifest
+
+            def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
+                return [bad_ref, good_ref]
+
+            def publish(self, **kw: Any) -> str:
+                return ""
+
+            def set_current(self, ref: str) -> None:
+                pass
+
+        factory = MagicMock()
+        reader = ShardedVectorReader(
+            s3_prefix="s3://bucket",
+            local_root=str(tmp_path),
+            reader_factory=factory,
+            manifest_store=FallbackStore(),
+            max_fallback_attempts=3,
+        )
+        assert reader._manifest_ref is not None
+        assert reader._manifest_ref.ref == good_ref.ref
+        reader.close()
+
+    def test_fallback_fails_when_no_valid_manifest(self, tmp_path: Path) -> None:
+        bad_ref1 = _make_manifest_ref(ref="s3://bucket/m/1", run_id="r1")
+        bad_ref2 = _make_manifest_ref(ref="s3://bucket/m/2", run_id="r2")
+
+        class AllBadStore:
+            def load_current(self) -> ManifestRef:
+                return bad_ref1
+
+            def load_manifest(self, ref: str) -> ParsedManifest:
+                raise ManifestParseError("corrupt")
+
+            def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
+                return [bad_ref1, bad_ref2]
+
+            def publish(self, **kw: Any) -> str:
+                return ""
+
+            def set_current(self, ref: str) -> None:
+                pass
+
+        factory = MagicMock()
+        with pytest.raises(ManifestParseError):
+            ShardedVectorReader(
+                s3_prefix="s3://bucket",
+                local_root=str(tmp_path),
+                reader_factory=factory,
+                manifest_store=AllBadStore(),
+                max_fallback_attempts=3,
+            )
+
+    def test_fallback_disabled_with_zero_attempts(self, tmp_path: Path) -> None:
+        bad_ref = _make_manifest_ref()
+
+        class BadStore:
+            def load_current(self) -> ManifestRef:
+                return bad_ref
+
+            def load_manifest(self, ref: str) -> ParsedManifest:
+                raise ManifestParseError("corrupt")
+
+            def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
+                return [bad_ref]
+
+            def publish(self, **kw: Any) -> str:
+                return ""
+
+            def set_current(self, ref: str) -> None:
+                pass
+
+        with pytest.raises(ManifestParseError):
+            ShardedVectorReader(
+                s3_prefix="s3://bucket",
+                local_root=str(tmp_path),
+                reader_factory=MagicMock(),
+                manifest_store=BadStore(),
+                max_fallback_attempts=0,
+            )

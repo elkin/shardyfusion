@@ -330,7 +330,7 @@ class TestWriteSingleProcess:
         )
 
     def test_records_distributed_to_correct_shards(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import _write_single_process
+        from shardyfusion.vector.writer import _write_single_process_legacy
 
         factory = MockWriterFactory()
         config = self._make_config(tmp_path)
@@ -341,7 +341,7 @@ class TestWriteSingleProcess:
             VectorRecord(id=3, vector=np.zeros(4, dtype=np.float32), shard_id=0),
         ]
 
-        states = _write_single_process(
+        states = _write_single_process_legacy(
             records=records,
             config=config,
             num_dbs=2,
@@ -359,7 +359,7 @@ class TestWriteSingleProcess:
         assert states[1].row_count == 1
 
     def test_batching_flushes_at_threshold(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import _write_single_process
+        from shardyfusion.vector.writer import _write_single_process_legacy
 
         factory = MockWriterFactory()
         config = self._make_config(tmp_path)
@@ -370,7 +370,7 @@ class TestWriteSingleProcess:
             for i in range(5)
         ]
 
-        states = _write_single_process(
+        states = _write_single_process_legacy(
             records=records,
             config=config,
             num_dbs=1,
@@ -388,7 +388,7 @@ class TestWriteSingleProcess:
         assert states[0].row_count == 5
 
     def test_checkpoint_called_on_all_shards(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import _write_single_process
+        from shardyfusion.vector.writer import _write_single_process_legacy
 
         factory = MockWriterFactory()
         config = self._make_config(tmp_path)
@@ -398,7 +398,7 @@ class TestWriteSingleProcess:
             VectorRecord(id=2, vector=np.zeros(4, dtype=np.float32), shard_id=1),
         ]
 
-        states = _write_single_process(
+        states = _write_single_process_legacy(
             records=records,
             config=config,
             num_dbs=2,
@@ -414,12 +414,12 @@ class TestWriteSingleProcess:
         assert states[1].checkpoint_id == "mock-checkpoint"
 
     def test_empty_records_produces_empty_states(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import _write_single_process
+        from shardyfusion.vector.writer import _write_single_process_legacy
 
         factory = MockWriterFactory()
         config = self._make_config(tmp_path)
 
-        states = _write_single_process(
+        states = _write_single_process_legacy(
             records=[],
             config=config,
             num_dbs=2,
@@ -434,7 +434,7 @@ class TestWriteSingleProcess:
         assert len(states) == 0
 
     def test_db_url_includes_run_id(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import _write_single_process
+        from shardyfusion.vector.writer import _write_single_process_legacy
 
         factory = MockWriterFactory()
         config = self._make_config(tmp_path)
@@ -443,7 +443,7 @@ class TestWriteSingleProcess:
             VectorRecord(id=1, vector=np.zeros(4, dtype=np.float32), shard_id=0),
         ]
 
-        states = _write_single_process(
+        states = _write_single_process_legacy(
             records=records,
             config=config,
             num_dbs=1,
@@ -526,3 +526,95 @@ class TestWriteVectorShardedEntryPoint:
         )
         with pytest.raises(ConfigValidationError, match="Parallel"):
             write_vector_sharded([], cfg, parallel=True)
+
+
+# ---------------------------------------------------------------------------
+# parallel=True + vector_spec in Python KV writer
+# ---------------------------------------------------------------------------
+
+
+class TestParallelVectorSpecBlocked:
+    """parallel=True with vector_spec must raise ConfigValidationError."""
+
+    def test_parallel_with_vector_spec_raises(self) -> None:
+        from shardyfusion.config import VectorSpec, WriteConfig
+        from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
+        from shardyfusion.writer.python.writer import write_sharded
+
+        config = WriteConfig(
+            s3_prefix="s3://bucket/prefix",
+            sharding=ShardingSpec(
+                strategy=ShardingStrategy.CEL,
+                cel_expr="shard_hash(key) % 4u",
+                cel_columns={"key": "int"},
+                routing_values=[0, 1, 2, 3],
+            ),
+            vector_spec=VectorSpec(dim=8),
+        )
+
+        with pytest.raises(
+            ConfigValidationError, match="Parallel mode is not supported"
+        ):
+            write_sharded(
+                [],
+                config,
+                key_fn=lambda r: str(r),
+                value_fn=lambda r: b"v",
+                vector_fn=lambda r: (0, np.zeros(8), None),
+                parallel=True,
+            )
+
+
+# ---------------------------------------------------------------------------
+# bytes routing values round-trip serialization
+# ---------------------------------------------------------------------------
+
+
+class TestBytesRoutingValuesRoundTrip:
+    """bytes routing values must survive writer serialize -> reader deserialize."""
+
+    def test_bytes_serialized_with_marker(self) -> None:
+        """Writer wraps bytes values in __bytes_hex__ dict."""
+        routing_values: list[int | str | bytes] = [0, "hello", b"\xde\xad"]
+
+        serialized = [
+            v if isinstance(v, (int, str)) else {"__bytes_hex__": v.hex()}
+            for v in routing_values
+        ]
+
+        assert serialized[0] == 0
+        assert serialized[1] == "hello"
+        assert serialized[2] == {"__bytes_hex__": "dead"}
+
+    def test_bytes_deserialized_by_reader(self) -> None:
+        """Reader restores bytes from __bytes_hex__ wrapper."""
+        raw_rv = [0, "hello", {"__bytes_hex__": "dead"}]
+
+        restored = [
+            bytes.fromhex(v["__bytes_hex__"])
+            if isinstance(v, dict) and "__bytes_hex__" in v
+            else v
+            for v in raw_rv
+        ]
+
+        assert restored[0] == 0
+        assert restored[1] == "hello"
+        assert restored[2] == b"\xde\xad"
+
+    def test_full_round_trip(self) -> None:
+        """Writer -> JSON-like -> Reader preserves all types."""
+        original: list[int | str | bytes] = [42, "foo", b"\x01\x02\x03"]
+
+        serialized = [
+            v if isinstance(v, (int, str)) else {"__bytes_hex__": v.hex()}
+            for v in original
+        ]
+
+        restored = [
+            bytes.fromhex(v["__bytes_hex__"])
+            if isinstance(v, dict) and "__bytes_hex__" in v
+            else v
+            for v in serialized
+        ]
+
+        assert restored == original

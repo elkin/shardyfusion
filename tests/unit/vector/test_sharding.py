@@ -196,3 +196,55 @@ class TestRouteVectorToShards:
                 num_dbs=4,
                 num_probes=1,
             )
+
+
+# ---------------------------------------------------------------------------
+# k-means++ zero-sum edge case
+# ---------------------------------------------------------------------------
+
+
+class TestKMeansPlusPlusZeroSum:
+    """k-means++ should not crash when all vectors are identical."""
+
+    def test_identical_vectors_no_crash(self) -> None:
+        vectors = np.ones((20, 4), dtype=np.float32) * 3.0
+        centroids = train_centroids_kmeans(vectors, 3, seed=42)
+        assert centroids.shape == (3, 4)
+        for i in range(3):
+            np.testing.assert_allclose(centroids[i], vectors[0], atol=1e-6)
+
+    def test_nearly_identical_vectors(self) -> None:
+        """Vectors with very small variance should still train without error."""
+        rng = np.random.default_rng(42)
+        base = np.ones((50, 8), dtype=np.float32)
+        noise = rng.standard_normal((50, 8)).astype(np.float32) * 1e-10
+        vectors = base + noise
+        centroids = train_centroids_kmeans(vectors, 3, seed=42)
+        assert centroids.shape == (3, 8)
+
+
+# ---------------------------------------------------------------------------
+# LSH num_dbs validation
+# ---------------------------------------------------------------------------
+
+
+class TestLSHNumDbsValidation:
+    """lsh_assign must reject num_dbs <= 0."""
+
+    def test_num_dbs_zero_raises(self) -> None:
+        hp = np.ones((4, 8), dtype=np.float32)
+        vec = np.ones(8, dtype=np.float32)
+        with pytest.raises(ConfigValidationError, match="num_dbs must be > 0"):
+            lsh_assign(vec, hp, 0)
+
+    def test_num_dbs_negative_raises(self) -> None:
+        hp = np.ones((4, 8), dtype=np.float32)
+        vec = np.ones(8, dtype=np.float32)
+        with pytest.raises(ConfigValidationError, match="num_dbs must be > 0"):
+            lsh_assign(vec, hp, -1)
+
+    def test_num_dbs_one_ok(self) -> None:
+        hp = np.ones((4, 8), dtype=np.float32)
+        vec = np.ones(8, dtype=np.float32)
+        shard = lsh_assign(vec, hp, 1)
+        assert shard == 0

@@ -44,13 +44,15 @@ class TestWriteConfigVectorValidation:
             routing_values=[0, 1, 2, 3],
         )
 
-    def test_vector_spec_requires_cel(self) -> None:
-        with pytest.raises(ConfigValidationError, match="CEL sharding"):
-            WriteConfig(
-                num_dbs=4,
-                s3_prefix="s3://bucket/prefix",
-                vector_spec=VectorSpec(dim=128),
-            )
+    def test_vector_spec_accepted_with_hash_sharding(self) -> None:
+        """Vector sharding is independent of KV sharding strategy."""
+        config = WriteConfig(
+            num_dbs=4,
+            s3_prefix="s3://bucket/prefix",
+            vector_spec=VectorSpec(dim=128),
+        )
+        assert config.vector_spec is not None
+        assert config.vector_spec.dim == 128
 
     def test_vector_spec_with_cel_valid(self) -> None:
         config = WriteConfig(

@@ -11,8 +11,10 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-# sqlite-vec is optional; skip entire module if unavailable.
-sqlite_vec = pytest.importorskip("sqlite_vec")
+try:
+    import sqlite_vec
+except ImportError:
+    sqlite_vec = None  # type: ignore[assignment]
 
 from shardyfusion.sqlite_vec_adapter import (  # noqa: E402
     SqliteVecAdapter,
@@ -23,6 +25,32 @@ from shardyfusion.sqlite_vec_adapter import (  # noqa: E402
     _is_cached_snapshot_current,
 )
 from shardyfusion.vector.types import SearchResult  # noqa: E402
+
+
+def _is_sqlite_vec_available() -> bool:
+    """Check if sqlite-vec is available and loadable."""
+    if sqlite_vec is None:
+        return False
+    try:
+        conn = sqlite3.connect(":memory:")
+        if hasattr(conn, "enable_load_extension"):
+            conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        return True
+    except (sqlite3.OperationalError, AttributeError):
+        return False
+
+
+pytestmark = pytest.mark.vector_sqlite
+
+
+def _create_sqlite3_conn(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+    """Create a sqlite3 connection with extension loading enabled."""
+    conn = sqlite3.connect(*args, **kwargs)
+    if hasattr(conn, "enable_load_extension"):
+        conn.enable_load_extension(True)
+    return conn
+
 
 # ---------------------------------------------------------------------------
 # Writer lifecycle
@@ -161,7 +189,7 @@ class TestSqliteVecIdMapping:
     def test_integer_ids_have_typed_id_map_rows(self, tmp_path: Path) -> None:
         db_path = self._build_db(tmp_path, np.array([10, 20, 30]))
 
-        conn = sqlite3.connect(str(db_path))
+        conn = _create_sqlite3_conn(str(db_path))
         sqlite_vec.load(conn)
         rows = conn.execute(
             "SELECT internal_id, original_id FROM vec_id_map ORDER BY internal_id"
@@ -175,7 +203,7 @@ class TestSqliteVecIdMapping:
     def test_string_ids_populate_id_map(self, tmp_path: Path) -> None:
         db_path = self._build_db(tmp_path, np.array(["a", "b", "c"], dtype=object))
 
-        conn = sqlite3.connect(str(db_path))
+        conn = _create_sqlite3_conn(str(db_path))
         sqlite_vec.load(conn)
         rows = conn.execute(
             "SELECT internal_id, original_id FROM vec_id_map ORDER BY internal_id"
@@ -208,7 +236,7 @@ class TestSqliteVecIdMapping:
         )
         adapter.checkpoint()
 
-        conn = sqlite3.connect(str(shard_dir / "shard.db"))
+        conn = _create_sqlite3_conn(str(shard_dir / "shard.db"))
         sqlite_vec.load(conn)
         rows = conn.execute(
             "SELECT internal_id, original_id FROM vec_id_map ORDER BY internal_id"
@@ -228,7 +256,7 @@ class TestSqliteVecIdMapping:
             payloads=[{"color": "red"}, {"color": "blue"}],
         )
 
-        conn = sqlite3.connect(str(db_path))
+        conn = _create_sqlite3_conn(str(db_path))
         sqlite_vec.load(conn)
         rows = conn.execute(
             "SELECT rowid, payload FROM vec_payloads ORDER BY rowid"
@@ -245,7 +273,7 @@ class TestSqliteVecIdMapping:
             payloads=[{"color": "red"}, None],  # type: ignore[list-item]
         )
 
-        conn = sqlite3.connect(str(db_path))
+        conn = _create_sqlite3_conn(str(db_path))
         sqlite_vec.load(conn)
         rows = conn.execute("SELECT rowid FROM vec_payloads").fetchall()
         conn.close()
@@ -266,7 +294,7 @@ class TestSqliteVecIdMapping:
         adapter.write_vector_batch(ids, vecs)
         adapter.checkpoint()
 
-        conn = sqlite3.connect(str(shard_dir / "shard.db"))
+        conn = _create_sqlite3_conn(str(shard_dir / "shard.db"))
         sqlite_vec.load(conn)
         rows = conn.execute(
             "SELECT internal_id, original_id FROM vec_id_map ORDER BY internal_id"
@@ -299,7 +327,7 @@ class TestSqliteVecIdMapping:
         adapter.write_vector_batch(ids, vecs, payloads)
         adapter.checkpoint()
 
-        conn = sqlite3.connect(str(shard_dir / "shard.db"))
+        conn = _create_sqlite3_conn(str(shard_dir / "shard.db"))
         sqlite_vec.load(conn)
         id_map_rows = conn.execute(
             "SELECT internal_id, original_id FROM vec_id_map ORDER BY internal_id"
@@ -348,7 +376,7 @@ class TestSqliteVecIdMapping:
             adapter.write_vector_batch(batch2_ids, batch2_vecs)
             checkpoint = adapter.checkpoint()
 
-            conn = sqlite3.connect(str(shard_dir / "shard.db"))
+            conn = _create_sqlite3_conn(str(shard_dir / "shard.db"))
             sqlite_vec.load(conn)
             id_map_rows = conn.execute(
                 "SELECT internal_id, original_id FROM vec_id_map ORDER BY internal_id"
@@ -604,7 +632,7 @@ class TestCacheValidation:
 
         # Write a valid DB to the cache location
         db_path = read_dir / "shard.db"
-        conn = sqlite3.connect(str(db_path))
+        conn = _create_sqlite3_conn(str(db_path))
         sqlite_vec.load(conn)
         conn.execute(
             "CREATE TABLE kv (k BLOB PRIMARY KEY, v BLOB NOT NULL) WITHOUT ROWID"
