@@ -33,7 +33,12 @@ from shardyfusion.logging import (
     get_logger,
     log_event,
 )
-from shardyfusion.manifest import BuildResult
+from shardyfusion.manifest import (
+    BuildDurations,
+    BuildResult,
+    BuildStats,
+    RequiredShardMeta,
+)
 from shardyfusion.metrics import MetricEvent, MetricsCollector
 from shardyfusion.run_registry import managed_run_record
 from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
@@ -49,7 +54,11 @@ from shardyfusion.slatedb_adapter import (
 )
 from shardyfusion.type_defs import RetryConfig
 
-from .sharding import add_db_id_column
+from .sharding import (
+    VECTOR_DB_ID_COL,
+    _stack_vector_values,
+    add_db_id_column,
+)
 
 _logger = get_logger(__name__)
 
@@ -81,6 +90,21 @@ class _PartitionWriteRuntime:
     )
 
 
+@dataclass(slots=True)
+class _VectorPartitionWriteRuntime:
+    """Picklable runtime config for Dask vector partition writers."""
+
+    run_id: str
+    s3_prefix: str
+    shard_prefix: str
+    db_path_template: str
+    local_root: str
+    index_config: Any
+    adapter_factory: Any
+    batch_size: int
+    payload_cols: list[str] | None = None
+
+
 # Meta schema for result DataFrames returned by partition writers.
 _RESULT_META = pd.DataFrame(
     columns=[
@@ -107,6 +131,20 @@ _RESULT_META = pd.DataFrame(
         "all_attempt_urls": "object",
     }
 )
+
+
+def _vector_result_row(result: RequiredShardMeta) -> dict[str, object]:
+    return {
+        "db_id": result.db_id,
+        "db_url": result.db_url,
+        "attempt": result.attempt,
+        "row_count": result.row_count,
+        "min_key": result.min_key,
+        "max_key": result.max_key,
+        "checkpoint_id": result.checkpoint_id,
+        "writer_info": result.writer_info,
+        "all_attempt_urls": (),
+    }
 
 
 def write_sharded(
@@ -529,3 +567,248 @@ def _write_partition(
         return _RESULT_META.iloc[:0].copy()
 
     return pd.DataFrame(results)
+
+
+def write_vector_sharded(
+    ddf: dd.DataFrame,
+    config: WriteConfig,
+    *,
+    vector_col: str,
+    id_col: str,
+    payload_cols: list[str] | None = None,
+    shard_id_col: str | None = None,
+    routing_context_cols: dict[str, str] | None = None,
+    max_writes_per_second: float | None = None,
+) -> BuildResult:
+    """Write vectors from a Dask DataFrame into N sharded vector indices.
+
+    Args:
+        ddf: Dask DataFrame with vector and ID columns.
+        config: Write configuration.
+        vector_col: Name of the vector column.
+        id_col: Name of the ID column.
+        payload_cols: Optional payload columns.
+        shard_id_col: Column with explicit shard IDs (EXPLICIT strategy only).
+        routing_context_cols: Columns for CEL expression evaluation.
+        max_writes_per_second: Optional rate limit.
+
+    Returns:
+        BuildResult with manifest reference and stats.
+    """
+    import numpy as np
+
+    from shardyfusion.vector._distributed import (
+        publish_vector_manifest,
+        resolve_adapter_factory,
+        resolve_vector_routing,
+        upload_routing_metadata,
+    )
+    from shardyfusion.vector.config import VectorWriteConfig
+
+    from .sharding import add_vector_db_id_column
+
+    assert config.vector_spec is not None, "vector_spec is required for vector writes"
+
+    started = time.perf_counter()
+    run_id = config.output.run_id or uuid4().hex
+
+    mc = config.metrics_collector
+
+    sample_vectors: np.ndarray | None = None
+    if (
+        config.vector_spec.sharding.strategy == "cluster"
+        and config.vector_spec.sharding.train_centroids
+    ):
+        sample_series = ddf[vector_col]
+        sample = sample_series.sample(frac=0.1)
+        sample_values = sample.compute().tolist()
+        if not sample_values:
+            sample_values = sample_series.head(
+                config.vector_spec.sharding.centroids_training_sample_size,
+                compute=True,
+            ).tolist()
+        sample_vectors = _stack_vector_values(sample_values)
+        if (
+            sample_vectors.shape[0]
+            > config.vector_spec.sharding.centroids_training_sample_size
+        ):
+            sample_vectors = sample_vectors[
+                : config.vector_spec.sharding.centroids_training_sample_size
+            ]
+
+    credentials = (
+        config.credential_provider.resolve() if config.credential_provider else None
+    )
+    from shardyfusion.storage import create_s3_client
+
+    s3_client = create_s3_client(credentials, config.s3_connection_options)
+
+    resolved_vector_factory = None
+    if config.adapter_factory is not None:
+        candidate_factory: Any = config.adapter_factory
+        if getattr(candidate_factory, "supports_vector_writes", False) is True:
+            resolved_vector_factory = candidate_factory
+
+    vec_config = VectorWriteConfig(
+        num_dbs=config.num_dbs,
+        s3_prefix=config.s3_prefix,
+        index_config=config.vector_spec.to_vector_index_config(),
+        sharding=config.vector_spec.to_vector_sharding_spec(),
+        output=config.output,
+        adapter_factory=resolved_vector_factory,
+        batch_size=config.batch_size,
+        credential_provider=config.credential_provider,
+        s3_connection_options=config.s3_connection_options,
+        max_writes_per_second=max_writes_per_second,
+        metrics_collector=mc,
+        manifest=config.manifest,
+    )
+
+    routing = resolve_vector_routing(vec_config, sample_vectors=sample_vectors)
+
+    adapter_factory = resolve_adapter_factory(vec_config, s3_client)
+
+    ddf_with_id, num_dbs = add_vector_db_id_column(
+        ddf,
+        vector_col=vector_col,
+        routing=routing,
+        shard_id_col=shard_id_col,
+        routing_context_cols=routing_context_cols,
+    )
+
+    ddf_shuffled = ddf_with_id.shuffle(on=VECTOR_DB_ID_COL, npartitions=num_dbs)
+
+    _id_col = id_col
+    _vector_col = vector_col
+    _runtime = _VectorPartitionWriteRuntime(
+        run_id=run_id,
+        s3_prefix=vec_config.s3_prefix,
+        shard_prefix=vec_config.output.shard_prefix,
+        db_path_template=vec_config.output.db_path_template,
+        local_root=vec_config.output.local_root,
+        index_config=vec_config.index_config,
+        adapter_factory=adapter_factory,
+        batch_size=vec_config.batch_size,
+        payload_cols=payload_cols,
+    )
+
+    def _write_partition_vector(
+        pdf: pd.DataFrame, runtime: _VectorPartitionWriteRuntime
+    ) -> pd.DataFrame:  # noqa: N803
+        from shardyfusion.vector._distributed import (
+            VectorTuple,
+            coerce_vector_value,
+            write_vector_shard,
+        )
+
+        if pdf.empty:
+            return pd.DataFrame(columns=["db_id", "db_url", "attempt", "row_count"])
+
+        pdf_copy = pdf.copy()
+        pdf_copy["_temp_vec_id"] = pdf_copy[VECTOR_DB_ID_COL].astype(int)
+        groups = pdf_copy.groupby("_temp_vec_id")
+
+        results = []
+        for db_id, group in groups:
+            _pcols = runtime.payload_cols
+            rows_iter: list[VectorTuple] = [
+                (
+                    str(row[_id_col]),
+                    coerce_vector_value(row[_vector_col]),
+                    {col: row[col] for col in _pcols} if _pcols else None,
+                )
+                for _, row in group.iterrows()
+            ]
+            result = write_vector_shard(
+                db_id=int(db_id),  # type: ignore[arg-type]
+                rows=rows_iter,
+                run_id=runtime.run_id,
+                s3_prefix=runtime.s3_prefix,
+                shard_prefix=runtime.shard_prefix,
+                db_path_template=runtime.db_path_template,
+                local_root=runtime.local_root,
+                index_config=runtime.index_config,
+                adapter_factory=runtime.adapter_factory,
+                batch_size=runtime.batch_size,
+            )
+            results.append(result)
+
+        return pd.DataFrame.from_records(
+            [_vector_result_row(result) for result in results],
+            columns=list(_RESULT_META.columns),
+        )
+
+    ddf_results = ddf_shuffled.map_partitions(
+        _write_partition_vector,
+        _runtime,
+        meta=_RESULT_META,
+    )
+
+    results = ddf_results.compute()
+
+    winners = list(results.itertuples(index=False, name=None))
+    winners = [
+        RequiredShardMeta(
+            db_id=int(db_id),
+            db_url=db_url,
+            attempt=int(attempt),
+            row_count=int(row_count),
+            checkpoint_id=checkpoint_id,
+            writer_info=writer_info,
+        )
+        for (
+            db_id,
+            db_url,
+            attempt,
+            row_count,
+            _min_key,
+            _max_key,
+            checkpoint_id,
+            writer_info,
+            _all_attempt_urls,
+        ) in winners
+    ]
+    num_attempts = len(winners)
+
+    total_vectors = sum(w.row_count for w in winners)
+    total_duration_ms = int((time.perf_counter() - started) * 1000)
+
+    centroids_ref, hyperplanes_ref = upload_routing_metadata(
+        s3_prefix=config.s3_prefix,
+        run_id=run_id,
+        centroids=routing.centroids,
+        hyperplanes=routing.hyperplanes,
+        s3_client=s3_client,
+    )
+
+    manifest_start = time.perf_counter()
+    manifest_ref = publish_vector_manifest(
+        config=vec_config,
+        run_id=run_id,
+        num_dbs=num_dbs,
+        winners=winners,
+        total_vectors=total_vectors,
+        centroids_ref=centroids_ref,
+        hyperplanes_ref=hyperplanes_ref,
+    )
+    manifest_duration_ms = int((time.perf_counter() - manifest_start) * 1000)
+
+    stats = BuildStats(
+        durations=BuildDurations(
+            sharding_ms=0,
+            write_ms=total_duration_ms - manifest_duration_ms,
+            manifest_ms=manifest_duration_ms,
+            total_ms=total_duration_ms,
+        ),
+        num_attempt_results=num_attempts,
+        num_winners=len(winners),
+        rows_written=total_vectors,
+    )
+
+    return BuildResult(
+        run_id=run_id,
+        winners=winners,
+        manifest_ref=manifest_ref,
+        stats=stats,
+        run_record_ref=None,
+    )

@@ -230,6 +230,16 @@ class USearchWriterFactory:
 
     def __init__(self, s3_client: Any | None = None) -> None:
         self._s3_client = s3_client
+        self._s3_config: dict[str, Any] | None = None
+
+    def __getstate__(self) -> dict[str, Any]:
+        state = self.__dict__.copy()
+        state.pop("_s3_client", None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._s3_client = None
 
     def __call__(
         self,

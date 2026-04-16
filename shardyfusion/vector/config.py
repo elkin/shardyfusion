@@ -56,6 +56,22 @@ class VectorShardingSpec:
 
 
 @dataclass(slots=True)
+class VectorSpecSharding:
+    """Sharding configuration for vector index writes via VectorSpec."""
+
+    strategy: str = "cluster"
+    num_probes: int = 1
+    centroids: np.ndarray | None = None
+    train_centroids: bool = False
+    centroids_training_sample_size: int = 100_000
+    num_hash_bits: int = 8
+    hyperplanes: np.ndarray | None = None
+    cel_expr: str | None = None
+    cel_columns: dict[str, str] | None = None
+    routing_values: list[int | str | bytes] | None = None
+
+
+@dataclass(slots=True)
 class VectorWriteConfig:
     """Configuration for write_vector_sharded()."""
 

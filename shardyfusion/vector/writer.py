@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import contextlib
-import io
 import time
 import uuid
 from collections.abc import Iterable
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,64 +18,163 @@ from ..manifest import (
     BuildDurations,
     BuildResult,
     BuildStats,
-    ManifestShardingSpec,
-    RequiredBuildMeta,
     RequiredShardMeta,
     WriterInfo,
 )
-from ..manifest_store import S3ManifestStore
 from ..metrics._events import MetricEvent
-from ..sharding_types import KeyEncoding, ShardingStrategy
-from ..storage import create_s3_client, put_bytes
-from .config import VectorWriteConfig
-from .sharding import (
-    cluster_assign,
-    lsh_assign,
-    lsh_generate_hyperplanes,
-    train_centroids_kmeans,
+from ..storage import create_s3_client
+from ._distributed import (
+    ResolvedVectorRouting,
+    VectorShardState,
+    assign_vector_shard,
+    flush_vector_shard_batch,
+    publish_vector_manifest,
+    resolve_adapter_factory,
+    resolve_vector_routing,
+    upload_routing_metadata,
+    validate_vector_config,
 )
+from .config import VectorWriteConfig
 from .types import (
     DistanceMetric,
-    VectorIndexWriter,
     VectorIndexWriterFactory,
     VectorRecord,
     VectorShardingStrategy,
 )
 
-# CEL support — lazy import to avoid hard dependency on cel extra
-_compiled_cel_cache: dict[str, Any] = {}
-
 _logger = get_logger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Internal state
-# ---------------------------------------------------------------------------
+def _assign_shard(
+    *,
+    record: VectorRecord,
+    strategy: VectorShardingStrategy,
+    num_dbs: int,
+    metric: DistanceMetric | None = None,
+    centroids: np.ndarray | None = None,
+    hyperplanes: np.ndarray | None = None,
+    compiled_cel: Any | None = None,  # noqa: ANN401
+    routing_values: list | None = None,
+    cel_lookup: dict | None = None,
+) -> int:
+    """Assign a vector record to a shard.
+
+    This is a backward-compatibility wrapper that adapts the old API
+    to the new assign_vector_shard function.
+    """
+    from ._distributed import ResolvedVectorRouting
+
+    routing = ResolvedVectorRouting(
+        strategy=strategy,
+        num_dbs=num_dbs,
+        centroids=centroids,
+        hyperplanes=hyperplanes,
+        metric=metric or DistanceMetric.COSINE,
+        compiled_cel=compiled_cel,
+        routing_values=routing_values,
+        cel_lookup=cel_lookup,
+    )
+    return assign_vector_shard(
+        vector=record.vector,
+        routing=routing,
+        shard_id=record.shard_id,
+        routing_context=record.routing_context,
+    )
 
 
-@dataclass(slots=True)
-class _ShardState:
-    adapter: VectorIndexWriter | None = None
-    db_url: str = ""
-    ids: list[int | str] = field(default_factory=list)
-    vectors: list[np.ndarray] = field(default_factory=list)
-    payloads: list[dict[str, Any] | None] = field(default_factory=list)
-    row_count: int = 0
-    checkpoint_id: str | None = None
+_validate_config = validate_vector_config
+_flush_shard_batch = flush_vector_shard_batch
+_ShardState = VectorShardState
 
 
-def _validate_routed_shard_id(db_id: int, *, num_dbs: int, strategy: str) -> int:
-    """Reject shard IDs that fall outside the configured shard count."""
-    if db_id < 0 or db_id >= num_dbs:
-        raise ConfigValidationError(
-            f"{strategy} sharding produced shard_id {db_id} outside [0, {num_dbs})"
-        )
-    return db_id
+def _write_single_process(
+    *,
+    records: Iterable[VectorRecord],
+    config: VectorWriteConfig,
+    routing: ResolvedVectorRouting,
+    run_id: str,
+    adapter_factory: VectorIndexWriterFactory,
+    ops_limiter: TokenBucket | None,
+) -> dict[int, VectorShardState]:
+    """Write records to shards in a single process (new API)."""
+    shard_states: dict[int, VectorShardState] = {}
+
+    with contextlib.ExitStack() as stack:
+        for record in records:
+            db_id = assign_vector_shard(
+                vector=record.vector,
+                routing=routing,
+                shard_id=record.shard_id,
+                routing_context=record.routing_context,
+            )
+
+            if db_id not in shard_states:
+                state = VectorShardState()
+                db_path = config.output.db_path_template.format(db_id=db_id)
+                shard_prefix = config.output.shard_prefix
+                state.db_url = f"{config.s3_prefix}/{shard_prefix}/run_id={run_id}/{db_path}/attempt=00"
+                local_dir = Path(config.output.local_root) / f"shard_{db_id:05d}"
+                adapter = adapter_factory(
+                    db_url=state.db_url,
+                    local_dir=local_dir,
+                    index_config=config.index_config,
+                )
+                state.adapter = stack.enter_context(adapter)
+                shard_states[db_id] = state
+
+            state = shard_states[db_id]
+            state.ids.append(record.id)
+            state.vectors.append(record.vector)
+            state.payloads.append(record.payload)
+            state.row_count += 1
+
+            if len(state.ids) >= config.batch_size:
+                if ops_limiter is not None:
+                    ops_limiter.acquire()
+                flush_vector_shard_batch(state)
+
+        for state in shard_states.values():
+            if state.ids:
+                if ops_limiter is not None:
+                    ops_limiter.acquire()
+                flush_vector_shard_batch(state)
+            if state.adapter is not None:
+                state.checkpoint_id = state.adapter.checkpoint()
+
+    return shard_states
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+def _write_single_process_legacy(
+    *,
+    records: list[VectorRecord],
+    config: VectorWriteConfig,
+    num_dbs: int,
+    run_id: str,
+    adapter_factory: VectorIndexWriterFactory,
+    resolved_centroids: np.ndarray | None,
+    resolved_hyperplanes: np.ndarray | None,
+    ops_limiter: TokenBucket | None,
+    s3_client: Any = None,  # noqa: ANN401 - unused in new impl
+    metric: DistanceMetric | None = None,
+) -> dict[int, VectorShardState]:
+    """Write records to shards in a single process (legacy API for tests)."""
+    from ._distributed import ResolvedVectorRouting
+
+    routing = ResolvedVectorRouting(
+        strategy=config.sharding.strategy,
+        num_dbs=num_dbs,
+        centroids=resolved_centroids,
+        hyperplanes=resolved_hyperplanes,
+        metric=metric or DistanceMetric.COSINE,
+    )
+    return _write_single_process(
+        records=records,
+        config=config,
+        routing=routing,
+        run_id=run_id,
+        adapter_factory=adapter_factory,
+        ops_limiter=ops_limiter,
+    )
 
 
 def write_vector_sharded(
@@ -107,93 +203,35 @@ def write_vector_sharded(
     if mc is not None:
         mc.emit(MetricEvent.VECTOR_WRITE_STARTED, {"run_id": run_id})
 
-    _validate_config(config)
+    validate_vector_config(config)
 
     credentials = (
         config.credential_provider.resolve() if config.credential_provider else None
     )
     s3_client = create_s3_client(credentials, config.s3_connection_options)
 
-    # Resolve sharding metadata
-    sharding = config.sharding
-    resolved_centroids: np.ndarray | None = sharding.centroids
-    resolved_hyperplanes: np.ndarray | None = sharding.hyperplanes
-    num_dbs = config.num_dbs
-
-    # For CLUSTER with training, we need to buffer records first
     records_list: list[VectorRecord] | None = None
-    if sharding.strategy == VectorShardingStrategy.CLUSTER and sharding.train_centroids:
+    sample_vectors: np.ndarray | None = None
+    if (
+        config.sharding.strategy == VectorShardingStrategy.CLUSTER
+        and config.sharding.train_centroids
+    ):
         records_list = list(records)
-        if num_dbs is None:
-            raise ConfigValidationError(
-                "num_dbs must be provided for CLUSTER sharding with train_centroids"
-            )
         if not records_list:
             raise ConfigValidationError(
                 "Cannot train centroids from an empty record set"
             )
-        sample_size = min(len(records_list), sharding.centroids_training_sample_size)
+        sample_size = min(
+            len(records_list), config.sharding.centroids_training_sample_size
+        )
         sample_vectors = np.array(
             [r.vector for r in records_list[:sample_size]], dtype=np.float32
         )
-        resolved_centroids = train_centroids_kmeans(sample_vectors, num_dbs, seed=42)
-        log_event(
-            "centroids_trained",
-            logger=_logger,
-            num_clusters=num_dbs,
-            sample_size=sample_size,
-        )
 
-    if sharding.strategy == VectorShardingStrategy.LSH and resolved_hyperplanes is None:
-        if num_dbs is None:
-            raise ConfigValidationError("num_dbs must be provided for LSH sharding")
-        resolved_hyperplanes = lsh_generate_hyperplanes(
-            sharding.num_hash_bits, config.index_config.dim, seed=42
-        )
+    routing = resolve_vector_routing(config, sample_vectors=sample_vectors)
 
-    if (
-        sharding.strategy == VectorShardingStrategy.CLUSTER
-        and resolved_centroids is not None
-    ):
-        if num_dbs is None:
-            num_dbs = len(resolved_centroids)
-        elif len(resolved_centroids) != num_dbs:
-            raise ConfigValidationError(
-                f"centroids count ({len(resolved_centroids)}) != num_dbs ({num_dbs})"
-            )
+    adapter_factory = resolve_adapter_factory(config, s3_client)
 
-    # CEL: compile expression and resolve num_dbs from routing_values
-    compiled_cel: Any | None = None
-    cel_lookup: dict[int | str | bytes, int] | None = None
-    if sharding.strategy == VectorShardingStrategy.CEL:
-        from ..cel import build_categorical_routing_lookup, compile_cel
-
-        assert sharding.cel_expr is not None
-        assert sharding.cel_columns is not None
-        compiled_cel = compile_cel(sharding.cel_expr, sharding.cel_columns)
-        if sharding.routing_values is not None:
-            cel_lookup = build_categorical_routing_lookup(sharding.routing_values)
-            if num_dbs is None:
-                num_dbs = len(sharding.routing_values)
-
-    if num_dbs is None:
-        raise ConfigValidationError(
-            "num_dbs must be provided (or inferred from centroids for CLUSTER "
-            "or routing_values for CEL)"
-        )
-    if num_dbs <= 0:
-        raise ConfigValidationError(f"num_dbs must be > 0, got {num_dbs}")
-
-    # Adapter factory
-    adapter_factory: VectorIndexWriterFactory
-    if config.adapter_factory is not None:
-        adapter_factory = config.adapter_factory
-    else:
-        from .adapters.usearch_adapter import USearchWriterFactory
-
-        adapter_factory = USearchWriterFactory(s3_client=s3_client)
-
-    # Rate limiter
     ops_limiter: TokenBucket | None = None
     if config.max_writes_per_second is not None:
         ops_limiter = TokenBucket(
@@ -202,28 +240,17 @@ def write_vector_sharded(
             limiter_type="ops",
         )
 
-    # Write records
     shard_start = time.perf_counter()
-    records_iter: Iterable[VectorRecord] = (
-        records_list if records_list is not None else records
-    )
-
     shard_states = _write_single_process(
-        records=records_iter,
+        records=records_list if records_list is not None else records,
         config=config,
-        num_dbs=num_dbs,
+        routing=routing,
         run_id=run_id,
         adapter_factory=adapter_factory,
-        resolved_centroids=resolved_centroids,
-        resolved_hyperplanes=resolved_hyperplanes,
         ops_limiter=ops_limiter,
-        s3_client=s3_client,
-        compiled_cel=compiled_cel,
-        cel_lookup=cel_lookup,
     )
     shard_duration_ms = int((time.perf_counter() - shard_start) * 1000)
 
-    # Build winners list
     winners: list[RequiredShardMeta] = []
     total_vectors = 0
     for db_id in sorted(shard_states.keys()):
@@ -248,45 +275,23 @@ def write_vector_sharded(
                 {"db_id": db_id, "row_count": state.row_count},
             )
 
-    # Upload centroids/hyperplanes to S3 for reader
-    centroids_ref: str | None = None
-    hyperplanes_ref: str | None = None
+    centroids_ref, hyperplanes_ref = upload_routing_metadata(
+        s3_prefix=config.s3_prefix,
+        run_id=run_id,
+        centroids=routing.centroids,
+        hyperplanes=routing.hyperplanes,
+        s3_client=s3_client,
+    )
 
-    if resolved_centroids is not None:
-        centroids_ref = f"{config.s3_prefix}/vector_meta/run_id={run_id}/centroids.npy"
-        buf = io.BytesIO()
-        np.save(buf, resolved_centroids)
-        put_bytes(
-            centroids_ref,
-            buf.getvalue(),
-            "application/octet-stream",
-            s3_client=s3_client,
-        )
-
-    if resolved_hyperplanes is not None:
-        hyperplanes_ref = (
-            f"{config.s3_prefix}/vector_meta/run_id={run_id}/hyperplanes.npy"
-        )
-        buf = io.BytesIO()
-        np.save(buf, resolved_hyperplanes)
-        put_bytes(
-            hyperplanes_ref,
-            buf.getvalue(),
-            "application/octet-stream",
-            s3_client=s3_client,
-        )
-
-    # Publish manifest
     manifest_start = time.perf_counter()
-    manifest_ref = _publish_vector_manifest(
+    manifest_ref = publish_vector_manifest(
         config=config,
         run_id=run_id,
-        num_dbs=num_dbs,
+        num_dbs=routing.num_dbs,
         winners=winners,
         total_vectors=total_vectors,
         centroids_ref=centroids_ref,
         hyperplanes_ref=hyperplanes_ref,
-        s3_client=s3_client,
     )
     manifest_duration_ms = int((time.perf_counter() - manifest_start) * 1000)
 
@@ -332,274 +337,4 @@ def write_vector_sharded(
     )
 
 
-# ---------------------------------------------------------------------------
-# Single-process writer
-# ---------------------------------------------------------------------------
-
-
-def _write_single_process(
-    *,
-    records: Iterable[VectorRecord],
-    config: VectorWriteConfig,
-    num_dbs: int,
-    run_id: str,
-    adapter_factory: VectorIndexWriterFactory,
-    resolved_centroids: np.ndarray | None,
-    resolved_hyperplanes: np.ndarray | None,
-    ops_limiter: TokenBucket | None,
-    s3_client: Any | None,
-    compiled_cel: Any | None = None,
-    cel_lookup: dict[int | str | bytes, int] | None = None,
-) -> dict[int, _ShardState]:
-    """Write records to shards in a single process."""
-    sharding = config.sharding
-    metric = config.index_config.metric
-    shard_states: dict[int, _ShardState] = {}
-
-    with contextlib.ExitStack() as stack:
-        for record in records:
-            # Assign shard
-            db_id = _assign_shard(
-                record=record,
-                strategy=sharding.strategy,
-                num_dbs=num_dbs,
-                metric=metric,
-                centroids=resolved_centroids,
-                hyperplanes=resolved_hyperplanes,
-                compiled_cel=compiled_cel,
-                routing_values=sharding.routing_values,
-                cel_lookup=cel_lookup,
-            )
-
-            # Ensure shard state
-            if db_id not in shard_states:
-                state = _ShardState()
-                db_path = config.output.db_path_template.format(db_id=db_id)
-                shard_prefix = config.output.shard_prefix
-                state.db_url = f"{config.s3_prefix}/{shard_prefix}/run_id={run_id}/{db_path}/attempt=00"
-                local_dir = Path(config.output.local_root) / f"shard_{db_id:05d}"
-                adapter = adapter_factory(
-                    db_url=state.db_url,
-                    local_dir=local_dir,
-                    index_config=config.index_config,
-                )
-                state.adapter = stack.enter_context(adapter)
-                shard_states[db_id] = state
-
-            state = shard_states[db_id]
-            state.ids.append(record.id)
-            state.vectors.append(record.vector)
-            state.payloads.append(record.payload)
-            state.row_count += 1
-
-            # Flush batch if threshold reached
-            if len(state.ids) >= config.batch_size:
-                if ops_limiter is not None:
-                    ops_limiter.acquire()
-                _flush_shard_batch(state)
-
-        # Flush remaining batches and finalize
-        for state in shard_states.values():
-            if state.ids:
-                if ops_limiter is not None:
-                    ops_limiter.acquire()
-                _flush_shard_batch(state)
-            if state.adapter is not None:
-                state.checkpoint_id = state.adapter.checkpoint()
-
-    return shard_states
-
-
-def _assign_shard(
-    *,
-    record: VectorRecord,
-    strategy: VectorShardingStrategy,
-    num_dbs: int,
-    metric: DistanceMetric | None,
-    centroids: np.ndarray | None,
-    hyperplanes: np.ndarray | None,
-    compiled_cel: Any | None = None,
-    routing_values: list[int | str | bytes] | None = None,
-    cel_lookup: dict[int | str | bytes, int] | None = None,
-) -> int:
-    """Assign a record to a shard based on the sharding strategy."""
-    if strategy == VectorShardingStrategy.EXPLICIT:
-        if record.shard_id is None:
-            raise ConfigValidationError(
-                "EXPLICIT sharding requires shard_id on every VectorRecord"
-            )
-        if record.shard_id < 0 or record.shard_id >= num_dbs:
-            raise ConfigValidationError(
-                f"shard_id {record.shard_id} out of range [0, {num_dbs})"
-            )
-        return record.shard_id
-
-    if strategy == VectorShardingStrategy.CLUSTER:
-        if centroids is None:
-            raise ConfigValidationError("CLUSTER sharding requires centroids")
-        return _validate_routed_shard_id(
-            cluster_assign(record.vector, centroids, metric or DistanceMetric.COSINE),
-            num_dbs=num_dbs,
-            strategy="CLUSTER",
-        )
-
-    if strategy == VectorShardingStrategy.LSH:
-        if hyperplanes is None:
-            raise ConfigValidationError("LSH sharding requires hyperplanes")
-        return _validate_routed_shard_id(
-            lsh_assign(record.vector, hyperplanes, num_dbs),
-            num_dbs=num_dbs,
-            strategy="LSH",
-        )
-
-    if strategy == VectorShardingStrategy.CEL:
-        if compiled_cel is None:
-            raise ConfigValidationError("CEL sharding requires a compiled expression")
-        if record.routing_context is None:
-            raise ConfigValidationError(
-                "CEL sharding requires routing_context on every VectorRecord"
-            )
-        from ..cel import route_cel
-
-        return _validate_routed_shard_id(
-            route_cel(
-                compiled_cel,
-                record.routing_context,
-                routing_values=routing_values,
-                lookup=cel_lookup,
-            ),
-            num_dbs=num_dbs,
-            strategy="CEL",
-        )
-
-    raise ConfigValidationError(f"Unknown sharding strategy: {strategy}")
-
-
-def _flush_shard_batch(state: _ShardState) -> None:
-    """Flush buffered records to the adapter."""
-    if not state.ids or state.adapter is None:
-        return
-    # Preserve string IDs — only use int64 when all IDs are numeric
-    if all(isinstance(i, (int, np.integer)) for i in state.ids):
-        ids_arr = np.array(state.ids, dtype=np.int64)
-    else:
-        ids_arr = np.array(state.ids, dtype=object)
-    vectors_arr = np.array(state.vectors, dtype=np.float32)
-    payloads_list: list[dict[str, Any]] | None = None
-    if any(p is not None for p in state.payloads):
-        payloads_list = [p if p is not None else {} for p in state.payloads]
-
-    state.adapter.add_batch(ids_arr, vectors_arr, payloads_list)
-    state.ids.clear()
-    state.vectors.clear()
-    state.payloads.clear()
-
-
-# ---------------------------------------------------------------------------
-# Manifest publishing
-# ---------------------------------------------------------------------------
-
-
-def _validate_config(config: VectorWriteConfig) -> None:
-    """Validate VectorWriteConfig before writing."""
-    if config.index_config.dim <= 0:
-        raise ConfigValidationError(f"dim must be > 0, got {config.index_config.dim}")
-    if not config.s3_prefix:
-        raise ConfigValidationError("s3_prefix is required")
-    if config.batch_size <= 0:
-        raise ConfigValidationError(f"batch_size must be > 0, got {config.batch_size}")
-
-    sharding = config.sharding
-    if sharding.strategy == VectorShardingStrategy.CLUSTER:
-        if sharding.centroids is None and not sharding.train_centroids:
-            raise ConfigValidationError(
-                "CLUSTER sharding requires either centroids or train_centroids=True"
-            )
-    if sharding.strategy == VectorShardingStrategy.CEL:
-        if not sharding.cel_expr:
-            raise ConfigValidationError("CEL sharding requires cel_expr to be set")
-        if not sharding.cel_columns:
-            raise ConfigValidationError("CEL sharding requires cel_columns to be set")
-    if sharding.num_probes < 1:
-        raise ConfigValidationError(
-            f"num_probes must be >= 1, got {sharding.num_probes}"
-        )
-
-
-def _publish_vector_manifest(
-    *,
-    config: VectorWriteConfig,
-    run_id: str,
-    num_dbs: int,
-    winners: list[RequiredShardMeta],
-    total_vectors: int,
-    centroids_ref: str | None,
-    hyperplanes_ref: str | None,
-    s3_client: Any | None,
-) -> str:
-    """Build and publish manifest with vector metadata in custom fields."""
-    sharding = config.sharding
-
-    required_build = RequiredBuildMeta(
-        run_id=run_id,
-        created_at=datetime.now(UTC),
-        num_dbs=num_dbs,
-        s3_prefix=config.s3_prefix,
-        key_col="_vector_id",
-        sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
-        db_path_template=config.output.db_path_template,
-        shard_prefix=config.output.shard_prefix,
-        format_version=2,
-        key_encoding=KeyEncoding.RAW,
-    )
-
-    vector_custom: dict[str, Any] = {
-        "dim": config.index_config.dim,
-        "metric": config.index_config.metric.value,
-        "index_type": config.index_config.index_type,
-        "quantization": config.index_config.quantization,
-        "total_vectors": total_vectors,
-        "sharding_strategy": sharding.strategy.value,
-        "num_probes": sharding.num_probes,
-    }
-    if centroids_ref is not None:
-        vector_custom["centroids_ref"] = centroids_ref
-    if hyperplanes_ref is not None:
-        vector_custom["hyperplanes_ref"] = hyperplanes_ref
-        vector_custom["num_hash_bits"] = sharding.num_hash_bits
-    if sharding.strategy == VectorShardingStrategy.CEL:
-        vector_custom["cel_expr"] = sharding.cel_expr
-        vector_custom["cel_columns"] = sharding.cel_columns
-        if sharding.routing_values is not None:
-            vector_custom["routing_values"] = [
-                v if isinstance(v, (int, str)) else {"__bytes_hex__": v.hex()}
-                for v in sharding.routing_values
-            ]
-
-    custom_fields = dict(config.manifest.custom_manifest_fields)
-    custom_fields["vector"] = vector_custom
-
-    store = config.manifest.store or S3ManifestStore(
-        config.s3_prefix,
-        credential_provider=config.manifest.credential_provider
-        or config.credential_provider,
-        s3_connection_options=config.manifest.s3_connection_options
-        or config.s3_connection_options,
-        metrics_collector=config.metrics_collector,
-    )
-
-    manifest_ref = store.publish(
-        run_id=run_id,
-        required_build=required_build,
-        shards=winners,
-        custom=custom_fields,
-    )
-
-    log_event(
-        "vector_manifest_published",
-        logger=_logger,
-        run_id=run_id,
-        manifest_ref=manifest_ref,
-    )
-
-    return manifest_ref
+_publish_vector_manifest = publish_vector_manifest

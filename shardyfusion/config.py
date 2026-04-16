@@ -18,6 +18,7 @@ from .type_defs import JsonObject, RetryConfig, S3ConnectionOptions
 if TYPE_CHECKING:
     from .manifest_store import ManifestStore
     from .run_registry import RunRegistry
+    from .vector.config import VectorIndexConfig, VectorShardingSpec, VectorSpecSharding
 
 _SAFE_SEGMENT_CHARS = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
@@ -82,6 +83,12 @@ def _coerce_vector_metric(metric: VectorMetric | str) -> VectorMetric:
         return metric_str
 
 
+def _get_vector_spec_sharding() -> "VectorSpecSharding":  # noqa: UP037
+    from .vector.config import VectorSpecSharding
+
+    return VectorSpecSharding()
+
+
 @dataclass(slots=True)
 class VectorSpec:
     """Specifies how to extract and index vectors alongside KV data.
@@ -110,9 +117,45 @@ class VectorSpec:
     index_type: str = "hnsw"
     index_params: dict[str, object] = field(default_factory=dict)
     quantization: str | None = None
+    sharding: "VectorSpecSharding" = field(  # noqa: UP037
+        default_factory=lambda: _get_vector_spec_sharding()
+    )
 
     def __post_init__(self) -> None:
         self.metric = _coerce_vector_metric(self.metric)
+
+    def to_vector_index_config(self) -> VectorIndexConfig:
+        from .vector.config import VectorIndexConfig
+        from .vector.types import DistanceMetric
+
+        metric = self.metric
+        if isinstance(metric, str):
+            metric = DistanceMetric(metric)
+        return VectorIndexConfig(
+            dim=self.dim,
+            metric=metric,
+            index_type=self.index_type,
+            index_params=self.index_params,
+            quantization=self.quantization,
+        )
+
+    def to_vector_sharding_spec(self) -> VectorShardingSpec:
+        from .vector.config import VectorShardingSpec
+        from .vector.types import VectorShardingStrategy
+
+        strategy = VectorShardingStrategy(self.sharding.strategy)
+        return VectorShardingSpec(
+            strategy=strategy,
+            num_probes=self.sharding.num_probes,
+            centroids=self.sharding.centroids,
+            train_centroids=self.sharding.train_centroids,
+            centroids_training_sample_size=self.sharding.centroids_training_sample_size,
+            num_hash_bits=self.sharding.num_hash_bits,
+            hyperplanes=self.sharding.hyperplanes,
+            cel_expr=self.sharding.cel_expr,
+            cel_columns=self.sharding.cel_columns,
+            routing_values=self.sharding.routing_values,
+        )
 
 
 @dataclass(slots=True)
@@ -227,11 +270,6 @@ class WriteConfig:
 
         if self.vector_spec is not None:
             vs = self.vector_spec
-            if self.sharding.strategy != ShardingStrategy.CEL:
-                raise ConfigValidationError(
-                    "vector_spec requires CEL sharding strategy "
-                    "(unified KV+vector mode is CEL-only)"
-                )
             if vs.dim <= 0:
                 raise ConfigValidationError(
                     f"vector_spec.dim must be > 0, got {vs.dim}"

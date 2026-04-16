@@ -65,6 +65,8 @@ def _load_sqlite_vec(conn: sqlite3.Connection) -> None:
     except ImportError as exc:
         raise ImportError(_SQLITE_VEC_IMPORT_ERROR) from exc
 
+    if hasattr(conn, "enable_load_extension"):
+        conn.enable_load_extension(True)
     sqlite_vec.load(conn)
 
 
@@ -93,8 +95,15 @@ class SqliteVecFactory:
     cache_size_pages: int = -2000
     s3_connection_options: S3ConnectionOptions | None = None
     credential_provider: CredentialProvider | None = None
+    supports_vector_writes: bool = True
 
-    def __call__(self, *, db_url: str, local_dir: Path) -> SqliteVecAdapter:
+    def __call__(
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        index_config: Any | None = None,
+    ) -> SqliteVecAdapter:
         return SqliteVecAdapter(
             db_url=db_url,
             local_dir=local_dir,
@@ -268,6 +277,15 @@ class SqliteVecAdapter:
                 "INSERT OR REPLACE INTO vec_payloads (rowid, payload) VALUES (?, ?)",
                 payload_rows,
             )
+
+    def add_batch(
+        self,
+        ids: np.ndarray,
+        vectors: np.ndarray,
+        payloads: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """VectorIndexWriter compatibility shim for distributed writers."""
+        self.write_vector_batch(ids, vectors, payloads)
 
     # -- Lifecycle --
 
