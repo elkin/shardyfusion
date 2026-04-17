@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: docker/garage-e2e.Dockerfile
-    image: slatedb-e2e-garage
+    image: shardyfusion-e2e-garage
     environment:
       GARAGE_ADMIN_TOKEN: "e2e-admin-token-for-testing"
       GARAGE_RPC_SECRET: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
