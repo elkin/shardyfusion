@@ -16,7 +16,7 @@ import numpy as np
 
 from .._rate_limiter import RateLimiter
 from ..credentials import CredentialProvider
-from ..errors import ReaderStateError
+from ..errors import ConfigValidationError, ReaderStateError
 from ..logging import get_logger, log_event
 from ..manifest import ManifestRef, ParsedManifest, RequiredShardMeta
 from ..manifest_store import ManifestStore, S3ManifestStore
@@ -100,17 +100,6 @@ class ShardedVectorReader:
             metrics_collector=metrics_collector,
         )
 
-        if reader_factory is not None:
-            self._reader_factory = reader_factory
-        else:
-            from .adapters.usearch_adapter import USearchReaderFactory
-
-            credentials = credential_provider.resolve() if credential_provider else None
-            from ..storage import create_s3_client
-
-            s3_client = create_s3_client(credentials, s3_connection_options)
-            self._reader_factory = USearchReaderFactory(s3_client=s3_client)
-
         # S3 client for loading centroids/hyperplanes
         credentials = credential_provider.resolve() if credential_provider else None
         from ..storage import create_s3_client
@@ -139,6 +128,11 @@ class ShardedVectorReader:
         self._cel_columns: dict[str, str] | None = None
         self._routing_values: list[int | str | bytes] | None = None
         self._shard_meta: dict[int, RequiredShardMeta] = {}
+
+        # Factory selection: either user-supplied, or auto-dispatched based
+        # on the manifest backend after it's loaded.  Populated below.
+        self._user_reader_factory: VectorShardReaderFactory | None = reader_factory
+        self._reader_factory: VectorShardReaderFactory  # set during init
 
         self._load_initial_manifest()
 
@@ -532,6 +526,43 @@ class ShardedVectorReader:
                         logger=_logger,
                         hyperplanes_ref=hyperplanes_ref,
                     )
+
+        # Select the reader factory based on the manifest backend, unless
+        # the user supplied one explicitly.
+        backend = vector_meta.get("backend", "usearch") if vector_meta else "usearch"
+        self._reader_factory = self._select_reader_factory(backend)
+
+    def _select_reader_factory(self, backend: str) -> VectorShardReaderFactory:
+        """Pick a reader factory for ``backend`` (or honor user override)."""
+        if self._user_reader_factory is not None:
+            return self._user_reader_factory
+
+        if backend == "sqlite-vec":
+            try:
+                from .adapters.sqlite_vec_adapter import (
+                    SqliteVecVectorReaderFactory,
+                )
+            except ImportError as exc:  # pragma: no cover - defensive
+                raise ConfigValidationError(
+                    "Manifest declares backend 'sqlite-vec' but the "
+                    "'vector-sqlite' extra is not installed. "
+                    "Install with: pip install 'shardyfusion[vector-sqlite]'"
+                ) from exc
+
+            return SqliteVecVectorReaderFactory(
+                credential_provider=self._credential_provider,
+                s3_connection_options=self._s3_connection_options,
+            )
+
+        if backend == "usearch":
+            from .adapters.usearch_adapter import USearchReaderFactory
+
+            return USearchReaderFactory(s3_client=self._s3_client)
+
+        raise ConfigValidationError(
+            f"Unknown vector backend in manifest: {backend!r}. "
+            "Supported backends: 'usearch', 'sqlite-vec'."
+        )
 
     def _search_shard(
         self,

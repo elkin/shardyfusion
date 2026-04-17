@@ -10,7 +10,7 @@
   - Reader path (async): `reader/async_reader.py`, `routing.py`, `async_manifest_store.py` (`AsyncS3ManifestStore`)
   - CLI path: `cli/app.py`, `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
   - SQLite backend: `sqlite_adapter.py` (writer + download-and-cache reader + range-read VFS reader + async wrappers)
-  - Vector search: `vector/types.py`, `vector/config.py`, `vector/sharding.py`, `vector/_merge.py`, `vector/writer.py`, `vector/reader.py`, `vector/adapters/usearch_adapter.py`
+  - Vector search: `vector/types.py`, `vector/config.py`, `vector/sharding.py`, `vector/_merge.py`, `vector/writer.py`, `vector/reader.py`, `vector/adapters/usearch_adapter.py`, `vector/adapters/sqlite_vec_adapter.py` (vector-only shim)
   - Unified KV+vector: `sqlite_vec_adapter.py` (sqlite-vec unified adapter), `composite_adapter.py` (KV+vector composite), `reader/unified_reader.py` (UnifiedShardedReader)
   - Shared models/protocols: `config.py`, `credentials.py`, `manifest.py`, `manifest_store.py`, `async_manifest_store.py`, `run_registry.py`, `storage.py`, `testing.py`
   - Core utilities: `errors.py`, `type_defs.py`, `sharding_types.py`, `ordering.py`, `logging.py`, `serde.py`, `cel.py`, `_rate_limiter.py`, `metrics/`

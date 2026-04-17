@@ -6,6 +6,8 @@ For datasets that include vector indices, use the specialized vector readers.
 ### ShardedVectorReader
 The `ShardedVectorReader` is a standalone reader for vector-only datasets. It handles the "double-dip" routing (finding target shards via centroids/hyperplanes) and concurrently fans out the search.
 
+The backend (USearch HNSW sidecar vs sqlite-vec embedded) is auto-detected from the manifest's `vector.backend` field, so the reader picks the right factory automatically. Pass `reader_factory=...` only to override this.
+
 ```python
 from shardyfusion.vector.reader import ShardedVectorReader
 import numpy as np

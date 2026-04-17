@@ -96,6 +96,7 @@ class SqliteVecFactory:
     s3_connection_options: S3ConnectionOptions | None = None
     credential_provider: CredentialProvider | None = None
     supports_vector_writes: bool = True
+    backend_name: str = "sqlite-vec"
 
     def __call__(
         self,
@@ -370,6 +371,7 @@ class SqliteVecReaderFactory:
     mmap_size: int = 268_435_456  # 256 MB
     s3_connection_options: S3ConnectionOptions | None = None
     credential_provider: CredentialProvider | None = None
+    backend_name: str = "sqlite-vec"
 
     def __call__(
         self,

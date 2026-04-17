@@ -452,3 +452,149 @@ class TestVectorWriterReaderRoundTrip:
         health = reader.health()
         assert health.status == "unhealthy"
         assert health.is_closed is True
+
+
+# ---------------------------------------------------------------------------
+# End-to-end round-trip across real backends (USearch + sqlite-vec)
+# ---------------------------------------------------------------------------
+
+
+def _usearch_available() -> bool:
+    try:
+        import usearch.index  # type: ignore[import-untyped]  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def _sqlite_vec_available() -> bool:
+    import sqlite3
+
+    try:
+        import sqlite_vec  # type: ignore[import-not-found]
+    except ImportError:
+        return False
+    try:
+        conn = sqlite3.connect(":memory:")
+        if hasattr(conn, "enable_load_extension"):
+            conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+    except Exception:
+        return False
+    return True
+
+
+def _make_real_writer_factory(backend: str) -> Any:
+    if backend == "usearch":
+        from shardyfusion.vector.adapters.usearch_adapter import USearchWriterFactory
+
+        return USearchWriterFactory()
+    if backend == "sqlite-vec":
+        from shardyfusion.vector.adapters.sqlite_vec_adapter import (
+            SqliteVecVectorWriterFactory,
+        )
+
+        return SqliteVecVectorWriterFactory()
+    raise ValueError(f"unknown backend: {backend}")
+
+
+class TestRealBackendRoundTrip:
+    """End-to-end round-trip against moto S3 with real USearch and sqlite-vec."""
+
+    @pytest.mark.parametrize(
+        "backend",
+        [
+            pytest.param(
+                "usearch",
+                marks=pytest.mark.skipif(
+                    not _usearch_available(), reason="usearch not installed"
+                ),
+            ),
+            pytest.param(
+                "sqlite-vec",
+                marks=[
+                    pytest.mark.vector_sqlite,
+                    pytest.mark.skipif(
+                        not _sqlite_vec_available(),
+                        reason="sqlite-vec not installed",
+                    ),
+                ],
+            ),
+        ],
+    )
+    def test_real_backend_round_trip(
+        self,
+        backend: str,
+        s3_prefix: str,
+        cred_provider: StaticCredentialProvider,
+        s3_conn_opts: S3ConnectionOptions,
+        tmp_path: Path,
+    ) -> None:
+        rng = np.random.default_rng(42)
+        prefix = f"{s3_prefix}/real-{backend}"
+        records = _make_records(rng, n=40, dim=8)
+
+        from shardyfusion.config import OutputOptions
+
+        config = VectorWriteConfig(
+            num_dbs=2,
+            s3_prefix=prefix,
+            index_config=VectorIndexConfig(dim=8, metric=DistanceMetric.COSINE),
+            sharding=VectorShardingSpec(
+                strategy=VectorShardingStrategy.EXPLICIT,
+            ),
+            output=OutputOptions(local_root=str(tmp_path / f"out-{backend}")),
+            adapter_factory=_make_real_writer_factory(backend),
+            batch_size=20,
+            credential_provider=cred_provider,
+            s3_connection_options=s3_conn_opts,
+        )
+        # Distribute records across the 2 shards explicitly.
+        for r in records:
+            r.shard_id = int(r.id) % 2
+
+        result = write_vector_sharded(records, config)
+        assert result.manifest_ref is not None
+        assert result.stats.rows_written == 40
+
+        # No reader_factory passed → reader must auto-dispatch based on
+        # the ``vector.backend`` custom field written by the writer.
+        reader = ShardedVectorReader(
+            s3_prefix=prefix,
+            local_root=str(tmp_path / f"reader-{backend}"),
+            manifest_store=S3ManifestStore(
+                prefix,
+                credential_provider=cred_provider,
+                s3_connection_options=s3_conn_opts,
+            ),
+            credential_provider=cred_provider,
+            s3_connection_options=s3_conn_opts,
+        )
+
+        # The reader_factory type should match the backend.
+        if backend == "usearch":
+            from shardyfusion.vector.adapters.usearch_adapter import (
+                USearchReaderFactory,
+            )
+
+            assert isinstance(reader._reader_factory, USearchReaderFactory)
+        else:
+            from shardyfusion.vector.adapters.sqlite_vec_adapter import (
+                SqliteVecVectorReaderFactory,
+            )
+
+            assert isinstance(reader._reader_factory, SqliteVecVectorReaderFactory)
+
+        info = reader.snapshot_info()
+        assert info.num_dbs == 2
+        assert info.total_vectors == 40
+
+        query = rng.standard_normal(8).astype(np.float32)
+        response = reader.search(query, top_k=5, shard_ids=[0, 1])
+        assert response.num_shards_queried == 2
+        assert len(response.results) >= 1
+        # Scores sorted ascending (lower distance = better for all backends).
+        scores = [r.score for r in response.results]
+        assert scores == sorted(scores)
+
+        reader.close()

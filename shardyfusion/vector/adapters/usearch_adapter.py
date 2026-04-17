@@ -228,6 +228,8 @@ class USearchWriter:
 class USearchWriterFactory:
     """Factory that creates USearchWriter instances."""
 
+    backend_name: str = "usearch"
+
     def __init__(self, s3_client: Any | None = None) -> None:
         self._s3_client = s3_client
         self._s3_config: dict[str, Any] | None = None
@@ -394,6 +396,8 @@ class USearchShardReader:
 
 class USearchReaderFactory:
     """Factory that creates USearchShardReader instances."""
+
+    backend_name: str = "usearch"
 
     def __init__(self, s3_client: Any | None = None) -> None:
         self._s3_client = s3_client

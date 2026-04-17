@@ -478,6 +478,7 @@ def publish_vector_manifest(
         "total_vectors": total_vectors,
         "sharding_strategy": sharding.strategy.value,
         "num_probes": sharding.num_probes,
+        "backend": getattr(config.adapter_factory, "backend_name", "usearch"),
     }
     if centroids_ref is not None:
         vector_custom["centroids_ref"] = centroids_ref

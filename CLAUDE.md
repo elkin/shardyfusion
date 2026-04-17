@@ -74,10 +74,10 @@ The library is split into six independent paths that share config, manifest mode
 `cli/app.py` → `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
 
 **Vector writer path** (no Spark/Java needed; requires `vector` or `vector-sqlite` extra):
-`vector/writer.py` (`write_vector_sharded`) → `vector/sharding.py` (CLUSTER/LSH/EXPLICIT/CEL assignment) → `vector/adapters/usearch_adapter.py` (USearch HNSW) or `sqlite_vec_adapter.py` (sqlite-vec unified)
+`vector/writer.py` (`write_vector_sharded`) → `vector/sharding.py` (CLUSTER/LSH/EXPLICIT/CEL assignment) → `vector/adapters/usearch_adapter.py` (USearch HNSW) or `vector/adapters/sqlite_vec_adapter.py` (sqlite-vec, vector-only shim over `sqlite_vec_adapter.py`)
 
 **Vector reader path** (no Spark/Java needed):
-`vector/reader.py` (`ShardedVectorReader`) → `vector/sharding.py` (query routing) → `vector/adapters/usearch_adapter.py` or `sqlite_vec_adapter.py` → `vector/_merge.py` (top-k heap merge)
+`vector/reader.py` (`ShardedVectorReader`) → `vector/sharding.py` (query routing) → `vector/adapters/usearch_adapter.py` or `vector/adapters/sqlite_vec_adapter.py` → `vector/_merge.py` (top-k heap merge). Backend auto-dispatched from manifest `vector.backend` field (`"usearch"` or `"sqlite-vec"`).
 
 **Unified KV + vector path** (no Spark/Java needed):
 `reader/unified_reader.py` (`UnifiedShardedReader`, extends `ShardedReader`) → `vector/_merge.py` for search merge
