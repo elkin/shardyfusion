@@ -109,6 +109,13 @@ class SqliteVecVectorShardReader:
     Thin adapter that delegates ``search()`` to
     :class:`shardyfusion.sqlite_vec_adapter.SqliteVecShardReader` and
     exposes the :class:`VectorShardReader` protocol (``search`` + ``close``).
+
+    Note: ``index_config`` is accepted for
+    :class:`VectorShardReaderFactory` protocol parity (distance metric and
+    dimensionality are already baked into the serialized ``shard.db``), so
+    no per-call configuration is needed.  Similarly, the ``ef`` argument to
+    ``search()`` is ignored — sqlite-vec uses a brute-force scan and has no
+    equivalent tunable.
     """
 
     def __init__(

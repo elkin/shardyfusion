@@ -263,18 +263,25 @@ class TestSqliteVecVectorRoundTrip:
     """Write a shard with SqliteVecVectorWriterFactory, read it back."""
 
     def _build_shard(
-        self, local_dir: Path, db_url: str, index_config: VectorIndexConfig
+        self,
+        local_dir: Path,
+        db_url: str,
+        index_config: VectorIndexConfig,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Write vectors locally (upload to S3 is a no-op using a mock later)."""
+        """Write vectors locally using the real writer.
+
+        The writer uploads to S3 on ``close()``; we stub out ``put_bytes``
+        so the test stays offline and can fully close the adapter.
+        """
+        from shardyfusion import sqlite_vec_adapter as unified_mod
         from shardyfusion.vector.adapters.sqlite_vec_adapter import (
             SqliteVecVectorWriterFactory,
         )
 
-        # Monkey-patch: SqliteVecAdapter uploads to S3 on close.  For this
-        # test we create the DB locally, keep a copy in `local_dir`, and
-        # then intercept get_bytes for read-back.  Use the real writer.
+        monkeypatch.setattr(unified_mod, "put_bytes", lambda *args, **kwargs: None)
+
         factory = SqliteVecVectorWriterFactory()
-        writer = factory(db_url=db_url, local_dir=local_dir, index_config=index_config)
         ids = np.array([1, 2, 3, 4], dtype=np.int64)
         vectors = np.array(
             [
@@ -285,11 +292,11 @@ class TestSqliteVecVectorRoundTrip:
             ],
             dtype=np.float32,
         )
-        writer.add_batch(ids, vectors, payloads=[{"i": int(i)} for i in ids])
-        writer.checkpoint()
-        # Do NOT call writer.close() to avoid the S3 upload attempt; the
-        # file on disk is enough for the reader test below after we
-        # monkeypatch get_bytes.
+        with factory(
+            db_url=db_url, local_dir=local_dir, index_config=index_config
+        ) as writer:
+            writer.add_batch(ids, vectors, payloads=[{"i": int(i)} for i in ids])
+            writer.checkpoint()
 
     def test_end_to_end_with_local_db(
         self,
@@ -309,7 +316,7 @@ class TestSqliteVecVectorRoundTrip:
         db_url = "s3://bucket/shard"
         index_config = VectorIndexConfig(dim=4, metric=DistanceMetric.COSINE)
 
-        self._build_shard(shard_dir, db_url, index_config)
+        self._build_shard(shard_dir, db_url, index_config, monkeypatch)
 
         # The underlying reader calls `get_bytes(f"{db_url}/shard.db")` to
         # fetch the file.  Redirect that to the locally-written file.
