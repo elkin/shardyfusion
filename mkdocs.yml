@@ -45,6 +45,7 @@ nav:
     - 2026-03-25 Run Registry For Deferred Cleanup: engineering-notes/2026-03-25-run-registry-for-deferred-cleanup.md
     - 2026-03-28 Categorical CEL Routing: engineering-notes/2026-03-28-categorical-cel-routing.md
   - Operations: operations.md
+  - Tox & Dependency Matrix: tox-and-dependency-matrix.md
   - Cloud Testing: cloud-testing.md
   - Release Process: release.md
   - Glossary: glossary.md
