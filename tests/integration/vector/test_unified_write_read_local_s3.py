@@ -1,7 +1,7 @@
 """Integration test for unified KV+vector write→read round-trip on moto S3.
 
 Uses mock adapters that buffer KV + vector data in memory and store them
-as JSON on S3, so no usearch or sqlite-vec dependencies are needed.
+as JSON on S3, so no lancedb or sqlite-vec dependencies are needed.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from shardyfusion.type_defs import S3ConnectionOptions
 from shardyfusion.vector.types import SearchResult
 
 # ---------------------------------------------------------------------------
-# Mock unified adapter — no usearch / sqlite-vec needed
+# Mock unified adapter — no lancedb / sqlite-vec needed
 # ---------------------------------------------------------------------------
 
 
@@ -270,7 +270,7 @@ class TestUnifiedWriteReadRoundTrip:
         assert vec_meta is not None
         assert vec_meta["dim"] == 8
         assert vec_meta["unified"] is True
-        assert vec_meta["backend"] == "usearch-sidecar"
+        assert vec_meta["backend"] == "lancedb"
 
         # Read back
         reader = UnifiedShardedReader(

@@ -1,7 +1,7 @@
 """Integration tests for vector writer + reader against moto S3.
 
 These tests verify the full write→manifest→read round-trip using mock
-adapters (no usearch dependency) against a real (moto) S3 service.
+adapters (no lancedb dependency) against a real (moto) S3 service.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from shardyfusion.vector.types import (
 from shardyfusion.vector.writer import write_vector_sharded
 
 # ---------------------------------------------------------------------------
-# Mock adapters — no usearch needed
+# Mock adapters — no lancedb needed
 # ---------------------------------------------------------------------------
 
 

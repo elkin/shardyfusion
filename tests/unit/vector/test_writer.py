@@ -25,7 +25,7 @@ from shardyfusion.vector.writer import (
 )
 
 # ---------------------------------------------------------------------------
-# Mock adapter for testing without usearch
+# Mock adapter for testing without lancedb
 # ---------------------------------------------------------------------------
 
 

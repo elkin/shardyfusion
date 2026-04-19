@@ -103,14 +103,14 @@ class TestWrapFactoryForVector:
         mock_factory = MagicMock()
 
         with patch(
-            "shardyfusion.writer.python.writer.USearchWriterFactory",
+            "shardyfusion.writer.python.writer.LanceDbWriterFactory",
             create=True,
         ):
             # Patch the import inside _wrap_factory_for_vector
             with patch(
-                "shardyfusion.vector.adapters.usearch_adapter.USearchWriterFactory"
-            ) as mock_usearch:
-                mock_usearch.return_value = MagicMock()
+                "shardyfusion.vector.adapters.lancedb_adapter.LanceDbWriterFactory"
+            ) as mock_lancedb:
+                mock_lancedb.return_value = MagicMock()
                 result = _wrap_factory_for_vector(mock_factory, config)
 
         assert isinstance(result, CompositeFactory)
@@ -142,10 +142,10 @@ class TestDetectVectorBackend:
         factory = SqliteVecFactory(vector_spec=VectorSpec(dim=8))
         assert _detect_vector_backend(factory) == "sqlite-vec"
 
-    def test_other_factory_is_usearch_sidecar(self) -> None:
+    def test_other_factory_is_lancedb_sidecar(self) -> None:
         from shardyfusion.writer.python.writer import _detect_vector_backend
 
-        assert _detect_vector_backend(MagicMock()) == "usearch-sidecar"
+        assert _detect_vector_backend(MagicMock()) == "lancedb"
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +175,7 @@ class TestInjectVectorManifestFields:
         assert vec["index_type"] == "hnsw"
         assert vec["quantization"] == "fp16"
         assert vec["unified"] is True
-        assert vec["backend"] == "usearch-sidecar"
+        assert vec["backend"] == "lancedb"
         assert vec["index_params"] == {"M": 32}
 
     def test_injects_sqlite_vec_backend(self) -> None:

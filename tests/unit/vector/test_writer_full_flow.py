@@ -21,7 +21,7 @@ from shardyfusion.vector.config import (
 from shardyfusion.vector.types import VectorRecord, VectorShardingStrategy
 
 # ---------------------------------------------------------------------------
-# Mock adapter for testing without usearch
+# Mock adapter for testing without lancedb
 # ---------------------------------------------------------------------------
 
 
@@ -280,10 +280,10 @@ class TestWriteVectorShardedExplicit:
         assert result.winners[0].db_id == 0
 
     @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    def test_default_factory_requires_usearch(
+    def test_default_factory_requires_lancedb(
         self, mock_s3: Any, tmp_path: Path
     ) -> None:
-        """Without adapter_factory, should try to import USearchWriterFactory."""
+        """Without adapter_factory, should try to import LanceDbWriterFactory."""
         import builtins
 
         from shardyfusion.vector.writer import write_vector_sharded
@@ -297,14 +297,14 @@ class TestWriteVectorShardedExplicit:
 
         original_import = builtins.__import__
 
-        def fail_usearch(name: str, *args: Any, **kwargs: Any) -> Any:
-            if "usearch" in name:
-                raise ImportError("no usearch")
+        def fail_lancedb(name: str, *args: Any, **kwargs: Any) -> Any:
+            if "lancedb" in name:
+                raise ImportError("no lancedb")
             return original_import(name, *args, **kwargs)
 
         records = _make_records(1, shard_id=0)
-        with patch("builtins.__import__", side_effect=fail_usearch):
-            with pytest.raises(ImportError, match="usearch"):
+        with patch("builtins.__import__", side_effect=fail_lancedb):
+            with pytest.raises(ImportError, match="lancedb"):
                 write_vector_sharded(records, config)
 
 

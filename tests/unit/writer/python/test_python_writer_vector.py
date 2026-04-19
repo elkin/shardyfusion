@@ -147,13 +147,13 @@ class TestAutoVectorFn:
 
 
 # ---------------------------------------------------------------------------
-# _wrap_factory_for_vector — usearch ImportError fallback
+# _wrap_factory_for_vector — lancedb ImportError fallback
 # ---------------------------------------------------------------------------
 
 
 class TestWrapFactoryImportFallback:
-    def test_usearch_import_error_raises(self) -> None:
-        """When usearch is not installed, _wrap_factory_for_vector raises."""
+    def test_lancedb_import_error_raises(self) -> None:
+        """When lancedb is not installed, _wrap_factory_for_vector raises."""
         import builtins
         from unittest.mock import patch
 
@@ -161,9 +161,9 @@ class TestWrapFactoryImportFallback:
 
         original_import = builtins.__import__
 
-        def fail_usearch(name: str, *args: Any, **kwargs: Any) -> Any:
-            if "usearch" in name:
-                raise ImportError("no usearch")
+        def fail_lancedb(name: str, *args: Any, **kwargs: Any) -> Any:
+            if "lancedb" in name:
+                raise ImportError("no lancedb")
             return original_import(name, *args, **kwargs)
 
         config = WriteConfig(
@@ -173,7 +173,7 @@ class TestWrapFactoryImportFallback:
         )
         mock_factory = MagicMock()
 
-        with patch("builtins.__import__", side_effect=fail_usearch):
+        with patch("builtins.__import__", side_effect=fail_lancedb):
             with pytest.raises(ConfigValidationError, match="vector.*extra"):
                 _wrap_factory_for_vector(mock_factory, config)
 

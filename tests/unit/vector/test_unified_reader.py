@@ -49,7 +49,7 @@ class TestParseVectorCustom:
                 "quantization": None,
                 "index_params": {"M": 16},
                 "unified": True,
-                "backend": "usearch-sidecar",
+                "backend": "lancedb",
             }
         }
         meta = _parse_vector_custom(custom)
@@ -58,7 +58,7 @@ class TestParseVectorCustom:
         assert meta.index_type == "hnsw"
         assert meta.quantization is None
         assert meta.index_params == {"M": 16}
-        assert meta.backend == "usearch-sidecar"
+        assert meta.backend == "lancedb"
 
     def test_missing_vector_key(self) -> None:
         with pytest.raises(ConfigValidationError, match="vector metadata"):
@@ -76,7 +76,7 @@ class TestParseVectorCustom:
         assert meta.index_type == "hnsw"
         assert meta.quantization is None
         assert meta.index_params == {}
-        assert meta.backend == "usearch-sidecar"  # default
+        assert meta.backend == "lancedb"  # default
 
     def test_sqlite_vec_backend(self) -> None:
         custom = {
@@ -119,7 +119,7 @@ class TestUnifiedVectorMeta:
             index_type="hnsw",
             quantization=None,
             index_params={},
-            backend="usearch-sidecar",
+            backend="lancedb",
             kv_backend="slatedb",
         )
         with pytest.raises(AttributeError):
@@ -148,14 +148,14 @@ class TestAutoReaderFactory:
             _auto_reader_factory(meta)
             mock_cls.assert_called_once()
 
-    def test_usearch_sidecar_default_slatedb(self) -> None:
+    def test_lancedb_sidecar_default_slatedb(self) -> None:
         meta = UnifiedVectorMeta(
             dim=32,
             metric=DistanceMetric.COSINE,
             index_type="hnsw",
             quantization=None,
             index_params={},
-            backend="usearch-sidecar",
+            backend="lancedb",
             kv_backend="slatedb",
         )
         with (
@@ -163,7 +163,7 @@ class TestAutoReaderFactory:
                 "shardyfusion.composite_adapter.CompositeReaderFactory"
             ) as mock_composite,
             patch("shardyfusion.reader._types.SlateDbReaderFactory"),
-            patch("shardyfusion.vector.adapters.usearch_adapter.USearchReaderFactory"),
+            patch("shardyfusion.vector.adapters.lancedb_adapter.LanceDbReaderFactory"),
             patch("shardyfusion.storage.create_s3_client"),
         ):
             _auto_reader_factory(meta)
@@ -171,14 +171,14 @@ class TestAutoReaderFactory:
             call_kwargs = mock_composite.call_args[1]
             assert call_kwargs["kv_factory"] is not None
 
-    def test_usearch_sidecar_with_sqlite_kv(self) -> None:
+    def test_lancedb_sidecar_with_sqlite_kv(self) -> None:
         meta = UnifiedVectorMeta(
             dim=32,
             metric=DistanceMetric.COSINE,
             index_type="hnsw",
             quantization=None,
             index_params={},
-            backend="usearch-sidecar",
+            backend="lancedb",
             kv_backend="sqlite",
         )
         with (
@@ -186,7 +186,7 @@ class TestAutoReaderFactory:
                 "shardyfusion.composite_adapter.CompositeReaderFactory"
             ) as mock_composite,
             patch("shardyfusion.sqlite_adapter.SqliteReaderFactory") as mock_sqlite_kv,
-            patch("shardyfusion.vector.adapters.usearch_adapter.USearchReaderFactory"),
+            patch("shardyfusion.vector.adapters.lancedb_adapter.LanceDbReaderFactory"),
             patch("shardyfusion.storage.create_s3_client"),
         ):
             _auto_reader_factory(meta)
@@ -264,7 +264,7 @@ def _build_mock_reader(
         index_type="hnsw",
         quantization=None,
         index_params={},
-        backend="usearch-sidecar",
+        backend="lancedb",
         kv_backend="slatedb",
     )
     readers_list: list[Any] = []
@@ -458,7 +458,7 @@ class TestVectorMetaProperty:
 
 
 class TestAutoReaderFactoryImportFallback:
-    def test_usearch_import_error_raises(self) -> None:
+    def test_lancedb_import_error_raises(self) -> None:
         import builtins
 
         meta = UnifiedVectorMeta(
@@ -467,18 +467,18 @@ class TestAutoReaderFactoryImportFallback:
             index_type="hnsw",
             quantization=None,
             index_params={},
-            backend="usearch-sidecar",
+            backend="lancedb",
             kv_backend="slatedb",
         )
 
         original_import = builtins.__import__
 
-        def fail_usearch(name: str, *args: Any, **kwargs: Any) -> Any:
-            if "usearch" in name:
-                raise ImportError("no usearch")
+        def fail_lancedb(name: str, *args: Any, **kwargs: Any) -> Any:
+            if "lancedb" in name:
+                raise ImportError("no lancedb")
             return original_import(name, *args, **kwargs)
 
-        with patch("builtins.__import__", side_effect=fail_usearch):
+        with patch("builtins.__import__", side_effect=fail_lancedb):
             with pytest.raises(ConfigValidationError, match="vector.*extra"):
                 _auto_reader_factory(meta)
 
@@ -539,7 +539,7 @@ def _vector_manifest(num_dbs: int = 2) -> ParsedManifest:
             "index_type": "hnsw",
             "quantization": None,
             "unified": True,
-            "backend": "usearch-sidecar",
+            "backend": "lancedb",
             "kv_backend": "slatedb",
         }
     }
@@ -595,7 +595,7 @@ class TestUnifiedShardedReaderInit:
             meta = reader.vector_meta
             assert meta.dim == 4
             assert meta.metric is DistanceMetric.COSINE
-            assert meta.backend == "usearch-sidecar"
+            assert meta.backend == "lancedb"
         finally:
             reader.close()
 

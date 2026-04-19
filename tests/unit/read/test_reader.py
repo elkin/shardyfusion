@@ -129,7 +129,7 @@ def _vector_only_manifest(db_url: str) -> ParsedManifest:
             "vector": {
                 "dim": 4,
                 "metric": "cosine",
-                "backend": "usearch-sidecar",
+                "backend": "lancedb",
                 "kv_backend": "slatedb",
             }
         },

@@ -48,11 +48,11 @@ class TestVectorAdaptersLazyImports:
         """Accessing a known __all__ name triggers the lazy import path."""
         import shardyfusion.vector.adapters
 
-        # USearchWriterFactory is in __all__ — accessing it goes through __getattr__
-        # which imports usearch_adapter. This works because usearch is importable
+        # LanceDbWriterFactory is in __all__ — accessing it goes through __getattr__
+        # which imports lancedb_adapter. This works because lancedb is importable
         # in this env (it's a Python module even if the C extension fails).
         try:
-            cls = shardyfusion.vector.adapters.USearchWriterFactory
+            cls = shardyfusion.vector.adapters.LanceDbWriterFactory
             assert cls is not None
         except (ImportError, AttributeError):
-            pytest.skip("usearch not available")
+            pytest.skip("lancedb not available")
