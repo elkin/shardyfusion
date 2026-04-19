@@ -5,6 +5,10 @@ Tests for string/int ID handling and writer lifecycle.
 
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip("lancedb")
+
 from pathlib import Path
 from unittest.mock import patch
 
