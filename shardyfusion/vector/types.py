@@ -186,3 +186,27 @@ class VectorShardReaderFactory(Protocol):
         local_dir: Path,
         index_config: VectorIndexConfig,
     ) -> VectorShardReader: ...
+
+
+class AsyncVectorShardReader(Protocol):
+    """Async per-shard search interface (e.g. for asyncio services)."""
+
+    async def search(
+        self,
+        query: np.ndarray,
+        top_k: int,
+    ) -> list[SearchResult]: ...
+
+    async def close(self) -> None: ...
+
+
+class AsyncVectorShardReaderFactory(Protocol):
+    """Factory for creating async per-shard readers."""
+
+    async def __call__(
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        index_config: VectorIndexConfig,
+    ) -> AsyncVectorShardReader: ...

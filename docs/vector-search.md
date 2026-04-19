@@ -113,27 +113,53 @@ result = write_vector_sharded(
 
 ### 2. Reading and Searching
 
-Use `UnifiedShardedReader` (if the index contains KV data) or `ShardedVectorReader` for vector-only indices.
+Use `UnifiedShardedReader` (if the index contains KV data) or `ShardedVectorReader` for vector-only indices. For high-concurrency environments like `asyncio`-based web services, use the `AsyncShardedVectorReader`.
+
+### Synchronous Reader
 
 ```python
-from shardyfusion.reader.unified_reader import UnifiedShardedReader
+from shardyfusion.vector.reader import ShardedVectorReader
 import numpy as np
 
-reader = UnifiedShardedReader(
+reader = ShardedVectorReader(
     s3_prefix="s3://my-bucket/vectors-run",
     local_root="/tmp/reader",
-    # Automatically defaults to the backend written in the manifest,
-    # or you can supply an explicit reader_factory like LanceDbReaderFactory.
 )
-
-# Optional: Perform a standard Key-Value point lookup
-val = reader.get("record-123")
 
 # Perform a Vector Search
 query_vector = np.random.randn(128).astype(np.float32)
 
 # The reader uses the routing metadata in the manifest to fan out only to relevant shards.
 results = reader.search(query_vector, top_k=10)
+for res in results:
+    print(res.id, res.score, res.payload)
+
+reader.close()
+```
+
+### Asynchronous Reader (FastAPI / aiohttp)
+
+```python
+from shardyfusion.vector.async_reader import AsyncShardedVectorReader
+import numpy as np
+
+# Use the factory method `open` to load the manifest asynchronously
+reader = await AsyncShardedVectorReader.open(
+    s3_prefix="s3://my-bucket/vectors-run",
+    local_root="/tmp/reader",
+    max_concurrency=4,  # limits concurrent shard S3 downloads
+)
+
+# Perform an Async Vector Search
+query_vector = np.random.randn(128).astype(np.float32)
+
+# Shards are queried concurrently for lower latency
+results = await reader.search(query_vector, top_k=10)
+for res in results:
+    print(res.id, res.score, res.payload)
+
+await reader.close()
+```
 
 for res in results:
     print(f"ID: {res.id}, Score: {res.score}, Payload: {res.payload}")

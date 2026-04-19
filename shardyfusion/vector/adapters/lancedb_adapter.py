@@ -455,3 +455,136 @@ class LanceDbReaderFactory:
             index_config=index_config,
             s3_client=self._s3_client,
         )
+
+
+class AsyncLanceDbShardReader:
+    """Connects to remote LanceDB dataset on S3 and searches asynchronously."""
+
+    def __init__(self) -> None:
+        # Private constructor: instantiate via open() or factory
+        self._db: Any = None
+        self._table: Any = None
+        self._closed = False
+        self._table_name = "vector_index"
+
+    @classmethod
+    async def open(
+        cls,
+        *,
+        db_url: str,
+        local_dir: Path,
+        index_config: Any,
+        s3_client: Any | None = None,
+    ) -> AsyncLanceDbShardReader:
+        lancedb, _ = _import_lancedb()
+        instance = cls()
+        storage_options = _extract_storage_options(s3_client)
+        try:
+            # We connect to LanceDB natively using async API
+            instance._db = await lancedb.connect_async(
+                db_url, storage_options=storage_options
+            )
+            instance._table = await instance._db.open_table(instance._table_name)
+        except Exception as exc:
+            import traceback
+
+            traceback.print_exc()
+            print(
+                f"FAILED TO OPEN ASYNC TABLE {instance._table_name} AT {db_url}: {exc}"
+            )
+            instance._table = None
+        return instance
+
+    async def search(
+        self,
+        query: np.ndarray,
+        top_k: int,
+    ) -> list[SearchResult]:
+        if self._closed:
+            raise VectorSearchError("Reader is closed")
+
+        if self._table is None:
+            return []
+
+        try:
+            query_builder = await self._table.search(query.astype(np.float32))
+            query_builder = query_builder.limit(top_k)
+            matches = await query_builder.to_arrow()
+        except Exception as exc:
+            raise VectorSearchError(f"Search failed: {exc}") from exc
+
+        results: list[SearchResult] = []
+        for i in range(len(matches)):
+            row = matches.take([i]).to_pylist()[0]
+            orig_id: int | str = row["id"]
+            score = float(row.get("_distance", 0.0))
+
+            payload_str = row.get("payload")
+            payload = None
+            if payload_str is not None:
+                try:
+                    payload = json.loads(payload_str)
+                except Exception:
+                    pass
+
+            results.append(
+                SearchResult(
+                    id=orig_id,
+                    score=score,
+                    payload=payload,
+                )
+            )
+
+        return results
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+
+
+class AsyncLanceDbReaderFactory:
+    """Factory that creates AsyncLanceDbShardReader instances."""
+
+    def __init__(
+        self,
+        s3_client: Any | None = None,
+        s3_connection_options: Any | None = None,
+        credential_provider: Any | None = None,
+    ) -> None:
+        self._s3_client = s3_client
+        self._s3_connection_options = s3_connection_options
+        self._credential_provider = credential_provider
+
+    def __getstate__(self) -> dict[str, Any]:
+        state = self.__dict__.copy()
+        state.pop("_s3_client", None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        if self._s3_connection_options or self._credential_provider:
+            from ...storage import create_s3_client
+
+            creds = (
+                self._credential_provider.resolve()
+                if self._credential_provider
+                else None
+            )
+            self._s3_client = create_s3_client(creds, self._s3_connection_options)
+        else:
+            self._s3_client = None
+
+    async def __call__(
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        index_config: Any,
+    ) -> AsyncLanceDbShardReader:
+        return await AsyncLanceDbShardReader.open(
+            db_url=db_url,
+            local_dir=local_dir,
+            index_config=index_config,
+            s3_client=self._s3_client,
+        )

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from .async_reader import AsyncShardedVectorReader
 from .config import VectorIndexConfig, VectorShardingSpec, VectorWriteConfig
 from .reader import ShardedVectorReader, VectorReaderHealth
 from .types import (
+    AsyncVectorShardReader,
+    AsyncVectorShardReaderFactory,
     DistanceMetric,
     SearchResult,
     VectorIndexWriter,
@@ -20,6 +23,9 @@ from .types import (
 from .writer import write_vector_sharded
 
 __all__ = [
+    "AsyncShardedVectorReader",
+    "AsyncVectorShardReader",
+    "AsyncVectorShardReaderFactory",
     "DistanceMetric",
     "SearchResult",
     "ShardedVectorReader",

@@ -18,6 +18,7 @@ Requires the ``vector-sqlite`` extra (``sqlite-vec``).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -518,6 +519,77 @@ class SqliteVecShardReader:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+
+@dataclass(slots=True)
+class AsyncSqliteVecReaderFactory:
+    """Async factory for creating unified KV + vector shard readers.
+
+    This delegates to the synchronous ``SqliteVecReaderFactory`` but runs
+    the initial download-and-cache operations in a thread pool to avoid
+    blocking the event loop.
+    """
+
+    mmap_size: int = 268_435_456  # 256 MB
+    s3_connection_options: S3ConnectionOptions | None = None
+    credential_provider: CredentialProvider | None = None
+
+    async def __call__(
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None = None,
+        index_config: Any | None = None,
+    ) -> AsyncSqliteVecShardReader:
+        # Offload sync operations (download, connect, extension load) to thread
+        sync_factory = SqliteVecReaderFactory(
+            mmap_size=self.mmap_size,
+            s3_connection_options=self.s3_connection_options,
+            credential_provider=self.credential_provider,
+        )
+
+        inner = await asyncio.to_thread(
+            sync_factory,
+            db_url=db_url,
+            local_dir=local_dir,
+            checkpoint_id=checkpoint_id,
+            index_config=index_config,
+        )
+        return AsyncSqliteVecShardReader(inner)
+
+
+class AsyncSqliteVecShardReader:
+    """Async wrapper around :class:`SqliteVecShardReader`.
+
+    Provides identical functionality (unified KV + vector search) but runs
+    all SQLite database queries in background threads via :func:`asyncio.to_thread`
+    to unblock the asyncio event loop.
+    """
+
+    def __init__(self, inner: SqliteVecShardReader) -> None:
+        self._inner = inner
+
+    async def get(self, key: bytes) -> bytes | None:
+        """KV point lookup (async)."""
+        return await asyncio.to_thread(self._inner.get, key)
+
+    async def search(
+        self,
+        query: np.ndarray,
+        top_k: int,
+    ) -> list[SearchResult]:
+        """Vector similarity search (async)."""
+        return await asyncio.to_thread(self._inner.search, query, top_k)
+
+    async def close(self) -> None:
+        await asyncio.to_thread(self._inner.close)
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
 
 
 # ---------------------------------------------------------------------------

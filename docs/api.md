@@ -94,6 +94,8 @@
 
 ::: shardyfusion.vector.reader
 
+::: shardyfusion.vector.async_reader
+
 ::: shardyfusion.vector.types
 
 ::: shardyfusion.vector.writer
