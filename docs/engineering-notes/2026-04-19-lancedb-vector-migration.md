@@ -77,8 +77,8 @@ Cons:
 - Implemented robust batch table addition logic.
 
 ### Test Coverage Expansion
-- **Unit Tests**: Added `tests/unit/vector/test_lancedb_reader.py` covering reader instantiation, search functionality, and type preservation.
-- **Integration Tests**: Replaced mock adapters with real `LanceDbWriterFactory`, `LanceDbReaderFactory`, `SqliteVecFactory`, and `SqliteVecReaderFactory` in `test_vector_writer_reader_local_s3.py` and `test_unified_write_read_local_s3.py` against Moto S3.
+- **Unit Tests**: Added `tests/unit/vector/test_lancedb_reader.py` covering reader instantiation, search functionality, and type preservation. Utilized `pytest.importorskip("lancedb")` to ensure test collection doesn't fail in tox environments where the optional `lancedb` dependency isn't installed.
+- **Integration Tests**: Replaced mock adapters with real `LanceDbWriterFactory`, `LanceDbReaderFactory`, `SqliteVecFactory`, and `SqliteVecReaderFactory` in `test_vector_writer_reader_local_s3.py` and `test_unified_write_read_local_s3.py` against Moto S3. Updated `tox.ini` to explicitly include the `backend-vector-lancedb` dependency group for the `vector-integration` environment so the real adapters can be tested.
 - **E2E Tests**: Augmented Spark E2E tests (`test_spark_vector_e2e.py`). Added reader-side verifications to `sqlite-vec` paths. Added `test_spark_vector_lancedb_write_and_read` to verify the end-to-end Spark distributed writer-to-LanceDB reader pipeline against Garage S3.
 
 ## Known Limitations
