@@ -79,6 +79,7 @@
 - For behavior changes, add/adjust unit tests first, then integration tests where routing/publishing or Spark behavior is affected.
 
 ## Commit & Pull Request Guidelines
+- **Before requesting a review or concluding changes are ready, always run `just ci d-e2e` to ensure all tests (including E2E) pass.**
 - Follow concise, imperative commit subjects; Conventional Commit prefixes are used in history (`fix:`, `chore:`, `test:`, `feat:`) and recommended.
 - Keep commits scoped (single concern) and include tests for functional changes.
 - PRs should include:
