@@ -78,6 +78,28 @@
 
 ::: shardyfusion.reader.async_reader
 
+::: shardyfusion.reader.unified_reader
+
+## Storage Adapters
+
+::: shardyfusion.sqlite_adapter
+
+::: shardyfusion.sqlite_vec_adapter
+
+::: shardyfusion.composite_adapter
+
+## Vector Search
+
+::: shardyfusion.vector.config
+
+::: shardyfusion.vector.reader
+
+::: shardyfusion.vector.types
+
+::: shardyfusion.vector.writer
+
+::: shardyfusion.vector.adapters.lancedb_adapter
+
 ## Serde
 
 ::: shardyfusion.serde

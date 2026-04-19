@@ -29,6 +29,15 @@ uv sync --extra sqlite-async
 # Async SQLite range reads (combine async wrappers + APSW)
 uv sync --extra sqlite-async --extra read-sqlite-range
 
+# Vector search (LanceDB backend)
+uv sync --extra vector
+
+# Unified KV+Vector search (SQLite-vec backend)
+uv sync --extra vector-sqlite
+
+# Unified vector readers
+uv sync --extra unified-vector
+
 # Spark writer (default SlateDB backend, requires Java)
 uv sync --extra writer-spark
 
