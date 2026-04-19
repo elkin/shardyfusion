@@ -8,7 +8,7 @@ The vector search integration adds approximate nearest-neighbor (ANN) search
 to shardyfusion's sharded snapshot model.  It provides:
 
 - A standalone vector write/read pipeline (`vector/writer.py`, `vector/reader.py`)
-- Two storage backends: USearch HNSW sidecar and sqlite-vec embedded
+- Two storage backends: LanceDB HNSW sidecar and sqlite-vec embedded
 - A unified KV+vector mode via `VectorSpec` on `WriteConfig`
 - Four sharding strategies: CLUSTER (k-means), LSH, EXPLICIT, CEL
 
@@ -169,9 +169,9 @@ added but never tested with actual concurrency.
 No test verifies behavior when `get_bytes(centroids_ref)` raises mid-search
 after a successful initial load (e.g., transient S3 error during refresh).
 
-### D. USearch adapter with string IDs end-to-end
+### D. LanceDB adapter with string IDs end-to-end
 
-The writer `id_map` table is tested in isolation (and skipped without usearch),
+The writer `id_map` table is tested in isolation (and skipped without lancedb),
 but there's no integration test proving the full writer→reader round-trip
 returns the original string IDs from `search()`.
 

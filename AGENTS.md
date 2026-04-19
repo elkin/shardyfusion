@@ -10,7 +10,7 @@
   - Reader path (async): `reader/async_reader.py`, `routing.py`, `async_manifest_store.py` (`AsyncS3ManifestStore`)
   - CLI path: `cli/app.py`, `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
   - SQLite backend: `sqlite_adapter.py` (writer + download-and-cache reader + range-read VFS reader + async wrappers)
-  - Vector search: `vector/types.py`, `vector/config.py`, `vector/sharding.py`, `vector/_merge.py`, `vector/writer.py`, `vector/reader.py`, `vector/adapters/usearch_adapter.py`
+  - Vector search: `vector/types.py`, `vector/config.py`, `vector/sharding.py`, `vector/_merge.py`, `vector/writer.py`, `vector/reader.py`, `vector/adapters/lancedb_adapter.py`
   - Unified KV+vector: `sqlite_vec_adapter.py` (sqlite-vec unified adapter), `composite_adapter.py` (KV+vector composite), `reader/unified_reader.py` (UnifiedShardedReader)
   - Shared models/protocols: `config.py`, `credentials.py`, `manifest.py`, `manifest_store.py`, `async_manifest_store.py`, `run_registry.py`, `storage.py`, `testing.py`
   - Core utilities: `errors.py`, `type_defs.py`, `sharding_types.py`, `ordering.py`, `logging.py`, `serde.py`, `cel.py`, `_rate_limiter.py`, `metrics/`
@@ -33,7 +33,7 @@
   - Ray writer: `uv sync --extra writer-ray` or `uv sync --extra writer-ray-sqlite`
   - CLI-only: `uv sync --extra cli`
   - Observability extras: `uv sync --extra metrics-prometheus`, `uv sync --extra metrics-otel`
-  - Vector search: `uv sync --extra vector` (USearch), `uv sync --extra vector-sqlite` (sqlite-vec), `uv sync --extra unified-vector` (KV+vector)
+  - Vector search: `uv sync --extra vector` (LanceDB), `uv sync --extra vector-sqlite` (sqlite-vec), `uv sync --extra unified-vector` (KV+vector)
   - Full dev: `uv sync --all-extras --dev`
 - Lint: `uv run ruff check .`
 - Format check: `uv run ruff format --check .`

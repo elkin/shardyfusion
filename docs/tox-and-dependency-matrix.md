@@ -45,7 +45,7 @@ This page explains:
 | Expression routing | CEL sharding | cel-expr-python |
 | Observability | Prometheus metrics | prometheus-client |
 | Observability | OpenTelemetry | opentelemetry-api |
-| Vector search | USearch | usearch, numpy |
+| Vector search | LanceDB | lancedb, numpy |
 | Vector search | sqlite-vec | sqlite-vec, numpy |
 
 ### Python Versions
@@ -92,7 +92,7 @@ Because every use case has different dependencies. Users should not install:
 
 - PySpark if they use Dask
 - aiobotocore if they only need sync reads
-- usearch if they only need key-value lookups
+- lancedb if they only need key-value lookups
 
 The matrix is large because the option set is large.
 
@@ -173,7 +173,7 @@ Most envs install only what they need. `py312-read-slatedb-unit` never pulls PyS
 
 ### 3. Clear failure isolation
 
-When `py313-vector-usearch-unit` fails, the failure tells you the issue is in Python 3.13 + vector + USearch. Not "some dependency problem".
+When `py313-vector-lancedb-unit` fails, the failure tells you the issue is in Python 3.13 + vector + LanceDB. Not "some dependency problem".
 
 ### 4. CI parallelization
 

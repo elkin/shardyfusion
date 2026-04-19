@@ -149,19 +149,19 @@ Cons:
 - custom format requires custom deserialization
 - no established tooling for inspection or debugging
 
-#### Option B: Use usearch as the index engine with a pluggable adapter protocol
+#### Option B: Use lancedb as the index engine with a pluggable adapter protocol
 
 Pros:
-- usearch is a mature, fast HNSW implementation
+- lancedb is a mature, fast HNSW implementation
 - supports multiple distance metrics and quantization (fp16, i8)
 - save/load to file is built in
 - deferred import means no hard dependency at package level
 - adapter protocol allows swapping to FAISS or other engines later
 
 Cons:
-- adds an optional C++ dependency (usearch)
-- usearch API may change between versions
-- payload storage is not built into usearch (requires a sidecar)
+- adds an optional C++ dependency (lancedb)
+- lancedb API may change between versions
+- payload storage is not built into lancedb (requires a sidecar)
 
 #### Option C: Use FAISS as the index engine
 
@@ -171,10 +171,10 @@ Pros:
 
 Cons:
 - heavier dependency (faiss-cpu or faiss-gpu)
-- API is more complex than usearch for simple HNSW
+- API is more complex than lancedb for simple HNSW
 - no clear advantage for the HNSW-only use case
 
-**Chosen approach**: Option B with `VectorIndexWriter` and `VectorShardReader` protocols. The usearch adapter is the default implementation, imported lazily. Payloads are stored in a SQLite sidecar database alongside each shard's index file. The protocol design allows adding a FAISS adapter later without changing the writer or reader. The pre-existing `HnswGraphBuilder` / `HnswGraph` / `HnswNode` types in `types.py` were kept for potential future graph inspection use but are not used by the current adapter — usearch manages the HNSW graph internally.
+**Chosen approach**: Option B with `VectorIndexWriter` and `VectorShardReader` protocols. The lancedb adapter is the default implementation, imported lazily. Payloads are stored in a SQLite sidecar database alongside each shard's index file. The protocol design allows adding a FAISS adapter later without changing the writer or reader. The pre-existing `HnswGraphBuilder` / `HnswGraph` / `HnswNode` types in `types.py` were kept for potential future graph inspection use but are not used by the current adapter — lancedb manages the HNSW graph internally.
 
 ### Decision 4: How to handle reader shard lifecycle
 
@@ -246,11 +246,11 @@ The implementation creates a `shardyfusion/vector/` subpackage with the followin
 - `config.py` — `VectorIndexConfig` (dim, metric, HNSW params, quantization), `VectorShardingSpec` (strategy, num_probes, centroids/hyperplanes), `VectorWriteConfig` (top-level config mirroring `WriteConfig` structure).
 - `sharding.py` — Pure-numpy sharding implementations: k-means++ training (`train_centroids_kmeans`), cluster assignment and probing, LSH hyperplane generation, LSH hashing and probing, CEL expression-based routing (delegates to `shardyfusion.cel`), and a unified `route_vector_to_shards` dispatcher.
 - `_merge.py` — Heap-based top-k merge across per-shard result lists, metric-aware.
-- `adapters/usearch_adapter.py` — `USearchWriter` (builds usearch.Index + SQLite payloads locally, uploads to S3 on close), `USearchShardReader` (downloads from S3, loads index and payloads), and corresponding factories. usearch is imported inside `_import_usearch()` to keep it optional.
+- `adapters/lancedb_adapter.py` — `LanceDBWriter` (builds lancedb.Index + SQLite payloads locally, uploads to S3 on close), `LanceDBShardReader` (downloads from S3, loads index and payloads), and corresponding factories. lancedb is imported inside `_import_lancedb()` to keep it optional.
 - `writer.py` — `write_vector_sharded()` function with single-process implementation. Buffers records by shard, flushes in batches to the adapter, handles centroid training and hyperplane generation, uploads sharding metadata to S3, and publishes a manifest with vector config in custom fields.
 - `reader.py` — `ShardedVectorReader` class with lazy shard loading, LRU eviction, thread-pool fan-out for multi-shard search, manifest refresh, health monitoring, and shard inspection methods.
 - `__init__.py` — Public API exports (18 names).
-- `adapters/__init__.py` — Lazy `__getattr__` exports for USearch adapter types.
+- `adapters/__init__.py` — Lazy `__getattr__` exports for LanceDB adapter types.
 
 ### Write Pipeline
 
@@ -323,9 +323,9 @@ The `VectorShardReader` protocol:
 
 ### Payload Storage
 
-The USearch adapter stores payloads in a SQLite sidecar (`payloads.db`) alongside the index file (`index.usearch`). Each shard has two files uploaded to S3:
+The LanceDB adapter stores payloads in a SQLite sidecar (`payloads.db`) alongside the index file (`index.lancedb`). Each shard has two files uploaded to S3:
 
-- `{db_url}/index.usearch` — the usearch HNSW index
+- `{db_url}/index.lancedb` — the lancedb HNSW index
 - `{db_url}/payloads.db` — SQLite with `(id TEXT PRIMARY KEY, payload TEXT)` table
 
 The reader downloads both files, loads the index, and joins search results with payloads via SQL lookups.
@@ -341,5 +341,5 @@ The reader downloads both files, loads the index, and joins search results with 
 ### Design Trade-offs Accepted
 
 - **Placeholder sharding in manifest**: `RequiredBuildMeta.sharding` is set to `ShardingStrategy.HASH` as a placeholder since the core `ManifestShardingSpec` does not support vector sharding strategies. The actual vector sharding config lives in `custom["vector"]`. This is fine because non-vector readers never interpret the sharding field for vector manifests.
-- **Payload sidecar**: Storing payloads in a separate SQLite file adds a second S3 GET per shard load. An alternative would be embedding payloads in the index file format, but usearch does not support arbitrary payload storage, and the SQLite approach keeps payloads queryable.
-- **No graph inspection**: The `HnswGraph` / `HnswNode` types exist in `types.py` but are not populated by the usearch adapter. usearch manages the graph internally and does not expose node-level structure. These types remain available for potential future adapters that do expose graph internals.
+- **Payload sidecar**: Storing payloads in a separate SQLite file adds a second S3 GET per shard load. An alternative would be embedding payloads in the index file format, but lancedb does not support arbitrary payload storage, and the SQLite approach keeps payloads queryable.
+- **No graph inspection**: The `HnswGraph` / `HnswNode` types exist in `types.py` but are not populated by the lancedb adapter. lancedb manages the graph internally and does not expose node-level structure. These types remain available for potential future adapters that do expose graph internals.

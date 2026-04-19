@@ -15,12 +15,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Reader-side routing helpers for service-side `get` and `multi_get`
 - `shardy` CLI for interactive and batch lookups against published snapshots
 - Token-bucket rate limiting for all writer paths (`max_writes_per_second`, `max_write_bytes_per_second`)
-- Sharded vector search with pluggable backends (USearch HNSW sidecar, sqlite-vec) and CLUSTER/LSH/EXPLICIT/CEL sharding strategies
+- Sharded vector search with pluggable backends (LanceDB HNSW sidecar, sqlite-vec) and CLUSTER/LSH/EXPLICIT/CEL sharding strategies
 - Unified KV + vector mode: single snapshot supporting both point lookups and ANN search via `UnifiedShardedReader`
 
 ## Tooling
 
-**Package manager**: uv. Extras: `read`, `read-async` (adds aiobotocore for native async S3), `read-sqlite`, `read-sqlite-range` (adds apsw), `sqlite-async`, `writer-spark` (requires Java), `writer-spark-sqlite`, `writer-python`, `writer-python-sqlite`, `writer-dask`, `writer-dask-sqlite`, `writer-ray`, `writer-ray-sqlite`, `cli`, `cel` (adds cel-expr-python), `metrics-prometheus`, `metrics-otel`, `vector` (USearch + numpy + boto3), `vector-usearch`, `vector-sqlite` (sqlite-vec + numpy + boto3), `unified-vector` (vector + cel), `unified-vector-sqlite`. Core dependency: `pyyaml>=6.0`. Full dev: `uv sync --all-extras --dev`.
+**Package manager**: uv. Extras: `read`, `read-async` (adds aiobotocore for native async S3), `read-sqlite`, `read-sqlite-range` (adds apsw), `sqlite-async`, `writer-spark` (requires Java), `writer-spark-sqlite`, `writer-python`, `writer-python-sqlite`, `writer-dask`, `writer-dask-sqlite`, `writer-ray`, `writer-ray-sqlite`, `cli`, `cel` (adds cel-expr-python), `metrics-prometheus`, `metrics-otel`, `vector` (LanceDB + numpy + boto3), `vector-lancedb`, `vector-sqlite` (sqlite-vec + numpy + boto3), `unified-vector` (vector + cel), `unified-vector-sqlite`. Core dependency: `pyyaml>=6.0`. Full dev: `uv sync --all-extras --dev`.
 
 **Workflows**: Run `just --list` for all local and container (`d-*`) targets. Key entry points: `just setup` (bootstrap a fresh clone), `just doctor` (verify environment), `just fix` (auto-format), `just ci` (quality + unit + integration), `just clean` / `just clean-all` (remove caches/artifacts). Container default engine is Podman; override with `CONTAINER_ENGINE=docker`.
 
@@ -74,10 +74,10 @@ The library is split into six independent paths that share config, manifest mode
 `cli/app.py` → `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
 
 **Vector writer path** (no Spark/Java needed; requires `vector` or `vector-sqlite` extra):
-`vector/writer.py` (`write_vector_sharded`) → `vector/sharding.py` (CLUSTER/LSH/EXPLICIT/CEL assignment) → `vector/adapters/usearch_adapter.py` (USearch HNSW) or `sqlite_vec_adapter.py` (sqlite-vec unified)
+`vector/writer.py` (`write_vector_sharded`) → `vector/sharding.py` (CLUSTER/LSH/EXPLICIT/CEL assignment) → `vector/adapters/lancedb_adapter.py` (LanceDB HNSW) or `sqlite_vec_adapter.py` (sqlite-vec unified)
 
 **Vector reader path** (no Spark/Java needed):
-`vector/reader.py` (`ShardedVectorReader`) → `vector/sharding.py` (query routing) → `vector/adapters/usearch_adapter.py` or `sqlite_vec_adapter.py` → `vector/_merge.py` (top-k heap merge)
+`vector/reader.py` (`ShardedVectorReader`) → `vector/sharding.py` (query routing) → `vector/adapters/lancedb_adapter.py` or `sqlite_vec_adapter.py` → `vector/_merge.py` (top-k heap merge)
 
 **Unified KV + vector path** (no Spark/Java needed):
 `reader/unified_reader.py` (`UnifiedShardedReader`, extends `ShardedReader`) → `vector/_merge.py` for search merge
@@ -92,7 +92,7 @@ Layer 2 — Storage, routing, manifest, run registry: storage.py (w/ RetryConfig
 Layer 3 — Writer core: _writer_core.py (shared by all writers; assemble_build_result, cleanup_losers, CleanupAction, cleanup_stale_attempts, cleanup_old_runs), _shard_writer.py (shared shard-write loop + retry: write_shard_core, write_shard_with_retry, ShardWriteParams)
 Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/ (reader.py, concurrent_reader.py, _base.py, _types.py, _state.py), reader/async_reader.py, cli/app.py
 Layer vec — Vector search: vector/types.py, vector/config.py (vector types/protocols/enums), vector/sharding.py (CLUSTER/LSH/EXPLICIT/CEL routing), vector/_merge.py (top-k heap merge), vector/writer.py (write_vector_sharded), vector/reader.py (ShardedVectorReader)
-Layer 5 — Adapters & testing: slatedb_adapter.py, sqlite_adapter.py (optional apsw for range-read VFS), sqlite_vec_adapter.py (unified KV+vector SQLite), vector/adapters/usearch_adapter.py (USearch HNSW sidecar), composite_adapter.py (KV+vector composite), testing.py
+Layer 5 — Adapters & testing: slatedb_adapter.py, sqlite_adapter.py (optional apsw for range-read VFS), sqlite_vec_adapter.py (unified KV+vector SQLite), vector/adapters/lancedb_adapter.py (LanceDB HNSW sidecar), composite_adapter.py (KV+vector composite), testing.py
 Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus extra), metrics/otel.py (metrics-otel extra)
 ```
 
@@ -352,8 +352,8 @@ Vector types and functions are imported from subpackages (not re-exported at top
 - **`tests/integration/`** — S3 via `moto`; Spark writer tests require Spark + Java. `backend/sqlite/` tests SQLite adapter against moto S3.
 - **`tests/e2e/`** — Garage S3 via compose; `just d-e2e`
 - **`tests/helpers/`** — `s3_test_scenarios.py` (shared scenarios for moto/Garage), `smoke_scenarios.py` (shared smoke E2E data and scenarios for HASH/CEL sharding across all writer frameworks), `run_record_assertions.py` (shared run-record content assertions), `tracking.py` (test doubles: `TrackingAdapter`, `TrackingFactory`, `RecordingTokenBucket`, `InMemoryPublisher`)
-- **`tests/unit/vector/`** — Vector search unit tests (types, config, sharding, merge, writer, reader, adapters, unified reader, CEL vector routing). Included in the `core-unit` tox env. Tests requiring `usearch` or `sqlite-vec` are skipped via `pytest.importorskip()` when extras are not installed.
-- **`tests/integration/vector/`** — Vector write→read round-trip against moto S3 using mock adapters (no usearch/sqlite-vec dependency). Included in `all-integration` tox env.
+- **`tests/unit/vector/`** — Vector search unit tests (types, config, sharding, merge, writer, reader, adapters, unified reader, CEL vector routing). Included in the `core-unit` tox env. Tests requiring `lancedb` or `sqlite-vec` are skipped via `pytest.importorskip()` when extras are not installed.
+- **`tests/integration/vector/`** — Vector write→read round-trip against moto S3 using mock adapters (no lancedb/sqlite-vec dependency). Included in `all-integration` tox env.
 - Markers: `@pytest.mark.spark`, `@pytest.mark.dask`, `@pytest.mark.ray`, `@pytest.mark.cel`, `@pytest.mark.e2e`, `@pytest.mark.vector`, `@pytest.mark.vector_sqlite`
 - **CEL tests**: require `cel` extra (`cel-expr-python`). Use `@pytest.mark.cel` marker. Skipped via `pytest.importorskip()` when the extra is not installed.
 - **Contract tests**: hypothesis property tests in `tests/unit/writer/core/test_routing_contract.py`, framework cross-checks in `writer/spark/`, `writer/dask/`, and `writer/ray/`
@@ -391,10 +391,10 @@ Vector types and functions are imported from subpackages (not re-exported at top
 - **`RetryConfig` usage**: Used in two places: (1) `S3ManifestStore` / `AsyncS3ManifestStore` for transient S3 errors, and (2) `WriteConfig.shard_retry` for retryable writer paths. `shard_retry` currently covers Dask/Ray sharded writes, Spark/Dask/Ray `write_single_db()`, and Python parallel writes. Spark sharded writes still rely on Spark task retry/speculation. When `shard_retry` is set, the retry path writes each attempt to a fresh S3 prefix (`attempt=00`, `attempt=01`, ...).
 - **`cel-expr-python` does not support Python 3.14**: The `cel` extra depends on `cel-expr-python` which has no py3.14 wheels. CEL tests are skipped on py3.14 via `pytest.importorskip()`.
 - **UnifiedShardedReader is lazily imported**: `__init__.py` uses `__getattr__` to defer the import of `UnifiedShardedReader` (and its numpy transitive dependency) until first access. This prevents `import shardyfusion` from requiring numpy for non-vector users.
-- **USearch and sqlite-vec imports are deferred**: `usearch_adapter.py` imports `usearch.index` inside class methods. `sqlite_vec_adapter.py` imports `sqlite_vec` inside `_load_sqlite_vec()`. Both are optional dependencies.
-- **Vector adapters use always-synthetic internal IDs**: USearch and sqlite-vec adapters assign monotonically increasing internal IDs to prevent cross-batch collisions between int and string user IDs (e.g., `42` vs `"42"`). The original ID type is preserved via typed JSON in the `id_map`/`vec_id_map` table (`{"v": <value>, "t": "int"|"str"}`).
+- **LanceDB and sqlite-vec imports are deferred**: `lancedb_adapter.py` imports `lancedb.index` inside class methods. `sqlite_vec_adapter.py` imports `sqlite_vec` inside `_load_sqlite_vec()`. Both are optional dependencies.
+- **Vector adapters use always-synthetic internal IDs**: LanceDB and sqlite-vec adapters assign monotonically increasing internal IDs to prevent cross-batch collisions between int and string user IDs (e.g., `42` vs `"42"`). The original ID type is preserved via typed JSON in the `id_map`/`vec_id_map` table (`{"v": <value>, "t": "int"|"str"}`).
 - **CEL compilation is cached in vector routing**: `route_vector_to_shards()` caches compiled CEL expressions at module level (keyed on expression + columns) to avoid recompilation on every search call.
-- **Vector distance semantics**: All backends (USearch, sqlite-vec) return distances (lower = more similar) for all metrics including dot product. `merge_results()` uses `heapq.nsmallest` uniformly. There is no `nlargest` path.
+- **Vector distance semantics**: All backends (LanceDB, sqlite-vec) return distances (lower = more similar) for all metrics including dot product. `merge_results()` uses `heapq.nsmallest` uniformly. There is no `nlargest` path.
 
 ## Environment Notes
 
