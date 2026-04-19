@@ -547,4 +547,8 @@ def resolve_adapter_factory(
         return config.adapter_factory
     from .adapters.lancedb_adapter import LanceDbWriterFactory
 
-    return LanceDbWriterFactory(s3_client=s3_client)
+    return LanceDbWriterFactory(
+        s3_client=s3_client,
+        s3_connection_options=config.s3_connection_options,
+        credential_provider=config.credential_provider,
+    )

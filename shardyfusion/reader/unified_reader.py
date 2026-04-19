@@ -123,7 +123,11 @@ def _auto_reader_factory(
 
             credentials = credential_provider.resolve() if credential_provider else None
             s3_client = create_s3_client(credentials, s3_connection_options)
-            vector_factory = LanceDbReaderFactory(s3_client=s3_client)
+            vector_factory = LanceDbReaderFactory(
+                s3_client=s3_client,
+                s3_connection_options=s3_connection_options,
+                credential_provider=credential_provider,
+            )
         except ImportError as exc:
             raise ConfigValidationError(
                 "Unified KV+vector reader with lancedb backend requires "

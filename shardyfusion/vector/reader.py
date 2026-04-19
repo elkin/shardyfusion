@@ -114,7 +114,11 @@ class ShardedVectorReader:
             from ..storage import create_s3_client
 
             s3_client = create_s3_client(credentials, s3_connection_options)
-            self._reader_factory = LanceDbReaderFactory(s3_client=s3_client)
+            self._reader_factory = LanceDbReaderFactory(
+                s3_client=s3_client,
+                s3_connection_options=s3_connection_options,
+                credential_provider=credential_provider,
+            )
 
         # S3 client for loading centroids/hyperplanes
         credentials = credential_provider.resolve() if credential_provider else None

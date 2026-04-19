@@ -389,7 +389,11 @@ def wrap_factory_for_vector(factory: Any, config: WriteConfig) -> Any:
     try:
         from shardyfusion.vector.adapters.lancedb_adapter import LanceDbWriterFactory
 
-        vector_factory = LanceDbWriterFactory(s3_client=s3_client)
+        vector_factory = LanceDbWriterFactory(
+            s3_client=s3_client,
+            s3_connection_options=config.s3_connection_options,
+            credential_provider=config.credential_provider,
+        )
     except ImportError as exc:
         raise ConfigValidationError(
             "Unified KV+vector mode with SlateDB requires the 'vector' extra "
