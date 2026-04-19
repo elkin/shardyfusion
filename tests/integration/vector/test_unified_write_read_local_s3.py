@@ -17,7 +17,7 @@ import pytest
 
 pytest.importorskip("cel_expr_python", reason="requires cel extra")
 
-from shardyfusion.config import ManifestOptions, VectorSpec, WriteConfig
+from shardyfusion.config import ManifestOptions, OutputOptions, VectorSpec, WriteConfig
 from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.manifest_store import S3ManifestStore
 from shardyfusion.storage import get_bytes, put_bytes
@@ -220,6 +220,10 @@ class TestUnifiedWriteReadRoundTrip:
     ) -> None:
         from shardyfusion.reader.unified_reader import UnifiedShardedReader
         from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
+        from shardyfusion.sqlite_vec_adapter import (
+            SqliteVecFactory,
+            SqliteVecReaderFactory,
+        )
         from shardyfusion.writer.python.writer import write_sharded
 
         rng = np.random.default_rng(42)
@@ -236,13 +240,18 @@ class TestUnifiedWriteReadRoundTrip:
             s3_prefix=s3_prefix,
             sharding=sharding,
             vector_spec=VectorSpec(dim=8),
-            adapter_factory=FakeUnifiedFactory(),
+            adapter_factory=SqliteVecFactory(
+                vector_spec=VectorSpec(dim=8),
+                credential_provider=cred_provider,
+                s3_connection_options=s3_conn_opts,
+            ),
             manifest=ManifestOptions(
                 credential_provider=cred_provider,
                 s3_connection_options=s3_conn_opts,
             ),
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
+            output=OutputOptions(local_root=str(tmp_path / "unified_writer")),
         )
 
         result = write_sharded(
@@ -270,13 +279,16 @@ class TestUnifiedWriteReadRoundTrip:
         assert vec_meta is not None
         assert vec_meta["dim"] == 8
         assert vec_meta["unified"] is True
-        assert vec_meta["backend"] == "lancedb"
+        assert vec_meta["backend"] == "sqlite-vec"
 
         # Read back
         reader = UnifiedShardedReader(
             s3_prefix=s3_prefix,
             local_root=str(tmp_path / "reader"),
-            reader_factory=FakeUnifiedReaderFactory(),
+            reader_factory=SqliteVecReaderFactory(
+                credential_provider=cred_provider,
+                s3_connection_options=s3_conn_opts,
+            ),
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
         )
@@ -304,6 +316,7 @@ class TestUnifiedWriteReadRoundTrip:
     ) -> None:
         """vector_col extracts vectors from columns_fn without explicit vector_fn."""
         from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
+        from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
         from shardyfusion.writer.python.writer import write_sharded
 
         rng = np.random.default_rng(123)
@@ -320,13 +333,18 @@ class TestUnifiedWriteReadRoundTrip:
             s3_prefix=f"{s3_prefix}-col",
             sharding=sharding,
             vector_spec=VectorSpec(dim=8, vector_col="embedding"),
-            adapter_factory=FakeUnifiedFactory(),
+            adapter_factory=SqliteVecFactory(
+                vector_spec=VectorSpec(dim=8, vector_col="embedding"),
+                credential_provider=cred_provider,
+                s3_connection_options=s3_conn_opts,
+            ),
             manifest=ManifestOptions(
                 credential_provider=cred_provider,
                 s3_connection_options=s3_conn_opts,
             ),
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
+            output=OutputOptions(local_root=str(tmp_path / "unified_writer2")),
         )
 
         result = write_sharded(

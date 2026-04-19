@@ -6,17 +6,20 @@ adapters (no lancedb dependency) against a real (moto) S3 service.
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 
+from shardyfusion.config import OutputOptions
 from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.manifest_store import S3ManifestStore
 from shardyfusion.type_defs import S3ConnectionOptions
+from shardyfusion.vector.adapters.lancedb_adapter import (
+    LanceDbReaderFactory,
+    LanceDbWriterFactory,
+)
 from shardyfusion.vector.config import (
     VectorIndexConfig,
     VectorShardingSpec,
@@ -25,145 +28,10 @@ from shardyfusion.vector.config import (
 from shardyfusion.vector.reader import ShardedVectorReader
 from shardyfusion.vector.types import (
     DistanceMetric,
-    SearchResult,
     VectorRecord,
     VectorShardingStrategy,
 )
 from shardyfusion.vector.writer import write_vector_sharded
-
-# ---------------------------------------------------------------------------
-# Mock adapters — no lancedb needed
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class FakeVectorWriter:
-    """Writes vectors to a local SQLite file for testing."""
-
-    db_url: str
-    local_dir: Path
-    dim: int
-    _ids: list[int] = field(default_factory=list)
-    _vectors: list[np.ndarray] = field(default_factory=list)
-    _payloads: list[dict[str, Any]] = field(default_factory=list)
-    _closed: bool = False
-
-    def add_batch(
-        self,
-        ids: np.ndarray,
-        vectors: np.ndarray,
-        payloads: list[dict[str, Any]] | None = None,
-    ) -> None:
-        for i in range(len(ids)):
-            self._ids.append(int(ids[i]))
-            self._vectors.append(vectors[i])
-            self._payloads.append(payloads[i] if payloads else {})
-
-    def flush(self) -> None:
-        pass
-
-    def checkpoint(self) -> str | None:
-        return f"ckpt-{len(self._ids)}"
-
-    def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        # Write a simple index file (JSON) to S3-like local path
-        self.local_dir.mkdir(parents=True, exist_ok=True)
-        index_path = self.local_dir / "index.json"
-        data = {
-            "ids": self._ids,
-            "vectors": [v.tolist() for v in self._vectors],
-            "payloads": self._payloads,
-            "dim": self.dim,
-        }
-        index_path.write_text(json.dumps(data))
-
-        # Upload to S3
-        from shardyfusion.storage import put_bytes
-
-        put_bytes(
-            f"{self.db_url}/index.json",
-            index_path.read_bytes(),
-            "application/json",
-        )
-
-    def __enter__(self) -> FakeVectorWriter:
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        self.close()
-
-
-class FakeWriterFactory:
-    def __call__(
-        self, *, db_url: str, local_dir: Path, index_config: Any
-    ) -> FakeVectorWriter:
-        return FakeVectorWriter(
-            db_url=db_url,
-            local_dir=local_dir,
-            dim=index_config.dim,
-        )
-
-
-class FakeShardReader:
-    """Reads from JSON index file for testing."""
-
-    def __init__(
-        self,
-        *,
-        db_url: str,
-        local_dir: Path,
-        index_config: Any,
-    ) -> None:
-        from shardyfusion.storage import get_bytes
-
-        local_dir.mkdir(parents=True, exist_ok=True)
-        data = json.loads(get_bytes(f"{db_url}/index.json"))
-        self._ids = data["ids"]
-        self._vectors = [np.array(v, dtype=np.float32) for v in data["vectors"]]
-        self._payloads = data["payloads"]
-        self._closed = False
-
-    def search(
-        self,
-        query: np.ndarray,
-        top_k: int,
-        ef: int = 50,
-    ) -> list[SearchResult]:
-        # Brute-force L2 search
-        dists = []
-        for i, v in enumerate(self._vectors):
-            d = float(np.sum((query - v) ** 2))
-            dists.append((d, i))
-        dists.sort()
-
-        results = []
-        for score, idx in dists[:top_k]:
-            results.append(
-                SearchResult(
-                    id=self._ids[idx],
-                    score=score,
-                    payload=self._payloads[idx] if self._payloads else None,
-                )
-            )
-        return results
-
-    def close(self) -> None:
-        self._closed = True
-
-
-class FakeReaderFactory:
-    def __call__(
-        self, *, db_url: str, local_dir: Path, index_config: Any
-    ) -> FakeShardReader:
-        return FakeShardReader(
-            db_url=db_url,
-            local_dir=local_dir,
-            index_config=index_config,
-        )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -226,6 +94,11 @@ class TestVectorWriterReaderRoundTrip:
         s3_conn_opts: S3ConnectionOptions,
         tmp_path: Path,
     ) -> None:
+        from shardyfusion.storage import create_s3_client
+
+        s3_client = create_s3_client(
+            cred_provider.resolve() if cred_provider else None, s3_conn_opts
+        )
         rng = np.random.default_rng(42)
         records = _make_records(rng, n=100, dim=32)
 
@@ -243,10 +116,11 @@ class TestVectorWriterReaderRoundTrip:
                 centroids=centroids,
                 num_probes=2,
             ),
-            adapter_factory=FakeWriterFactory(),
+            adapter_factory=LanceDbWriterFactory(s3_client=s3_client),
             batch_size=50,
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
+            output=OutputOptions(local_root=str(tmp_path / "writer")),
         )
 
         # Write
@@ -258,7 +132,7 @@ class TestVectorWriterReaderRoundTrip:
         reader = ShardedVectorReader(
             s3_prefix=s3_prefix,
             local_root=str(tmp_path / "reader"),
-            reader_factory=FakeReaderFactory(),
+            reader_factory=LanceDbReaderFactory(s3_client=s3_client),
             manifest_store=S3ManifestStore(
                 s3_prefix,
                 credential_provider=cred_provider,
@@ -291,6 +165,11 @@ class TestVectorWriterReaderRoundTrip:
         s3_conn_opts: S3ConnectionOptions,
         tmp_path: Path,
     ) -> None:
+        from shardyfusion.storage import create_s3_client
+
+        s3_client = create_s3_client(
+            cred_provider.resolve() if cred_provider else None, s3_conn_opts
+        )
         rng = np.random.default_rng(42)
         prefix = f"{s3_prefix}/explicit"
 
@@ -313,10 +192,11 @@ class TestVectorWriterReaderRoundTrip:
             sharding=VectorShardingSpec(
                 strategy=VectorShardingStrategy.EXPLICIT,
             ),
-            adapter_factory=FakeWriterFactory(),
+            adapter_factory=LanceDbWriterFactory(s3_client=s3_client),
             batch_size=25,
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
+            output=OutputOptions(local_root=str(tmp_path / "writer_explicit")),
         )
 
         result = write_vector_sharded(records, config)
@@ -326,7 +206,7 @@ class TestVectorWriterReaderRoundTrip:
         reader = ShardedVectorReader(
             s3_prefix=prefix,
             local_root=str(tmp_path / "reader_explicit"),
-            reader_factory=FakeReaderFactory(),
+            reader_factory=LanceDbReaderFactory(s3_client=s3_client),
             manifest_store=S3ManifestStore(
                 prefix,
                 credential_provider=cred_provider,
@@ -353,6 +233,11 @@ class TestVectorWriterReaderRoundTrip:
         s3_conn_opts: S3ConnectionOptions,
         tmp_path: Path,
     ) -> None:
+        from shardyfusion.storage import create_s3_client
+
+        s3_client = create_s3_client(
+            cred_provider.resolve() if cred_provider else None, s3_conn_opts
+        )
         rng = np.random.default_rng(42)
         prefix = f"{s3_prefix}/lsh"
         records = _make_records(rng, n=50, dim=16)
@@ -366,10 +251,11 @@ class TestVectorWriterReaderRoundTrip:
                 num_hash_bits=6,
                 num_probes=2,
             ),
-            adapter_factory=FakeWriterFactory(),
+            adapter_factory=LanceDbWriterFactory(s3_client=s3_client),
             batch_size=20,
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
+            output=OutputOptions(local_root=str(tmp_path / "writer_lsh")),
         )
 
         result = write_vector_sharded(records, config)
@@ -380,7 +266,7 @@ class TestVectorWriterReaderRoundTrip:
         reader = ShardedVectorReader(
             s3_prefix=prefix,
             local_root=str(tmp_path / "reader_lsh"),
-            reader_factory=FakeReaderFactory(),
+            reader_factory=LanceDbReaderFactory(s3_client=s3_client),
             manifest_store=S3ManifestStore(
                 prefix,
                 credential_provider=cred_provider,
@@ -407,6 +293,11 @@ class TestVectorWriterReaderRoundTrip:
         s3_conn_opts: S3ConnectionOptions,
         tmp_path: Path,
     ) -> None:
+        from shardyfusion.storage import create_s3_client
+
+        s3_client = create_s3_client(
+            cred_provider.resolve() if cred_provider else None, s3_conn_opts
+        )
         rng = np.random.default_rng(42)
         prefix = f"{s3_prefix}/health"
         records = _make_records(rng, n=20, dim=8)
@@ -418,9 +309,10 @@ class TestVectorWriterReaderRoundTrip:
             sharding=VectorShardingSpec(
                 strategy=VectorShardingStrategy.EXPLICIT,
             ),
-            adapter_factory=FakeWriterFactory(),
+            adapter_factory=LanceDbWriterFactory(s3_client=s3_client),
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
+            output=OutputOptions(local_root=str(tmp_path / "writer_health")),
         )
 
         # All records go to shard 0
@@ -432,7 +324,7 @@ class TestVectorWriterReaderRoundTrip:
         reader = ShardedVectorReader(
             s3_prefix=prefix,
             local_root=str(tmp_path / "reader_health"),
-            reader_factory=FakeReaderFactory(),
+            reader_factory=LanceDbReaderFactory(s3_client=s3_client),
             manifest_store=S3ManifestStore(
                 prefix,
                 credential_provider=cred_provider,
