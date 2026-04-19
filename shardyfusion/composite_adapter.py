@@ -30,8 +30,15 @@ from .config import VectorSpec, vector_metric_to_str
 from .errors import ShardyfusionError
 from .logging import get_logger, log_event
 from .slatedb_adapter import DbAdapter, DbAdapterFactory
-from .type_defs import ShardReader, ShardReaderFactory
+from .type_defs import (
+    AsyncShardReader,
+    AsyncShardReaderFactory,
+    ShardReader,
+    ShardReaderFactory,
+)
 from .vector.types import (
+    AsyncVectorShardReader,
+    AsyncVectorShardReaderFactory,
     SearchResult,
     VectorIndexWriter,
     VectorIndexWriterFactory,
@@ -276,3 +283,96 @@ class CompositeShardReader:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+
+@dataclass(slots=True)
+class AsyncCompositeReaderFactory:
+    """Factory that creates async unified KV + vector shard readers.
+
+    Args:
+        kv_factory: Factory for KV async shard readers.
+        vector_factory: Factory for vector async shard readers.
+        vector_spec: Vector configuration.
+    """
+
+    kv_factory: AsyncShardReaderFactory
+    vector_factory: AsyncVectorShardReaderFactory
+    vector_spec: VectorSpec
+
+    async def __call__(
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None = None,
+    ) -> AsyncCompositeShardReader:
+        from .vector.config import VectorIndexConfig
+        from .vector.types import DistanceMetric
+
+        index_config = VectorIndexConfig(
+            dim=self.vector_spec.dim,
+            metric=DistanceMetric(vector_metric_to_str(self.vector_spec.metric)),
+            index_type=self.vector_spec.index_type,
+            index_params=self.vector_spec.index_params,
+            quantization=self.vector_spec.quantization,
+        )
+
+        kv_reader = await self.kv_factory(
+            db_url=db_url,
+            local_dir=local_dir,
+            checkpoint_id=checkpoint_id,
+        )
+
+        vector_dir = local_dir / "vector"
+        vector_dir.mkdir(parents=True, exist_ok=True)
+        vector_reader = await self.vector_factory(
+            db_url=f"{db_url.rstrip('/')}/vector",
+            local_dir=vector_dir,
+            index_config=index_config,
+        )
+
+        return AsyncCompositeShardReader(
+            kv_reader=kv_reader,
+            vector_reader=vector_reader,
+        )
+
+
+class AsyncCompositeShardReader:
+    """Async unified shard reader: KV point lookups + vector search.
+
+    Wraps an async KV ``AsyncShardReader`` and an ``AsyncVectorShardReader`` to support
+    both ``get()`` and ``search()`` on the same shard.
+    """
+
+    def __init__(
+        self,
+        *,
+        kv_reader: AsyncShardReader,
+        vector_reader: AsyncVectorShardReader,
+    ) -> None:
+        self._kv = kv_reader
+        self._vec = vector_reader
+
+    async def get(self, key: bytes) -> bytes | None:
+        """KV point lookup."""
+        return await self._kv.get(key)
+
+    async def search(
+        self,
+        query: np.ndarray,
+        top_k: int,
+    ) -> list[SearchResult]:
+        """Vector similarity search."""
+        return await self._vec.search(query, top_k)
+
+    async def close(self) -> None:
+        try:
+            await self._vec.close()
+        finally:
+            await self._kv.close()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()

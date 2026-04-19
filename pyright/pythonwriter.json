@@ -16,7 +16,8 @@
     "../shardyfusion/composite_adapter.py",
     "../shardyfusion/sqlite_vec_adapter.py",
     "../shardyfusion/metrics/prometheus.py",
-    "../shardyfusion/metrics/otel.py"
+    "../shardyfusion/metrics/otel.py",
+    "../shardyfusion/reader/async_unified_reader.py"
   ],
   "extraPaths": [
     ".."

@@ -10,6 +10,7 @@ from .reader import ShardedReader
 
 __all__ = [
     "AsyncShardedReader",
+    "AsyncUnifiedShardedReader",
     "AsyncShardReaderHandle",
     "AsyncSlateDbReaderFactory",
     "ConcurrentShardedReader",
@@ -24,6 +25,10 @@ __all__ = [
 
 
 def __getattr__(name: str):  # noqa: ANN202
+    if name == "AsyncUnifiedShardedReader":
+        from .async_unified_reader import AsyncUnifiedShardedReader
+
+        return AsyncUnifiedShardedReader
     if name == "UnifiedShardedReader":
         from .unified_reader import UnifiedShardedReader
 
