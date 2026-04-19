@@ -116,7 +116,9 @@ class LanceDbWriter:
 
         if self._table is None:
             self._table = self._db.create_table(
-                self._table_name, data=data, schema=self._schema
+                self._table_name,
+                data=data,
+                schema=self._schema,
             )
         else:
             self._table.add(data)
@@ -275,6 +277,34 @@ class LanceDbWriterFactory:
 # ---------------------------------------------------------------------------
 
 
+def _extract_storage_options(s3_client: Any | None) -> dict[str, str] | None:
+    if s3_client is None or not hasattr(s3_client, "meta"):
+        return None
+
+    options: dict[str, str] = {}
+    if s3_client.meta.endpoint_url:
+        options["aws_endpoint"] = s3_client.meta.endpoint_url
+        if s3_client.meta.endpoint_url.startswith("http://"):
+            options["aws_allow_http"] = "true"
+    if s3_client.meta.region_name:
+        options["aws_region"] = s3_client.meta.region_name
+
+    # Try to extract credentials
+    if hasattr(s3_client, "_request_signer") and hasattr(
+        s3_client._request_signer, "_credentials"
+    ):
+        creds = s3_client._request_signer._credentials
+        if creds:
+            if getattr(creds, "access_key", None):
+                options["aws_access_key_id"] = creds.access_key
+            if getattr(creds, "secret_key", None):
+                options["aws_secret_access_key"] = creds.secret_key
+            if getattr(creds, "token", None):
+                options["aws_session_token"] = creds.token
+
+    return options if options else None
+
+
 class LanceDbShardReader:
     """Connects to remote LanceDB dataset on S3 and searches remotely."""
 
@@ -296,12 +326,17 @@ class LanceDbShardReader:
         # the url. LanceDB uses `object_store` which picks up AWS_ params.
 
         # We connect directly to the db_url (assuming it's s3://...)
-        self._db = lancedb.connect(db_url)
+        storage_options = _extract_storage_options(s3_client)
+        self._db = lancedb.connect(db_url, storage_options=storage_options)
         self._closed = False
 
         try:
             self._table = self._db.open_table(self._table_name)
-        except Exception:
+        except Exception as exc:
+            import traceback
+
+            traceback.print_exc()
+            print(f"FAILED TO OPEN TABLE {self._table_name} AT {db_url}: {exc}")
             self._table = None
 
     def search(
@@ -329,14 +364,7 @@ class LanceDbShardReader:
         for i in range(len(matches)):
             row = matches.take([i]).to_pylist()[0]
 
-            orig_id_str = row["id"]
-            # Attempt to convert to int if it looks like one, to match LanceDB behavior
-            orig_id: int | str = orig_id_str
-            if orig_id_str.isdigit():
-                try:
-                    orig_id = int(orig_id_str)
-                except ValueError:
-                    pass
+            orig_id: int | str = row["id"]
 
             score = float(row.get("_distance", 0.0))
 
