@@ -93,8 +93,8 @@ def test_spark_vector_cluster_write_to_sqlite(
     assert total_vectors == num_records
 
     # Verification: Read back
-    from shardyfusion.vector.reader import ShardedVectorReader
     from shardyfusion.sqlite_vec_adapter import SqliteVecReaderFactory
+    from shardyfusion.vector.reader import ShardedVectorReader
 
     reader = ShardedVectorReader(
         s3_prefix=f"s3://{prefix}",
@@ -201,8 +201,8 @@ def test_spark_vector_lsh_write_to_sqlite(spark, garage_s3_service, tmp_path) ->
     assert total_vectors == num_records
 
     # Verification: Read back
-    from shardyfusion.vector.reader import ShardedVectorReader
     from shardyfusion.sqlite_vec_adapter import SqliteVecReaderFactory
+    from shardyfusion.vector.reader import ShardedVectorReader
 
     reader = ShardedVectorReader(
         s3_prefix=f"s3://{prefix}",
@@ -244,13 +244,13 @@ def test_spark_vector_lancedb_write_and_read(
         WriteConfig,
     )
     from shardyfusion.manifest_store import S3ManifestStore
+    from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
     from shardyfusion.storage import create_s3_client
     from shardyfusion.vector.adapters.lancedb_adapter import (
         LanceDbReaderFactory,
         LanceDbWriterFactory,
     )
     from shardyfusion.vector.config import VectorSpecSharding
-    from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
     from shardyfusion.vector.reader import ShardedVectorReader
     from shardyfusion.writer.spark.writer import write_vector_sharded
 
@@ -265,7 +265,7 @@ def test_spark_vector_lancedb_write_and_read(
     num_records = 1000
     dim = 128
     num_dbs = 4
-    
+
     vector_spec = VectorSpec(
         dim=dim,
         vector_col="embedding",
