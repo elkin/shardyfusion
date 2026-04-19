@@ -220,16 +220,14 @@
       {
         "name": "py311 / vector / lancedb / unit",
         "tox-env": "py311-vector-lancedb-unit",
-        "runner": "ubuntu-latest",
-        "python": "3.11",
-        "label": "unit"
+        "python-version": "3.11",
+        "needs-java": false
       },
       {
         "name": "py312 / vector / lancedb / unit",
         "tox-env": "py312-vector-lancedb-unit",
-        "runner": "ubuntu-latest",
-        "python": "3.12",
-        "label": "unit"
+        "python-version": "3.12",
+        "needs-java": false
       },
       {
         "name": "py313 / vector / lancedb / unit",
