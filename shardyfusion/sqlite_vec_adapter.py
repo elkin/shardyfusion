@@ -389,6 +389,7 @@ class SqliteVecReaderFactory:
         db_url: str,
         local_dir: Path,
         checkpoint_id: str | None = None,
+        index_config: Any | None = None,
     ) -> SqliteVecShardReader:
         return SqliteVecShardReader(
             db_url=db_url,
@@ -463,8 +464,7 @@ class SqliteVecShardReader:
 
         query_bytes = query.astype(np.float32).tobytes()
         rows = self._conn.execute(
-            "SELECT rowid, distance FROM vec_index "
-            "WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+            "SELECT rowid, distance FROM vec_index WHERE embedding MATCH ? AND k = ?",
             (query_bytes, top_k),
         ).fetchall()
 
