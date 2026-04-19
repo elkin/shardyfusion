@@ -1,37 +1,29 @@
 # Writer Side
 
-## Vector Writer
-To write sharded vector indices, use `write_vector_sharded`. This pipeline handles vector routing setup (like training centroids or generating hyperplanes) and writes the indices to S3.
+## Vector Search Writers
+
+To write datasets that include vector indices for approximate nearest-neighbor (ANN) search, `shardyfusion` provides a comprehensive vector indexing mode.
+
+This works seamlessly with the distributed writers (Spark, Ray, Dask) by embedding a `VectorSpec` inside your main `WriteConfig`:
 
 ```python
-from shardyfusion.vector.config import VectorWriteConfig, VectorIndexConfig, VectorShardingSpec
-from shardyfusion.vector.writer import write_vector_sharded
-from shardyfusion.vector.types import VectorRecord, VectorShardingStrategy
-import numpy as np
+from shardyfusion.config import WriteConfig, VectorSpec
+from shardyfusion.vector.config import VectorSpecSharding
 
-# Configuration for the vector index
-config = VectorWriteConfig(
-    s3_prefix="s3://bucket/prefix",
-    num_dbs=8,
-    index_config=VectorIndexConfig(dim=128, metric="cosine"),
-    sharding=VectorShardingSpec(
-        strategy=VectorShardingStrategy.CLUSTER,
-        train_centroids=True, # Automatically train centroids from sample
+config = WriteConfig(
+    # ... other KV options
+    vector_spec=VectorSpec(
+        dim=128,
+        vector_col="embedding",
+        sharding=VectorSpecSharding(strategy="cluster", train_centroids=True)
     ),
+    adapter_factory=LanceDbWriterFactory(...) # Or SqliteVecFactory
 )
-
-# Data to write
-records = [
-    VectorRecord(id=i, vector=np.random.randn(128), payload={"attr": "val"}) 
-    for i in range(1000)
-]
-
-# Execute write
-result = write_vector_sharded(records, config)
 ```
 
+For full details on vector backends (like LanceDB and `sqlite-vec`), routing strategies (`cluster`, `lsh`), and complete examples, see the dedicated [Vector Search Guide](vector-search.md).
 
-Four writer backends are available, all producing the same manifest format:
+## Available Backends
 
 | Backend | Entrypoint | Input Type | Requires Java |
 |---------|-----------|------------|---------------|

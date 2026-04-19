@@ -33,6 +33,7 @@ nav:
     - Ray: writers/ray.md
     - Python: writers/python.md
   - Reader: reader.md
+  - Vector Search: vector-search.md
   - Manifest Stores: manifest-stores.md
   - CLI (shardy): cli.md
   - Observability: observability.md
@@ -44,6 +45,8 @@ nav:
     - 2026-03-25 Consistent Writer Retry: engineering-notes/2026-03-25-consistent-writer-retry.md
     - 2026-03-25 Run Registry For Deferred Cleanup: engineering-notes/2026-03-25-run-registry-for-deferred-cleanup.md
     - 2026-03-28 Categorical CEL Routing: engineering-notes/2026-03-28-categorical-cel-routing.md
+    - 2026-04-04 Sharded Vector Search: engineering-notes/2026-04-04-sharded-vector-search.md
+    - 2026-04-06 Vector Search Review: engineering-notes/2026-04-06-vector-search-review.md
     - 2026-04-19 LanceDB Vector Migration: engineering-notes/2026-04-19-lancedb-vector-migration.md
   - Operations: operations.md
   - Tox & Dependency Matrix: tox-and-dependency-matrix.md

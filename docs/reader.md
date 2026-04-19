@@ -1,10 +1,33 @@
 # Reader Side
 
 ## Vector Search Readers
-For datasets that include vector indices, use the specialized vector readers.
+
+For datasets that include vector indices, `shardyfusion` offers two specialized readers depending on whether you're querying unified (KV+Vector) snapshots or standalone vector datasets. 
+
+See the comprehensive [Vector Search Guide](vector-search.md) for full configuration details and capabilities.
+
+### UnifiedShardedReader
+The `UnifiedShardedReader` provides both key-value point lookups and nearest-neighbor vector searches on the same snapshot dataset.
+
+```python
+from shardyfusion import UnifiedShardedReader
+import numpy as np
+
+reader = UnifiedShardedReader(
+    s3_prefix="s3://bucket/prefix",
+    local_root="/tmp/dataset",
+)
+
+# Standard point lookup
+val = reader.get("user-123")
+
+# Vector nearest neighbor search
+query = np.random.randn(128).astype(np.float32)
+results = reader.search(query, top_k=10)
+```
 
 ### ShardedVectorReader
-The `ShardedVectorReader` is a standalone reader for vector-only datasets. It handles the "double-dip" routing (finding target shards via centroids/hyperplanes) and concurrently fans out the search.
+The `ShardedVectorReader` is used when you are searching across standalone vector datasets (indices created without point-lookup KV data).
 
 ```python
 from shardyfusion.vector.reader import ShardedVectorReader
@@ -18,7 +41,7 @@ reader = ShardedVectorReader(
 query = np.random.randn(128).astype(np.float32)
 results = reader.search(query, top_k=10)
 
-for res in results.results:
+for res in results:
     print(f"ID: {res.id}, Score: {res.score}")
 ```
 
