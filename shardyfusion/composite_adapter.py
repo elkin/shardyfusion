@@ -1,7 +1,7 @@
 """Composite adapter — KV + vector sidecar in one lifecycle.
 
 Wraps a ``DbAdapter`` (KV storage, e.g. SlateDB) alongside a
-``VectorIndexWriter`` (e.g. USearch HNSW) so that both share
+``VectorIndexWriter`` (e.g. LanceDB HNSW) so that both share
 the same shard prefix and are managed as a single unit.
 
 Writer side:
@@ -64,7 +64,7 @@ class CompositeFactory:
 
     Args:
         kv_factory: Factory for the KV adapter (e.g. ``SlateDbFactory``).
-        vector_factory: Factory for the vector writer (e.g. ``USearchWriterFactory``).
+        vector_factory: Factory for the vector writer (e.g. ``LanceDBWriterFactory``).
         vector_spec: Vector configuration from ``WriteConfig``.
     """
 
@@ -191,7 +191,7 @@ class CompositeReaderFactory:
 
     Args:
         kv_factory: Factory for KV shard readers (e.g. ``SlateDbReaderFactory``).
-        vector_factory: Factory for vector shard readers (e.g. ``USearchReaderFactory``).
+        vector_factory: Factory for vector shard readers (e.g. ``LanceDBReaderFactory``).
         vector_spec: Vector configuration.
     """
 

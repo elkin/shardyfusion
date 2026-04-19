@@ -2,7 +2,7 @@
 
 Wraps a ``ShardedReader`` and adds ``search()`` / ``batch_search()`` methods
 that query the vector index embedded in each shard (via sqlite-vec or
-USearch sidecar).  Uses the same manifest, routing, and shard lifecycle as
+LanceDB sidecar).  Uses the same manifest, routing, and shard lifecycle as
 the underlying KV reader.
 
 Requires that the snapshot was built with ``vector_spec`` set on
@@ -47,7 +47,7 @@ class UnifiedVectorMeta:
     index_type: str
     quantization: str | None
     index_params: dict[str, Any]
-    backend: str  # "sqlite-vec" or "usearch-sidecar"
+    backend: str  # "sqlite-vec" or "lancedb"
     kv_backend: str  # "slatedb", "sqlite", or "sqlite-vec"
 
 
@@ -65,7 +65,7 @@ def _parse_vector_custom(custom: dict[str, Any]) -> UnifiedVectorMeta:
         index_type=str(vector.get("index_type", "hnsw")),
         quantization=vector.get("quantization"),
         index_params=vector.get("index_params", {}),
-        backend=str(vector.get("backend", "usearch-sidecar")),
+        backend=str(vector.get("backend", "lancedb")),
         kv_backend=str(vector.get("kv_backend", "slatedb")),
     )
 
@@ -84,8 +84,8 @@ def _auto_reader_factory(
             credential_provider=credential_provider,
             s3_connection_options=s3_connection_options,
         )
-    else:
-        # usearch-sidecar: compose KV reader + vector reader
+    elif meta.backend == "lancedb":
+        # lancedb: compose KV reader + vector reader
         from shardyfusion.composite_adapter import CompositeReaderFactory
         from shardyfusion.config import VectorSpec
 
@@ -117,16 +117,16 @@ def _auto_reader_factory(
 
         try:
             from shardyfusion.storage import create_s3_client
-            from shardyfusion.vector.adapters.usearch_adapter import (
-                USearchReaderFactory,
+            from shardyfusion.vector.adapters.lancedb_adapter import (
+                LanceDbReaderFactory,
             )
 
             credentials = credential_provider.resolve() if credential_provider else None
             s3_client = create_s3_client(credentials, s3_connection_options)
-            vector_factory = USearchReaderFactory(s3_client=s3_client)
+            vector_factory = LanceDbReaderFactory(s3_client=s3_client)
         except ImportError as exc:
             raise ConfigValidationError(
-                "Unified KV+vector reader with usearch-sidecar backend requires "
+                "Unified KV+vector reader with lancedb backend requires "
                 "the 'vector' extra. Install with: pip install shardyfusion[vector]"
             ) from exc
 
@@ -135,6 +135,8 @@ def _auto_reader_factory(
             vector_factory=vector_factory,
             vector_spec=vs,
         )
+    else:
+        raise ConfigValidationError(f"Unknown vector backend '{meta.backend}'.")
 
 
 class UnifiedShardedReader(ShardedReader):

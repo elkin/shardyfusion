@@ -108,13 +108,13 @@ class ShardedVectorReader:
         if reader_factory is not None:
             self._reader_factory = reader_factory
         else:
-            from .adapters.usearch_adapter import USearchReaderFactory
+            from .adapters.lancedb_adapter import LanceDbReaderFactory
 
             credentials = credential_provider.resolve() if credential_provider else None
             from ..storage import create_s3_client
 
             s3_client = create_s3_client(credentials, s3_connection_options)
-            self._reader_factory = USearchReaderFactory(s3_client=s3_client)
+            self._reader_factory = LanceDbReaderFactory(s3_client=s3_client)
 
         # S3 client for loading centroids/hyperplanes
         credentials = credential_provider.resolve() if credential_provider else None

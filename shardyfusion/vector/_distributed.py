@@ -542,9 +542,9 @@ def resolve_adapter_factory(
     config: VectorWriteConfig,
     s3_client: Any | None,
 ) -> VectorIndexWriterFactory:
-    """Return the user-provided factory or the default USearch factory."""
+    """Return the user-provided factory or the default LanceDB factory."""
     if config.adapter_factory is not None:
         return config.adapter_factory
-    from .adapters.usearch_adapter import USearchWriterFactory
+    from .adapters.lancedb_adapter import LanceDbWriterFactory
 
-    return USearchWriterFactory(s3_client=s3_client)
+    return LanceDbWriterFactory(s3_client=s3_client)

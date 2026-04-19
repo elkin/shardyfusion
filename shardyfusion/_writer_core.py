@@ -387,13 +387,13 @@ def wrap_factory_for_vector(factory: Any, config: WriteConfig) -> Any:
     s3_client = create_s3_client(credentials, config.s3_connection_options)
 
     try:
-        from shardyfusion.vector.adapters.usearch_adapter import USearchWriterFactory
+        from shardyfusion.vector.adapters.lancedb_adapter import LanceDbWriterFactory
 
-        vector_factory = USearchWriterFactory(s3_client=s3_client)
+        vector_factory = LanceDbWriterFactory(s3_client=s3_client)
     except ImportError as exc:
         raise ConfigValidationError(
             "Unified KV+vector mode with SlateDB requires the 'vector' extra "
-            "(usearch). Install with: pip install shardyfusion[vector]"
+            "(lancedb). Install with: pip install shardyfusion[vector]"
         ) from exc
 
     return CompositeFactory(
@@ -408,7 +408,7 @@ def detect_vector_backend(factory: Any) -> str:
 
     if isinstance(factory, SqliteVecFactory):
         return "sqlite-vec"
-    return "usearch-sidecar"
+    return "lancedb"
 
 
 def detect_kv_backend(factory: Any) -> str:
