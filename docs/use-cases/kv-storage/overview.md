@@ -6,6 +6,39 @@ This page explains how sharding, manifests, publishing, and reading work for **a
 
 ---
 
+## Snapshots and reader migration
+
+The core idea is that you **publish new snapshots regularly** without breaking any existing readers. Each snapshot is an immutable, self-contained set of shards. Old snapshots remain on S3 until you explicitly clean them up. Readers decide when to move to a newer snapshot.
+
+```mermaid
+flowchart LR
+    subgraph S3["S3 / Object store"]
+        direction TB
+        MAN1["manifest N-1<br/>run_id=abc"]
+        MAN2["manifest N<br/>run_id=def"]
+        MAN3["manifest N+1<br/>run_id=ghi"]
+        CUR["_CURRENT pointer"]
+
+        CUR -->|points to| MAN3
+    end
+
+    subgraph "Reader A (new)"
+        RA["open()"] -->|reads _CURRENT| MAN3
+    end
+
+    subgraph "Reader B (already open)"
+        RB["open() earlier"] -->|pinned to| MAN2
+        RB -.->|"refresh() when ready"| MAN3
+    end
+```
+
+- **Writer** publishes a new snapshot by writing a new manifest object, then updating `_CURRENT` to point at it.
+- **Reader A** opened after the new publish: it reads `_CURRENT` and sees the latest snapshot immediately.
+- **Reader B** was already running before the publish: it stays pinned to the older manifest it loaded at open time. It only sees the new snapshot after calling `refresh()` (or restarting).
+- **Old snapshots** are not deleted when a new one is published. They stay on S3 as the rollback history until `cleanup` is run.
+
+---
+
 ## What is a shard?
 
 A **shard** is one physical database file (`db_id` ∈ `[0, num_dbs)`). The writer distributes rows across shards; the reader routes each key to exactly one shard. The mapping from key → shard is deterministic and identical on both sides.
