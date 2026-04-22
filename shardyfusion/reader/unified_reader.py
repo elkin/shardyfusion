@@ -87,11 +87,11 @@ def _auto_reader_factory(
     elif meta.backend == "lancedb":
         # lancedb: compose KV reader + vector reader
         from shardyfusion.composite_adapter import CompositeReaderFactory
-        from shardyfusion.config import VectorSpec
+        from shardyfusion.config import VectorSpec, vector_metric_to_str
 
         vs = VectorSpec(
             dim=meta.dim,
-            metric=meta.metric,
+            metric=vector_metric_to_str(meta.metric),
             index_type=meta.index_type,
             index_params=meta.index_params,
             quantization=meta.quantization,

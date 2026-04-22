@@ -51,13 +51,11 @@ class ManifestOptions:
 _VALID_VECTOR_METRICS = frozenset({"cosine", "l2", "dot_product"})
 
 VectorMetricLiteral: TypeAlias = Literal["cosine", "l2", "dot_product"]
-if TYPE_CHECKING:
-    from .vector.types import DistanceMetric
-
-VectorMetric: TypeAlias = "DistanceMetric | VectorMetricLiteral"
 
 
-def vector_metric_to_str(metric: VectorMetric | str) -> VectorMetricLiteral:
+def vector_metric_to_str(
+    metric: VectorMetricLiteral | str | object,
+) -> VectorMetricLiteral:
     """Normalize a vector metric to its stable manifest string value."""
     metric_str = getattr(metric, "value", metric)
     if not isinstance(metric_str, str) or metric_str not in _VALID_VECTOR_METRICS:
@@ -68,19 +66,17 @@ def vector_metric_to_str(metric: VectorMetric | str) -> VectorMetricLiteral:
     return metric_str  # type: ignore[return-value]
 
 
-def _coerce_vector_metric(metric: VectorMetric | str) -> VectorMetric:
-    """Convert metric strings to ``DistanceMetric`` when available.
+def _coerce_vector_metric(
+    metric: VectorMetricLiteral | str | object,
+) -> VectorMetricLiteral:
+    """Validate and normalize a vector metric to its string literal form.
 
-    Falls back to constrained string literals when vector dependencies are
-    unavailable (lazy import behavior).
+    This keeps ``VectorSpec.metric`` as a plain string so downstream code
+    does not need to handle both ``DistanceMetric`` enums and strings.
+    The conversion to ``DistanceMetric`` happens only when building a
+    ``VectorIndexConfig`` (via ``to_vector_index_config``).
     """
-    metric_str = vector_metric_to_str(metric)
-    try:
-        from .vector.types import DistanceMetric
-
-        return DistanceMetric(metric_str)
-    except ImportError:
-        return metric_str
+    return vector_metric_to_str(metric)
 
 
 def _get_vector_spec_sharding() -> "VectorSpecSharding":  # noqa: UP037
@@ -113,7 +109,7 @@ class VectorSpec:
 
     dim: int
     vector_col: str | None = None
-    metric: VectorMetric = "cosine"
+    metric: VectorMetricLiteral = "cosine"
     index_type: str = "hnsw"
     index_params: dict[str, object] = field(default_factory=dict)
     quantization: str | None = None
