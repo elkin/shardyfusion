@@ -1,0 +1,23 @@
+/* Widen the main grid to use more viewport space */
+.md-grid {
+  max-width: 90vw;
+}
+
+/* Allow content area to expand */
+.md-content {
+  max-width: none;
+}
+
+/* Slightly narrow the sidebars so content gets more room */
+.md-sidebar {
+  width: 14rem;
+}
+
+.md-sidebar--secondary {
+  width: 12rem;
+}
+
+/* Ensure content inner uses full available width */
+.md-content__inner {
+  max-width: none;
+}
