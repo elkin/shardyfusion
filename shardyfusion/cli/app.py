@@ -181,6 +181,15 @@ def _build_reader(ctx: click.Context) -> ConcurrentShardedReader:
     if pinned_ref is not None:
         manifest_store = _PinnedManifestStore(manifest_store, pinned_ref)
 
+    reader_factory = None
+    if reader_cfg.reader_backend == "sqlite":
+        from ..sqlite_adapter import SqliteReaderFactory
+
+        reader_factory = SqliteReaderFactory(
+            credential_provider=params["credential_provider"],
+            s3_connection_options=params["s3_connection_options"],
+        )
+
     try:
         return ConcurrentShardedReader(
             s3_prefix=params["s3_prefix"],
@@ -193,6 +202,7 @@ def _build_reader(ctx: click.Context) -> ConcurrentShardedReader:
             thread_safety=reader_cfg.thread_safety,
             pool_checkout_timeout=reader_cfg.pool_checkout_timeout,
             max_workers=reader_cfg.max_workers,
+            reader_factory=reader_factory,
         )
     except Exception as exc:
         raise click.ClickException(f"Failed to initialise reader: {exc}") from exc

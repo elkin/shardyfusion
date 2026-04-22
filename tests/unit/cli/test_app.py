@@ -433,6 +433,76 @@ pool_checkout_timeout = 15.0
 
 
 # ---------------------------------------------------------------------------
+# reader_backend selection
+# ---------------------------------------------------------------------------
+
+
+class TestReaderBackendSelection:
+    def test_slatedb_default_no_factory_override(self, tmp_path: Any) -> None:
+        cfg_path = tmp_path / "reader.toml"
+        cfg_path.write_text(
+            """\
+[reader]
+current_url = "s3://bucket/prefix/_CURRENT"
+"""
+        )
+        captured_kwargs: dict[str, Any] = {}
+
+        def _capture_reader(**kwargs: Any) -> _FakeReader:
+            captured_kwargs.update(kwargs)
+            return _FakeReader()
+
+        with (
+            patch(
+                "shardyfusion.reader.ConcurrentShardedReader",
+                side_effect=_capture_reader,
+            ),
+            patch(
+                "shardyfusion.cli.app._build_manifest_store",
+                return_value=MagicMock(),
+            ),
+        ):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(cli, ["--config", str(cfg_path), "info"])
+
+        assert result.exit_code == 0
+        assert captured_kwargs.get("reader_factory") is None
+
+    def test_sqlite_injects_sqlite_reader_factory(self, tmp_path: Any) -> None:
+        cfg_path = tmp_path / "reader.toml"
+        cfg_path.write_text(
+            """\
+[reader]
+current_url = "s3://bucket/prefix/_CURRENT"
+reader_backend = "sqlite"
+"""
+        )
+        captured_kwargs: dict[str, Any] = {}
+
+        def _capture_reader(**kwargs: Any) -> _FakeReader:
+            captured_kwargs.update(kwargs)
+            return _FakeReader()
+
+        with (
+            patch(
+                "shardyfusion.reader.ConcurrentShardedReader",
+                side_effect=_capture_reader,
+            ),
+            patch(
+                "shardyfusion.cli.app._build_manifest_store",
+                return_value=MagicMock(),
+            ),
+        ):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(cli, ["--config", str(cfg_path), "info"])
+
+        assert result.exit_code == 0
+        from shardyfusion.sqlite_adapter import SqliteReaderFactory
+
+        assert isinstance(captured_kwargs.get("reader_factory"), SqliteReaderFactory)
+
+
+# ---------------------------------------------------------------------------
 # Schema subcommand (no reader needed)
 # ---------------------------------------------------------------------------
 

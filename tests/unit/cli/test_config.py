@@ -213,6 +213,18 @@ class TestReaderConfigNewFields:
         cfg = ReaderConfig(s3_prefix="")
         assert cfg.s3_prefix is None
 
+    def test_reader_backend_default_is_slatedb(self) -> None:
+        cfg = ReaderConfig()
+        assert cfg.reader_backend == "slatedb"
+
+    def test_reader_backend_sqlite(self) -> None:
+        cfg = ReaderConfig(reader_backend="sqlite")
+        assert cfg.reader_backend == "sqlite"
+
+    def test_invalid_reader_backend_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ReaderConfig(reader_backend="bogus")  # type: ignore[arg-type]
+
 
 # ---------------------------------------------------------------------------
 # load_reader_config with [manifest_store]

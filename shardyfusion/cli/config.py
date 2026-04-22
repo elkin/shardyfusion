@@ -44,6 +44,7 @@ class ReaderConfig(BaseModel):
     max_workers: int = Field(default=4, ge=1)
     slate_env_file: str | None = None
     credentials_profile: str = "default"
+    reader_backend: Literal["slatedb", "sqlite"] = "slatedb"
 
     @field_validator("current_url", "s3_prefix", mode="before")
     @classmethod
