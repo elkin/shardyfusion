@@ -94,6 +94,23 @@ class TestCliVectorSearchLanceDb:
         assert parsed["top_k"] == 3
         assert parsed["num_shards_queried"] > 0
 
+        results = parsed["results"]
+        assert len(results) == 3
+        # L2 distance from [1.0, 5.0] to [1.0, i] is |5 - i|
+        assert results[0]["id"] == "id_5"
+        assert results[0]["score"] == 0.0
+        assert results[0]["payload"] == {"val": 5}
+        # id_4 and id_6 are both distance 1 away; order between them is unspecified
+        assert results[1]["score"] == 1.0
+        assert results[1]["id"] in ("id_4", "id_6")
+        assert results[1]["payload"]["val"] in (4, 6)
+        assert results[2]["score"] == 1.0
+        assert results[2]["id"] in ("id_4", "id_6")
+        assert results[2]["id"] != results[1]["id"]
+        assert results[2]["payload"]["val"] in (4, 6)
+        # Scores must be monotonically non-decreasing
+        assert results[0]["score"] <= results[1]["score"] <= results[2]["score"]
+
     def test_search_shard_ids(self, garage_s3_service, tmp_path) -> None:
         s3_prefix = _write_lancedb_vector_data(garage_s3_service, tmp_path)
         current_url = f"{s3_prefix}/_CURRENT"
@@ -103,6 +120,32 @@ class TestCliVectorSearchLanceDb:
         parsed = json.loads(result.output)
         assert parsed["op"] == "search"
         assert parsed["num_shards_queried"] == 1
+
+        results = parsed["results"]
+        # Shard 0 contains even ids: 0, 2, 4, 6, 8
+        assert len(results) == 5
+        ids = [r["id"] for r in results]
+        assert set(ids) == {"id_0", "id_2", "id_4", "id_6", "id_8"}
+        # Verify exact ordering by squared-L2 distance from [1.0, 5.0]
+        # (LanceDB returns squared L2, not Euclidean L2)
+        assert results[0]["id"] == "id_4"
+        assert results[0]["score"] == 1.0
+        assert results[0]["payload"] == {"val": 4}
+        assert results[1]["id"] == "id_6"
+        assert results[1]["score"] == 1.0
+        assert results[1]["payload"] == {"val": 6}
+        assert results[2]["id"] == "id_2"
+        assert results[2]["score"] == 9.0
+        assert results[2]["payload"] == {"val": 2}
+        assert results[3]["id"] == "id_8"
+        assert results[3]["score"] == 9.0
+        assert results[3]["payload"] == {"val": 8}
+        assert results[4]["id"] == "id_0"
+        assert results[4]["score"] == 25.0
+        assert results[4]["payload"] == {"val": 0}
+        # Scores must be monotonically non-decreasing
+        for i in range(len(results) - 1):
+            assert results[i]["score"] <= results[i + 1]["score"]
 
 
 # ---------------------------------------------------------------------------
@@ -123,9 +166,10 @@ def _write_sqlite_vec_data(s3_service: LocalS3Service, tmp_path: Path) -> str:
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
     from shardyfusion.writer.python.writer import write_sharded
 
+    rng = np.random.default_rng(42)
     num_records = 10
     dim = 4
-    vectors = np.random.rand(num_records, dim).astype(np.float32)
+    vectors = rng.random((num_records, dim)).astype(np.float32)
     records = [
         {
             "id": f"key_{i}",
@@ -176,4 +220,31 @@ class TestCliVectorSearchSqliteVec:
         parsed = json.loads(result.output)
         assert parsed["op"] == "search"
         assert parsed["num_shards_queried"] > 0
-        assert len(parsed["results"]) <= 5
+
+        results = parsed["results"]
+        assert len(results) <= 5
+        assert len(results) > 0
+
+        # With 10 records and top_k=5 we should get 5 results
+        assert len(results) == 5
+
+        # All returned IDs must belong to the known set
+        known_ids = {f"key_{i}" for i in range(10)}
+        for r in results:
+            assert r["id"] in known_ids
+            assert isinstance(r["score"], float)
+            assert r["score"] >= 0.0
+            # sqlite-vec cosine distance is in [0, 2]
+            assert r["score"] <= 2.0
+            # payload was passed as None in vector_fn
+            assert r["payload"] is None
+
+        # Results must be sorted by score ascending (best match first)
+        scores = [r["score"] for r in results]
+        assert scores == sorted(scores)
+
+        # The closest vector to [1,0,0,0] should be the one with the largest
+        # first component. With seed=42 the largest first component is
+        # vectors[6][0] ≈ 0.8929, so key_6 should be first.
+        assert results[0]["id"] == "key_6"
+        assert results[0]["score"] < results[1]["score"]
