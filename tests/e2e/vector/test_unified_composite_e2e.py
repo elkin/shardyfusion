@@ -1,0 +1,94 @@
+"""End-to-end tests for the unified KV+vector composite reader (SlateDB+LanceDB) against Garage S3."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from shardyfusion import VectorSpec, WriteConfig
+from shardyfusion.composite_adapter import CompositeFactory
+from shardyfusion.reader.unified_reader import UnifiedShardedReader
+from shardyfusion.slatedb_adapter import SlateDbFactory
+from shardyfusion.storage import create_s3_client
+from shardyfusion.vector.adapters.lancedb_adapter import LanceDbWriterFactory
+from shardyfusion.writer.python.writer import write_sharded
+from tests.e2e.conftest import (
+    credential_provider_from_service,
+    s3_connection_options_from_service,
+)
+
+pytest.importorskip("lancedb")
+pytest.importorskip("slatedb")
+
+
+@pytest.mark.e2e
+@pytest.mark.vector
+def test_unified_composite_e2e(
+    garage_s3_service: dict[str, str], tmp_path: Path
+) -> None:
+    s3_prefix = f"s3://{garage_s3_service['bucket']}/e2e-unified-composite"
+    cred_provider = credential_provider_from_service(garage_s3_service)
+    s3_conn_opts = s3_connection_options_from_service(garage_s3_service)
+    s3_client = create_s3_client(cred_provider.resolve(), s3_conn_opts)
+
+    num_records = 20
+    dim = 8
+    num_dbs = 2
+
+    vectors = np.random.rand(num_records, dim).astype(np.float32)
+    records = [
+        {
+            "id": f"key_{i}",
+            "payload": f"value_{i}".encode(),
+            "embedding": vectors[i],
+        }
+        for i in range(num_records)
+    ]
+
+    vector_spec = VectorSpec(dim=dim, metric="cosine")
+
+    config = WriteConfig(
+        num_dbs=num_dbs,
+        s3_prefix=s3_prefix,
+        adapter_factory=CompositeFactory(
+            kv_factory=SlateDbFactory(),
+            vector_factory=LanceDbWriterFactory(s3_client=s3_client),
+            vector_spec=vector_spec,
+        ),
+        vector_spec=vector_spec,
+        credential_provider=cred_provider,
+        s3_connection_options=s3_conn_opts,
+    )
+
+    result = write_sharded(
+        records,
+        config,
+        key_fn=lambda r: r["id"].encode(),
+        value_fn=lambda r: r["payload"],
+        vector_fn=lambda r: (r["id"], r["embedding"], None),
+    )
+
+    assert result.run_id is not None
+    assert result.manifest_ref is not None
+
+    reader = UnifiedShardedReader(
+        s3_prefix=s3_prefix,
+        local_root=str(tmp_path / "reader"),
+        credential_provider=cred_provider,
+        s3_connection_options=s3_conn_opts,
+    )
+
+    try:
+        # KV lookup
+        val = reader.get(b"key_5")
+        assert val == b"value_5"
+
+        # Vector search
+        query = np.array(vectors[5], dtype=np.float32)
+        response = reader.search(query, top_k=5)
+        assert len(response.results) <= 5
+        assert response.num_shards_queried > 0
+    finally:
+        reader.close()
