@@ -14,20 +14,44 @@ The core idea is that you **publish new snapshots regularly** without breaking a
 flowchart LR
     subgraph S3["S3 / Object store"]
         direction TB
-        MAN1["manifest N-1<br/>run_id=abc"]
-        MAN2["manifest N<br/>run_id=def"]
-        MAN3["manifest N+1<br/>run_id=ghi"]
-        CUR["_CURRENT pointer"]
 
-        CUR -->|points to| MAN3
+        subgraph snapN1["Snapshot N-1 (run_id=abc)"]
+            MAN1["manifest"]
+            SH1_0["shard-0.db"]
+            SH1_1["shard-1.db"]
+            MAN1 --> SH1_0
+            MAN1 --> SH1_1
+        end
+
+        subgraph snapN["Snapshot N (run_id=def)"]
+            MAN2["manifest"]
+            SH2_0["shard-0.db"]
+            SH2_1["shard-1.db"]
+            MAN2 --> SH2_0
+            MAN2 --> SH2_1
+        end
+
+        subgraph snapN1_new["Snapshot N+1 (run_id=ghi)"]
+            MAN3["manifest"]
+            SH3_0["shard-0.db"]
+            SH3_1["shard-1.db"]
+            MAN3 --> SH3_0
+            MAN3 --> SH3_1
+        end
+
+        CUR["_CURRENT pointer"] -->|points to| MAN3
     end
 
     subgraph "Reader A (new)"
         RA["open()"] -->|reads _CURRENT| MAN3
+        RA --> SH3_0
+        RA --> SH3_1
     end
 
     subgraph "Reader B (already open)"
         RB["open() earlier"] -->|pinned to| MAN2
+        RB --> SH2_0
+        RB --> SH2_1
         RB -.->|"refresh() when ready"| MAN3
     end
 ```
