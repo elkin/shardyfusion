@@ -18,6 +18,20 @@ if TYPE_CHECKING:
     from tests.e2e.conftest import BackendFixture
 
 
+# Override the parametrized backend fixture so CLI e2e tests only run
+# against sqlite.  The existing e2e suite uses file-backed SlateDB
+# (map_s3_db_url_to_file_url) which never hits real S3; the CLI
+# constructs SlateDbReaderFactory with real S3 URLs, and SlateDB's
+# object_store cannot resolve AWS credentials from the environment
+# against Garage, causing a ~12 s IMDS timeout per test that makes
+# the suite appear to hang.
+@pytest.fixture
+def backend(garage_s3_service: LocalS3Service, tmp_path: Path) -> BackendFixture:
+    from tests.e2e.conftest import _sqlite_backend
+
+    return _sqlite_backend(garage_s3_service)
+
+
 def _s3(svc: LocalS3Service) -> dict[str, Any]:
     """Build credential_provider + s3_connection_options from a service dict."""
     from tests.e2e.conftest import (

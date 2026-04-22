@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from tests.e2e.cli.conftest import _invoke_cli, _write_cli_configs
@@ -31,9 +29,13 @@ class TestCliInteractive:
         )
         result = _invoke_cli(tmp_path, [], input="multiget 1 2\nquit\n")
         assert result.exit_code == 0
-        parsed = json.loads(result.output.strip().split("\n")[-2])
-        assert parsed["op"] == "multiget"
-        assert len(parsed["results"]) == 2
+        # Interactive mode uses pretty-printed JSON which spans multiple lines,
+        # so parse by extracting the JSON block containing "multiget".
+        output = result.output
+        assert '"op": "multiget"' in output
+        assert '"key": "1"' in output
+        assert '"key": "2"' in output
+        assert '"found": true' in output
 
     def test_interactive_info(
         self, garage_s3_service, tmp_path, backend, cli_kv_prefix

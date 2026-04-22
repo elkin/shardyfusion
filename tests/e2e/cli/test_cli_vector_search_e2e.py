@@ -66,7 +66,9 @@ def _write_lancedb_vector_data(s3_service: LocalS3Service, tmp_path: Path) -> st
         s3_prefix=s3_prefix,
         index_config=VectorIndexConfig(dim=2, metric=DistanceMetric.L2),
         sharding=VectorShardingSpec(strategy=VectorShardingStrategy.EXPLICIT),
-        output=OutputOptions(run_id="cli-e2e-vector-run"),
+        output=OutputOptions(
+            run_id="cli-e2e-vector-run", local_root=str(tmp_path / "writer")
+        ),
         adapter_factory=writer_factory,
         credential_provider=cred_provider,
         s3_connection_options=s3_conn_opts,
@@ -83,7 +85,9 @@ class TestCliVectorSearchLanceDb:
         s3_prefix = _write_lancedb_vector_data(garage_s3_service, tmp_path)
         current_url = f"{s3_prefix}/_CURRENT"
         _write_cli_configs(tmp_path, garage_s3_service, current_url)
-        result = _invoke_cli(tmp_path, ["search", "1.0,5.0", "--top-k", "3"])
+        result = _invoke_cli(
+            tmp_path, ["search", "1.0,5.0", "--top-k", "3", "--shard-ids", "0,1"]
+        )
         assert result.exit_code == 0, result.output + (result.stderr or "")
         parsed = json.loads(result.output)
         assert parsed["op"] == "search"
@@ -115,6 +119,7 @@ def _write_sqlite_vec_data(s3_service: LocalS3Service, tmp_path: Path) -> str:
     cred_provider = credential_provider_from_service(s3_service)
     s3_conn_opts = s3_connection_options_from_service(s3_service)
 
+    from shardyfusion.sharding_types import KeyEncoding
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
     from shardyfusion.writer.python.writer import write_sharded
 
@@ -143,6 +148,10 @@ def _write_sqlite_vec_data(s3_service: LocalS3Service, tmp_path: Path) -> str:
         vector_spec=vector_spec,
         credential_provider=cred_provider,
         s3_connection_options=s3_conn_opts,
+        key_encoding=KeyEncoding.RAW,
+        output=OutputOptions(
+            run_id="cli-e2e-vector-sqlite", local_root=str(tmp_path / "writer")
+        ),
     )
 
     write_sharded(
