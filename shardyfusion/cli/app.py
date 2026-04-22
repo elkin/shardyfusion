@@ -35,6 +35,7 @@ from .output import (
     build_info_result,
     build_multiget_result,
     build_route_result,
+    build_search_result,
     build_shards_result,
     emit,
 )
@@ -836,6 +837,147 @@ def cleanup_cmd(
         raise
     except Exception as exc:
         result = build_error_result("cleanup", None, str(exc))
+        emit(result, output_cfg, file=sys.stderr)
+        sys.exit(1)
+
+
+@cli.command("search")
+@click.argument("query", required=False)
+@click.option(
+    "--vector-file",
+    "vector_file",
+    type=click.Path(exists=True),
+    help="Path to a .npy file containing the query vector.",
+)
+@click.option("--top-k", default=10, type=int, help="Number of results to return.")
+@click.option(
+    "--shard-ids",
+    "shard_ids_str",
+    default=None,
+    help="Comma-separated list of shard IDs to search.",
+)
+@click.pass_context
+def search_cmd(
+    ctx: click.Context,
+    query: str | None,
+    vector_file: str | None,
+    top_k: int,
+    shard_ids_str: str | None,
+) -> None:
+    """Search a vector snapshot by approximate nearest-neighbor search.
+
+    Provide either a positional QUERY as comma-separated floats
+    (e.g. ``0.1,0.2,0.3``) or a ``--vector-file`` pointing to a .npy file.
+    """
+    output_cfg = _get_output_cfg(ctx)
+    params = ctx.obj[_CTX_INIT_PARAMS]
+    store_cfg: ManifestStoreConfig = params["store_cfg"]
+
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise click.ClickException(
+            "Vector search requires numpy. "
+            "Install with: pip install 'shardyfusion[vector-lancedb]'"
+        ) from exc
+
+    # Parse query vector
+    if vector_file is not None:
+        query_vector = np.load(vector_file)
+        if query_vector.ndim != 1:
+            raise click.ClickException(
+                f"Query vector must be 1-D, got shape {query_vector.shape}"
+            )
+    elif query is not None:
+        try:
+            parts = [float(x.strip()) for x in query.split(",")]
+        except ValueError as exc:
+            raise click.ClickException(
+                "QUERY must be comma-separated floats, e.g. '0.1,0.2,0.3'"
+            ) from exc
+        query_vector = np.array(parts, dtype=np.float32)
+    else:
+        raise click.UsageError("Provide either a positional QUERY or --vector-file")
+
+    shard_ids: list[int] | None = None
+    if shard_ids_str is not None:
+        try:
+            shard_ids = [int(x.strip()) for x in shard_ids_str.split(",")]
+        except ValueError as exc:
+            raise click.ClickException(
+                "--shard-ids must be comma-separated integers"
+            ) from exc
+
+    manifest_store = _build_manifest_store(store_cfg, params)
+
+    pinned_ref = _resolve_manifest_ref_obj(
+        manifest_store,
+        ref=params.get("manifest_ref"),
+        offset=params.get("manifest_offset"),
+    )
+    if pinned_ref is not None:
+        manifest_store = _PinnedManifestStore(manifest_store, pinned_ref)
+
+    try:
+        ref = manifest_store.load_current()
+        if ref is None:
+            raise click.ClickException("No CURRENT manifest found")
+        manifest = manifest_store.load_manifest(ref.ref)
+    except Exception as exc:
+        raise click.ClickException(f"Failed to load manifest: {exc}") from exc
+
+    vector_meta = manifest.custom.get("vector")
+    if not isinstance(vector_meta, dict) or not vector_meta:
+        raise click.ClickException(
+            "Snapshot does not contain vector metadata. "
+            "Use a vector-enabled writer to build searchable snapshots."
+        )
+
+    s3_prefix = params["s3_prefix"]
+    local_root = params["reader_cfg"].local_root
+    cred_provider = params["credential_provider"]
+    s3_conn_opts = params["s3_connection_options"]
+
+    try:
+        if vector_meta.get("unified"):
+            from ..reader.unified_reader import UnifiedShardedReader
+
+            reader = UnifiedShardedReader(
+                s3_prefix=s3_prefix,
+                local_root=local_root,
+                manifest_store=manifest_store,
+                credential_provider=cred_provider,
+                s3_connection_options=s3_conn_opts,
+            )
+            try:
+                response = reader.search(query_vector, top_k=top_k, shard_ids=shard_ids)
+                result = build_search_result(response, top_k)
+                emit(result, output_cfg)
+            finally:
+                reader.close()
+        else:
+            from ..vector.reader import ShardedVectorReader
+
+            reader = ShardedVectorReader(
+                s3_prefix=s3_prefix,
+                local_root=local_root,
+                manifest_store=manifest_store,
+                credential_provider=cred_provider,
+                s3_connection_options=s3_conn_opts,
+            )
+            try:
+                response = reader.search(query_vector, top_k=top_k, shard_ids=shard_ids)
+                result = build_search_result(response, top_k)
+                emit(result, output_cfg)
+            finally:
+                reader.close()
+    except ImportError as exc:
+        raise click.ClickException(
+            "Vector search requires vector extras. "
+            "Install with: pip install 'shardyfusion[vector-lancedb]'"
+        ) from exc
+    except Exception as exc:
+        result = build_error_result("search", None, str(exc))
         emit(result, output_cfg, file=sys.stderr)
         sys.exit(1)
 

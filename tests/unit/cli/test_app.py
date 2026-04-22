@@ -645,3 +645,118 @@ class TestGetStrict:
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["found"] is False
+
+
+# ---------------------------------------------------------------------------
+# search
+# ---------------------------------------------------------------------------
+
+
+class TestSearch:
+    def _invoke_search(self, args: list[str]) -> click.testing.Result:
+        runner = click.testing.CliRunner(
+            env={"SHARDY_CURRENT": "s3://bucket/prefix/_CURRENT"}
+        )
+        # Patch _build_reader so existing commands still work, but search builds
+        # its own reader from the manifest store.
+        with patch(
+            "shardyfusion.cli.app._build_reader",
+            return_value=_FakeReader(),
+        ):
+            return runner.invoke(cli, args, obj={})
+
+    def test_search_no_query_or_file_errors(self) -> None:
+        result = self._invoke_search(["search"])
+        assert result.exit_code != 0
+        assert "Provide either" in result.output or "Usage:" in result.output
+
+    def test_search_comma_separated_query(self) -> None:
+        fake_manifest = MagicMock()
+        fake_manifest.custom = {
+            "vector": {
+                "dim": 3,
+                "metric": "cosine",
+                "unified": False,
+            }
+        }
+        fake_ref = MagicMock()
+        fake_ref.ref = "manifest.json"
+        fake_store = MagicMock()
+        fake_store.load_current.return_value = fake_ref
+        fake_store.load_manifest.return_value = fake_manifest
+
+        fake_response = MagicMock()
+        fake_response.num_shards_queried = 1
+        fake_response.latency_ms = 1.5
+        fake_response.results = [
+            MagicMock(id="a", score=0.1, payload={"x": 1}),
+        ]
+
+        with patch(
+            "shardyfusion.cli.app._build_manifest_store", return_value=fake_store
+        ):
+            with patch("shardyfusion.vector.reader.ShardedVectorReader") as MockReader:
+                MockReader.return_value.__enter__ = lambda self: self
+                MockReader.return_value.__exit__ = lambda *args: None
+                MockReader.return_value.search.return_value = fake_response
+                result = self._invoke_search(["search", "0.1,0.2,0.3", "--top-k", "1"])
+
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["op"] == "search"
+        assert parsed["top_k"] == 1
+        assert len(parsed["results"]) == 1
+        assert parsed["results"][0]["id"] == "a"
+
+    def test_search_unified_snapshot(self) -> None:
+        fake_manifest = MagicMock()
+        fake_manifest.custom = {
+            "vector": {
+                "dim": 2,
+                "metric": "l2",
+                "unified": True,
+            }
+        }
+        fake_ref = MagicMock()
+        fake_ref.ref = "manifest.json"
+        fake_store = MagicMock()
+        fake_store.load_current.return_value = fake_ref
+        fake_store.load_manifest.return_value = fake_manifest
+
+        fake_response = MagicMock()
+        fake_response.num_shards_queried = 2
+        fake_response.latency_ms = 2.0
+        fake_response.results = []
+
+        with patch(
+            "shardyfusion.cli.app._build_manifest_store", return_value=fake_store
+        ):
+            with patch(
+                "shardyfusion.reader.unified_reader.UnifiedShardedReader"
+            ) as MockReader:
+                MockReader.return_value.__enter__ = lambda self: self
+                MockReader.return_value.__exit__ = lambda *args: None
+                MockReader.return_value.search.return_value = fake_response
+                result = self._invoke_search(["search", "1.0,2.0"])
+
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["op"] == "search"
+        assert parsed["num_shards_queried"] == 2
+
+    def test_search_no_vector_metadata(self) -> None:
+        fake_manifest = MagicMock()
+        fake_manifest.custom = {}
+        fake_ref = MagicMock()
+        fake_ref.ref = "manifest.json"
+        fake_store = MagicMock()
+        fake_store.load_current.return_value = fake_ref
+        fake_store.load_manifest.return_value = fake_manifest
+
+        with patch(
+            "shardyfusion.cli.app._build_manifest_store", return_value=fake_store
+        ):
+            result = self._invoke_search(["search", "0.1,0.2"])
+
+        assert result.exit_code != 0
+        assert "does not contain vector metadata" in result.output
