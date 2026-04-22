@@ -117,6 +117,7 @@ __all__ = [
     "AsyncShardReaderHandle",
     "AsyncShardedReader",
     "AsyncSlateDbReaderFactory",
+    "AsyncUnifiedShardedReader",
     "BuildDurations",
     "BuildResult",
     "BuildStats",
@@ -208,4 +209,8 @@ def __getattr__(name: str):  # noqa: ANN202
         from .reader.unified_reader import UnifiedShardedReader
 
         return UnifiedShardedReader
+    if name == "AsyncUnifiedShardedReader":
+        from .reader.async_unified_reader import AsyncUnifiedShardedReader
+
+        return AsyncUnifiedShardedReader
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

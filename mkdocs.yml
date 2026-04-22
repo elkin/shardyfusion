@@ -24,36 +24,85 @@ plugins:
 
 nav:
   - Home: index.md
-  - Getting Started: getting-started.md
-  - Architecture: how-it-works.md
-  - Writers:
-    - Overview: writer.md
-    - Spark: writers/spark.md
-    - Dask: writers/dask.md
-    - Ray: writers/ray.md
-    - Python: writers/python.md
-  - Reader: reader.md
-  - Vector Search: vector-search.md
-  - Manifest Stores: manifest-stores.md
-  - CLI (shardy): cli.md
-  - Observability: observability.md
-  - Error Handling: error-handling.md
-  - Engineering Notes:
-    - 2026-03-14 Manifest History & Rollback: engineering-notes/2026-03-14-manifest-history-and-rollback.md
-    - 2026-03-15 Reliable Loser Cleanup Plan: engineering-notes/2026-03-15-reliable-loser-cleanup-plan.md
-    - 2026-03-24 Test Coverage Gap Closure: engineering-notes/2026-03-24-test-coverage-gap-closure.md
-    - 2026-03-25 Consistent Writer Retry: engineering-notes/2026-03-25-consistent-writer-retry.md
-    - 2026-03-25 Run Registry For Deferred Cleanup: engineering-notes/2026-03-25-run-registry-for-deferred-cleanup.md
-    - 2026-03-28 Categorical CEL Routing: engineering-notes/2026-03-28-categorical-cel-routing.md
-    - 2026-04-04 Sharded Vector Search: engineering-notes/2026-04-04-sharded-vector-search.md
-    - 2026-04-06 Vector Search Review: engineering-notes/2026-04-06-vector-search-review.md
-    - 2026-04-19 LanceDB Vector Migration: engineering-notes/2026-04-19-lancedb-vector-migration.md
-  - Operations: operations.md
-  - Tox & Dependency Matrix: tox-and-dependency-matrix.md
-  - Cloud Testing: cloud-testing.md
-  - Release Process: release.md
-  - Glossary: glossary.md
-  - API Reference: api.md
+  - Use cases:
+    - Overview: use-cases/index.md
+    - Build — Python + SlateDB: use-cases/build-python-slatedb.md
+    - Build — Python + SQLite: use-cases/build-python-sqlite.md
+    - Build — Spark + SlateDB: use-cases/build-spark-slatedb.md
+    - Build — Spark + SQLite: use-cases/build-spark-sqlite.md
+    - Build — Dask + SlateDB: use-cases/build-dask-slatedb.md
+    - Build — Dask + SQLite: use-cases/build-dask-sqlite.md
+    - Build — Ray + SlateDB: use-cases/build-ray-slatedb.md
+    - Build — Ray + SQLite: use-cases/build-ray-sqlite.md
+    - Build — KV+Vector composite (SlateDB+LanceDB): use-cases/build-python-slatedb-lancedb.md
+    - Build — KV+Vector unified (sqlite-vec): use-cases/build-python-sqlite-vec.md
+    - Build — Vector standalone (LanceDB): use-cases/build-vector-lancedb-standalone.md
+    - Build — Vector standalone (sqlite-vec): use-cases/build-vector-sqlite-vec-standalone.md
+    - Read — Sync SlateDB: use-cases/read-sync-slatedb.md
+    - Read — Sync SQLite: use-cases/read-sync-sqlite.md
+    - Read — Async SlateDB: use-cases/read-async-slatedb.md
+    - Read — Async SQLite: use-cases/read-async-sqlite.md
+    - Operate — CLI: use-cases/operate-cli.md
+    - Operate — History & rollback: use-cases/operate-manifest-history-and-rollback.md
+    - Operate — Prometheus metrics: use-cases/operate-prometheus-metrics.md
+    - Operate — OTel metrics: use-cases/operate-otel-metrics.md
+  - Architecture:
+    - Overview: architecture/index.md
+    - Writer core: architecture/writer-core.md
+    - Sharding: architecture/sharding.md
+    - Routing: architecture/routing.md
+    - Manifest & _CURRENT: architecture/manifest-and-current.md
+    - Manifest stores: architecture/manifest-stores.md
+    - Run registry: architecture/run-registry.md
+    - Retry & cleanup: architecture/retry-and-cleanup.md
+    - Adapters: architecture/adapters.md
+    - Observability: architecture/observability.md
+    - Error model: architecture/error-model.md
+    - Optional imports: architecture/optional-imports.md
+  - Reference:
+    - Public API: reference/api.md
+    - Configuration: reference/config.md
+    - CLI: reference/cli.md
+    - Glossary: reference/glossary.md
+  - Operations:
+    - Overview: operations/index.md
+    - Cloud testing: operations/cloud-testing.md
+    - Tox & dependency matrix: operations/tox-matrix.md
+  - Contributing:
+    - Overview: contributing/index.md
+    - Local development: contributing/local-development.md
+    - Testing: contributing/testing.md
+    - Extras & dependencies: contributing/extras-and-dependencies.md
+    - Adding an adapter: contributing/adding-an-adapter.md
+    - Adding a writer: contributing/adding-a-writer.md
+    - Adding a use case: contributing/adding-a-use-case.md
+    - Documentation policy: contributing/documentation-policy.md
+  - History:
+    - Overview: history/index.md
+    - Reorganization notes: history/reorg-notes.md
+    - Design decisions:
+      - Overview: history/design-decisions/index.md
+      - ADR-001 Two-phase publish: history/design-decisions/adr-001-two-phase-publish.md
+      - ADR-002 Categorical CEL routing: history/design-decisions/adr-002-categorical-cel-routing.md
+      - ADR-003 Run registry for deferred cleanup: history/design-decisions/adr-003-run-registry-deferred-cleanup.md
+      - ADR-004 Consistent writer retry: history/design-decisions/adr-004-consistent-writer-retry.md
+      - ADR-005 Sharded vector search: history/design-decisions/adr-005-sharded-vector-search.md
+      - ADR-006 LanceDB vector backend: history/design-decisions/adr-006-lancedb-vector-backend.md
+    - Implementation plans:
+      - Overview: history/implementation-plans/index.md
+      - Reliable loser cleanup: history/implementation-plans/2026-03-15-reliable-loser-cleanup-plan.md
+      - Test coverage gap closure: history/implementation-plans/2026-03-24-test-coverage-gap-closure.md
+    - Historical notes:
+      - Overview: history/historical-notes/index.md
+      - 2026-03-14 Manifest history & rollback: history/historical-notes/2026-03-14-manifest-history-and-rollback.md
+      - 2026-03-15 Reliable loser cleanup plan: history/historical-notes/2026-03-15-reliable-loser-cleanup-plan.md
+      - 2026-03-24 Test coverage gap closure: history/historical-notes/2026-03-24-test-coverage-gap-closure.md
+      - 2026-03-25 Consistent writer retry: history/historical-notes/2026-03-25-consistent-writer-retry.md
+      - 2026-03-25 Run registry for deferred cleanup: history/historical-notes/2026-03-25-run-registry-for-deferred-cleanup.md
+      - 2026-03-28 Categorical CEL routing: history/historical-notes/2026-03-28-categorical-cel-routing.md
+      - 2026-04-04 Sharded vector search: history/historical-notes/2026-04-04-sharded-vector-search.md
+      - 2026-04-06 Vector search review: history/historical-notes/2026-04-06-vector-search-review.md
+      - 2026-04-19 LanceDB vector migration: history/historical-notes/2026-04-19-lancedb-vector-migration.md
 
 markdown_extensions:
   - admonition
