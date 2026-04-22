@@ -9,9 +9,11 @@ This engineering note documents the migration of our sharded approximate nearest
 
 ## 1. What problem is being solved or functionality being added by the changes?
 
-The initial vector search implementation proved difficult to scale and test using the `usearch` engine and mock test adapters. We needed an engine that offered better performance, native on-disk/S3 integration, and robust Python tooling. We also needed to address data integrity bugs and testing blind spots:
+The initial vector search implementation used `usearch` as the dedicated vector backend, but we hit a fundamental architectural blocker: **usearch operates in local-only mode and cannot request index data directly from S3**. This meant every shard index had to be fully downloaded to local disk before search could begin — impractical for large indices and incompatible with our sharded-snapshot model where shards are stored remotely and loaded on-demand.
 
-1. **Engine Limitations**: `usearch` was not meeting our needs for mature indexing and query tooling.
+We needed an engine that offered native S3 integration, mature indexing features, and robust Python tooling. We also needed to address data integrity bugs and testing blind spots:
+
+1. **S3 Integration**: `usearch` has no native support for reading index data from remote object storage. LanceDB's `object_store` backend can query datasets directly on S3 without full local materialisation.
 2. **String ID Coercion Bug**: When using `LanceDB`, string IDs containing only digits (e.g., `"123"`) were blindly coerced into integers by PyArrow during the `search()` operation, causing lookups to fail or return mismatched types.
 3. **Storage Configuration**: LanceDB requires explicit `storage_options` to connect to local mock S3 instances (Moto/Garage) used in our CI environments, which was hindering robust testing.
 4. **Table Creation Lifecycle**: LanceDB's `create_table` method threw errors when called repeatedly on existing tables during batch insertions.
@@ -25,6 +27,7 @@ The initial vector search implementation proved difficult to scale and test usin
 Pros:
 - No migration cost.
 Cons:
+- **Local-only**: usearch cannot read index data from S3; requires full download before search.
 - Lack of mature features (quantization, built-in disk persistence formats) compared to other engines.
 
 #### Option B: FAISS

@@ -1,12 +1,13 @@
 # 2026-03-26 Vector Search Options
 
-- Status: `proposed`
+- Status: `superseded` — see ADR-005, ADR-006, and `historical-notes/2026-04-19-lancedb-vector-migration.md`
 - Date: `2026-03-26`
 - Baseline repo commit before this note: `f7b100504383f1c78d9e1ea08f41a595db6c2b72`
 - Baseline commit summary: `docs: refresh repository guidance for run registry`
 - Implementation status:
-  - No implementation commits yet.
-  - This note captures design options explored for adding vector search without changing the existing point-lookup contract.
+  - Implementation completed April 2026.
+  - **Engine choice changed**: `usearch` was rejected because it operates in local-only mode and cannot request index data directly from S3. We adopted **LanceDB** as the primary vector backend instead.
+  - This note captures early design options explored for adding vector search without changing the existing point-lookup contract.
 
 ## Summary
 
@@ -432,25 +433,25 @@ Ship hybrid vector support first:
 
 ## Recommended Phasing
 
-### Phase 1
+### Phase 1 (Implemented)
 
-- create `shardyfusion-vector[usearch]`
+- ~~create `shardyfusion-vector[usearch]`~~ → created `shardyfusion[vector-lancedb]` (LanceDB backend; usearch rejected for lack of S3 support)
 - implement Python writer and reader first
 - support:
   - CEL-filtered vector search
   - ANN + exact rerank
   - payload fetch by key through existing readers
 
-### Phase 2
+### Phase 2 (Implemented)
 
 - add global overlay partition selection for mixed workloads
-- add async vector reader
+- add async vector reader (`AsyncShardedVectorReader`, `AsyncUnifiedShardedReader`)
 - add docs and benchmarks
 
-### Phase 3
+### Phase 3 (Implemented)
 
 - add Spark, Dask, and Ray vector build flows
-- optionally add Faiss backend for larger-scale deployments
+- ~~optionally add Faiss backend~~ → sqlite-vec added as lightweight alternative; LanceDB retained for production scale
 - optionally add vector-only partitioning mode
 
 ## Final Recommendation

@@ -11,7 +11,9 @@ The initial vector path (ADR-005) used sqlite-vec exclusively — simple single-
 - Recall/QPS ceiling at scale (no IVF/HNSW tuning surface).
 - Mixed-workload (KV + vector) requires the unified-table model — fine for small/medium scale, not for production-grade ANN.
 
-Production vector workloads require richer indexing primitives.
+We previously evaluated `usearch` as the dedicated vector backend, but it was rejected because **usearch operates in local-only mode** — it cannot request index data directly from S3. This forces a full download of the index to local disk before search can begin, which is impractical for large indices and incompatible with our sharded-snapshot model where shards are stored remotely and loaded on-demand.
+
+Production vector workloads require richer indexing primitives **and** native remote storage support.
 
 ## Decision
 
