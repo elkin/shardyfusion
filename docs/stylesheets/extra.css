@@ -21,3 +21,8 @@
 .md-content__inner {
   max-width: none;
 }
+
+/* Slightly larger, readable text in Mermaid diagrams */
+.mermaid {
+  font-size: 1.05rem;
+}

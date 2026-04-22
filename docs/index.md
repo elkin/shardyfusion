@@ -61,14 +61,6 @@ flowchart TD
   OP --> OP_PROM[Prometheus metrics]
   OP --> OP_OTEL[OTel metrics]
 
-  classDef leaf fill:#e3f2fd,stroke:#1565c0,stroke-width:2,color:#0d47a1;
-  classDef overview fill:#fff8e1,stroke:#f57f17,stroke-width:2,color:#e65100;
-  classDef branch fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1,color:#4a148c;
-
-  class KV_PY,KV_SP,KV_DK,KV_RY,KV_RD_SY_SL,KV_RD_SY_SQ,KV_RD_AS_SL,KV_RD_AS_SQ,KVV_CO,KVV_UN,KVV_RD_SY,KVV_RD_AS,VEC_LN,VEC_SV,VEC_RD_SY,VEC_RD_AS,OP_CLI,OP_HIST,OP_PROM,OP_OTEL leaf;
-  class KV_OV,KVV_OV,VEC_OV overview;
-  class KV_BUILD,KV_READ,KVV_BUILD,KVV_READ,VEC_BUILD,VEC_READ,OP branch;
-
   click KV_OV href "use-cases/kv-storage/overview/"
   click KV_PY href "use-cases/kv-storage/build/python/"
   click KV_SP href "use-cases/kv-storage/build/spark/"

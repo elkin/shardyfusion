@@ -51,3 +51,6 @@ uv.lock
 
 # Worktrees
 .worktrees/
+
+# MkDocs generated files
+.mkdocs-generated/
