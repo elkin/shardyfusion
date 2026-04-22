@@ -1,6 +1,8 @@
 # Vector Search Integration — Architecture Review
 
 *Reviewed: 2026-04-06*
+*Updated: 2026-04-22 — resolved items marked with strikethrough. Superseded
+by the 2026-04-19 LanceDB migration note for backend-specific details.*
 
 ## Overview
 
@@ -20,10 +22,12 @@ opportunities, missing cases, and untested scenarios.
 ## 1. Weak Points
 
 ### A. No async vector reader path
-`AsyncShardedReader` has no vector search counterpart. There is
+~~`AsyncShardedReader` has no vector search counterpart. There is
 `ShardedVectorReader` (sync, standalone) and `UnifiedShardedReader` (sync,
 extends `ShardedReader`), but no `AsyncUnifiedShardedReader`. Any async
-service wanting KV+vector must use `asyncio.to_thread()` as a workaround.
+service wanting KV+vector must use `asyncio.to_thread()` as a workaround.~~
+*Resolved: `AsyncShardedVectorReader` and `AsyncUnifiedShardedReader` were
+implemented. Both support async search with `asyncio.TaskGroup` fan-out.*
 
 ### B. Thread safety during manifest refresh
 ~~`ShardedVectorReader.refresh()` holds `_refresh_lock` and swaps `_centroids`,
@@ -44,10 +48,13 @@ just `max_cached_shards`.~~
 in `_get_or_load_reader`.*
 
 ### D. Only the Python writer supports unified KV+vector
-The Spark, Dask, and Ray writers have zero `vector_spec` / `vector_fn`
+~~The Spark, Dask, and Ray writers have zero `vector_spec` / `vector_fn`
 support. Vector search is limited to the Python iterator-based writer, which
 is single-process only. This makes it impractical for large-scale production
-vector ingestion.
+vector ingestion.~~
+*Resolved: Spark, Dask, and Ray writers now accept `vector_fn` and
+`vector_spec`. Distributed unified KV+vector writes are tested in
+`tests/integration/vector/test_distributed_unified_writers_local_s3.py`.*
 
 ### E. Duplicate merge logic
 ~~`_merge_top_k()` in `unified_reader.py` and `merge_results()` in
@@ -113,14 +120,19 @@ significantly improve write throughput.
 
 ### A. Spark/Dask/Ray writer vector support
 
-These frameworks handle the vast majority of production write workloads but
+~~These frameworks handle the vast majority of production write workloads but
 have no vector integration at all.  A production user can't shard-write
-millions of vectors through Spark.
+millions of vectors through Spark.~~
+*Resolved: Spark, Dask, and Ray writers support `vector_fn` and `vector_spec`
+for both standalone vector and unified KV+vector snapshots. See
+`tests/integration/vector/test_distributed_writers_local_s3.py` and
+`tests/integration/vector/test_distributed_unified_writers_local_s3.py`.*
 
 ### B. Async vector search
-
-No `AsyncUnifiedShardedReader` or async equivalent of `ShardedVectorReader`.
-Async services (FastAPI, etc.) must block a thread pool for every search.
+~~No `AsyncUnifiedShardedReader` or async equivalent of `ShardedVectorReader`.
+Async services (FastAPI, etc.) must block a thread pool for every search.~~
+*Resolved: Both `AsyncShardedVectorReader` and `AsyncUnifiedShardedReader`
+are available with full `search()` / `batch_search()` support.*
 
 ### C. Vector index updates / incremental writes
 
