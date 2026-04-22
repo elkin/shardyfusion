@@ -94,6 +94,10 @@ all = [
   "shardyfusion[cel]",
   "shardyfusion[metrics-prometheus]",
   "shardyfusion[metrics-otel]",
+  "shardyfusion[vector]",
+  "shardyfusion[vector-sqlite]",
+  "shardyfusion[unified-vector]",
+  "shardyfusion[unified-vector-sqlite]",
 ]
 test = [
   "pytest>=7.4",
