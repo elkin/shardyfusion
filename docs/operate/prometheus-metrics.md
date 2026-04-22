@@ -9,7 +9,7 @@ Use the **`PrometheusCollector`** to scrape shardyfusion writer/reader metrics w
 
 ## When NOT to use
 
-- You're standardized on OTel / OTLP — use [`operate-otel-metrics.md`](operate-otel-metrics.md).
+- You're standardized on OTel / OTLP — use [OTel metrics](otel-metrics.md).
 - You don't need observability — pass `metrics=None` (the default).
 
 ## Install
@@ -75,5 +75,5 @@ The collector translates events into Prometheus counters/histograms. Backends re
 
 ## See also
 
-- [`operate-otel-metrics.md`](operate-otel-metrics.md).
-- [`architecture/observability.md`](../architecture/observability.md).
+- [OTel metrics](otel-metrics.md)
+- [`architecture/observability.md`](../architecture/observability.md)

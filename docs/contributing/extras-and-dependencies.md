@@ -89,7 +89,7 @@ py{311,312,313}-vector-foo-integration
 Add a row to:
 
 - [`architecture/optional-imports.md`](../architecture/optional-imports.md) — the canonical extras index.
-- A new use-case page (e.g. `docs/use-cases/build-python-vector-foo.md`) — see [`adding-a-use-case.md`](adding-a-use-case.md).
+- A new use-case page (e.g. `docs/use-cases/vector/build/foo.md`) — see [`adding-a-use-case.md`](adding-a-use-case.md).
 
 ### 6. Verify with `validate-docs`
 

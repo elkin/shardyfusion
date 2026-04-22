@@ -92,5 +92,5 @@ If you want application-level observability of which keys are read, instrument y
 ## See also
 
 - [`optional-imports.md`](optional-imports.md) — how the extras gate is implemented.
-- [`use-cases/operate-prometheus-metrics.md`](../use-cases/operate-prometheus-metrics.md).
-- [`use-cases/operate-otel-metrics.md`](../use-cases/operate-otel-metrics.md).
+- [`operate/prometheus-metrics.md`](../operate/prometheus-metrics.md).
+- [`operate/otel-metrics.md`](../operate/otel-metrics.md).

@@ -1,4 +1,4 @@
-# Operate manifest history and rollback
+# Manifest history and rollback
 
 Use the **manifest history** to inspect past publishes and **rollback** to revert `_CURRENT` to a previous manifest.
 
@@ -10,7 +10,7 @@ Use the **manifest history** to inspect past publishes and **rollback** to rever
 
 ## When NOT to use
 
-- Cleaning up old data — see `cleanup` subcommand (referenced from [`operate-cli.md`](operate-cli.md)).
+- Cleaning up old data — see `cleanup` subcommand in the [CLI](cli.md).
 - Forking the snapshot lineage — manifests are append-only, not branchable.
 
 ## Install
@@ -21,7 +21,7 @@ uv add 'shardyfusion[cli,read]'
 
 ## Minimal example
 
-Snapshot location comes from `reader.toml` (or `--current-url`/`SHARDY_CURRENT`); see [`operate-cli.md`](operate-cli.md) for configuration.
+Snapshot location comes from `reader.toml` (or `--current-url`/`SHARDY_CURRENT`); see [CLI](cli.md) for configuration.
 
 ```bash
 # List recent publishes
@@ -76,6 +76,7 @@ Exactly **one** of `--ref`, `--run-id`, or `--offset` must be supplied to `rollb
 
 ## See also
 
-- [`operate-cli.md`](operate-cli.md).
-- [`architecture/manifest-and-current.md`](../architecture/manifest-and-current.md).
-- [`architecture/run-registry.md`](../architecture/run-registry.md).
+- [CLI](cli.md)
+- [KV Storage Overview](../use-cases/kv-storage/overview.md) — manifests, two-phase publish
+- [`architecture/manifest-and-current.md`](../architecture/manifest-and-current.md)
+- [`architecture/run-registry.md`](../architecture/run-registry.md)

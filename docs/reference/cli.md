@@ -2,7 +2,7 @@
 
 Entry point: `shardy = "shardyfusion.cli.app:main"`. Top-level group at `shardyfusion/cli/app.py:209`.
 
-Snapshot location and reader settings come from `reader.toml` + `credentials.toml`. Example configs ship in `shardyfusion/cli/example_config/`. See [`use-cases/operate-cli.md`](../use-cases/operate-cli.md) for the full configuration walkthrough.
+Snapshot location and reader settings come from `reader.toml` + `credentials.toml`. Example configs ship in `shardyfusion/cli/example_config/`. See [`operate/cli.md`](../operate/cli.md) for the full configuration walkthrough.
 
 ## Global flags
 
@@ -77,5 +77,5 @@ The default comes from `[output].format` in `reader.toml` (`jsonl` in the shippe
 
 ## See also
 
-- [`use-cases/operate-cli.md`](../use-cases/operate-cli.md)
-- [`use-cases/operate-manifest-history-and-rollback.md`](../use-cases/operate-manifest-history-and-rollback.md)
+- [`operate/cli.md`](../operate/cli.md)
+- [`operate/history-rollback.md`](../operate/history-rollback.md)

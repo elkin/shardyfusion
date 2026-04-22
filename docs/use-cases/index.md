@@ -1,45 +1,54 @@
 # Use Cases
 
-Each use-case page follows the same template: when to use, when not to use, install, minimal example, configuration, functional and non-functional properties, guarantees, weaknesses, failure modes & recovery, and related links.
+The use-case docs are organized as a **decision tree**. Start with the conceptual overview for your use-case type, then drill down into writer or reader specifics.
 
-For a visual map of all use cases, see the [landing page](../index.md).
+## Sharded KV Storage
 
-## Build (writer flavors)
+The foundational use case: write key-value pairs into sharded immutable snapshots, read them back with routed lookups.
 
-### Spark
-- [build-spark-slatedb](build-spark-slatedb.md) — Spark writer, SlateDB backend
-- [build-spark-sqlite](build-spark-sqlite.md) — Spark writer, SQLite backend
+- **[Overview](kv-storage/overview.md)** — sharding, manifests, two-phase publish, safety properties (start here)
+- **Build**
+  - [Choosing a writer](kv-storage/build/index.md)
+  - [Python](kv-storage/build/python.md)
+  - [Spark](kv-storage/build/spark.md)
+  - [Dask](kv-storage/build/dask.md)
+  - [Ray](kv-storage/build/ray.md)
+- **Read**
+  - [Choosing a reader](kv-storage/read/index.md)
+  - [Sync SlateDB](kv-storage/read/sync/slatedb.md)
+  - [Sync SQLite](kv-storage/read/sync/sqlite.md)
+  - [Async SlateDB](kv-storage/read/async/slatedb.md)
+  - [Async SQLite](kv-storage/read/async/sqlite.md)
 
-### Dask
-- [build-dask-slatedb](build-dask-slatedb.md) — Dask writer, SlateDB backend
-- [build-dask-sqlite](build-dask-sqlite.md) — Dask writer, SQLite backend
+## Sharded KV Storage with Vector Search
 
-### Ray
-- [build-ray-slatedb](build-ray-slatedb.md) — Ray writer, SlateDB backend
-- [build-ray-sqlite](build-ray-sqlite.md) — Ray writer, SQLite backend
+Write both KV pairs and vector embeddings in the same snapshot. Query by key or by nearest-neighbor search.
 
-### Python (single-process)
-- [build-python-slatedb](build-python-slatedb.md) — Python writer, SlateDB backend
-- [build-python-sqlite](build-python-sqlite.md) — Python writer, SQLite backend
+- **[Overview](kv-vector/overview.md)** — composite vs unified backends
+- **Build**
+  - [Composite (SlateDB + LanceDB)](kv-vector/build/composite.md)
+  - [Unified (sqlite-vec)](kv-vector/build/unified.md)
+- **Read**
+  - [Sync](kv-vector/read/sync.md) — `UnifiedShardedReader`
+  - [Async](kv-vector/read/async.md) — `AsyncUnifiedShardedReader`
 
-### Unified KV + vector
-- [build-python-slatedb-lancedb](build-python-slatedb-lancedb.md) — SlateDB KV + LanceDB vectors per shard
-- [build-python-sqlite-vec](build-python-sqlite-vec.md) — SQLite + sqlite-vec unified per shard
+## Sharded Vector Search
 
-### Vector standalone
-- [build-vector-lancedb-standalone](build-vector-lancedb-standalone.md) — vector-only sharded build with LanceDB
-- [build-vector-sqlite-vec-standalone](build-vector-sqlite-vec-standalone.md) — vector-only sharded build with sqlite-vec
+Vector-only: write embeddings into sharded indices, query by approximate nearest-neighbor search.
 
-## Read
-
-- [read-sync-slatedb](read-sync-slatedb.md) — synchronous reader, SlateDB backend
-- [read-sync-sqlite](read-sync-sqlite.md) — synchronous reader, SQLite backend
-- [read-async-slatedb](read-async-slatedb.md) — async reader, SlateDB backend
-- [read-async-sqlite](read-async-sqlite.md) — async reader, SQLite backend
+- **[Overview](vector/overview.md)** — routing strategies, scatter-gather flow
+- **Build**
+  - [LanceDB](vector/build/lancedb.md)
+  - [sqlite-vec](vector/build/sqlite-vec.md)
+- **Read**
+  - [Sync](vector/read/sync.md) — `ShardedVectorReader`
+  - [Async](vector/read/async.md) — `AsyncShardedVectorReader`
 
 ## Operate
 
-- [operate-cli](operate-cli.md) — `shardy` CLI for inspection, routing, history, rollback, cleanup
-- [operate-manifest-history-and-rollback](operate-manifest-history-and-rollback.md) — manifest log and atomic rollback
-- [operate-prometheus-metrics](operate-prometheus-metrics.md) — Prometheus metrics collector
-- [operate-otel-metrics](operate-otel-metrics.md) — OpenTelemetry metrics collector
+Operational tasks for all use-case types:
+
+- [CLI](../operate/cli.md)
+- [History & rollback](../operate/history-rollback.md)
+- [Prometheus metrics](../operate/prometheus-metrics.md)
+- [OTel metrics](../operate/otel-metrics.md)

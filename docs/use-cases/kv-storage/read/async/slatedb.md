@@ -6,12 +6,11 @@ Use **`AsyncShardedReader`** to do point-key and multi-key lookups against a pub
 
 - You're in `asyncio` code (FastAPI, async workers).
 - SlateDB-backed snapshot.
-- You want concurrent `multi_get` via `asyncio.TaskGroup`.
 
 ## When NOT to use
 
-- Synchronous code — use [`read-sync-slatedb.md`](read-sync-slatedb.md).
-- SQLite snapshot — use [`read-async-sqlite.md`](read-async-sqlite.md).
+- Synchronous code — use [sync SlateDB](../sync/slatedb.md).
+- SQLite snapshot — use [async SQLite](sqlite.md).
 
 ## Install
 
@@ -65,7 +64,7 @@ State must be loaded via `await AsyncShardedReader.open(...)` — direct `__init
 
 ## Reader API
 
-The async reader mirrors the sync reader API; the routed and direct-shard methods exist with `async` semantics. See [`read-sync-slatedb.md`](read-sync-slatedb.md#reader-api) for the conceptual model.
+The async reader mirrors the sync reader API:
 
 ```python
 # Lookups
@@ -92,7 +91,7 @@ await reader.close()
 
 `reader_for_key` returns an `AsyncShardReaderHandle` — use it with `async with` so the reader can release its borrow counter.
 
-## Functional / Non-functional properties
+## Functional properties
 
 - `multi_get` uses `asyncio.TaskGroup` and an optional `Semaphore`.
 - `refresh()` is async; same explicit-refresh model as the sync reader.
@@ -101,18 +100,20 @@ await reader.close()
 
 - Reads pinned to manifest at last `open`/`refresh`.
 - Routing matches writer.
+- Same cold-start fallback as sync reader (up to `max_fallback_attempts` previous manifests).
 
 ## Weaknesses
 
-- Default `AsyncSlateDbReaderFactory` is **SlateDB-only**. SQLite async factory exists in `sqlite_adapter.py` but is not imported by `async_reader.py` — you must wire it explicitly. See [`read-async-sqlite.md`](read-async-sqlite.md).
+- Default `AsyncSlateDbReaderFactory` is **SlateDB-only**. SQLite async factory exists in `sqlite_adapter.py` but must be wired explicitly. See [async SQLite](sqlite.md).
 - `AsyncManifestStore` is read-only; publishing must go through the sync writer path.
 
 ## Failure modes & recovery
 
-Same matrix as [`read-sync-slatedb.md`](read-sync-slatedb.md), surfaced as awaited exceptions.
+Same matrix as [sync SlateDB](../sync/slatedb.md), surfaced as awaited exceptions.
 
 ## See also
 
-- [`read-sync-slatedb.md`](read-sync-slatedb.md).
-- [`read-async-sqlite.md`](read-async-sqlite.md).
-- [`architecture/manifest-and-current.md`](../architecture/manifest-and-current.md).
+- [KV Storage Overview](../../overview.md)
+- [Sync SlateDB](../sync/slatedb.md) — canonical reference for shared API
+- [Async SQLite](sqlite.md)
+- [`architecture/manifest-and-current.md`](../../../../architecture/manifest-and-current.md)

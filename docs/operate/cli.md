@@ -92,7 +92,7 @@ Top-level group at `shardyfusion/cli/app.py:209`. Subcommands:
 | `route <key>` | Show which shard a key routes to (no lookup). |
 | `exec --script FILE [--output FILE]` | Run a YAML batch script. |
 | `history [--limit N]` | List recent published manifests (default 10). |
-| `rollback (--ref REF | --run-id RUN_ID | --offset N)` | Atomically swap `_CURRENT` to a previous manifest. Exactly one selector required. |
+| `rollback (--ref REF \| --run-id RUN_ID \| --offset N)` | Atomically swap `_CURRENT` to a previous manifest. Exactly one selector required. |
 | `cleanup [--dry-run] [--include-old-runs] [--older-than DURATION] [--keep-last N] [--max-retries N]` | Delete stale attempt directories and optionally old run data. `DURATION` is e.g. `7d`, `24h`. |
 | `schema [--type {manifest,current-pointer,sqlite-manifest}]` | Print the JSON Schema for the manifest, current pointer, or SQLite manifest DDL. |
 
@@ -142,5 +142,7 @@ Invoking `shardy` with **no subcommand** drops you into a `cmd.Cmd`-based REPL (
 
 ## See also
 
-- [`operate-manifest-history-and-rollback.md`](operate-manifest-history-and-rollback.md).
-- [`reference/cli.md`](../reference/cli.md).
+- [History & rollback](history-rollback.md)
+- [Prometheus metrics](prometheus-metrics.md)
+- [OTel metrics](otel-metrics.md)
+- [Reference → CLI](../reference/cli.md)

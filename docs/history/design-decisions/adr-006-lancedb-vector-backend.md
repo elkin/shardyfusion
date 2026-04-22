@@ -34,5 +34,5 @@ Adopt **LanceDB** as the primary production vector backend, alongside sqlite-vec
 
 - ADR-005 (sharded vector architecture).
 - [`architecture/adapters.md`](../../architecture/adapters.md)
-- [`use-cases/build-python-slatedb-lancedb.md`](../../use-cases/build-python-slatedb-lancedb.md)
-- [`use-cases/build-python-sqlite-vec.md`](../../use-cases/build-python-sqlite-vec.md)
+- [`use-cases/kv-vector/build/composite.md`](../../use-cases/kv-vector/build/composite.md)
+- [`use-cases/kv-vector/build/unified.md`](../../use-cases/kv-vector/build/unified.md)

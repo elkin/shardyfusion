@@ -1,84 +1,100 @@
 # shardyfusion
 
-A library for **building, publishing, and reading sharded SlateDB/SQLite snapshots** — with optional vector search.
+A library for **sharded SlateDB/SQLite snapshots** and **sharded vector search** — use either independently or together.
 
-The docs are organized by **what you want to do**. Pick a node below.
+The docs are organized by **what you want to do**. Pick a branch below.
 
 ## Use-case map
 
-Click any leaf node to jump to its use-case page. (See the [full index](use-cases/index.md) for a flat list.)
+Click any node to jump to its page. (See the [full index](use-cases/index.md) for a navigational tree.)
 
 <div style="overflow:auto; max-width:100%;">
-<div style="min-width:1100px;">
+<div style="min-width:1200px;">
 
 ```mermaid
-%%{init: {'flowchart': {'nodeSpacing': 35, 'rankSpacing': 55, 'htmlLabels': true}, 'themeVariables': {'fontSize': '16px'}}}%%
 flowchart TD
   ROOT([What do you want to do?])
 
-  ROOT --> BUILD[Build a snapshot]
-  ROOT --> READ[Read a snapshot]
+  ROOT --> KV[Sharded KV storage]
+  ROOT --> KVV[Sharded KV + Vector]
+  ROOT --> VEC[Sharded Vector search]
   ROOT --> OP[Operate snapshots]
 
-  BUILD --> KV[KV only]
-  BUILD --> VEC[Vector only]
-  BUILD --> KVV[KV + Vector]
+  KV --> KV_OV[Overview]
+  KV --> KV_BUILD[Build]
+  KV --> KV_READ[Read]
 
-  KV --> KV_PY[Python]
-  KV --> KV_SP[Spark]
-  KV --> KV_DK[Dask]
-  KV --> KV_RY[Ray]
+  KV_BUILD --> KV_PY[Python]
+  KV_BUILD --> KV_SP[Spark]
+  KV_BUILD --> KV_DK[Dask]
+  KV_BUILD --> KV_RY[Ray]
 
-  KV_PY --> KV_PY_SL[SlateDB]
-  KV_PY --> KV_PY_SQ[SQLite]
-  KV_SP --> KV_SP_SL[SlateDB]
-  KV_SP --> KV_SP_SQ[SQLite]
-  KV_DK --> KV_DK_SL[SlateDB]
-  KV_DK --> KV_DK_SQ[SQLite]
-  KV_RY --> KV_RY_SL[SlateDB]
-  KV_RY --> KV_RY_SQ[SQLite]
+  KV_READ --> KV_RD_SY[Sync]
+  KV_READ --> KV_RD_AS[Async]
+  KV_RD_SY --> KV_RD_SY_SL[SlateDB]
+  KV_RD_SY --> KV_RD_SY_SQ[SQLite]
+  KV_RD_AS --> KV_RD_AS_SL[SlateDB]
+  KV_RD_AS --> KV_RD_AS_SQ[SQLite]
 
-  VEC --> VEC_LN[LanceDB]
-  VEC --> VEC_SV[sqlite-vec]
+  KVV --> KVV_OV[Overview]
+  KVV --> KVV_BUILD[Build]
+  KVV --> KVV_READ[Read]
 
-  KVV --> KVV_CO[Composite SlateDB+LanceDB]
-  KVV --> KVV_UN[Unified sqlite-vec]
+  KVV_BUILD --> KVV_CO[Composite<br/>SlateDB+LanceDB]
+  KVV_BUILD --> KVV_UN[Unified<br/>sqlite-vec]
 
-  READ --> RD_SY[Sync]
-  READ --> RD_AS[Async]
-  RD_SY --> RD_SY_SL[SlateDB]
-  RD_SY --> RD_SY_SQ[SQLite]
-  RD_AS --> RD_AS_SL[SlateDB]
-  RD_AS --> RD_AS_SQ[SQLite]
+  KVV_READ --> KVV_RD_SY[Sync]
+  KVV_READ --> KVV_RD_AS[Async]
+
+  VEC --> VEC_OV[Overview]
+  VEC --> VEC_BUILD[Build]
+  VEC --> VEC_READ[Read]
+
+  VEC_BUILD --> VEC_LN[LanceDB]
+  VEC_BUILD --> VEC_SV[sqlite-vec]
+
+  VEC_READ --> VEC_RD_SY[Sync]
+  VEC_READ --> VEC_RD_AS[Async]
 
   OP --> OP_CLI[CLI]
-  OP --> OP_HIST[History & rollback]
+  OP --> OP_HIST[History &amp; rollback]
   OP --> OP_PROM[Prometheus metrics]
   OP --> OP_OTEL[OTel metrics]
 
-  classDef leaf fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#0d47a1,cursor:pointer;
-  class KV_PY_SL,KV_PY_SQ,KV_SP_SL,KV_SP_SQ,KV_DK_SL,KV_DK_SQ,KV_RY_SL,KV_RY_SQ,VEC_LN,VEC_SV,KVV_CO,KVV_UN,RD_SY_SL,RD_SY_SQ,RD_AS_SL,RD_AS_SQ,OP_CLI,OP_HIST,OP_PROM,OP_OTEL leaf;
+  classDef leaf fill:#e3f2fd,stroke:#1565c0,stroke-width:2,color:#0d47a1;
+  classDef overview fill:#fff8e1,stroke:#f57f17,stroke-width:2,color:#e65100;
+  classDef branch fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1,color:#4a148c;
 
-  click KV_PY_SL "use-cases/build-python-slatedb/"
-  click KV_PY_SQ "use-cases/build-python-sqlite/"
-  click KV_SP_SL "use-cases/build-spark-slatedb/"
-  click KV_SP_SQ "use-cases/build-spark-sqlite/"
-  click KV_DK_SL "use-cases/build-dask-slatedb/"
-  click KV_DK_SQ "use-cases/build-dask-sqlite/"
-  click KV_RY_SL "use-cases/build-ray-slatedb/"
-  click KV_RY_SQ "use-cases/build-ray-sqlite/"
-  click VEC_LN "use-cases/build-vector-lancedb-standalone/"
-  click VEC_SV "use-cases/build-vector-sqlite-vec-standalone/"
-  click KVV_CO "use-cases/build-python-slatedb-lancedb/"
-  click KVV_UN "use-cases/build-python-sqlite-vec/"
-  click RD_SY_SL "use-cases/read-sync-slatedb/"
-  click RD_SY_SQ "use-cases/read-sync-sqlite/"
-  click RD_AS_SL "use-cases/read-async-slatedb/"
-  click RD_AS_SQ "use-cases/read-async-sqlite/"
-  click OP_CLI "use-cases/operate-cli/"
-  click OP_HIST "use-cases/operate-manifest-history-and-rollback/"
-  click OP_PROM "use-cases/operate-prometheus-metrics/"
-  click OP_OTEL "use-cases/operate-otel-metrics/"
+  class KV_PY,KV_SP,KV_DK,KV_RY,KV_RD_SY_SL,KV_RD_SY_SQ,KV_RD_AS_SL,KV_RD_AS_SQ,KVV_CO,KVV_UN,KVV_RD_SY,KVV_RD_AS,VEC_LN,VEC_SV,VEC_RD_SY,VEC_RD_AS,OP_CLI,OP_HIST,OP_PROM,OP_OTEL leaf;
+  class KV_OV,KVV_OV,VEC_OV overview;
+  class KV_BUILD,KV_READ,KVV_BUILD,KVV_READ,VEC_BUILD,VEC_READ,OP branch;
+
+  click KV_OV href "use-cases/kv-storage/overview/"
+  click KV_PY href "use-cases/kv-storage/build/python/"
+  click KV_SP href "use-cases/kv-storage/build/spark/"
+  click KV_DK href "use-cases/kv-storage/build/dask/"
+  click KV_RY href "use-cases/kv-storage/build/ray/"
+  click KV_RD_SY_SL href "use-cases/kv-storage/read/sync/slatedb/"
+  click KV_RD_SY_SQ href "use-cases/kv-storage/read/sync/sqlite/"
+  click KV_RD_AS_SL href "use-cases/kv-storage/read/async/slatedb/"
+  click KV_RD_AS_SQ href "use-cases/kv-storage/read/async/sqlite/"
+
+  click KVV_OV href "use-cases/kv-vector/overview/"
+  click KVV_CO href "use-cases/kv-vector/build/composite/"
+  click KVV_UN href "use-cases/kv-vector/build/unified/"
+  click KVV_RD_SY href "use-cases/kv-vector/read/sync/"
+  click KVV_RD_AS href "use-cases/kv-vector/read/async/"
+
+  click VEC_OV href "use-cases/vector/overview/"
+  click VEC_LN href "use-cases/vector/build/lancedb/"
+  click VEC_SV href "use-cases/vector/build/sqlite-vec/"
+  click VEC_RD_SY href "use-cases/vector/read/sync/"
+  click VEC_RD_AS href "use-cases/vector/read/async/"
+
+  click OP_CLI href "operate/cli/"
+  click OP_HIST href "operate/history-rollback/"
+  click OP_PROM href "operate/prometheus-metrics/"
+  click OP_OTEL href "operate/otel-metrics/"
 ```
 
 </div>
@@ -86,7 +102,8 @@ flowchart TD
 
 ## Sections
 
-- **[Use cases](use-cases/index.md)** — task-oriented guides. Each follows a fixed template (when to use / install / minimal example / config / properties / guarantees / weaknesses / failure modes).
+- **[Use cases](use-cases/index.md)** — task-oriented guides organized by use-case type (KV, KV+Vector, Vector) with conceptual overviews and backend-specific leaf pages.
+- **[Operate](operate/index.md)** — CLI, history & rollback, metrics (Prometheus, OTel).
 - **[Architecture](architecture/writer-core.md)** — internal design: writer core, sharding, routing, manifest, run registry, adapters, observability, error model.
 - **[Reference](reference/api.md)** — public API, configuration objects, CLI, glossary.
 - **[Operations](operations/index.md)** — running shardyfusion in production, cloud testing, tox & dependency matrix.

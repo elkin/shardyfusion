@@ -214,7 +214,7 @@ store = PostgresManifestStore(
 
 **Cause:** The current manifest is malformed (schema migration, partial write, corruption).
 
-**Resolution:** The reader's cold-start fallback automatically tries previous manifests (up to `max_fallback_attempts=3` by default; see [`use-cases/read-sync-slatedb.md`](../use-cases/read-sync-slatedb.md)). If all manifests are invalid:
+**Resolution:** The reader's cold-start fallback automatically tries previous manifests (up to `max_fallback_attempts=3` by default; see [`use-cases/kv-storage/read/sync/slatedb.md`](../use-cases/kv-storage/read/sync/slatedb.md)). If all manifests are invalid:
 
 1. Check manifest contents: `uv run shardy --ref <manifest-ref> info`
 2. Roll back to a known-good manifest: `uv run shardy rollback --offset 1`
@@ -261,4 +261,4 @@ if not result:
     await asyncio.sleep(result.deficit)
 ```
 
-See [`use-cases/read-async-slatedb.md`](../use-cases/read-async-slatedb.md) for async rate-limiter patterns.
+See [`use-cases/kv-storage/read/async/slatedb.md`](../use-cases/kv-storage/read/async/slatedb.md) for async rate-limiter patterns.

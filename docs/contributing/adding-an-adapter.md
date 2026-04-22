@@ -180,7 +180,7 @@ Then `just ci-matrix` regenerates `.github/ci-matrix.json`.
 
 Per [`adding-a-use-case.md`](adding-a-use-case.md):
 
-1. Add `docs/use-cases/build-python-foodb.md` (or whichever writer flavor is the entry point).
+1. Add `docs/use-cases/kv-storage/build/python.md` (or the appropriate writer leaf page if the adapter supports an existing writer flavor).
 2. Add a row to the use-case map in `docs/index.md`.
 3. Update [`architecture/adapters.md`](../architecture/adapters.md) with a row in the built-in adapters table.
 4. Update [`architecture/optional-imports.md`](../architecture/optional-imports.md) extras index.

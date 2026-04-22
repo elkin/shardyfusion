@@ -49,7 +49,7 @@ Operates on `SUCCEEDED` runs only (in registry terms). The current `_CURRENT` ru
 
 ## CleanupAction
 
-`CleanupAction` (`_writer_core.py:655`) is the data class describing one planned cleanup operation. The cleanup functions return lists of these so callers can log/inspect them (used heavily in tests and by the `cleanup` CLI subcommand — see [`use-cases/operate-cli.md`](../use-cases/operate-cli.md)).
+`CleanupAction` (`_writer_core.py:655`) is the data class describing one planned cleanup operation. The cleanup functions return lists of these so callers can log/inspect them (used heavily in tests and by the `cleanup` CLI subcommand — see [`operate/cli.md`](../operate/cli.md)).
 
 ## Failure modes during cleanup
 

@@ -1,4 +1,62 @@
-# Documentation reorganization (2026-04-21)
+# Documentation reorganization
+
+## 2026-04-22 — Tree-structured use cases
+
+The use-case docs were reorganized from a flat list (18 pages at the same level) into a **decision tree**:
+
+- Three top-level use-case families: **Sharded KV storage**, **Sharded KV + Vector**, **Sharded Vector search**.
+- Each family has a conceptual **overview** page (shared concepts: sharding, manifests, two-phase publish, safety).
+- Overview pages branch into **build** and **read** sections.
+- Writer build pages are **merged by writer flavor** (one page covers both SlateDB and SQLite backends).
+- KV+Vector build pages use **content tabs** for Python/Spark/Dask/Ray examples.
+- Reader pages are **split by backend** (SlateDB vs SQLite) under sync/async.
+- **Operate** docs were promoted to a top-level nav section.
+
+### Directory changes
+
+| Old flat path | New tree path |
+|---|---|
+| `use-cases/build-python-slatedb.md` | `use-cases/kv-storage/build/python.md` |
+| `use-cases/build-python-sqlite.md` | merged into `use-cases/kv-storage/build/python.md` |
+| `use-cases/build-spark-slatedb.md` | `use-cases/kv-storage/build/spark.md` |
+| `use-cases/build-spark-sqlite.md` | merged into `use-cases/kv-storage/build/spark.md` |
+| `use-cases/build-dask-slatedb.md` | `use-cases/kv-storage/build/dask.md` |
+| `use-cases/build-dask-sqlite.md` | merged into `use-cases/kv-storage/build/dask.md` |
+| `use-cases/build-ray-slatedb.md` | `use-cases/kv-storage/build/ray.md` |
+| `use-cases/build-ray-sqlite.md` | merged into `use-cases/kv-storage/build/ray.md` |
+| `use-cases/build-python-slatedb-lancedb.md` | `use-cases/kv-vector/build/composite.md` |
+| `use-cases/build-python-sqlite-vec.md` | `use-cases/kv-vector/build/unified.md` |
+| `use-cases/build-vector-lancedb-standalone.md` | `use-cases/vector/build/lancedb.md` |
+| `use-cases/build-vector-sqlite-vec-standalone.md` | `use-cases/vector/build/sqlite-vec.md` |
+| `use-cases/read-sync-slatedb.md` | `use-cases/kv-storage/read/sync/slatedb.md` |
+| `use-cases/read-sync-sqlite.md` | `use-cases/kv-storage/read/sync/sqlite.md` |
+| `use-cases/read-async-slatedb.md` | `use-cases/kv-storage/read/async/slatedb.md` |
+| `use-cases/read-async-sqlite.md` | `use-cases/kv-storage/read/async/sqlite.md` |
+| `use-cases/operate-cli.md` | `operate/cli.md` |
+| `use-cases/operate-manifest-history-and-rollback.md` | `operate/history-rollback.md` |
+| `use-cases/operate-prometheus-metrics.md` | `operate/prometheus-metrics.md` |
+| `use-cases/operate-otel-metrics.md` | `operate/otel-metrics.md` |
+
+New pages added:
+
+- `use-cases/kv-storage/overview.md`
+- `use-cases/kv-vector/overview.md`
+- `use-cases/vector/overview.md`
+- `use-cases/kv-storage/build/index.md`
+- `use-cases/kv-storage/read/index.md`
+- `use-cases/vector/read/sync.md`
+- `use-cases/vector/read/async.md`
+- `use-cases/kv-vector/read/sync.md`
+- `use-cases/kv-vector/read/async.md`
+- `operate/index.md`
+
+### Diagrams restored
+
+Mermaid diagrams from the pre-2026-04-21 deep-dive docs (`writers/*.md`, `reader.md`, `how-it-works.md`) were restored and updated to match current source code behavior. These include data-flow flowcharts for all four writers, manifest lifecycle sequence diagrams, reader refresh safety diagrams, and cold-start fallback flowcharts.
+
+---
+
+## 2026-04-21 — Use-case-driven layout
 
 The docs were restructured from a concept-first layout (one page per major concept: writer, reader, vector-search, ...) into a **use-case-driven layout** (one page per task the user wants to accomplish, plus thin architecture/reference/operations sections).
 

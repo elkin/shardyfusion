@@ -25,7 +25,7 @@ Of the built-in factories, only `SlateDbFactory` is in the public `__all__` (`sh
 | sqlite-vec (KV+vector) | `SqliteVecFactory` | `SqliteVecAdapter` | `sqlite_vec_adapter.py:106`, `:134` |
 | Composite (KV + vector) | `CompositeFactory` | `CompositeAdapter` | `composite_adapter.py:69`, `:111` |
 
-The composite adapter wires a KV adapter (SlateDB or SQLite) together with a vector adapter (LanceDB) into a single logical shard. See [`use-cases/build-python-slatedb-lancedb.md`](../use-cases/build-python-slatedb-lancedb.md).
+The composite adapter wires a KV adapter (SlateDB or SQLite) together with a vector adapter (LanceDB) into a single logical shard. See [`use-cases/kv-vector/build/composite.md`](../use-cases/kv-vector/build/composite.md).
 
 ## Reader protocols
 

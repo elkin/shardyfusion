@@ -29,26 +29,42 @@ nav:
   - Home: index.md
   - Use cases:
     - Overview: use-cases/index.md
-    - Build — Python + SlateDB: use-cases/build-python-slatedb.md
-    - Build — Python + SQLite: use-cases/build-python-sqlite.md
-    - Build — Spark + SlateDB: use-cases/build-spark-slatedb.md
-    - Build — Spark + SQLite: use-cases/build-spark-sqlite.md
-    - Build — Dask + SlateDB: use-cases/build-dask-slatedb.md
-    - Build — Dask + SQLite: use-cases/build-dask-sqlite.md
-    - Build — Ray + SlateDB: use-cases/build-ray-slatedb.md
-    - Build — Ray + SQLite: use-cases/build-ray-sqlite.md
-    - Build — KV+Vector composite (SlateDB+LanceDB): use-cases/build-python-slatedb-lancedb.md
-    - Build — KV+Vector unified (sqlite-vec): use-cases/build-python-sqlite-vec.md
-    - Build — Vector standalone (LanceDB): use-cases/build-vector-lancedb-standalone.md
-    - Build — Vector standalone (sqlite-vec): use-cases/build-vector-sqlite-vec-standalone.md
-    - Read — Sync SlateDB: use-cases/read-sync-slatedb.md
-    - Read — Sync SQLite: use-cases/read-sync-sqlite.md
-    - Read — Async SlateDB: use-cases/read-async-slatedb.md
-    - Read — Async SQLite: use-cases/read-async-sqlite.md
-    - Operate — CLI: use-cases/operate-cli.md
-    - Operate — History & rollback: use-cases/operate-manifest-history-and-rollback.md
-    - Operate — Prometheus metrics: use-cases/operate-prometheus-metrics.md
-    - Operate — OTel metrics: use-cases/operate-otel-metrics.md
+    - Sharded KV storage:
+      - Overview: use-cases/kv-storage/overview.md
+      - Build:
+        - Choosing a writer: use-cases/kv-storage/build/index.md
+        - Python: use-cases/kv-storage/build/python.md
+        - Spark: use-cases/kv-storage/build/spark.md
+        - Dask: use-cases/kv-storage/build/dask.md
+        - Ray: use-cases/kv-storage/build/ray.md
+      - Read:
+        - Choosing a reader: use-cases/kv-storage/read/index.md
+        - Sync SlateDB: use-cases/kv-storage/read/sync/slatedb.md
+        - Sync SQLite: use-cases/kv-storage/read/sync/sqlite.md
+        - Async SlateDB: use-cases/kv-storage/read/async/slatedb.md
+        - Async SQLite: use-cases/kv-storage/read/async/sqlite.md
+    - Sharded KV + Vector:
+      - Overview: use-cases/kv-vector/overview.md
+      - Build:
+        - Composite (SlateDB + LanceDB): use-cases/kv-vector/build/composite.md
+        - Unified (sqlite-vec): use-cases/kv-vector/build/unified.md
+      - Read:
+        - Sync: use-cases/kv-vector/read/sync.md
+        - Async: use-cases/kv-vector/read/async.md
+    - Sharded Vector search:
+      - Overview: use-cases/vector/overview.md
+      - Build:
+        - LanceDB: use-cases/vector/build/lancedb.md
+        - sqlite-vec: use-cases/vector/build/sqlite-vec.md
+      - Read:
+        - Sync: use-cases/vector/read/sync.md
+        - Async: use-cases/vector/read/async.md
+  - Operate:
+    - Overview: operate/index.md
+    - CLI: operate/cli.md
+    - History & rollback: operate/history-rollback.md
+    - Prometheus metrics: operate/prometheus-metrics.md
+    - OTel metrics: operate/otel-metrics.md
   - Architecture:
     - Overview: architecture/index.md
     - Writer core: architecture/writer-core.md
@@ -117,3 +133,5 @@ markdown_extensions:
         - name: mermaid
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true

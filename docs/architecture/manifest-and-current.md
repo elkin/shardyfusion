@@ -57,7 +57,7 @@ See [`history/design-decisions/adr-001-two-phase-publish.md`](../history/design-
 
 ## Manifest history
 
-Old manifest objects are retained in `manifests/`. They are deleted only by `cleanup_old_runs` (`_writer_core.py:725`), gated by `keep_runs`. Until then, they form the rollback log: pointing `_CURRENT` at a previous manifest object atomically rolls the snapshot back. See [`use-cases/operate-manifest-history-and-rollback.md`](../use-cases/operate-manifest-history-and-rollback.md).
+Old manifest objects are retained in `manifests/`. They are deleted only by `cleanup_old_runs` (`_writer_core.py:725`), gated by `keep_runs`. Until then, they form the rollback log: pointing `_CURRENT` at a previous manifest object atomically rolls the snapshot back. See [`operate/history-rollback.md`](../operate/history-rollback.md).
 
 ## Manifest stores
 

@@ -131,8 +131,7 @@ Add `py{311,312,313}-myframework-slatedb-{unit,integration,e2e}` envs to `tox.in
 
 Per [`adding-a-use-case.md`](adding-a-use-case.md), add at minimum:
 
-- `docs/use-cases/build-myframework-slatedb.md`
-- `docs/use-cases/build-myframework-sqlite.md`
+- `docs/use-cases/kv-storage/build/myframework.md` (covering both SlateDB and SQLite backends in one page)
 
 Update [`architecture/writer-core.md`](../architecture/writer-core.md) if you introduce a new shared primitive.
 
