@@ -10,8 +10,8 @@ Here is a comprehensive architectural review, critical analysis, and strategic r
 **The good:**
 You have correctly implemented a **two-phase publish protocol** that guarantees Snapshot Isolation.
 1. Writers dump immutable data to separate prefix paths (`attempt=XX`).
-2. A single orchestrator process writes a declarative `manifest.yaml` with pointers to the winning attempts.
-3. The `_CURRENT` pointer is atomically overwritten to point to the new manifest.
+2. A single orchestrator process writes a serialized SQLite manifest/metadata database that records the winning attempts.
+3. The `_CURRENT` pointer is atomically overwritten to point to that new manifest database object.
 
 This ensures readers never see partial writes. Even if a driver node crashes mid-publish, the previous `_CURRENT` pointer remains valid.
 
@@ -43,12 +43,12 @@ This ensures readers never see partial writes. Even if a driver node crashes mid
 Using CEL (`cel-expr-python`) for sharding logic is the most elegant part of this codebase. It fundamentally solves the "cross-language routing" problem. By pushing the sharding logic into a generic AST (Abstract Syntax Tree) in the manifest, you can seamlessly build Rust, Go, or TypeScript readers in the future without replicating Python's `hash()` or custom logic.
 
 ### 5. Manifest Protocol Analysis
-Currently, your manifest is a YAML (or JSON) document containing `required_build` and a list of `shards`.
+Currently, your manifest is a serialized SQLite database containing build metadata plus a `shards` table, with nested fields such as sharding settings and custom metadata stored as JSON.
 * **Is it good enough?** Yes, for up to ~10,000 shards.
-* **The scaling limit:** If a user scales to 1,000,000 shards, the YAML file will be ~100MB. Parsing a 100MB YAML file into Pydantic models on every single Reader startup or `refresh()` will cause severe CPU spiking and memory bloat, potentially triggering OOM kills in small Kubernetes pods.
-* **The Long-Term Fix:** Move to a **Hierarchical Manifest** or **Binary Format** for v2.
-  1. *Hierarchical:* The root manifest contains metadata and points to 10 sub-manifests, which each point to shards.
-  2. *Binary:* Use an Apache Parquet file or an embedded SQLite DB as the manifest itself. The reader downloads `manifest.db` and runs `SELECT db_url FROM shards WHERE min_key <= ? AND max_key >= ?`.
+* **The scaling limit:** If a user scales to 1,000,000 shards, the manifest database can still grow to ~100MB+, making manifest download, materialization, and shard metadata scans noticeably more expensive during reader startup or `refresh()`.
+* **The Long-Term Fix:** Move to a **Hierarchical Manifest** or otherwise partitioned metadata layout.
+  1. *Hierarchical:* The root manifest database contains global metadata and points to sub-manifest databases that each cover a shard range.
+  2. *Partitioned metadata:* Keep SQLite as the manifest format, but split shard metadata into multiple manifest databases so readers can fetch or refresh only the subsets they need.
 
 ### 6. Strategy for Growth & Popularity
 To make `shardyfusion` a mainstream tool, lean heavily into the "Serverless/Zero-Infra" narrative.
@@ -61,4 +61,4 @@ You have a solid foundation, but distributed systems hide race conditions in the
 1. **Chaos / Network Partition Tests:** Use `responses` or `moto` to simulate S3 `503 Slow Down` or `Timeout` errors mid-way through a Reader's range-read I/O. Verify that the APSW VFS doesn't segfault and that your rate limiters handle the backoff.
 2. **Concurrency Fuzzing:** Write a test that spins up 50 threads constantly calling `reader.get()`, while a background thread calls `reader.refresh()` every 0.1 seconds, forcefully swapping the underlying database. Ensure no `sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in that same thread` errors leak through and the `refcount` never drops below zero.
 3. **Orphan / GC Tests:** Force an exception immediately after `store.publish()` but before `cleanup_losers()`, then assert that your GC scripts accurately identify and purge the untracked attempts.
-4. **Manifest Scale Test:** Programmatically generate a `ParsedManifest` with 100,000 dummy shards, write it to memory, and benchmark how long `reader.refresh()` takes to parse it. Ensure it doesn't block the async event loop for too long in `AsyncShardedReader`.
+4. **Manifest Scale Test:** Programmatically generate a large SQLite manifest database with 100,000 dummy shards, benchmark `load_manifest()` / `reader.refresh()`, and ensure it doesn't block the async event loop for too long in `AsyncShardedReader`.

@@ -34,9 +34,10 @@ reader = ShardedVectorReader(
 )
 
 query = np.random.randn(384).astype(np.float32)
-results = reader.search(query, top_k=10)
+response = reader.search(query, top_k=10)
 
-for res in results:
+print("search latency (ms):", round(response.latency_ms, 2))
+for res in response.results:
     print(res.id, res.score, res.payload)
 
 reader.close()
