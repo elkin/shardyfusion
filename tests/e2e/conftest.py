@@ -25,8 +25,6 @@ from shardyfusion.slatedb_adapter import DbAdapterFactory
 from shardyfusion.type_defs import S3ConnectionOptions, ShardReaderFactory
 
 if TYPE_CHECKING:
-    from pyspark.sql import SparkSession
-
     from tests.conftest import LocalS3Service
 
 
@@ -227,15 +225,3 @@ def s3_connection_options_from_service(
     )
 
 
-@pytest.fixture(scope="session")
-def spark() -> Generator[SparkSession, None, None]:
-    from pyspark.sql import SparkSession
-
-    session = (
-        SparkSession.builder.master("local[2]")
-        .appName("shardyfusion_e2e")
-        .config("spark.ui.enabled", "false")
-        .getOrCreate()
-    )
-    yield session
-    session.stop()
