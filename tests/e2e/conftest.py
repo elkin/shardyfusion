@@ -223,5 +223,3 @@ def s3_connection_options_from_service(
         region_name=service["region_name"],
         addressing_style="path",
     )
-
-
