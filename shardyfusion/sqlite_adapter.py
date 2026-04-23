@@ -403,56 +403,6 @@ class SqliteRangeReaderFactory:
         )
 
 
-class _S3ReadOnlyFile:
-    """Read-only virtual file backed by S3 range requests with LRU cache.
-
-    This is the core I/O layer used by the APSW VFS implementation.
-
-    .. deprecated::
-        Use :class:`shardyfusion._sqlite_vfs.S3ReadOnlyFile` instead.
-        This class delegates to the shared implementation.
-    """
-
-    def __init__(
-        self,
-        *,
-        bucket: str,
-        key: str,
-        page_cache_pages: int = 1024,
-        s3_connection_options: S3ConnectionOptions | None = None,
-        s3_credentials: S3Credentials | None = None,
-    ) -> None:
-        from ._sqlite_vfs import S3ReadOnlyFile, S3VfsError
-
-        try:
-            self._delegate = S3ReadOnlyFile(
-                bucket=bucket,
-                key=key,
-                page_cache_pages=page_cache_pages,
-                s3_connection_options=s3_connection_options,
-                s3_credentials=s3_credentials,
-            )
-        except S3VfsError as exc:
-            raise SqliteAdapterError(str(exc)) from exc
-
-    @property
-    def size(self) -> int:
-        return self._delegate.size
-
-    def read(self, offset: int, amount: int) -> bytes:
-        return self._delegate.read(offset, amount)
-
-
-def _normalize_page_cache_pages(page_cache_pages: int) -> int:
-    from ._sqlite_vfs import S3VfsError
-    from ._sqlite_vfs import _normalize_page_cache_pages as _normalize
-
-    try:
-        return _normalize(page_cache_pages)
-    except S3VfsError as exc:
-        raise SqliteAdapterError(str(exc)) from exc
-
-
 class SqliteRangeShardReader:
     """Range-read reader: fetches only the SQLite pages needed via S3 Range requests.
 
@@ -482,6 +432,7 @@ class SqliteRangeShardReader:
                 "Install via: pip install apsw"
             ) from exc
 
+        from ._sqlite_vfs import _normalize_page_cache_pages
         from .storage import parse_s3_url
 
         page_cache_pages = _normalize_page_cache_pages(page_cache_pages)
@@ -495,7 +446,9 @@ class SqliteRangeShardReader:
         creds = credential_provider.resolve() if credential_provider else None
 
         try:
-            self._s3_file = _S3ReadOnlyFile(
+            from ._sqlite_vfs import S3ReadOnlyFile, S3VfsError, create_apsw_vfs
+
+            self._s3_file = S3ReadOnlyFile(
                 bucket=bucket,
                 key=key,
                 page_cache_pages=page_cache_pages,
@@ -513,7 +466,7 @@ class SqliteRangeShardReader:
         import uuid
 
         vfs_name = f"s3range_{uuid.uuid4().hex}"
-        self._vfs = _create_apsw_vfs(vfs_name, self._s3_file)
+        self._vfs = create_apsw_vfs(vfs_name, self._s3_file)
         self._conn = apsw.Connection(
             f"file:{_DB_FILENAME}?mode=ro",
             flags=apsw.SQLITE_OPEN_READONLY | apsw.SQLITE_OPEN_URI,
@@ -536,17 +489,6 @@ class SqliteRangeShardReader:
         if self._vfs is not None:
             self._vfs.unregister()
             self._vfs = None
-
-
-def _create_apsw_vfs(vfs_name: str, s3_file: _S3ReadOnlyFile) -> Any:
-    """Create and register an APSW VFS backed by S3 range reads.
-
-    Delegates to the shared implementation in :mod:`shardyfusion._sqlite_vfs`.
-    """
-    from ._sqlite_vfs import create_apsw_vfs
-
-    delegate: Any = s3_file._delegate if hasattr(s3_file, "_delegate") else s3_file
-    return create_apsw_vfs(vfs_name, delegate)
 
 
 # ---------------------------------------------------------------------------
