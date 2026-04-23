@@ -11,26 +11,19 @@ os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
 import pandas as pd
 import pytest
 
-dask = pytest.importorskip("dask")
-dd = pytest.importorskip("dask.dataframe")
-ray_data = pytest.importorskip("ray.data")
-
-from shardyfusion._writer_core import VectorColumnMapping  # noqa: E402
-from shardyfusion.config import (  # noqa: E402
+from shardyfusion._writer_core import VectorColumnMapping
+from shardyfusion.config import (
     ManifestOptions,
     OutputOptions,
     VectorSpec,
     WriteConfig,
 )
-from shardyfusion.credentials import StaticCredentialProvider  # noqa: E402
-from shardyfusion.manifest_store import parse_manifest_payload  # noqa: E402
-from shardyfusion.serde import ValueSpec  # noqa: E402
-from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy  # noqa: E402
-from shardyfusion.type_defs import S3ConnectionOptions  # noqa: E402
-from shardyfusion.writer.dask import write_sharded as write_dask_sharded  # noqa: E402
-from shardyfusion.writer.ray import write_sharded as write_ray_sharded  # noqa: E402
-from shardyfusion.writer.spark import write_sharded as write_spark_sharded  # noqa: E402
-from tests.integration.vector.test_unified_write_read_local_s3 import (  # noqa: E402
+from shardyfusion.credentials import StaticCredentialProvider
+from shardyfusion.manifest_store import parse_manifest_payload
+from shardyfusion.serde import ValueSpec
+from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
+from shardyfusion.type_defs import S3ConnectionOptions
+from tests.integration.vector.test_unified_write_read_local_s3 import (
     FakeUnifiedFactory,
 )
 
@@ -41,12 +34,6 @@ pytestmark = [
         reason="requires cel extra",
     ),
 ]
-
-
-@pytest.fixture(autouse=True)
-def _synchronous_scheduler():
-    with dask.config.set(scheduler="synchronous"):
-        yield
 
 
 def _base_config(local_s3_service: dict[str, object], *, prefix: str) -> WriteConfig:
@@ -93,6 +80,10 @@ def _assert_vector_manifest(
 
 
 def test_dask_unified_vector_write(local_s3_service):
+    dask = pytest.importorskip("dask")
+    dd = pytest.importorskip("dask.dataframe")
+    from shardyfusion.writer.dask import write_sharded as write_dask_sharded
+
     config = _base_config(local_s3_service, prefix="dask-unified-vectors")
     pdf = pd.DataFrame(
         {
@@ -101,19 +92,23 @@ def test_dask_unified_vector_write(local_s3_service):
             "embedding": [json.dumps([0.0, 0.1, 0.2, 0.3])] * 4,
         }
     )
-    ddf = dd.from_pandas(pdf, npartitions=2)
-    result = write_dask_sharded(
-        ddf,
-        config,
-        key_col="key",
-        value_spec=ValueSpec.callable_encoder(lambda row: row["value"].encode()),
-        vector_fn=lambda row: (int(row["key"]), json.loads(row["embedding"]), None),
-    )
+    with dask.config.set(scheduler="synchronous"):
+        ddf = dd.from_pandas(pdf, npartitions=2)
+        result = write_dask_sharded(
+            ddf,
+            config,
+            key_col="key",
+            value_spec=ValueSpec.callable_encoder(lambda row: row["value"].encode()),
+            vector_fn=lambda row: (int(row["key"]), json.loads(row["embedding"]), None),
+        )
     assert result.stats.rows_written == 4
     _assert_vector_manifest(local_s3_service, result.manifest_ref)
 
 
 def test_ray_unified_vector_write(local_s3_service):
+    ray_data = pytest.importorskip("ray.data")
+    from shardyfusion.writer.ray import write_sharded as write_ray_sharded
+
     config = _base_config(local_s3_service, prefix="ray-unified-vectors")
     ds = ray_data.from_items(
         [
@@ -133,6 +128,9 @@ def test_ray_unified_vector_write(local_s3_service):
 
 
 def test_spark_unified_vector_write(spark, local_s3_service):
+    pytest.importorskip("pyspark", reason="requires writer-spark extra")
+    from shardyfusion.writer.spark import write_sharded as write_spark_sharded
+
     config = _base_config(local_s3_service, prefix="spark-unified-vectors")
     df = spark.createDataFrame(
         [(0, "v0", [0.0, 0.1, 0.2, 0.3]), (1, "v1", [0.4, 0.5, 0.6, 0.7])],
