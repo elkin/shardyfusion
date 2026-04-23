@@ -93,12 +93,11 @@ class TestValidateConfig:
         _validate_config(cfg)  # should not raise
 
     def test_zero_dim_raises(self):
-        cfg = VectorWriteConfig(
-            s3_prefix="s3://bucket",
-            index_config=VectorIndexConfig(dim=0),
-        )
-        with pytest.raises(ConfigValidationError, match="dim"):
-            _validate_config(cfg)
+        with pytest.raises(ConfigValidationError, match=r"index_config\.dim"):
+            VectorWriteConfig(
+                s3_prefix="s3://bucket",
+                index_config=VectorIndexConfig(dim=0),
+            )
 
     def test_empty_prefix_raises(self):
         cfg = VectorWriteConfig(

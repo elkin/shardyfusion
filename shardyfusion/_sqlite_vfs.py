@@ -64,6 +64,8 @@ class S3ReadOnlyFile:
         return self._size
 
     def read(self, offset: int, amount: int) -> bytes:
+        if amount <= 0:
+            return b""
         if offset >= self._size:
             return b""
 

@@ -888,7 +888,10 @@ def search_cmd(
     except ImportError as exc:
         raise click.ClickException(
             "Vector search requires numpy. "
-            "Install with: pip install 'shardyfusion[vector-lancedb]'"
+            "Install a supported vector extra, for example: "
+            "pip install 'shardyfusion[vector]' or "
+            "'shardyfusion[vector-lancedb]' or "
+            "'shardyfusion[vector-sqlite]'"
         ) from exc
 
     # Parse query vector
@@ -984,7 +987,10 @@ def search_cmd(
     except ImportError as exc:
         raise click.ClickException(
             "Vector search requires vector extras. "
-            "Install with: pip install 'shardyfusion[vector-lancedb]'"
+            "Install a supported vector extra, for example: "
+            "pip install 'shardyfusion[vector]' or "
+            "'shardyfusion[vector-lancedb]' or "
+            "'shardyfusion[vector-sqlite]'"
         ) from exc
     except Exception as exc:
         result = build_error_result("search", None, str(exc))

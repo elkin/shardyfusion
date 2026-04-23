@@ -95,20 +95,18 @@ class TestValidateVectorConfig:
         validate_vector_config(cfg)
 
     def test_invalid_zero_dim(self) -> None:
-        cfg = VectorWriteConfig(
-            s3_prefix="s3://bucket/prefix",
-            index_config=VectorIndexConfig(dim=0),
-        )
-        with pytest.raises(ConfigValidationError, match="dim"):
-            validate_vector_config(cfg)
+        with pytest.raises(ConfigValidationError, match=r"index_config\.dim"):
+            VectorWriteConfig(
+                s3_prefix="s3://bucket/prefix",
+                index_config=VectorIndexConfig(dim=0),
+            )
 
     def test_invalid_negative_dim(self) -> None:
-        cfg = VectorWriteConfig(
-            s3_prefix="s3://bucket/prefix",
-            index_config=VectorIndexConfig(dim=-1),
-        )
-        with pytest.raises(ConfigValidationError, match="dim"):
-            validate_vector_config(cfg)
+        with pytest.raises(ConfigValidationError, match=r"index_config\.dim"):
+            VectorWriteConfig(
+                s3_prefix="s3://bucket/prefix",
+                index_config=VectorIndexConfig(dim=-1),
+            )
 
     def test_invalid_empty_prefix(self) -> None:
         cfg = VectorWriteConfig(

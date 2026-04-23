@@ -74,6 +74,24 @@ class TestS3ReadOnlyFile:
         assert data == b""
 
     @patch("shardyfusion.storage.create_s3_client")
+    def test_zero_length_read_returns_empty(self, mock_create: MagicMock) -> None:
+        client = _mock_s3_client(100)
+        mock_create.return_value = client
+        f = S3ReadOnlyFile(bucket="b", key="k")
+
+        assert f.read(0, 0) == b""
+        client.get_object.assert_not_called()
+
+    @patch("shardyfusion.storage.create_s3_client")
+    def test_negative_length_read_returns_empty(self, mock_create: MagicMock) -> None:
+        client = _mock_s3_client(100)
+        mock_create.return_value = client
+        f = S3ReadOnlyFile(bucket="b", key="k")
+
+        assert f.read(0, -1) == b""
+        client.get_object.assert_not_called()
+
+    @patch("shardyfusion.storage.create_s3_client")
     def test_read_cache_hit(self, mock_create: MagicMock) -> None:
         client = _mock_s3_client(100)
         mock_create.return_value = client

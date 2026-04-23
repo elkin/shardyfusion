@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from typing import cast
+
+import pytest
+
 from shardyfusion.vector._merge import merge_results
 from shardyfusion.vector.types import DistanceMetric, SearchResult
 
@@ -58,3 +62,7 @@ class TestMergeResults:
         shard1 = [_r(1, 0.1)]
         merged = merge_results([shard1], 10, DistanceMetric.L2)
         assert len(merged) == 1
+
+    def test_unsupported_metric_raises(self):
+        with pytest.raises(ValueError, match="Unsupported distance metric"):
+            merge_results([[_r(1, 0.1)]], 1, cast(DistanceMetric, "unsupported"))

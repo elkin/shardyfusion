@@ -9,6 +9,7 @@ import numpy as np
 
 from ..config import ManifestOptions, OutputOptions
 from ..credentials import CredentialProvider
+from ..errors import ConfigValidationError
 from ..metrics._protocol import MetricsCollector
 from ..run_registry import RunRegistry
 from ..type_defs import S3ConnectionOptions
@@ -91,3 +92,10 @@ class VectorWriteConfig:
     s3_connection_options: S3ConnectionOptions | None = None
     metrics_collector: MetricsCollector | None = None
     run_registry: RunRegistry | None = None
+
+    def __post_init__(self) -> None:
+        if self.index_config.dim <= 0:
+            raise ConfigValidationError(
+                "index_config.dim must be > 0; provide an explicit "
+                f"VectorIndexConfig (got {self.index_config.dim})"
+            )

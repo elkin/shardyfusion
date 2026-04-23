@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
+from shardyfusion.errors import ConfigValidationError
 from shardyfusion.vector.config import (
     VectorIndexConfig,
     VectorShardingSpec,
@@ -67,13 +69,9 @@ class TestVectorShardingSpec:
 
 
 class TestVectorWriteConfig:
-    def test_defaults(self):
-        cfg = VectorWriteConfig()
-        assert cfg.num_dbs is None
-        assert cfg.s3_prefix == ""
-        assert cfg.batch_size == 10_000
-        assert cfg.adapter_factory is None
-        assert cfg.max_writes_per_second is None
+    def test_missing_index_config_raises(self):
+        with pytest.raises(ConfigValidationError, match=r"index_config\.dim"):
+            VectorWriteConfig()
 
     def test_custom_config(self):
         cfg = VectorWriteConfig(

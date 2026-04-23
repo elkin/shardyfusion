@@ -575,7 +575,9 @@ def test_sharded_reader_rejects_vector_only_manifest(tmp_path) -> None:
         "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"one"},
     }
 
-    with pytest.raises(ConfigValidationError, match="vector-only metadata"):
+    with pytest.raises(
+        ConfigValidationError, match="unsupported or incomplete vector metadata"
+    ):
         ShardedReader(
             s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
@@ -591,7 +593,9 @@ def test_concurrent_reader_rejects_vector_only_manifest(tmp_path) -> None:
         "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"one"},
     }
 
-    with pytest.raises(ConfigValidationError, match="vector-only metadata"):
+    with pytest.raises(
+        ConfigValidationError, match="unsupported or incomplete vector metadata"
+    ):
         ConcurrentShardedReader(
             s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),

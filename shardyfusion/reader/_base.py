@@ -107,8 +107,9 @@ class _BaseShardedReader:
         vector_meta = manifest.custom.get("vector")
         if isinstance(vector_meta, dict) and not bool(vector_meta.get("unified")):
             raise ConfigValidationError(
-                "This manifest contains vector-only metadata and cannot be opened "
-                "with a generic KV reader. Use ShardedVectorReader instead."
+                "This manifest contains unsupported or incomplete vector metadata "
+                "and cannot be opened with a generic KV reader. Use "
+                "ShardedVectorReader instead."
             )
 
     def _open_one_reader(self, shard: RequiredShardMeta) -> ShardReader:
