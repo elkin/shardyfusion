@@ -9,8 +9,6 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-pytest.importorskip("aiobotocore")
-
 from shardyfusion.errors import ConfigValidationError, ReaderStateError
 from shardyfusion.manifest import (
     ManifestRef,
