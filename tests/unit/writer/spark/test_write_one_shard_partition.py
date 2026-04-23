@@ -5,7 +5,6 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 from pyspark.sql import Row
 
 from shardyfusion._writer_core import ShardAttemptResult
@@ -18,7 +17,12 @@ from shardyfusion.writer.spark.writer import (
     PartitionWriteConfig,
     write_one_shard_partition,
 )
-from tests.helpers.tracking import RecordingTokenBucket
+from tests.helpers.tracking import (
+    RecordingTokenBucket,
+    patch_token_bucket_fixture,
+)
+
+_patch_token_bucket = patch_token_bucket_fixture("shardyfusion.writer.spark.writer")
 
 # ---------------------------------------------------------------------------
 # Fake adapter infrastructure
@@ -274,16 +278,6 @@ def test_vector_partition_uses_distributed_shard_writer(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 # Rate-limiter integration tests
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def _patch_token_bucket(monkeypatch: pytest.MonkeyPatch) -> list[RecordingTokenBucket]:
-    RecordingTokenBucket.instances = []
-    monkeypatch.setattr(
-        "shardyfusion.writer.spark.writer.TokenBucket",
-        RecordingTokenBucket,
-    )
-    return RecordingTokenBucket.instances
 
 
 def _make_rate_limited_runtime(

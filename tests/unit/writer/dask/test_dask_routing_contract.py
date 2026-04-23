@@ -7,7 +7,6 @@ function against the canonical routing function.
 
 from __future__ import annotations
 
-import dask
 import dask.dataframe as dd
 import pandas as pd
 import pytest
@@ -26,12 +25,6 @@ from tests.unit.writer.core.test_routing_contract import (
     EDGE_CASE_KEYS,
     U32_EDGE_CASE_KEYS,
 )
-
-
-@pytest.fixture(autouse=True)
-def _synchronous_scheduler():
-    with dask.config.set(scheduler="synchronous"):
-        yield
 
 
 @pytest.mark.parametrize("num_dbs", [1, 2, 3, 5, 7, 8, 16, 64, 128])

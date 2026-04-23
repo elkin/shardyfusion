@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
-
-os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
 
 import pandas as pd
 import pytest

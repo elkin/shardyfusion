@@ -14,12 +14,6 @@ dask = pytest.importorskip("dask")
 dd = pytest.importorskip("dask.dataframe")
 
 
-@pytest.fixture(autouse=True)
-def _sync_scheduler():
-    with dask.config.set(scheduler="synchronous"):
-        yield
-
-
 @pytest.mark.e2e
 @pytest.mark.vector
 def test_dask_vector_cluster_write_to_sqlite(garage_s3_service, tmp_path) -> None:

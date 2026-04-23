@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 
-import dask
 import dask.dataframe as dd
 import pandas as pd
-import pytest
 
 from shardyfusion.config import (
     ManifestOptions,
@@ -26,12 +24,6 @@ from tests.helpers.run_record_assertions import (
     assert_success_run_record,
     load_s3_run_record,
 )
-
-
-@pytest.fixture(autouse=True)
-def _synchronous_scheduler():
-    with dask.config.set(scheduler="synchronous"):
-        yield
 
 
 def test_single_db_dask_publishes_manifest_and_current(

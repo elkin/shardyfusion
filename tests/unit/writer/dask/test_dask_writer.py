@@ -6,7 +6,6 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Self
 
-import dask
 import dask.dataframe as dd
 import pandas as pd
 import pytest
@@ -39,18 +38,16 @@ from tests.helpers.run_record_assertions import (
     assert_success_run_record,
     load_in_memory_run_record,
 )
-from tests.helpers.tracking import RecordingTokenBucket
+from tests.helpers.tracking import (
+    RecordingTokenBucket,
+    patch_token_bucket_fixture,
+)
+
+_patch_token_bucket = patch_token_bucket_fixture("shardyfusion._shard_writer")
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _synchronous_scheduler():
-    """Force synchronous Dask scheduler for deterministic test behavior."""
-    with dask.config.set(scheduler="synchronous"):
-        yield
 
 
 # ---------------------------------------------------------------------------
@@ -398,16 +395,6 @@ def testresults_pdf_to_attempts_preserves_all_attempt_urls() -> None:
 # ---------------------------------------------------------------------------
 # Rate-limiter integration tests
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def _patch_token_bucket(monkeypatch: pytest.MonkeyPatch) -> list[RecordingTokenBucket]:
-    RecordingTokenBucket.instances = []
-    monkeypatch.setattr(
-        "shardyfusion._shard_writer.TokenBucket",
-        RecordingTokenBucket,
-    )
-    return RecordingTokenBucket.instances
 
 
 def test_rate_limiter_bucket_created_with_correct_rate(

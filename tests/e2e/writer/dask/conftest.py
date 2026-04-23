@@ -1,4 +1,4 @@
-"""Shared fixtures for Dask writer integration tests."""
+"""Shared fixtures for Dask writer e2e tests."""
 
 from __future__ import annotations
 

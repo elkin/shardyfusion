@@ -10,6 +10,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Self
 
+import pytest
+
 from shardyfusion._rate_limiter import AcquireResult
 
 
@@ -82,3 +84,27 @@ class RecordingTokenBucket:
 
     async def acquire_async(self, tokens: int = 1) -> None:
         self.acquire_calls.append(tokens)
+
+
+def patch_token_bucket_fixture(module_path: str):
+    """Return a pytest fixture that patches ``TokenBucket`` in *module_path*.
+
+    Usage in a test module::
+
+        _patch_token_bucket = patch_token_bucket_fixture(
+            "shardyfusion.writer.spark.single_db_writer"
+        )
+    """
+
+    @pytest.fixture()
+    def _patch_token_bucket(
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> list[RecordingTokenBucket]:
+        RecordingTokenBucket.instances = []
+        monkeypatch.setattr(
+            f"{module_path}.TokenBucket",
+            RecordingTokenBucket,
+        )
+        return RecordingTokenBucket.instances
+
+    return _patch_token_bucket

@@ -40,6 +40,11 @@ from tests.helpers.tracking import (
     RecordingTokenBucket,
     TrackingAdapter,
     TrackingFactory,
+    patch_token_bucket_fixture,
+)
+
+_patch_token_bucket = patch_token_bucket_fixture(
+    "shardyfusion.writer.ray.single_db_writer"
 )
 
 # ---------------------------------------------------------------------------
@@ -203,16 +208,6 @@ def test_rate_limiting() -> None:
 # ---------------------------------------------------------------------------
 # Rate-limiter integration tests
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def _patch_token_bucket(monkeypatch: pytest.MonkeyPatch) -> list[RecordingTokenBucket]:
-    RecordingTokenBucket.instances = []
-    monkeypatch.setattr(
-        "shardyfusion.writer.ray.single_db_writer.TokenBucket",
-        RecordingTokenBucket,
-    )
-    return RecordingTokenBucket.instances
 
 
 def test_rate_limiter_bucket_created_with_correct_rate(

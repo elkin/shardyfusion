@@ -32,7 +32,12 @@ from tests.helpers.run_record_assertions import (
     assert_success_run_record,
     load_in_memory_run_record,
 )
-from tests.helpers.tracking import RecordingTokenBucket
+from tests.helpers.tracking import (
+    RecordingTokenBucket,
+    patch_token_bucket_fixture,
+)
+
+_patch_token_bucket = patch_token_bucket_fixture("shardyfusion.writer.python.writer")
 
 # ---------------------------------------------------------------------------
 # Test infrastructure
@@ -203,16 +208,6 @@ def test_rate_limited_write() -> None:
 # ---------------------------------------------------------------------------
 # Rate-limiter integration tests
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def _patch_token_bucket(monkeypatch: pytest.MonkeyPatch) -> list[RecordingTokenBucket]:
-    RecordingTokenBucket.instances = []
-    monkeypatch.setattr(
-        "shardyfusion.writer.python.writer.TokenBucket",
-        RecordingTokenBucket,
-    )
-    return RecordingTokenBucket.instances
 
 
 def test_rate_limiter_bucket_created_with_correct_rate(
