@@ -8,7 +8,6 @@ import uuid
 from collections.abc import Iterable
 from copy import copy
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
@@ -38,50 +37,12 @@ from ._distributed import (
 )
 from .config import VectorWriteConfig
 from .types import (
-    DistanceMetric,
     VectorIndexWriterFactory,
     VectorRecord,
     VectorShardingStrategy,
 )
 
 _logger = get_logger(__name__)
-
-
-def _assign_shard(
-    *,
-    record: VectorRecord,
-    strategy: VectorShardingStrategy,
-    num_dbs: int,
-    metric: DistanceMetric | None = None,
-    centroids: np.ndarray | None = None,
-    hyperplanes: np.ndarray | None = None,
-    compiled_cel: Any | None = None,  # noqa: ANN401
-    routing_values: list | None = None,
-    cel_lookup: dict | None = None,
-) -> int:
-    """Assign a vector record to a shard.
-
-    This is a backward-compatibility wrapper that adapts the old API
-    to the new assign_vector_shard function.
-    """
-    from ._distributed import ResolvedVectorRouting
-
-    routing = ResolvedVectorRouting(
-        strategy=strategy,
-        num_dbs=num_dbs,
-        centroids=centroids,
-        hyperplanes=hyperplanes,
-        metric=metric or DistanceMetric.COSINE,
-        compiled_cel=compiled_cel,
-        routing_values=routing_values,
-        cel_lookup=cel_lookup,
-    )
-    return assign_vector_shard(
-        vector=record.vector,
-        routing=routing,
-        shard_id=record.shard_id,
-        routing_context=record.routing_context,
-    )
 
 
 _validate_config = validate_vector_config
@@ -144,39 +105,6 @@ def _write_single_process(
                 state.checkpoint_id = state.adapter.checkpoint()
 
     return shard_states
-
-
-def _write_single_process_legacy(
-    *,
-    records: list[VectorRecord],
-    config: VectorWriteConfig,
-    num_dbs: int,
-    run_id: str,
-    adapter_factory: VectorIndexWriterFactory,
-    resolved_centroids: np.ndarray | None,
-    resolved_hyperplanes: np.ndarray | None,
-    ops_limiter: TokenBucket | None,
-    s3_client: Any = None,  # noqa: ANN401 - unused in new impl
-    metric: DistanceMetric | None = None,
-) -> dict[int, VectorShardState]:
-    """Write records to shards in a single process (legacy API for tests)."""
-    from ._distributed import ResolvedVectorRouting
-
-    routing = ResolvedVectorRouting(
-        strategy=config.sharding.strategy,
-        num_dbs=num_dbs,
-        centroids=resolved_centroids,
-        hyperplanes=resolved_hyperplanes,
-        metric=metric or DistanceMetric.COSINE,
-    )
-    return _write_single_process(
-        records=records,
-        config=config,
-        routing=routing,
-        run_id=run_id,
-        adapter_factory=adapter_factory,
-        ops_limiter=ops_limiter,
-    )
 
 
 def write_vector_sharded(

@@ -10,13 +10,18 @@ import numpy as np
 import pytest
 
 from shardyfusion.errors import ConfigValidationError
+from shardyfusion.vector._distributed import ResolvedVectorRouting, assign_vector_shard
 from shardyfusion.vector.config import (
     VectorIndexConfig,
     VectorShardingSpec,
     VectorWriteConfig,
 )
-from shardyfusion.vector.types import VectorRecord, VectorShardingStrategy
-from shardyfusion.vector.writer import _assign_shard, _validate_config
+from shardyfusion.vector.types import (
+    DistanceMetric,
+    VectorRecord,
+    VectorShardingStrategy,
+)
+from shardyfusion.vector.writer import _validate_config
 
 # ---------------------------------------------------------------------------
 # Mock CEL helpers — avoids hard dependency on cel-expr-python for unit tests
@@ -83,7 +88,7 @@ class TestValidateConfigCel:
 
 
 # ---------------------------------------------------------------------------
-# Writer: _assign_shard with CEL
+# Writer: assign_vector_shard with CEL
 # ---------------------------------------------------------------------------
 
 
@@ -103,16 +108,18 @@ class TestAssignShardCel:
         with patch("shardyfusion.cel.route_cel") as mock_route_cel:
             mock_route_cel.return_value = 1  # "eu" → shard 1
 
-            db_id = _assign_shard(
-                record=record,
+            routing = ResolvedVectorRouting(
                 strategy=VectorShardingStrategy.CEL,
                 num_dbs=3,
-                metric=None,
-                centroids=None,
-                hyperplanes=None,
+                metric=DistanceMetric.COSINE,
                 compiled_cel=compiled,
                 routing_values=routing_values,
                 cel_lookup=cel_lookup,
+            )
+            db_id = assign_vector_shard(
+                vector=record.vector,
+                routing=routing,
+                routing_context=record.routing_context,
             )
             assert db_id == 1
             mock_route_cel.assert_called_once_with(
@@ -125,7 +132,6 @@ class TestAssignShardCel:
     def test_cel_direct_integer_routing(self):
         """CEL direct integer routing (no routing_values)."""
         compiled = FakeCompiledCel(key_field="shard")
-
         record = VectorRecord(
             id=1,
             vector=np.zeros(8, dtype=np.float32),
@@ -134,16 +140,18 @@ class TestAssignShardCel:
 
         with patch("shardyfusion.cel.route_cel") as mock_route_cel:
             mock_route_cel.return_value = 2
-            db_id = _assign_shard(
-                record=record,
+            routing = ResolvedVectorRouting(
                 strategy=VectorShardingStrategy.CEL,
                 num_dbs=4,
-                metric=None,
-                centroids=None,
-                hyperplanes=None,
+                metric=DistanceMetric.COSINE,
                 compiled_cel=compiled,
                 routing_values=None,
                 cel_lookup=None,
+            )
+            db_id = assign_vector_shard(
+                vector=record.vector,
+                routing=routing,
+                routing_context=record.routing_context,
             )
             assert db_id == 2
 
@@ -158,17 +166,19 @@ class TestAssignShardCel:
 
         with patch("shardyfusion.cel.route_cel") as mock_route_cel:
             mock_route_cel.return_value = 3
+            routing = ResolvedVectorRouting(
+                strategy=VectorShardingStrategy.CEL,
+                num_dbs=3,
+                metric=DistanceMetric.COSINE,
+                compiled_cel=compiled,
+                routing_values=None,
+                cel_lookup=None,
+            )
             with pytest.raises(ConfigValidationError, match="outside \\[0, 3\\)"):
-                _assign_shard(
-                    record=record,
-                    strategy=VectorShardingStrategy.CEL,
-                    num_dbs=3,
-                    metric=None,
-                    centroids=None,
-                    hyperplanes=None,
-                    compiled_cel=compiled,
-                    routing_values=None,
-                    cel_lookup=None,
+                assign_vector_shard(
+                    vector=record.vector,
+                    routing=routing,
+                    routing_context=record.routing_context,
                 )
 
     def test_cel_missing_compiled_raises(self):
@@ -177,15 +187,17 @@ class TestAssignShardCel:
             vector=np.zeros(8, dtype=np.float32),
             routing_context={"region": "us"},
         )
+        routing = ResolvedVectorRouting(
+            strategy=VectorShardingStrategy.CEL,
+            num_dbs=3,
+            metric=DistanceMetric.COSINE,
+            compiled_cel=None,
+        )
         with pytest.raises(ConfigValidationError, match="compiled expression"):
-            _assign_shard(
-                record=record,
-                strategy=VectorShardingStrategy.CEL,
-                num_dbs=3,
-                metric=None,
-                centroids=None,
-                hyperplanes=None,
-                compiled_cel=None,
+            assign_vector_shard(
+                vector=record.vector,
+                routing=routing,
+                routing_context=record.routing_context,
             )
 
     def test_cel_missing_routing_context_raises(self):
@@ -195,15 +207,17 @@ class TestAssignShardCel:
             vector=np.zeros(8, dtype=np.float32),
             routing_context=None,
         )
+        routing = ResolvedVectorRouting(
+            strategy=VectorShardingStrategy.CEL,
+            num_dbs=3,
+            metric=DistanceMetric.COSINE,
+            compiled_cel=compiled,
+        )
         with pytest.raises(ConfigValidationError, match="routing_context"):
-            _assign_shard(
-                record=record,
-                strategy=VectorShardingStrategy.CEL,
-                num_dbs=3,
-                metric=None,
-                centroids=None,
-                hyperplanes=None,
-                compiled_cel=compiled,
+            assign_vector_shard(
+                vector=record.vector,
+                routing=routing,
+                routing_context=record.routing_context,
             )
 
 

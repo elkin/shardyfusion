@@ -607,21 +607,28 @@ class TestPublishVectorManifest:
 
 
 # ---------------------------------------------------------------------------
-# _assign_shard — unknown strategy
+# assign_vector_shard — unknown strategy
 # ---------------------------------------------------------------------------
 
 
 class TestAssignShardUnknown:
     def test_unknown_strategy_raises(self) -> None:
-        from shardyfusion.vector.writer import _assign_shard
+        from shardyfusion.vector._distributed import (
+            ResolvedVectorRouting,
+            assign_vector_shard,
+        )
+        from shardyfusion.vector.types import DistanceMetric
 
         record = VectorRecord(id=1, vector=np.zeros(4, dtype=np.float32))
+        routing = ResolvedVectorRouting(
+            strategy="bogus",  # type: ignore[arg-type]
+            num_dbs=4,
+            centroids=None,
+            hyperplanes=None,
+            metric=DistanceMetric.COSINE,
+        )
         with pytest.raises(ConfigValidationError, match="Unknown"):
-            _assign_shard(
-                record=record,
-                strategy="bogus",  # type: ignore[arg-type]
-                num_dbs=4,
-                metric=None,
-                centroids=None,
-                hyperplanes=None,
+            assign_vector_shard(
+                vector=record.vector,
+                routing=routing,
             )

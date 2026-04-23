@@ -18,7 +18,6 @@ from shardyfusion.vector.config import (
 )
 from shardyfusion.vector.types import VectorRecord, VectorShardingStrategy
 from shardyfusion.vector.writer import (
-    _assign_shard,
     _flush_shard_batch,
     _ShardState,
     _validate_config,
@@ -122,52 +121,72 @@ class TestValidateConfig:
 
 
 class TestAssignShard:
+    def _make_routing(
+        self,
+        strategy: VectorShardingStrategy,
+        num_dbs: int,
+        centroids: np.ndarray | None = None,
+        hyperplanes: np.ndarray | None = None,
+    ) -> Any:
+        from shardyfusion.vector._distributed import ResolvedVectorRouting
+        from shardyfusion.vector.types import DistanceMetric
+
+        return ResolvedVectorRouting(
+            strategy=strategy,
+            num_dbs=num_dbs,
+            centroids=centroids,
+            hyperplanes=hyperplanes,
+            metric=DistanceMetric.COSINE,
+        )
+
     def test_explicit_valid(self):
+        from shardyfusion.vector._distributed import assign_vector_shard
+
         record = VectorRecord(id=1, vector=np.zeros(8, dtype=np.float32), shard_id=2)
-        db_id = _assign_shard(
-            record=record,
-            strategy=VectorShardingStrategy.EXPLICIT,
-            num_dbs=4,
-            metric=None,
-            centroids=None,
-            hyperplanes=None,
+        routing = self._make_routing(VectorShardingStrategy.EXPLICIT, 4)
+        db_id = assign_vector_shard(
+            vector=record.vector,
+            routing=routing,
+            shard_id=record.shard_id,
         )
         assert db_id == 2
 
     def test_explicit_missing_shard_id_raises(self):
+        from shardyfusion.vector._distributed import assign_vector_shard
+
         record = VectorRecord(id=1, vector=np.zeros(8, dtype=np.float32))
-        with pytest.raises(ConfigValidationError, match="shard_id"):
-            _assign_shard(
-                record=record,
-                strategy=VectorShardingStrategy.EXPLICIT,
-                num_dbs=4,
-                metric=None,
-                centroids=None,
-                hyperplanes=None,
+        routing = self._make_routing(VectorShardingStrategy.EXPLICIT, 4)
+        with pytest.raises(ConfigValidationError, match="requires shard_id"):
+            assign_vector_shard(
+                vector=record.vector,
+                routing=routing,
+                shard_id=record.shard_id,
             )
 
     def test_explicit_out_of_range_raises(self):
+        from shardyfusion.vector._distributed import assign_vector_shard
+
         record = VectorRecord(id=1, vector=np.zeros(8, dtype=np.float32), shard_id=10)
+        routing = self._make_routing(VectorShardingStrategy.EXPLICIT, 4)
         with pytest.raises(ConfigValidationError, match="out of range"):
-            _assign_shard(
-                record=record,
-                strategy=VectorShardingStrategy.EXPLICIT,
-                num_dbs=4,
-                metric=None,
-                centroids=None,
-                hyperplanes=None,
+            assign_vector_shard(
+                vector=record.vector,
+                routing=routing,
+                shard_id=record.shard_id,
             )
 
     def test_cluster_assign(self):
+        from shardyfusion.vector._distributed import assign_vector_shard
+
         centroids = np.array([[1, 0], [0, 1]], dtype=np.float32)
         record = VectorRecord(id=1, vector=np.array([0.9, 0.1], dtype=np.float32))
-        db_id = _assign_shard(
-            record=record,
-            strategy=VectorShardingStrategy.CLUSTER,
-            num_dbs=2,
-            metric=None,
-            centroids=centroids,
-            hyperplanes=None,
+        routing = self._make_routing(
+            VectorShardingStrategy.CLUSTER, 2, centroids=centroids
+        )
+        db_id = assign_vector_shard(
+            vector=record.vector,
+            routing=routing,
+            shard_id=record.shard_id,
         )
         assert db_id == 0
 
@@ -270,42 +289,56 @@ class TestFlushShardBatch:
 
 
 class TestAssignShardAdditional:
+    def _make_routing(
+        self,
+        strategy: VectorShardingStrategy,
+        num_dbs: int,
+        centroids: np.ndarray | None = None,
+        hyperplanes: np.ndarray | None = None,
+    ) -> Any:
+        from shardyfusion.vector._distributed import ResolvedVectorRouting
+        from shardyfusion.vector.types import DistanceMetric
+
+        return ResolvedVectorRouting(
+            strategy=strategy,
+            num_dbs=num_dbs,
+            centroids=centroids,
+            hyperplanes=hyperplanes,
+            metric=DistanceMetric.COSINE,
+        )
+
     def test_cluster_missing_centroids_raises(self):
+        from shardyfusion.vector._distributed import assign_vector_shard
+
         record = VectorRecord(id=1, vector=np.zeros(4, dtype=np.float32))
+        routing = self._make_routing(VectorShardingStrategy.CLUSTER, 4)
         with pytest.raises(ConfigValidationError, match="centroids"):
-            _assign_shard(
-                record=record,
-                strategy=VectorShardingStrategy.CLUSTER,
-                num_dbs=4,
-                metric=None,
-                centroids=None,
-                hyperplanes=None,
+            assign_vector_shard(
+                vector=record.vector,
+                routing=routing,
             )
 
     def test_lsh_missing_hyperplanes_raises(self):
+        from shardyfusion.vector._distributed import assign_vector_shard
+
         record = VectorRecord(id=1, vector=np.zeros(4, dtype=np.float32))
+        routing = self._make_routing(VectorShardingStrategy.LSH, 4)
         with pytest.raises(ConfigValidationError, match="hyperplanes"):
-            _assign_shard(
-                record=record,
-                strategy=VectorShardingStrategy.LSH,
-                num_dbs=4,
-                metric=None,
-                centroids=None,
-                hyperplanes=None,
+            assign_vector_shard(
+                vector=record.vector,
+                routing=routing,
             )
 
     def test_lsh_assignment(self):
+        from shardyfusion.vector._distributed import assign_vector_shard
         from shardyfusion.vector.sharding import lsh_generate_hyperplanes
 
         hps = lsh_generate_hyperplanes(num_hash_bits=3, dim=4, seed=42)
         record = VectorRecord(id=1, vector=np.array([1, 0, 0, 0], dtype=np.float32))
-        db_id = _assign_shard(
-            record=record,
-            strategy=VectorShardingStrategy.LSH,
-            num_dbs=8,
-            metric=None,
-            centroids=None,
-            hyperplanes=hps,
+        routing = self._make_routing(VectorShardingStrategy.LSH, 8, hyperplanes=hps)
+        db_id = assign_vector_shard(
+            vector=record.vector,
+            routing=routing,
         )
         assert 0 <= db_id < 8
 
@@ -328,8 +361,20 @@ class TestWriteSingleProcess:
             batch_size=100,
         )
 
+    def _make_routing(self, config: VectorWriteConfig, num_dbs: int) -> Any:
+        from shardyfusion.vector._distributed import ResolvedVectorRouting
+        from shardyfusion.vector.types import DistanceMetric
+
+        return ResolvedVectorRouting(
+            strategy=config.sharding.strategy,
+            num_dbs=num_dbs,
+            centroids=None,
+            hyperplanes=None,
+            metric=DistanceMetric.COSINE,
+        )
+
     def test_records_distributed_to_correct_shards(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import _write_single_process_legacy
+        from shardyfusion.vector.writer import _write_single_process
 
         factory = MockWriterFactory()
         config = self._make_config(tmp_path)
@@ -340,16 +385,13 @@ class TestWriteSingleProcess:
             VectorRecord(id=3, vector=np.zeros(4, dtype=np.float32), shard_id=0),
         ]
 
-        states = _write_single_process_legacy(
+        states = _write_single_process(
             records=records,
             config=config,
-            num_dbs=2,
+            routing=self._make_routing(config, num_dbs=2),
             run_id="test-run",
             adapter_factory=factory,
-            resolved_centroids=None,
-            resolved_hyperplanes=None,
             ops_limiter=None,
-            s3_client=None,
         )
 
         assert 0 in states
@@ -358,7 +400,7 @@ class TestWriteSingleProcess:
         assert states[1].row_count == 1
 
     def test_batching_flushes_at_threshold(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import _write_single_process_legacy
+        from shardyfusion.vector.writer import _write_single_process
 
         factory = MockWriterFactory()
         config = self._make_config(tmp_path)
@@ -369,16 +411,13 @@ class TestWriteSingleProcess:
             for i in range(5)
         ]
 
-        states = _write_single_process_legacy(
+        states = _write_single_process(
             records=records,
             config=config,
-            num_dbs=1,
+            routing=self._make_routing(config, num_dbs=1),
             run_id="test-run",
             adapter_factory=factory,
-            resolved_centroids=None,
-            resolved_hyperplanes=None,
             ops_limiter=None,
-            s3_client=None,
         )
 
         # 5 records / batch_size 2 = 2 full batches + 1 final flush
@@ -387,7 +426,7 @@ class TestWriteSingleProcess:
         assert states[0].row_count == 5
 
     def test_checkpoint_called_on_all_shards(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import _write_single_process_legacy
+        from shardyfusion.vector.writer import _write_single_process
 
         factory = MockWriterFactory()
         config = self._make_config(tmp_path)
@@ -397,43 +436,37 @@ class TestWriteSingleProcess:
             VectorRecord(id=2, vector=np.zeros(4, dtype=np.float32), shard_id=1),
         ]
 
-        states = _write_single_process_legacy(
+        states = _write_single_process(
             records=records,
             config=config,
-            num_dbs=2,
+            routing=self._make_routing(config, num_dbs=2),
             run_id="test-run",
             adapter_factory=factory,
-            resolved_centroids=None,
-            resolved_hyperplanes=None,
             ops_limiter=None,
-            s3_client=None,
         )
 
         assert states[0].checkpoint_id == "mock-checkpoint"
         assert states[1].checkpoint_id == "mock-checkpoint"
 
     def test_empty_records_produces_empty_states(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import _write_single_process_legacy
+        from shardyfusion.vector.writer import _write_single_process
 
         factory = MockWriterFactory()
         config = self._make_config(tmp_path)
 
-        states = _write_single_process_legacy(
+        states = _write_single_process(
             records=[],
             config=config,
-            num_dbs=2,
+            routing=self._make_routing(config, num_dbs=2),
             run_id="test-run",
             adapter_factory=factory,
-            resolved_centroids=None,
-            resolved_hyperplanes=None,
             ops_limiter=None,
-            s3_client=None,
         )
 
         assert len(states) == 0
 
     def test_db_url_includes_run_id(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import _write_single_process_legacy
+        from shardyfusion.vector.writer import _write_single_process
 
         factory = MockWriterFactory()
         config = self._make_config(tmp_path)
@@ -442,16 +475,13 @@ class TestWriteSingleProcess:
             VectorRecord(id=1, vector=np.zeros(4, dtype=np.float32), shard_id=0),
         ]
 
-        states = _write_single_process_legacy(
+        states = _write_single_process(
             records=records,
             config=config,
-            num_dbs=1,
+            routing=self._make_routing(config, num_dbs=1),
             run_id="my-run-123",
             adapter_factory=factory,
-            resolved_centroids=None,
-            resolved_hyperplanes=None,
             ops_limiter=None,
-            s3_client=None,
         )
 
         assert "run_id=my-run-123" in states[0].db_url

@@ -598,9 +598,7 @@ class AsyncSqliteVecShardReader:
 
 
 def _decode_id_map_value(raw: str) -> int | str:
-    """Decode an id_map original_id value, handling both new typed JSON
-    format (``{"v": ..., "t": "int"|"str"}``) and legacy plain-string format.
-    """
+    """Decode an id_map original_id value from the typed JSON format."""
     try:
         obj = json.loads(raw)
         if isinstance(obj, dict) and "v" in obj:
@@ -609,8 +607,8 @@ def _decode_id_map_value(raw: str) -> int | str:
             return str(obj["v"])
     except (json.JSONDecodeError, ValueError, TypeError):
         pass
-    # Legacy format: plain string
-    return raw
+
+    raise ValueError(f"Invalid id_map value format: {raw}")
 
 
 def _is_cached_snapshot_current(
