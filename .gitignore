@@ -9,7 +9,7 @@ venv/
 .env/
 
 # Packaging/build artifacts
-build/
+/build/
 dist/
 site/
 *.egg-info/
