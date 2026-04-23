@@ -370,3 +370,155 @@ class TestCompositeReaderFactory:
         assert reader.get(b"k") == b"v"
         assert len(reader.search(np.zeros(8), top_k=1)) == 1
         reader.close()
+
+
+# ---------------------------------------------------------------------------
+# Async fakes
+# ---------------------------------------------------------------------------
+
+
+class FakeAsyncKvReader:
+    def __init__(self, data: dict[bytes, bytes]) -> None:
+        self._data = data
+        self.closed = False
+
+    async def get(self, key: bytes) -> bytes | None:
+        return self._data.get(key)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class FakeAsyncVectorReader:
+    def __init__(self, results: list[SearchResult]) -> None:
+        self._results = results
+        self.closed = False
+
+    async def search(
+        self, query: np.ndarray, top_k: int, ef: int = 50
+    ) -> list[SearchResult]:
+        return self._results[:top_k]
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+# ---------------------------------------------------------------------------
+# AsyncCompositeReaderFactory
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncCompositeReaderFactory:
+    @pytest.mark.asyncio
+    async def test_factory_wires_up_async_adapters(self, tmp_path: Path) -> None:
+        from shardyfusion.composite_adapter import AsyncCompositeReaderFactory
+
+        kv_created: list[dict[str, Any]] = []
+        vec_created: list[dict[str, Any]] = []
+
+        async def kv_factory(
+            *, db_url: str, local_dir: Path, checkpoint_id: str | None = None
+        ) -> FakeAsyncKvReader:
+            kv_created.append({"db_url": db_url, "local_dir": local_dir})
+            return FakeAsyncKvReader({b"k": b"v"})
+
+        async def vec_factory(
+            *, db_url: str, local_dir: Path, index_config: Any
+        ) -> FakeAsyncVectorReader:
+            vec_created.append(
+                {"db_url": db_url, "local_dir": local_dir, "config": index_config}
+            )
+            return FakeAsyncVectorReader([SearchResult(id=1, score=0.5)])
+
+        from shardyfusion.config import VectorSpec
+
+        vs = VectorSpec(dim=8, metric="cosine")
+        factory = AsyncCompositeReaderFactory(
+            kv_factory=kv_factory,
+            vector_factory=vec_factory,
+            vector_spec=vs,
+        )
+        reader = await factory(
+            db_url="s3://bucket/shard", local_dir=tmp_path, checkpoint_id="abc"
+        )
+
+        from shardyfusion.composite_adapter import AsyncCompositeShardReader
+
+        assert isinstance(reader, AsyncCompositeShardReader)
+        assert len(kv_created) == 1
+        assert kv_created[0]["db_url"] == "s3://bucket/shard"
+        assert len(vec_created) == 1
+        assert vec_created[0]["db_url"] == "s3://bucket/shard/vector"
+        assert vec_created[0]["config"].dim == 8
+        await reader.close()
+
+
+# ---------------------------------------------------------------------------
+# AsyncCompositeShardReader
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncCompositeShardReader:
+    @pytest.mark.asyncio
+    async def test_get_delegates_to_kv(self) -> None:
+        kv = FakeAsyncKvReader({b"k1": b"v1"})
+        vec = FakeAsyncVectorReader([])
+
+        from shardyfusion.composite_adapter import AsyncCompositeShardReader
+
+        reader = AsyncCompositeShardReader(kv_reader=kv, vector_reader=vec)
+        assert await reader.get(b"k1") == b"v1"
+        assert await reader.get(b"missing") is None
+        await reader.close()
+
+    @pytest.mark.asyncio
+    async def test_search_delegates_to_vector(self) -> None:
+        results = [SearchResult(id=1, score=0.5), SearchResult(id=2, score=0.8)]
+        kv = FakeAsyncKvReader({})
+        vec = FakeAsyncVectorReader(results)
+
+        from shardyfusion.composite_adapter import AsyncCompositeShardReader
+
+        reader = AsyncCompositeShardReader(kv_reader=kv, vector_reader=vec)
+        query = np.random.randn(8).astype(np.float32)
+        got = await reader.search(query, top_k=2)
+        assert len(got) == 2
+        assert got[0].id == 1
+        await reader.close()
+
+    @pytest.mark.asyncio
+    async def test_close_both(self) -> None:
+        kv = FakeAsyncKvReader({})
+        vec = FakeAsyncVectorReader([])
+
+        from shardyfusion.composite_adapter import AsyncCompositeShardReader
+
+        reader = AsyncCompositeShardReader(kv_reader=kv, vector_reader=vec)
+        await reader.close()
+        assert kv.closed
+        assert vec.closed
+
+    @pytest.mark.asyncio
+    async def test_vec_close_failure_still_closes_kv(self) -> None:
+        kv = FakeAsyncKvReader({})
+        vec = FakeAsyncVectorReader([])
+        vec.close = lambda: (_ for _ in ()).throw(RuntimeError("boom"))  # type: ignore[assignment]
+
+        from shardyfusion.composite_adapter import AsyncCompositeShardReader
+
+        reader = AsyncCompositeShardReader(kv_reader=kv, vector_reader=vec)
+        with pytest.raises(RuntimeError, match="boom"):
+            await reader.close()
+        assert kv.closed
+
+    @pytest.mark.asyncio
+    async def test_async_context_manager(self) -> None:
+        kv = FakeAsyncKvReader({})
+        vec = FakeAsyncVectorReader([])
+
+        from shardyfusion.composite_adapter import AsyncCompositeShardReader
+
+        async with AsyncCompositeShardReader(kv_reader=kv, vector_reader=vec):
+            pass
+        assert kv.closed
+        assert vec.closed
