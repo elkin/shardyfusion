@@ -298,7 +298,7 @@ All package-specific errors inherit from `ShardyfusionError` and expose `retryab
 | `ShardAssignmentError` | `False` | `errors.py` | Routing mismatch or invalid shard IDs |
 | `ShardCoverageError` | `False` | `errors.py` | Writer results did not cover expected shard IDs |
 | `ShardWriteError` | `True` | `errors.py` | Shard write failed with a potentially transient error; wraps unknown adapter exceptions |
-| `SlateDbApiError` | `False` | `errors.py` | SlateDB binding unavailable/incompatible or shard reader failure |
+| `DbAdapterError` | `False` | `errors.py` | SlateDB binding unavailable/incompatible or shard reader failure |
 | `ManifestBuildError` | `False` | `errors.py` | Manifest builder failed during artifact creation |
 | `PublishManifestError` | `True` | `errors.py` | Manifest upload failed; safe to retry |
 | `PublishCurrentError` | `True` | `errors.py` | `_CURRENT` update failed after manifest publish |
@@ -318,7 +318,7 @@ Top-level exports from `shardyfusion.__init__` (`__all__`, grouped only for read
 
 - Config/build: `BuildDurations`, `BuildResult`, `BuildStats`, `CurrentPointer`, `ManifestOptions`, `OutputOptions`, `VectorSpec`, `WriteConfig`, `WriterInfo`
 - Credentials/connectivity: `CredentialProvider`, `EnvCredentialProvider`, `RetryConfig`, `S3ConnectionOptions`, `S3Credentials`, `StaticCredentialProvider`
-- Errors: `ConfigValidationError`, `DbAdapterError`, `ManifestBuildError`, `ManifestParseError`, `ManifestStoreError`, `PoolExhaustedError`, `PublishCurrentError`, `PublishManifestError`, `ReaderStateError`, `S3TransientError`, `ShardAssignmentError`, `ShardCoverageError`, `ShardWriteError`, `ShardyfusionError`, `SlateDbApiError`
+- Errors: `ConfigValidationError`, `DbAdapterError`, `ManifestBuildError`, `ManifestParseError`, `ManifestStoreError`, `PoolExhaustedError`, `PublishCurrentError`, `PublishManifestError`, `ReaderStateError`, `S3TransientError`, `ShardAssignmentError`, `ShardCoverageError`, `ShardWriteError`, `ShardyfusionError`, `DbAdapterError`
 - Manifest/store: `InMemoryManifestStore`, `ManifestArtifact`, `ManifestRef`, `ManifestShardingSpec`, `ManifestStore`, `ParsedManifest`, `RequiredBuildMeta`, `RequiredShardMeta`, `S3ManifestStore`, `SQLITE_MANIFEST_CONTENT_TYPE`, `SqliteManifestBuilder`, `SqliteShardLookup`, `load_sqlite_build_meta`, `parse_manifest_payload`, `parse_sqlite_manifest`
 - Run registry: `InMemoryRunRegistry`, `RunRecord`, `RunRegistry`, `RunStatus`, `S3RunRegistry`
 - Reader/routing: `AsyncManifestStore`, `AsyncS3ManifestStore`, `AsyncShardReader`, `AsyncShardReaderFactory`, `AsyncShardReaderHandle`, `AsyncShardedReader`, `AsyncSlateDbReaderFactory`, `ConcurrentShardedReader`, `ReaderHealth`, `ShardDetail`, `ShardLookup`, `ShardReader`, `ShardReaderFactory`, `ShardReaderHandle`, `ShardedReader`, `SlateDbReaderFactory`, `SnapshotInfo`, `SnapshotRouter`, `UnifiedShardedReader` (lazy import via `__getattr__`)

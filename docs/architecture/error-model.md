@@ -25,8 +25,7 @@ ShardyfusionError                       errors.py:15
 ├── VectorIndexError                    errors.py:174  # vector index build failure  (not in public __all__)
 └── VectorSearchError                   errors.py:184  # vector search failure       (not in public __all__)
 
-# Deprecated alias (in public __all__):
-SlateDbApiError = DbAdapterError                       errors.py:72
+
 ```
 
 Errors marked "not in public `__all__`" must be imported from their owning module (e.g. `from shardyfusion.sqlite_adapter import SqliteAdapterError`). All other errors above are re-exported from `shardyfusion`.

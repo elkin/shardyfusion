@@ -50,7 +50,7 @@ Lazy unified KV+vector readers (loaded via top-level `__getattr__`):
 - `ConfigValidationError`, `ManifestBuildError`, `ManifestParseError`, `ManifestStoreError`, `PublishManifestError`, `PublishCurrentError`.
 - `ShardCoverageError`, `ShardAssignmentError`, `ShardWriteError`.
 - `PoolExhaustedError`, `ReaderStateError`, `S3TransientError`.
-- `DbAdapterError`, `SlateDbApiError` (deprecated alias for `DbAdapterError`, still exported).
+- `DbAdapterError`
 - **NOT in `__all__`**: `SqliteAdapterError`, `SqliteVecAdapterError`, `CompositeAdapterError`, `VectorIndexError`, `VectorSearchError`, `UnknownRoutingTokenError`. Import these from `shardyfusion.errors` (or, for `UnknownRoutingTokenError`, `shardyfusion.routing`) if needed.
 - `UnknownRoutingTokenError` inherits from `ValueError`, **not** `ShardyfusionError`.
 

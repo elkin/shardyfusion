@@ -68,10 +68,6 @@ class DbAdapterError(ShardyfusionError):
     retryable = False
 
 
-# Backward-compatible alias (deprecated; will be removed in a future version).
-SlateDbApiError = DbAdapterError
-
-
 class ManifestBuildError(ShardyfusionError):
     """Manifest artifact creation failed.
 

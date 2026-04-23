@@ -38,7 +38,6 @@ from .errors import (
     ShardCoverageError,
     ShardWriteError,
     ShardyfusionError,
-    SlateDbApiError,
 )
 from .logging import (
     FailureSeverity,
@@ -179,7 +178,6 @@ __all__ = [
     "ShardLookup",
     "ShardingStrategy",
     "ShardyfusionError",
-    "SlateDbApiError",
     "SlateDbFactory",
     "SlateDbReaderFactory",
     "SnapshotInfo",

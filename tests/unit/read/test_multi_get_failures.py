@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from shardyfusion.errors import SlateDbApiError
+from shardyfusion.errors import DbAdapterError
 from shardyfusion.manifest import (
     ManifestRef,
     ManifestShardingSpec,
@@ -128,7 +128,7 @@ class TestMultiGetPartialFailure:
 
         # multi_get with keys spanning both shards should raise
         keys = [keys_by_shard[0], keys_by_shard[1]]
-        with pytest.raises((RuntimeError, SlateDbApiError)):
+        with pytest.raises((RuntimeError, DbAdapterError)):
             reader.multi_get(keys)
         reader.close()
 
@@ -150,7 +150,7 @@ class TestMultiGetPartialFailure:
             reader_factory=factory,
         ) as reader:
             keys = [keys_by_shard[0], keys_by_shard[1]]
-            with pytest.raises((RuntimeError, SlateDbApiError)):
+            with pytest.raises((RuntimeError, DbAdapterError)):
                 reader.multi_get(keys)
 
     def test_all_shards_fail_raises(self, tmp_path: Path) -> None:
@@ -159,7 +159,7 @@ class TestMultiGetPartialFailure:
         keys_by_shard = _find_keys_for_shards(2)
 
         def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
-            return _FailingReader(error=SlateDbApiError("all down"))
+            return _FailingReader(error=DbAdapterError("all down"))
 
         store = _FixedStore(manifest)
         reader = ShardedReader(
@@ -168,7 +168,7 @@ class TestMultiGetPartialFailure:
             manifest_store=store,
             reader_factory=factory,
         )
-        with pytest.raises(SlateDbApiError):
+        with pytest.raises(DbAdapterError):
             reader.multi_get([keys_by_shard[0], keys_by_shard[1]])
         reader.close()
 
@@ -179,7 +179,7 @@ class TestMultiGetPartialFailure:
 
         def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
             if db_url == "mem://db/0":
-                return _FailingReader(error=SlateDbApiError("shard 0 down"))
+                return _FailingReader(error=DbAdapterError("shard 0 down"))
             return _FakeReader({})
 
         store = _FixedStore(manifest)
@@ -190,7 +190,7 @@ class TestMultiGetPartialFailure:
             reader_factory=factory,
         )
         # Only keys for shard 0 — the failing one
-        with pytest.raises(SlateDbApiError, match="shard 0 down"):
+        with pytest.raises(DbAdapterError, match="shard 0 down"):
             reader.multi_get([keys_by_shard[0]])
         reader.close()
 
@@ -203,7 +203,7 @@ class TestMultiGetPartialFailure:
 
         def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
             if db_url == "mem://db/1":
-                return _FailingReader(error=SlateDbApiError("shard 1 read error"))
+                return _FailingReader(error=DbAdapterError("shard 1 read error"))
             return _FakeReader({})
 
         store = _FixedStore(manifest)
@@ -215,5 +215,5 @@ class TestMultiGetPartialFailure:
             max_workers=2,
         ) as reader:
             keys = [keys_by_shard[0], keys_by_shard[1]]
-            with pytest.raises(SlateDbApiError, match="shard 1"):
+            with pytest.raises(DbAdapterError, match="shard 1"):
                 reader.multi_get(keys)

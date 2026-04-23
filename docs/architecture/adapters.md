@@ -58,7 +58,7 @@ LanceDB supports `cosine`, `l2`, and `dot_product` distances; `dot_product` is m
 
 ## Adapter errors
 
-- `DbAdapterError` (`errors.py:62`) — base class. The deprecated alias `SlateDbApiError` (`errors.py:72`) is the same class and is the only adapter error currently re-exported from `shardyfusion/__init__.py`.
+- `DbAdapterError` (`errors.py:62`) — base class.
 - `SqliteAdapterError` (`sqlite_adapter.py:47`) — SQLite-specific. **Not** in public `__all__`; import from `shardyfusion.sqlite_adapter`.
 - `SqliteVecAdapterError` (`sqlite_vec_adapter.py:94`) — sqlite-vec-specific. **Not** in public `__all__`; import from `shardyfusion.sqlite_vec_adapter`.
 - `CompositeAdapterError` (`composite_adapter.py:57`) — composite-specific (e.g. mismatched key sets between KV and vector). **Not** in public `__all__`; import from `shardyfusion.composite_adapter`.
