@@ -486,7 +486,7 @@ def _prepare_partitioned_rows(
     elif num_dbs is None:
         agg_row = df_with_db_id.agg(
             F.max(DB_ID_COL).alias("max_id"),
-            F.countDistinct(DB_ID_COL).alias("n_distinct"),
+            F.count_distinct(DB_ID_COL).alias("n_distinct"),
         ).collect()[0]
         max_id = agg_row["max_id"]
         n_distinct = agg_row["n_distinct"]
