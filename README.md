@@ -48,6 +48,12 @@ flowchart LR
 - **Backend choices matched to workload** — SlateDB for KV durability, SQLite for simpler distribution, LanceDB for scalable ANN, sqlite-vec for single-file KV+vector shards.
 - **Operational controls built in** — deterministic winner selection, rollback via `_CURRENT`, and metrics/tracing integration points.
 
+## Good fit / not the best fit
+
+**Good fit** when you need immutable, refreshable snapshots on object storage and want one operational model for batch writes + online reads (KV, vector, or both).
+
+**Likely not the best fit** when you need frequent in-place updates, per-record transactional semantics, or highly dynamic low-latency writes (an OLTP system is usually a better match).
+
 ## When to use shardyfusion
 
 **Daily feature store refresh** — A Spark job writes feature vectors overnight across 64 shards. Your serving fleet opens a `ShardedReader` and serves lookups all day. When the next snapshot lands, call `refresh()` for an atomic swap with zero downtime.
