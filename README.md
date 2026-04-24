@@ -58,7 +58,7 @@ flowchart LR
 
 **Daily feature store refresh** — A Spark job writes feature vectors overnight across 64 shards. Your serving fleet opens a `ShardedReader` and serves lookups all day. When the next snapshot lands, call `refresh()` for an atomic swap with zero downtime.
 
-**Embedding snapshot for search** — A Ray pipeline encodes embeddings into sharded databases. An async API serves lookups via `AsyncShardedReader` with rate limiting and concurrency control.
+**Embedding snapshot for search** — A Ray pipeline encodes embeddings into sharded vector indices. An async API serves nearest-neighbor queries via `AsyncShardedVectorReader` with rate limiting and concurrency control.
 
 **Config/rule distribution** — A Python script packs business rules into a small snapshot. Microservices load the latest version on startup and periodically refresh, all reading from the same S3 prefix.
 
