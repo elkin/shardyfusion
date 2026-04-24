@@ -6,11 +6,47 @@
 [![Docs](https://img.shields.io/badge/docs-elkin.github.io%2Fshardyfusion-blue)](https://elkin.github.io/shardyfusion/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-Build and read sharded key-value snapshots on S3 with a default [SlateDB](https://slatedb.io) backend and an optional SQLite-on-S3 backend.
+Build and read sharded snapshots on S3 for both **key-value** and **vector search** workloads, with a default [SlateDB](https://slatedb.io) backend plus optional SQLite, LanceDB, and sqlite-vec integrations.
 
 Write millions of key-value pairs across N independent shard databases using Spark, Dask, Ray, or plain Python. Read them back from any Python service with consistent routing — the reader always finds the right shard.
 
+Add ANN search without throwing away your existing sharded architecture: run vector-only indexes (`ShardedVectorReader`) or unified KV+vector snapshots (`UnifiedShardedReader`) with the same publish protocol and refresh semantics.
+
 Current Python support is 3.11 through 3.13. Python 3.14 is intentionally not supported until every reader, writer, and backend dependency used by the project is compatible and covered by the test matrix.
+
+## Main use-cases
+
+```mermaid
+flowchart LR
+    A[Batch/Data pipeline] --> B[Write sharded snapshot to S3]
+
+    B --> C1[KV serving]
+    B --> C2[Vector search serving]
+    B --> C3[Unified KV + Vector serving]
+
+    C1 --> D1[ShardedReader / ConcurrentShardedReader / AsyncShardedReader]
+    C2 --> D2[ShardedVectorReader / AsyncShardedVectorReader]
+    C3 --> D3[UnifiedShardedReader / AsyncUnifiedShardedReader]
+
+    D1 --> E1[Feature store / config distribution / low-latency lookups]
+    D2 --> E2[Semantic search / recommendations / retrieval]
+    D3 --> E3[Hybrid APIs: point lookup + ANN in one snapshot]
+```
+
+## Docs quick links
+
+- [Getting Started](https://elkin.github.io/shardyfusion/getting-started/)
+- [Vector Search use case](https://elkin.github.io/shardyfusion/use-cases/vector/overview/)
+- [KV + Vector use case](https://elkin.github.io/shardyfusion/use-cases/kv-vector/overview/)
+- [Architecture overview](https://elkin.github.io/shardyfusion/how-it-works/)
+
+## Core properties
+
+- **Snapshot correctness model** — immutable shard artifacts, two-phase publish, and atomic reader refresh.
+- **Multiple writer runtimes, one routing contract** — Spark, Dask, Ray, and pure Python all produce snapshots readable through the same manifest/routing semantics.
+- **Reader coverage for service shapes** — sync, concurrent, async, vector-only, and unified KV+vector readers with shared lifecycle behavior.
+- **Backend choices matched to workload** — SlateDB for KV durability, SQLite for simpler distribution, LanceDB for scalable ANN, sqlite-vec for single-file KV+vector shards.
+- **Operational controls built in** — deterministic winner selection, rollback via `_CURRENT`, and metrics/tracing integration points.
 
 ## When to use shardyfusion
 
@@ -74,6 +110,16 @@ graph TB
 | `ConcurrentShardedReader` | Multi-threaded services (Flask, Django) | Lock or pool mode |
 | `AsyncShardedReader` | Asyncio services (FastAPI, aiohttp) | Async-native |
 
+## Vector search at a glance
+
+- **Vector-only mode**: write vectors with `write_vector_sharded(...)`, query with `ShardedVectorReader.search(...)`.
+- **Unified KV+vector mode**: write `WriteConfig(vector_spec=...)`, then use `UnifiedShardedReader` for both `.get()` and `.search()`.
+- **Sharding strategies**: `CLUSTER` (default), `LSH`, `CEL`, and `EXPLICIT`.
+- **Distance metrics**:
+  - LanceDB backend: `cosine`, `l2`, `dot_product`
+  - sqlite-vec backend: `cosine`, `l2`
+- **Search execution model**: routed scatter-gather fan-out + global top-k merge across shards.
+
 ## Quick start
 
 ```bash
@@ -81,12 +127,16 @@ pip install "shardyfusion[writer-python]"         # write, default SlateDB backe
 pip install "shardyfusion[writer-python-sqlite]"  # write, SQLite backend
 pip install "shardyfusion[read]"                  # read, default SlateDB backend
 pip install "shardyfusion[read-sqlite-range]"     # read, SQLite range-read backend
+pip install "shardyfusion[vector]"                # vector-only search (LanceDB)
+pip install "shardyfusion[vector-sqlite]"         # vector-only search (sqlite-vec)
+pip install "shardyfusion[unified-vector]"        # unified KV+vector (LanceDB composite)
+pip install "shardyfusion[unified-vector-sqlite]" # unified KV+vector (sqlite-vec)
 ```
 
 <details>
 <summary>All available extras</summary>
 
-`read`, `read-async`, `read-sqlite`, `read-sqlite-range`, `sqlite-async`, `writer-spark`, `writer-spark-sqlite`, `writer-dask`, `writer-dask-sqlite`, `writer-ray`, `writer-ray-sqlite`, `writer-python`, `writer-python-sqlite`, `cli`, `cel`, `metrics-prometheus`, `metrics-otel`
+`read`, `read-async`, `read-sqlite`, `read-sqlite-range`, `sqlite-async`, `writer-spark`, `writer-spark-sqlite`, `writer-dask`, `writer-dask-sqlite`, `writer-ray`, `writer-ray-sqlite`, `writer-python`, `writer-python-sqlite`, `cli`, `cel`, `metrics-prometheus`, `metrics-otel`, `vector-lancedb`, `vector`, `vector-sqlite`, `unified-vector`, `unified-vector-sqlite`
 
 See [Getting Started](https://elkin.github.io/shardyfusion/getting-started/) for full installation and dev setup.
 </details>
@@ -121,6 +171,7 @@ with ShardedReader(
 ```
 
 See the [Writer docs](https://elkin.github.io/shardyfusion/writer/) and [Reader docs](https://elkin.github.io/shardyfusion/reader/) for all backends and configuration options.
+For vector-specific flows, see [Vector Search](https://elkin.github.io/shardyfusion/use-cases/vector/overview/) and [KV + Vector](https://elkin.github.io/shardyfusion/use-cases/kv-vector/overview/).
 
 ## Key design decisions
 
@@ -159,6 +210,8 @@ See the [CLI docs](https://elkin.github.io/shardyfusion/cli/) for all commands i
 | [Architecture](https://elkin.github.io/shardyfusion/how-it-works/) | Internals, sharding, publish protocol |
 | [Writer Side](https://elkin.github.io/shardyfusion/writer/) | All 4 backends, config, rate limiting |
 | [Reader Side](https://elkin.github.io/shardyfusion/reader/) | Sync, concurrent, async readers |
+| [Vector Search](https://elkin.github.io/shardyfusion/use-cases/vector/overview/) | Vector-only build/read flows |
+| [KV + Vector](https://elkin.github.io/shardyfusion/use-cases/kv-vector/overview/) | Unified point lookup + ANN snapshots |
 | [Manifest Stores](https://elkin.github.io/shardyfusion/manifest-stores/) | S3, DB-backed, custom stores |
 | [CLI](https://elkin.github.io/shardyfusion/cli/) | Commands, REPL, batch mode |
 | [Observability](https://elkin.github.io/shardyfusion/observability/) | Metrics, logging, Prometheus, OTel |
