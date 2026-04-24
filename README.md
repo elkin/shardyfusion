@@ -73,7 +73,7 @@ graph TB
         python["Python · Iterable"]
     end
 
-    core["Shared Core — xxh3 routing · winner selection · manifest build"]
+    core["Shared Core — manifest-declared routing · winner selection · manifest build"]
 
     subgraph Publish["Two-Phase Publish"]
         s3manifest["S3: manifest YAML"]
@@ -183,7 +183,7 @@ For vector-specific flows, see [Vector Search](https://elkin.github.io/shardyfus
 
 - **Two-phase publish** — Manifest is written first, then `_CURRENT` pointer is updated. Readers never see a half-written snapshot.
 - **Deterministic winner selection** — Speculative execution (Spark task retries, Dask/Ray restarts) can produce duplicate shard writes. Winners are selected deterministically, so results are reproducible.
-- **Routing parity** — All writers and readers share the same routing implementation — never reimplemented per framework. The default is `xxh3_64` hash-based, but sharding is configurable with expression-based strategies for custom partitioning schemes.
+- **Routing parity** — All writers and readers share the same manifest-declared routing implementation — never reimplemented per framework. The only hash algorithm today is `xxh3_64`, and sharding is also configurable with expression-based strategies for custom partitioning schemes.
 - **Sparse manifests** — Only shards with data appear in the manifest. The router pads missing IDs with null readers that return `None` instantly.
 - **Atomic refresh** — `refresh()` loads the new manifest, opens new shard handles, and swaps state atomically. In-flight reads complete against the old state.
 

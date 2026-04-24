@@ -28,7 +28,9 @@
 
 **Winner sort key** — Tuple used to break ties between concurrent runs writing the same shard: `(attempt, task_attempt_id_or_2**63-1, db_url_or_empty)`. Sentinel is signed int64 max.
 
-**`KeyEncoding`** — How routing keys are encoded into bytes: `U64BE`, `U32BE`, `UTF8`, `RAW`.
+**`KeyEncoding`** — How keys are encoded into shard lookup bytes: `U64BE`, `U32BE`, `UTF8`, `RAW`. Routing hash bytes use `canonical_bytes` independently.
+
+**`ShardHashAlgorithm`** — Manifest-required hash algorithm for HASH routing. Currently only `XXH3_64` is supported.
 
 **`VectorSpec`** — `(dim, metric, index_type, index_params, quantization, ...)`. Set on `WriteConfig.vector_spec` for unified KV+vector flows. Backend (`"lancedb"` / `"sqlite-vec"`) is determined by the adapter factory, not by `VectorSpec`. The chosen backend is recorded in the manifest's `vector.backend` field; readers dispatch on it.
 

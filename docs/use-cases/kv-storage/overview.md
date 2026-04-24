@@ -100,11 +100,12 @@ Two strategies control how keys map to shards. Both are configured at write time
 ### HASH (default)
 
 ```
-db_id = xxh3_64(canonical_bytes(key), seed=0) % num_dbs
+db_id = hash_algorithm(canonical_bytes(key)) % num_dbs
 ```
 
-- `canonical_bytes` converts the key to bytes based on `KeyEncoding` (`U64BE`, `U32BE`, `UTF8`, `RAW`).
-- `xxh3_64` with `seed=0` is portable and fast. Changing `num_dbs` between runs reshuffles every key.
+- `hash_algorithm` is recorded in the manifest as `required.sharding.hash_algorithm`; the only supported value today is `xxh3_64` with `seed=0`.
+- `canonical_bytes` is independent from `KeyEncoding`: `int` keys hash as signed little-endian int64, `str` keys hash as UTF-8, and `bytes` pass through.
+- `KeyEncoding` controls stored lookup-key bytes. Changing `num_dbs` or `hash_algorithm` between runs reshuffles keys.
 - Best for uniform distribution when keys are ints, strings, or bytes.
 
 ### CEL (Common Expression Language)

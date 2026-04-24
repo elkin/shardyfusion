@@ -162,7 +162,10 @@ def _write_single_db_impl(
         attempts = [attempt_result]
         winners, num_attempts, all_attempt_urls = select_winners(attempts, num_dbs=1)
 
-        resolved_sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
+        resolved_sharding = ShardingSpec(
+            strategy=ShardingStrategy.HASH,
+            hash_algorithm=config.sharding.hash_algorithm,
+        )
 
         manifest_started = time.perf_counter()
         manifest_ref = publish_to_store(

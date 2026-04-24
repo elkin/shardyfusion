@@ -17,7 +17,11 @@ from shardyfusion.logging import (
     get_logger,
 )
 from shardyfusion.routing import SnapshotRouter
-from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
+from shardyfusion.sharding_types import (
+    KeyEncoding,
+    ShardHashAlgorithm,
+    ShardingStrategy,
+)
 from shardyfusion.type_defs import (
     ShardReader,
 )
@@ -49,8 +53,9 @@ class SnapshotInfo:
     sharding: ShardingStrategy
     created_at: datetime
     manifest_ref: str
-    key_encoding: KeyEncoding = KeyEncoding.U64BE
     row_count: int = 0
+    key_encoding: KeyEncoding = KeyEncoding.U64BE
+    hash_algorithm: ShardHashAlgorithm = ShardHashAlgorithm.XXH3_64
 
 
 @dataclass(slots=True, frozen=True)

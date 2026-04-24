@@ -14,6 +14,8 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
 
+from pydantic import ValidationError
+
 from .errors import ConfigValidationError, ManifestParseError, ManifestStoreError
 from .logging import FailureSeverity, get_logger, log_failure
 from .manifest import (
@@ -368,7 +370,10 @@ class PostgresManifestStore:
 
         custom = _parse_json_col(custom_raw) or {}
         data = {"required": build_data, "shards": shards_data, "custom": custom}
-        parsed = ParsedManifest.model_validate(data)
+        try:
+            parsed = ParsedManifest.model_validate(data)
+        except ValidationError as exc:
+            raise ManifestParseError(f"Manifest validation failed: {exc}") from exc
         _validate_manifest(parsed.required_build, parsed.shards)
         return parsed
 

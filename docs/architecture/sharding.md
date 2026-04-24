@@ -8,19 +8,19 @@ A **shard** is one physical database (`db_id` ∈ `[0, num_dbs)`). Sharding deci
 
 | Strategy | Routing function | When to use |
 |---|---|---|
-| `HASH` | `xxh3_db_id(canonical_bytes(key), num_dbs)` (`routing.py:71`) | Uniform distribution over int, string, or bytes keys. |
+| `HASH` | `hash_db_id(key, num_dbs, hash_algorithm)` (`routing.py`) | Uniform distribution over int, string, or bytes keys. |
 | `CEL` | Compiled CEL expression — direct (int return) or categorical (string→shard map) | Custom routing: tenant pinning, geo affinity, hot-key isolation. |
 
 ## Key encoding
 
-`KeyEncoding` (`sharding_types.py:66`) determines how the key bytes are formed before hashing. It lives on `WriteConfig.key_encoding`, **not** on `ShardingSpec`:
+`KeyEncoding` (`sharding_types.py:66`) determines how keys are serialized for storage and lookup. It lives on `WriteConfig.key_encoding`, **not** on `ShardingSpec`:
 
 - `U64BE` — 8-byte big-endian unsigned int (default).
 - `U32BE` — 4-byte big-endian unsigned int.
 - `UTF8` — UTF-8 string.
 - `RAW` — bytes passed through.
 
-`canonical_bytes` (`routing.py:42`) produces them deterministically; the same encoding is used by readers when looking up keys, so writer and reader agree by construction. See [`routing.md`](routing.md).
+Routing uses `canonical_bytes` (`routing.py:42`) independently from `KeyEncoding`: `int` keys hash as signed little-endian int64, `str` keys hash as UTF-8, and `bytes` pass through. Readers use `KeyEncoding` only after routing, when encoding the lookup key for the shard backend. See [`routing.md`](routing.md).
 
 ## ShardingSpec fields
 
@@ -30,6 +30,7 @@ ShardingSpec(
     routing_values: list[int|str|bytes] | None = None,   # CEL only
     cel_expr: str | None = None,                          # CEL only
     cel_columns: dict[str, str] | None = None,            # CEL only — column → CelType
+    hash_algorithm: ShardHashAlgorithm = XXH3_64,         # HASH routing contract, manifest-required
     max_keys_per_shard: int | None = None,                # HASH only — discover num_dbs from data
     infer_routing_values_from_data: bool = False,         # CEL categorical only
 )
@@ -58,6 +59,8 @@ Direct mode is preferred when:
 - You don't need symbolic per-shard names.
 
 CEL routing requires manifest format **v3** (see [`manifest-and-current.md`](manifest-and-current.md)).
+
+`hash_algorithm` is still serialized for CEL manifests. The CEL `shard_hash()` function remains fixed to `xxh3_64`; `hash_algorithm` does not change CEL expression semantics.
 
 ## Validation
 

@@ -38,6 +38,7 @@ def _build_required(
             cel_expr=cel_expr,
             cel_columns=cel_columns,
             routing_values=routing_values,
+            hash_algorithm="xxh3_64",
         ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",

@@ -112,7 +112,10 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding=KeyEncoding.U64BE,
-        sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
+        sharding=ManifestShardingSpec(
+            strategy=ShardingStrategy.HASH,
+            hash_algorithm="xxh3_64",
+        ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
     )

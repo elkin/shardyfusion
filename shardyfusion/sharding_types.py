@@ -107,13 +107,34 @@ class ShardingStrategy(str, Enum):
             ) from exc
 
 
+class ShardHashAlgorithm(str, Enum):
+    """Supported shard routing hash algorithms."""
+
+    XXH3_64 = "xxh3_64"
+
+    @classmethod
+    def from_value(cls, value: ShardHashAlgorithm | str) -> Self:
+        """Parse a hash algorithm value from enum or string input."""
+
+        if isinstance(value, cls):
+            return value
+        try:
+            return cls(str(value))
+        except ValueError as exc:
+            allowed = ", ".join(item.value for item in cls)
+            raise ValueError(
+                f"Unsupported shard hash algorithm: {value!r}. Allowed: {allowed}"
+            ) from exc
+
+
 @dataclass(slots=True)
 class ShardingSpec:
     """Configuration for mapping rows to shard database ids.
 
     Two strategies are supported:
 
-    **HASH** (default): Uniform distribution via ``xxh3_64(canonical_bytes(key)) % num_dbs``.
+    **HASH** (default): Uniform distribution via
+    ``hash_algorithm(canonical_bytes(key)) % num_dbs``.
     Supports int, str, and bytes keys. Requires ``num_dbs > 0`` (explicit or computed
     from ``max_keys_per_shard``).
 
@@ -128,12 +149,18 @@ class ShardingSpec:
     routing_values: list[RoutingValue] | None = None
     cel_expr: str | None = None
     cel_columns: dict[str, str] | None = None
+    hash_algorithm: ShardHashAlgorithm = ShardHashAlgorithm.XXH3_64
     max_keys_per_shard: int | None = None
     infer_routing_values_from_data: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.strategy, ShardingStrategy):
             raise ValueError("strategy must be ShardingStrategy")
+        if not isinstance(self.hash_algorithm, ShardHashAlgorithm):
+            try:
+                self.hash_algorithm = ShardHashAlgorithm.from_value(self.hash_algorithm)
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
         if self.strategy == ShardingStrategy.CEL:
             if not self.cel_expr:
                 raise ValueError("CEL strategy requires cel_expr")
@@ -168,6 +195,7 @@ class ShardingSpec:
 
         d: dict[str, object] = {
             "strategy": self.strategy.value,
+            "hash_algorithm": self.hash_algorithm.value,
         }
         if self.routing_values is not None:
             d["routing_values"] = self.routing_values

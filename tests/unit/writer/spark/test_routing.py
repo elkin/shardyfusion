@@ -19,7 +19,10 @@ def _build_required(*, strategy: ShardingStrategy, num_dbs: int) -> RequiredBuil
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding=KeyEncoding.U64BE,
-        sharding=ManifestShardingSpec(strategy=strategy),
+        sharding=ManifestShardingSpec(
+            strategy=strategy,
+            hash_algorithm="xxh3_64",
+        ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
     )
@@ -121,7 +124,10 @@ def _build_required_u32be(
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding=KeyEncoding.U32BE,
-        sharding=ManifestShardingSpec(strategy=strategy),
+        sharding=ManifestShardingSpec(
+            strategy=strategy,
+            hash_algorithm="xxh3_64",
+        ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
     )

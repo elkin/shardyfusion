@@ -362,6 +362,7 @@ class AsyncShardedReader:
             created_at=rb.created_at,
             manifest_ref=state.manifest_ref,
             key_encoding=rb.key_encoding,
+            hash_algorithm=rb.sharding.hash_algorithm,
             row_count=sum(s.row_count for s in state.router.shards),
         )
 

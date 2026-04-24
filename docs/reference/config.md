@@ -35,6 +35,7 @@ Manifest layout (path, naming, store) is configured via the nested `manifest: Ma
 - `routing_values` — closed token set (CEL strategy).
 - `cel_expr` — CEL expression returning routing token.
 - `cel_columns` — input columns for CEL.
+- `hash_algorithm` — `ShardHashAlgorithm`, currently `XXH3_64`; serialized into every manifest.
 - `max_keys_per_shard` — soft cap (writer-side); incompatible with explicit `num_dbs`.
 - `infer_routing_values_from_data` — derive `routing_values` from input.
 
@@ -43,6 +44,10 @@ Manifest layout (path, naming, store) is configured via the nested `manifest: Ma
 ## `KeyEncoding`
 
 `shardyfusion/type_defs.py`. Enum: `U64BE`, `U32BE`, `UTF8`, `RAW`. Default on `WriteConfig` is `U64BE`.
+
+## `ShardHashAlgorithm`
+
+`shardyfusion/sharding_types.py`. Enum: currently `XXH3_64` only. The value is required in manifest sharding metadata so future readers can reject unsupported algorithms rather than silently misrouting.
 
 ## `VectorSpec`
 

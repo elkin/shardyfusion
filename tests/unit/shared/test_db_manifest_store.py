@@ -160,7 +160,10 @@ def _build_meta(
         num_dbs=num_dbs,
         s3_prefix=s3_prefix,
         key_col="_key",
-        sharding=ManifestShardingSpec(strategy=strategy),
+        sharding=ManifestShardingSpec(
+            strategy=strategy,
+            hash_algorithm="xxh3_64",
+        ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
         key_encoding=key_encoding,
@@ -379,6 +382,7 @@ class TestCelShardingRoundTrip:
             strategy=ShardingStrategy.CEL,
             cel_expr="shard_hash(key) % 3u",
             cel_columns={"key": "int"},
+            hash_algorithm="xxh3_64",
         )
         build = _build_meta(num_dbs=3, strategy=ShardingStrategy.HASH)
         # Override with pre-built CEL sharding (can't pass through _build_meta)

@@ -408,6 +408,7 @@ def _resolve_inferred_categorical_sharding(
         routing_values=build_categorical_routing_values(tokens),
         cel_expr=sharding.cel_expr,
         cel_columns=dict(sharding.cel_columns),
+        hash_algorithm=sharding.hash_algorithm,
     )
 
 

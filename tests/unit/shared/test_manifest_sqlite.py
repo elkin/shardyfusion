@@ -28,7 +28,10 @@ def _make_required_build(**overrides):
         num_dbs=4,
         s3_prefix="s3://bucket/prefix",
         key_col="_key",
-        sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
+        sharding=ManifestShardingSpec(
+            strategy=ShardingStrategy.HASH,
+            hash_algorithm="xxh3_64",
+        ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
         key_encoding=KeyEncoding.U64BE,
@@ -69,6 +72,7 @@ class TestSqliteManifestBuilder:
         parsed = parse_sqlite_manifest(artifact.payload)
         assert parsed.required_build.run_id == "test-run"
         assert parsed.required_build.num_dbs == 4
+        assert parsed.required_build.sharding.hash_algorithm == "xxh3_64"
         assert len(parsed.shards) == 4
         assert parsed.custom["my_field"] == "val"
 
@@ -89,6 +93,7 @@ class TestSqliteManifestBuilder:
             cel_expr="key % 1000",
             cel_columns={"key": "int"},
             routing_values=[250, 500, 750],
+            hash_algorithm="xxh3_64",
         )
         rb = _make_required_build(sharding=sharding, format_version=3, num_dbs=3)
         shards = [_make_shard(i) for i in range(3)]

@@ -20,10 +20,12 @@ A manifest carries `BuildResult` (`manifest.py:160`) data: `WriterInfo` (`manife
 | Version | Capability |
 |---|---|
 | 1 | Legacy. Readers accept it; writers do not produce it. |
-| 2 | HASH or CEL **without** `routing_values`. Default for `RequiredBuildMeta.format_version` (`manifest.py:80`). |
+| 2 | HASH or CEL **without** `routing_values`, with required `sharding.hash_algorithm`. Default for `RequiredBuildMeta.format_version` (`manifest.py:80`). |
 | 3 | Required when `routing_values` is set (categorical CEL). Validation at `manifest_store.py:447`. |
 
 `_manifest_format_version_for_sharding` (`_writer_core.py:796`) returns `3` if `routing_values` is set, else `2`. Readers reject unsupported versions with `ManifestParseError` (`errors.py:109`) at `manifest_store.py:417`.
+
+`required.sharding.hash_algorithm` is required for every manifest. The only supported value today is `xxh3_64`. A manifest that omits the field or names an unsupported algorithm is invalid; readers reject it instead of falling back to a local default.
 
 ## `_CURRENT` object format
 

@@ -34,6 +34,7 @@ from .manifest import (
     SqliteManifestBuilder,
 )
 from .metrics import MetricsCollector
+from .sharding_types import ShardHashAlgorithm
 from .storage import (
     create_s3_client,
     get_bytes,
@@ -442,6 +443,13 @@ def _validate_manifest(
     if not required_build.sharding or not required_build.sharding.strategy:
         raise ManifestParseError("Manifest required.sharding.strategy is missing")
 
+    if required_build.sharding.hash_algorithm is None:
+        raise ManifestParseError("Manifest required.sharding.hash_algorithm is missing")
+    try:
+        ShardHashAlgorithm.from_value(required_build.sharding.hash_algorithm)
+    except ValueError as exc:
+        raise ManifestParseError(str(exc)) from exc
+
     routing_values = required_build.sharding.routing_values
     if routing_values is not None:
         if required_build.format_version < 3:
@@ -501,6 +509,7 @@ def load_sqlite_build_meta(
         raise ManifestParseError(
             f"SQLite manifest build_meta validation failed: {exc}"
         ) from exc
+    _validate_manifest(required_build, [])
     return required_build, custom
 
 

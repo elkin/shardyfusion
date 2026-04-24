@@ -23,7 +23,7 @@ from ..manifest import (
 from ..manifest_store import S3ManifestStore
 from ..metrics._events import MetricEvent
 from ..metrics._protocol import MetricsCollector
-from ..sharding_types import KeyEncoding, ShardingStrategy
+from ..sharding_types import KeyEncoding, ShardHashAlgorithm, ShardingStrategy
 from ..storage import put_bytes
 from .config import VectorIndexConfig, VectorWriteConfig
 from .sharding import (
@@ -474,7 +474,10 @@ def publish_vector_manifest(
         num_dbs=num_dbs,
         s3_prefix=config.s3_prefix,
         key_col="_vector_id",
-        sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
+        sharding=ManifestShardingSpec(
+            strategy=ShardingStrategy.HASH,
+            hash_algorithm=ShardHashAlgorithm.XXH3_64,
+        ),
         db_path_template=config.output.db_path_template,
         shard_prefix=config.output.shard_prefix,
         format_version=2,

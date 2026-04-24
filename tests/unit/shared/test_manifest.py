@@ -10,7 +10,7 @@ _REQUIRED_BUILD_DATA = {
     "num_dbs": 1,
     "s3_prefix": "s3://b/p",
     "key_col": "id",
-    "sharding": {"strategy": "hash"},
+    "sharding": {"strategy": "hash", "hash_algorithm": "xxh3_64"},
     "db_path_template": "db={db_id:05d}",
     "shard_prefix": "shards",
 }

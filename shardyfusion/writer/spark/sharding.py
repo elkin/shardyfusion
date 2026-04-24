@@ -34,6 +34,7 @@ def add_db_id_column(
         routing_values=sharding.routing_values,
         cel_expr=sharding.cel_expr,
         cel_columns=sharding.cel_columns,
+        hash_algorithm=sharding.hash_algorithm,
     )
 
     output_schema = StructType(
@@ -46,15 +47,16 @@ def add_db_id_column(
             assert num_dbs is not None, "num_dbs required for HASH sharding"
             _key_col = key_col
             _num_dbs = num_dbs
+            _hash_algorithm = sharding.hash_algorithm
 
             def _hash_map_arrow(iterator):  # type: ignore[no-untyped-def]
                 import pyarrow as pa  # type: ignore[import-not-found]
 
-                from shardyfusion.routing import xxh3_db_id
+                from shardyfusion.routing import hash_db_id
 
                 for batch in iterator:
                     keys = batch.column(_key_col).to_pylist()
-                    db_ids = [xxh3_db_id(k, _num_dbs) for k in keys]
+                    db_ids = [hash_db_id(k, _num_dbs, _hash_algorithm) for k in keys]
                     yield batch.append_column(
                         DB_ID_COL, pa.array(db_ids, type=pa.int32())
                     )

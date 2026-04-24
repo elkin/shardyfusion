@@ -9,8 +9,9 @@ This page enumerates the **public** symbols (those in `shardyfusion.__all__`) an
 ### Configuration
 
 - `WriteConfig` — writer config (num_dbs, s3_prefix, sharding, adapter_factory, vector_spec, shard_retry, key_encoding, ...).
-- `ShardingSpec` — sharding strategy + parameters (`strategy`, `routing_values`, `cel_expr`, `cel_columns`, `max_keys_per_shard`, `infer_routing_values_from_data`).
+- `ShardingSpec` — sharding strategy + parameters (`strategy`, `routing_values`, `cel_expr`, `cel_columns`, `hash_algorithm`, `max_keys_per_shard`, `infer_routing_values_from_data`).
 - `KeyEncoding` — `U64BE`, `U32BE`, `UTF8`, `RAW`.
+- `ShardHashAlgorithm` — currently `XXH3_64`.
 - `VectorSpec` — vector dimension, metric, index type/params, optional quantization. Set on `WriteConfig.vector_spec` for unified KV+vector flows. The backend (lancedb/sqlite-vec) is determined by the adapter factory, not by `VectorSpec`.
 
 ### Sharding / routing

@@ -114,7 +114,10 @@ def run_reader_loads_manifest_scenario(
         s3_prefix=s3_prefix,
         key_col="id",
         key_encoding=KeyEncoding.U64BE,
-        sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
+        sharding=ManifestShardingSpec(
+            strategy=ShardingStrategy.HASH,
+            hash_algorithm="xxh3_64",
+        ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
     )

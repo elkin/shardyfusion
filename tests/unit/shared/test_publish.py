@@ -49,7 +49,10 @@ def test_s3_manifest_store_builds_expected_urls(monkeypatch) -> None:
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding=KeyEncoding.U64BE,
-        sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
+        sharding=ManifestShardingSpec(
+            strategy=ShardingStrategy.HASH,
+            hash_algorithm="xxh3_64",
+        ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
     )

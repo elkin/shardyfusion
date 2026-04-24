@@ -30,10 +30,14 @@ from shardyfusion.manifest import (
 from shardyfusion.routing import (
     SnapshotRouter,
     canonical_bytes,
+    hash_db_id,
+    hash_digest,
     xxh3_db_id,
+    xxh3_digest,
 )
 from shardyfusion.sharding_types import (
     KeyEncoding,
+    ShardHashAlgorithm,
     ShardingSpec,
     ShardingStrategy,
 )
@@ -83,7 +87,10 @@ def _build_router(
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding=encoding,
-        sharding=ManifestShardingSpec(strategy=strategy),
+        sharding=ManifestShardingSpec(
+            strategy=strategy,
+            hash_algorithm="xxh3_64",
+        ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
     )
@@ -149,6 +156,19 @@ def test_hash_routing_deterministic_int(key: int, num_dbs: int) -> None:
     a = xxh3_db_id(key, num_dbs)
     b = xxh3_db_id(key, num_dbs)
     assert a == b
+
+
+def test_hash_dispatch_matches_xxh3_helpers() -> None:
+    keys = [0, 1, -1, 42, "hello", b"hello"]
+    for key in keys:
+        assert hash_digest(key, ShardHashAlgorithm.XXH3_64) == xxh3_digest(key)
+        assert hash_db_id(key, 17, ShardHashAlgorithm.XXH3_64) == xxh3_db_id(key, 17)
+
+
+def test_sharding_spec_accepts_hash_algorithm_string() -> None:
+    spec = ShardingSpec(hash_algorithm="xxh3_64")  # type: ignore[arg-type]
+    assert spec.hash_algorithm == ShardHashAlgorithm.XXH3_64
+    assert spec.to_manifest_dict()["hash_algorithm"] == "xxh3_64"
 
 
 @given(key=int_keys, num_dbs=num_dbs_st)

@@ -25,7 +25,10 @@ def _make_required_build(num_dbs: int = 2) -> RequiredBuildMeta:
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding=KeyEncoding.U64BE,
-        sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
+        sharding=ManifestShardingSpec(
+            strategy=ShardingStrategy.HASH,
+            hash_algorithm="xxh3_64",
+        ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
     )
@@ -165,6 +168,7 @@ def _make_cel_build(num_dbs: int = 2, format_version: int = 3) -> RequiredBuildM
             cel_expr="region",
             cel_columns={"region": "string"},
             routing_values=["ap", "eu"] if num_dbs == 2 else ["ap", "eu", "us"],
+            hash_algorithm="xxh3_64",
         ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
@@ -198,6 +202,7 @@ def test_manifest_rejects_removed_boundaries_field() -> None:
             "strategy": "cel",
             "cel_expr": "region",
             "cel_columns": {"region": "string"},
+            "hash_algorithm": "xxh3_64",
             "boundaries": ["eu", "us"],
         }
     )
@@ -206,6 +211,38 @@ def test_manifest_rejects_removed_boundaries_field() -> None:
         f"UPDATE build_meta SET sharding = '{sharding_with_boundaries}'",
     )
     with pytest.raises(ManifestParseError, match="boundaries"):
+        parse_sqlite_manifest(payload)
+
+
+def test_manifest_requires_hash_algorithm() -> None:
+    import json
+
+    build = _make_required_build(num_dbs=2)
+    shards = _make_shards(2)
+    payload = _to_sqlite(build, shards)
+    sharding_without_hash = json.dumps({"strategy": "hash"})
+    payload = _tamper_sqlite(
+        payload,
+        f"UPDATE build_meta SET sharding = '{sharding_without_hash}'",
+    )
+    with pytest.raises(ManifestParseError, match="hash_algorithm"):
+        parse_sqlite_manifest(payload)
+
+
+def test_manifest_rejects_unsupported_hash_algorithm() -> None:
+    import json
+
+    build = _make_required_build(num_dbs=2)
+    shards = _make_shards(2)
+    payload = _to_sqlite(build, shards)
+    sharding_unknown_hash = json.dumps(
+        {"strategy": "hash", "hash_algorithm": "future_hash"}
+    )
+    payload = _tamper_sqlite(
+        payload,
+        f"UPDATE build_meta SET sharding = '{sharding_unknown_hash}'",
+    )
+    with pytest.raises(ManifestParseError, match="Unsupported shard hash algorithm"):
         parse_sqlite_manifest(payload)
 
 
@@ -222,6 +259,7 @@ def test_manifest_rejects_unsupported_categorical_token_types() -> None:
             "cel_expr": "region",
             "cel_columns": {"region": "string"},
             "routing_values": [1.5, 2.5],
+            "hash_algorithm": "xxh3_64",
         }
     )
     payload = _tamper_sqlite(
@@ -245,6 +283,7 @@ def test_categorical_manifest_num_dbs_must_match_routing_values() -> None:
             "cel_expr": "region",
             "cel_columns": {"region": "string"},
             "routing_values": ["ap", "eu"],
+            "hash_algorithm": "xxh3_64",
         }
     )
     payload = _tamper_sqlite(

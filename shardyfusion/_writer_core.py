@@ -31,7 +31,7 @@ from .manifest import (
 from .manifest_store import S3ManifestStore
 from .metrics import MetricEvent, MetricsCollector
 from .ordering import compare_ordered
-from .routing import xxh3_db_id
+from .routing import hash_db_id
 from .sharding_types import (
     RoutingValue,
     ShardingSpec,
@@ -131,7 +131,7 @@ def route_key(
 
     if sharding.strategy == ShardingStrategy.HASH:
         assert num_dbs is not None, "num_dbs required for HASH routing"
-        return xxh3_db_id(key, num_dbs)
+        return hash_db_id(key, num_dbs, sharding.hash_algorithm)
     if sharding.strategy == ShardingStrategy.CEL:
         _compile_cel_cached, route_cel = _get_cel_imports()
         assert sharding.cel_expr is not None and sharding.cel_columns is not None
@@ -790,6 +790,7 @@ def manifest_safe_sharding(sharding: ShardingSpec) -> ManifestShardingSpec:
         cel_columns=dict(sharding.cel_columns)
         if sharding.cel_columns is not None
         else None,
+        hash_algorithm=sharding.hash_algorithm,
     )
 
 

@@ -92,7 +92,12 @@ from .run_registry import (
     S3RunRegistry,
 )
 from .serde import ValueSpec
-from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
+from .sharding_types import (
+    KeyEncoding,
+    ShardHashAlgorithm,
+    ShardingSpec,
+    ShardingStrategy,
+)
 from .slatedb_adapter import (
     DbAdapter,
     DbAdapterFactory,
@@ -170,6 +175,7 @@ __all__ = [
     "ShardCoverageError",
     "ShardWriteError",
     "ShardDetail",
+    "ShardHashAlgorithm",
     "ShardReader",
     "ShardReaderFactory",
     "ShardReaderHandle",

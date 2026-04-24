@@ -131,6 +131,27 @@ def test_hash_routing_round_trip() -> None:
     assert result.manifest_ref.startswith("mem://manifests/")
 
 
+def test_hash_routing_manifest_records_hash_algorithm() -> None:
+    store = InMemoryManifestStore()
+    config = WriteConfig(
+        num_dbs=2,
+        s3_prefix="s3://bucket/prefix",
+        adapter_factory=_TrackingFactory(),
+        output=OutputOptions(run_id="test-run"),
+        manifest=ManifestOptions(store=store),
+    )
+
+    result = write_sharded(
+        list(range(4)),
+        config,
+        key_fn=lambda r: r,
+        value_fn=lambda r: f"v{r}".encode(),
+    )
+
+    manifest = store.load_manifest(result.manifest_ref)
+    assert manifest.required_build.sharding.hash_algorithm == "xxh3_64"
+
+
 def test_hash_routing_round_trip_records_succeeded_run_record() -> None:
     registry = InMemoryRunRegistry()
     config = _make_config(num_dbs=4, run_registry=registry)

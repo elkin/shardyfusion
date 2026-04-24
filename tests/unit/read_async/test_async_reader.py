@@ -123,7 +123,10 @@ def _required_build() -> RequiredBuildMeta:
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding=KeyEncoding.U64BE,
-        sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
+        sharding=ManifestShardingSpec(
+            strategy=ShardingStrategy.HASH,
+            hash_algorithm="xxh3_64",
+        ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
     )
@@ -157,7 +160,10 @@ def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding=KeyEncoding.U64BE,
-        sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
+        sharding=ManifestShardingSpec(
+            strategy=ShardingStrategy.HASH,
+            hash_algorithm="xxh3_64",
+        ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
     )
@@ -202,6 +208,7 @@ def _categorical_manifest() -> ParsedManifest:
             cel_expr="region",
             cel_columns={"region": "string"},
             routing_values=["ap", "eu", "us"],
+            hash_algorithm="xxh3_64",
         ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
@@ -1001,7 +1008,10 @@ def _manifest_with_empty_shard() -> ParsedManifest:
         s3_prefix="s3://bucket/prefix",
         key_col="id",
         key_encoding=KeyEncoding.U64BE,
-        sharding=ManifestShardingSpec(strategy=ShardingStrategy.HASH),
+        sharding=ManifestShardingSpec(
+            strategy=ShardingStrategy.HASH,
+            hash_algorithm="xxh3_64",
+        ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
     )

@@ -2,7 +2,11 @@
 
 import pytest
 
-from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
+from shardyfusion.sharding_types import (
+    ShardHashAlgorithm,
+    ShardingSpec,
+    ShardingStrategy,
+)
 
 
 class TestShardingSpecCel:
@@ -130,6 +134,7 @@ class TestToManifestDict:
         )
         d = spec.to_manifest_dict()
         assert d["strategy"] == "cel"
+        assert d["hash_algorithm"] == "xxh3_64"
         assert d["cel_expr"] == "key % 10"
         assert d["cel_columns"] == {"key": "int"}
         assert "routing_values" not in d
@@ -149,3 +154,13 @@ class TestToManifestDict:
         d = spec.to_manifest_dict()
         assert "cel_expr" not in d
         assert "cel_columns" not in d
+        assert d["hash_algorithm"] == "xxh3_64"
+
+
+class TestShardHashAlgorithm:
+    def test_from_value_accepts_string(self) -> None:
+        assert ShardHashAlgorithm.from_value("xxh3_64") == ShardHashAlgorithm.XXH3_64
+
+    def test_from_value_rejects_unknown(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported shard hash algorithm"):
+            ShardHashAlgorithm.from_value("future_hash")

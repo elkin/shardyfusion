@@ -8,11 +8,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .sharding_types import (
     KeyEncoding,
     RoutingValue,
+    ShardHashAlgorithm,
     ShardingStrategy,
     validate_routing_values,
 )
@@ -43,7 +44,17 @@ class ManifestShardingSpec(BaseModel):
     routing_values: list[RoutingValue] | None = None
     cel_expr: str | None = None
     cel_columns: dict[str, str] | None = None
-    hash_algorithm: str = "xxh3_64"
+    hash_algorithm: ShardHashAlgorithm
+
+    @field_validator("hash_algorithm", mode="before")
+    @classmethod
+    def _validate_hash_algorithm(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("hash_algorithm is required")
+        try:
+            return ShardHashAlgorithm.from_value(value)  # type: ignore[arg-type]
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
     @model_validator(mode="after")
     def _validate_model(self) -> ManifestShardingSpec:

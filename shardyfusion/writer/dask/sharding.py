@@ -83,6 +83,7 @@ def _add_db_id_cel(
         else None,
         cel_expr=sharding.cel_expr,
         cel_columns=dict(sharding.cel_columns),
+        hash_algorithm=sharding.hash_algorithm,
     )
     cel_expr = resolved.cel_expr
     cel_columns = resolved.cel_columns

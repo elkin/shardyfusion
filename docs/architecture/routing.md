@@ -5,16 +5,17 @@ Routing maps a key to a `db_id` deterministically. The same function is used by 
 ## The HASH formula
 
 ```python
-db_id = xxh3_64(canonical_bytes(key), seed=0) % num_dbs
+db_id = hash_algorithm(canonical_bytes(key)) % num_dbs
 ```
 
-Implemented as `xxh3_db_id` (`shardyfusion/routing.py:71`).
+Implemented as `hash_db_id` (`shardyfusion/routing.py`). The manifest records the selected `required.sharding.hash_algorithm`; writers publish it and readers must honor it.
 
-- `xxh3_64` is the 64-bit variant of xxHash3 with `seed=0`.
-- `canonical_bytes` (`routing.py:42`) encodes the key based on `WriteConfig.key_encoding`. `U64BE`/`U32BE` produce big-endian unsigned ints; `UTF8` produces UTF-8 bytes; `RAW` passes bytes through.
+- The only supported algorithm today is `xxh3_64`, the 64-bit variant of xxHash3 with `seed=0`.
+- `canonical_bytes` (`routing.py:42`) is the routing-hash input contract: `int` keys become 8-byte signed little-endian, `str` keys become UTF-8, and `bytes`/`bytearray` pass through.
+- `WriteConfig.key_encoding` is independent of routing. It controls stored lookup-key bytes, not hash input bytes.
 - The modulus is taken in unsigned 64-bit space.
 
-`xxh3_digest` (`routing.py:62`) returns the raw 64-bit digest if you need it (e.g. for diagnostics or test fixtures).
+`hash_digest` returns the raw 64-bit digest for the selected algorithm. `xxh3_digest` and `xxh3_db_id` remain compatibility helpers for the current algorithm.
 
 ## The CEL path
 
@@ -38,9 +39,13 @@ The categorical map is materialized into the manifest at build time (see [`manif
 
 `ShardLookup` (`routing.py:21`) is the protocol that mounted shard adapters implement; the router combines it with the routing function to get end-to-end `key → adapter → bytes`.
 
+## Manifest Compatibility
+
+`hash_algorithm` is required in the manifest sharding object. Manifests that omit it are invalid. This avoids silent misrouting when new algorithms are introduced later.
+
 ## Why xxHash3, why seed=0
 
-xxHash3 is fast (gigabytes per second per core), portable across platforms, and has good avalanche properties — which matters because the modulus operation amplifies bias. `seed=0` is a deliberate non-choice: there is no benefit from a non-zero seed unless you need adversarial-input resistance, and changing seeds would silently re-shard every existing snapshot.
+xxHash3 is fast (gigabytes per second per core), portable across platforms, and has good avalanche properties — which matters because the modulus operation amplifies bias. `seed=0` is a deliberate non-choice for `xxh3_64`: there is no benefit from a non-zero seed unless you need adversarial-input resistance, and changing seeds would silently re-shard every existing snapshot.
 
 ## What is *not* hashed
 
@@ -48,7 +53,7 @@ xxHash3 is fast (gigabytes per second per core), portable across platforms, and 
 - Manifest metadata.
 - Run IDs.
 
-The hash is purely a function of the key bytes. This means the same logical key always lands on the same shard *for a given `num_dbs`* — but changing `num_dbs` between runs reshuffles everything. See [`sharding.md`](sharding.md).
+The hash is purely a function of the manifest-declared hash algorithm and the key's canonical routing bytes. This means the same logical key always lands on the same shard *for a given `num_dbs` and `hash_algorithm`* — but changing either between runs reshuffles keys. See [`sharding.md`](sharding.md).
 
 ## See also
 

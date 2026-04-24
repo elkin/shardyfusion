@@ -12,6 +12,7 @@ from .serde import make_key_encoder
 from .sharding_types import (
     KeyEncoding,
     RoutingValue,
+    ShardHashAlgorithm,
     ShardingStrategy,
     validate_routing_values,
 )
@@ -31,7 +32,7 @@ class ShardLookup(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Universal hash: xxh3_64 with seed=0
+# Hash algorithms
 # ---------------------------------------------------------------------------
 
 _XXH3_SEED = 0
@@ -68,12 +69,34 @@ def xxh3_digest(key: KeyInput) -> int:
     return xxhash.xxh3_64_intdigest(canonical_bytes(key), seed=_XXH3_SEED)
 
 
+def hash_digest(
+    key: KeyInput,
+    algorithm: ShardHashAlgorithm | str = ShardHashAlgorithm.XXH3_64,
+) -> int:
+    """Compute a shard-routing digest using the selected hash algorithm."""
+
+    algorithm = ShardHashAlgorithm.from_value(algorithm)
+    if algorithm == ShardHashAlgorithm.XXH3_64:
+        return xxh3_digest(key)
+    raise ValueError(f"Unsupported shard hash algorithm: {algorithm!r}")
+
+
+def hash_db_id(
+    key: KeyInput,
+    num_dbs: int,
+    algorithm: ShardHashAlgorithm | str = ShardHashAlgorithm.XXH3_64,
+) -> int:
+    """Route a key to a shard db_id using the selected hash algorithm."""
+
+    return hash_digest(key, algorithm) % num_dbs
+
+
 def xxh3_db_id(key: KeyInput, num_dbs: int) -> int:
     """Route a key to a shard db_id using xxh3_64.
 
     ``xxh3_digest(key) % num_dbs``
     """
-    return xxh3_digest(key) % num_dbs
+    return hash_db_id(key, num_dbs, ShardHashAlgorithm.XXH3_64)
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +169,7 @@ class SnapshotRouter:
         self.strategy = required_build.sharding.strategy
         self.num_dbs = required_build.num_dbs
         self.key_encoding = required_build.key_encoding
+        self.hash_algorithm = required_build.sharding.hash_algorithm
 
         routing_values = required_build.sharding.routing_values
         self._routing_values = (
@@ -280,7 +304,8 @@ class SnapshotRouter:
     def _build_route_one(self) -> Callable[[KeyInput], int]:
         if self.strategy == ShardingStrategy.HASH:
             num_dbs = self.num_dbs
-            return lambda key: xxh3_db_id(key, num_dbs)
+            algorithm = self.hash_algorithm
+            return lambda key: hash_db_id(key, num_dbs, algorithm)
 
         if self.strategy == ShardingStrategy.CEL:
             from .cel import compile_cel, resolve_cel_routing_key
