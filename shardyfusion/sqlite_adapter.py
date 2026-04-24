@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Self
 
+from ._sqlite_vfs import S3ReadOnlyFile, S3VfsError, create_apsw_vfs
 from .credentials import CredentialProvider, S3Credentials
 from .errors import ShardyfusionError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
@@ -432,10 +433,7 @@ class SqliteRangeShardReader:
                 "Install via: pip install apsw"
             ) from exc
 
-        from ._sqlite_vfs import _normalize_page_cache_pages
         from .storage import parse_s3_url
-
-        page_cache_pages = _normalize_page_cache_pages(page_cache_pages)
 
         self._db_url = db_url
         self._conn: Any | None = None
@@ -446,8 +444,6 @@ class SqliteRangeShardReader:
         creds = credential_provider.resolve() if credential_provider else None
 
         try:
-            from ._sqlite_vfs import S3ReadOnlyFile, S3VfsError, create_apsw_vfs
-
             self._s3_file = S3ReadOnlyFile(
                 bucket=bucket,
                 key=key,
@@ -455,12 +451,8 @@ class SqliteRangeShardReader:
                 s3_connection_options=s3_connection_options,
                 s3_credentials=creds,
             )
-        except Exception as exc:
-            from ._sqlite_vfs import S3VfsError
-
-            if isinstance(exc, S3VfsError):
-                raise SqliteAdapterError(str(exc)) from exc
-            raise
+        except S3VfsError as exc:
+            raise SqliteAdapterError(str(exc)) from exc
 
         # Register a unique VFS name for this reader instance
         import uuid
