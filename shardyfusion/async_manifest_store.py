@@ -34,7 +34,9 @@ class AsyncS3ManifestStore:
 
     Each ``load_current()`` / ``load_manifest()`` call creates a short-lived
     S3 client via the session context manager.  These calls are infrequent
-    (init + refresh only), so per-call clients are simple and safe.
+    (init + refresh only), so per-call clients are simple and safe.  The
+    aiobotocore session is initialized lazily so reader construction does not
+    require the async extra until an S3 operation actually runs.
     """
 
     def __init__(
@@ -48,18 +50,23 @@ class AsyncS3ManifestStore:
         metrics_collector: MetricsCollector | None = None,
         retry_config: RetryConfig | None = None,
     ) -> None:
-        import aiobotocore.session  # type: ignore[import-not-found]
-
         self.s3_prefix = s3_prefix.rstrip("/")
         self.manifest_name = manifest_name
         self.current_pointer_key = current_pointer_key
-        self._session = aiobotocore.session.get_session()
+        self._session: Any | None = None
         credentials = credential_provider.resolve() if credential_provider else None
         self._resolved = _resolve_s3_config_for_aiobotocore(
             credentials, s3_connection_options
         )
         self._metrics = metrics_collector
         self._retry_config = retry_config
+
+    def _get_session(self) -> Any:
+        if self._session is None:
+            import aiobotocore.session  # type: ignore[import-not-found]
+
+            self._session = aiobotocore.session.get_session()
+        return self._session
 
     async def load_current(self) -> ManifestRef | None:
         from .manifest_store import parse_current_pointer_to_ref
@@ -93,7 +100,7 @@ class AsyncS3ManifestStore:
         bucket, key_prefix = parse_s3_url(manifests_prefix)
 
         refs: list[ManifestRef] = []
-        async with self._session.create_client("s3", **self._resolved) as client:
+        async with self._get_session().create_client("s3", **self._resolved) as client:
             paginator = client.get_paginator("list_objects_v2")
             async for page in paginator.paginate(  # type: ignore[union-attr]
                 Bucket=bucket, Prefix=key_prefix, Delimiter="/"
@@ -131,14 +138,14 @@ class AsyncS3ManifestStore:
 
     async def _do_get_bytes(self, url: str) -> bytes:
         bucket, key = parse_s3_url(url)
-        async with self._session.create_client("s3", **self._resolved) as client:
+        async with self._get_session().create_client("s3", **self._resolved) as client:
             obj = await client.get_object(Bucket=bucket, Key=key)  # type: ignore[misc]
             async with obj["Body"] as stream:
                 return await stream.read()
 
     async def _do_try_get_bytes(self, url: str) -> bytes | None:
         bucket, key = parse_s3_url(url)
-        async with self._session.create_client("s3", **self._resolved) as client:
+        async with self._get_session().create_client("s3", **self._resolved) as client:
             try:
                 obj = await client.get_object(Bucket=bucket, Key=key)  # type: ignore[misc]
             except Exception as exc:

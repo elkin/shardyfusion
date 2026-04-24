@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Self
 
+from ._slatedb_symbols import get_slatedb_write_batch_class, get_slatedb_writer_class
 from .credentials import CredentialProvider, resolve_env_file
 from .errors import DbAdapterError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
@@ -91,10 +92,7 @@ class DefaultSlateDbAdapter:
         env_file: str | None,
         settings: JsonObject | None,
     ) -> None:
-        try:
-            from slatedb import SlateDB
-        except ImportError as exc:
-            raise DbAdapterError("slatedb package is required at runtime") from exc
+        slatedb_cls = get_slatedb_writer_class()
 
         settings_payload: str | None = None
         if settings is not None:
@@ -105,7 +103,7 @@ class DefaultSlateDbAdapter:
         self._db_url = db_url
 
         try:
-            self._db = SlateDB(
+            self._db = slatedb_cls(
                 str(local_dir),
                 url=db_url,
                 env_file=env_file,
@@ -144,12 +142,9 @@ class DefaultSlateDbAdapter:
         if not batch:
             return
 
-        try:
-            from slatedb import WriteBatch
-        except ImportError as exc:
-            raise DbAdapterError("slatedb package is required at runtime") from exc
+        write_batch_cls = get_slatedb_write_batch_class()
 
-        wb = WriteBatch()
+        wb = write_batch_cls()
         for key, value in batch:
             wb.put(key, value)
         self._db.write(wb)

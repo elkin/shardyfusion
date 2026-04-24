@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import timedelta
 from pathlib import Path
 
-import dask
 import dask.dataframe as dd
 import pandas as pd
 import pytest
@@ -41,18 +40,16 @@ from tests.helpers.tracking import (
     RecordingTokenBucket,
     TrackingAdapter,
     TrackingFactory,
+    patch_token_bucket_fixture,
+)
+
+_patch_token_bucket = patch_token_bucket_fixture(
+    "shardyfusion.writer.dask.single_db_writer"
 )
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _synchronous_scheduler():
-    """Force synchronous Dask scheduler for deterministic test behavior."""
-    with dask.config.set(scheduler="synchronous"):
-        yield
 
 
 # ---------------------------------------------------------------------------
@@ -216,16 +213,6 @@ def test_rate_limiting() -> None:
 # ---------------------------------------------------------------------------
 # Rate-limiter integration tests
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def _patch_token_bucket(monkeypatch: pytest.MonkeyPatch) -> list[RecordingTokenBucket]:
-    RecordingTokenBucket.instances = []
-    monkeypatch.setattr(
-        "shardyfusion.writer.dask.single_db_writer.TokenBucket",
-        RecordingTokenBucket,
-    )
-    return RecordingTokenBucket.instances
 
 
 def test_rate_limiter_bucket_created_with_correct_rate(

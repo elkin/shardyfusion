@@ -191,6 +191,27 @@ def build_error_result(op: str, key_hint: str | None, error: str) -> dict[str, A
     return result
 
 
+def build_search_result(
+    response: Any,
+    top_k: int,
+) -> dict[str, Any]:
+    """Build a dict representing a vector search result."""
+    return {
+        "op": "search",
+        "top_k": top_k,
+        "num_shards_queried": response.num_shards_queried,
+        "latency_ms": round(response.latency_ms, 2),
+        "results": [
+            {
+                "id": r.id,
+                "score": round(float(r.score), 6),
+                "payload": r.payload,
+            }
+            for r in response.results
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Formatters
 # ---------------------------------------------------------------------------
@@ -241,6 +262,19 @@ def format_result(result: dict[str, Any], fmt: str) -> str:
             return "\n".join(lines) if lines else "(no manifests)"
         if op == "route":
             return f"{result.get('key', '')} -> shard {result.get('db_id', '?')}"
+        if op == "search":
+            lines = [
+                f"top_k={result.get('top_k', '?')}  "
+                f"shards={result.get('num_shards_queried', 0)}  "
+                f"latency_ms={result.get('latency_ms', 0)}"
+            ]
+            for r in result.get("results", []):
+                payload = r.get("payload")
+                payload_str = json.dumps(payload) if payload is not None else ""
+                lines.append(
+                    f"id={r.get('id', '?')}  score={r.get('score', 0):.6f}  {payload_str}"
+                )
+            return "\n".join(lines)
         if op == "health":
             parts = [f"status={result.get('status', '?')}"]
             parts.append(f"manifest_age={result.get('manifest_age_seconds', 0)}s")
@@ -309,6 +343,18 @@ def format_result(result: dict[str, Any], fmt: str) -> str:
             for m in manifests:
                 lines.append(
                     f"{m['offset']:>3}  {m['published_at']:>26}  {m['run_id']}"
+                )
+            return "\n".join(lines)
+        if op == "search":
+            rows = result.get("results", [])
+            header = f"{'ID':<20}  {'SCORE':>12}  PAYLOAD"
+            sep = "-" * len(header)
+            lines = [header, sep]
+            for r in rows:
+                payload = r.get("payload")
+                payload_str = json.dumps(payload) if payload is not None else ""
+                lines.append(
+                    f"{str(r.get('id', '?')):<20}  {r.get('score', 0):>12.6f}  {payload_str}"
                 )
             return "\n".join(lines)
         if op == "health":

@@ -198,11 +198,65 @@
         "tox-env": "py311-otel-unit",
         "python-version": "3.11",
         "needs-java": false
+      },
+      {
+        "name": "py311 / vector / sqlite / unit",
+        "tox-env": "py311-vector-sqlite-unit",
+        "python-version": "3.11",
+        "needs-java": false
+      },
+      {
+        "name": "py312 / vector / sqlite / unit",
+        "tox-env": "py312-vector-sqlite-unit",
+        "python-version": "3.12",
+        "needs-java": false
+      },
+      {
+        "name": "py313 / vector / sqlite / unit",
+        "tox-env": "py313-vector-sqlite-unit",
+        "python-version": "3.13",
+        "needs-java": false
+      },
+      {
+        "name": "py311 / vector / lancedb / unit",
+        "tox-env": "py311-vector-lancedb-unit",
+        "python-version": "3.11",
+        "needs-java": false
+      },
+      {
+        "name": "py312 / vector / lancedb / unit",
+        "tox-env": "py312-vector-lancedb-unit",
+        "python-version": "3.12",
+        "needs-java": false
+      },
+      {
+        "name": "py313 / vector / lancedb / unit",
+        "tox-env": "py313-vector-lancedb-unit",
+        "python-version": "3.13",
+        "needs-java": false
       }
     ]
   },
   "integration": {
     "include": [
+      {
+        "name": "py311 / vector / integration",
+        "tox-env": "py311-vector-integration",
+        "python-version": "3.11",
+        "needs-java": false
+      },
+      {
+        "name": "py312 / vector / integration",
+        "tox-env": "py312-vector-integration",
+        "python-version": "3.12",
+        "needs-java": false
+      },
+      {
+        "name": "py313 / vector / integration",
+        "tox-env": "py313-vector-integration",
+        "python-version": "3.13",
+        "needs-java": false
+      },
       {
         "name": "py311 / read / slatedb / integration",
         "tox-env": "py311-read-slatedb-integration",

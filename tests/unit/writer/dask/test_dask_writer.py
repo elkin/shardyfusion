@@ -6,13 +6,12 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Self
 
-import dask
 import dask.dataframe as dd
 import pandas as pd
 import pytest
 
 from shardyfusion._shard_writer import results_pdf_to_attempts
-from shardyfusion._writer_core import route_key
+from shardyfusion._writer_core import ShardAttemptResult, route_key
 from shardyfusion.config import (
     ManifestOptions,
     OutputOptions,
@@ -24,6 +23,7 @@ from shardyfusion.metrics import MetricEvent
 from shardyfusion.run_registry import InMemoryRunRegistry
 from shardyfusion.serde import ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import (
+    DB_ID_COL,
     KeyEncoding,
     ShardingSpec,
 )
@@ -38,18 +38,16 @@ from tests.helpers.run_record_assertions import (
     assert_success_run_record,
     load_in_memory_run_record,
 )
-from tests.helpers.tracking import RecordingTokenBucket
+from tests.helpers.tracking import (
+    RecordingTokenBucket,
+    patch_token_bucket_fixture,
+)
+
+_patch_token_bucket = patch_token_bucket_fixture("shardyfusion._shard_writer")
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _synchronous_scheduler():
-    """Force synchronous Dask scheduler for deterministic test behavior."""
-    with dask.config.set(scheduler="synchronous"):
-        yield
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +269,61 @@ def test_batch_flushing() -> None:
     assert len(adapter.write_calls) >= 3  # at least 2 full + 1 final
 
 
+def test_write_partition_vector_fn_uses_distributed_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from shardyfusion.writer.dask import writer as dask_writer
+
+    captured_rows: list[
+        tuple[object, bytes, tuple[int | str, object, dict[str, object] | None]]
+    ] = []
+
+    def _fake_distributed(*, db_id: int, rows_fn, **kwargs):  # type: ignore[no-untyped-def]
+        _ = kwargs
+        rows = list(rows_fn())
+        captured_rows.extend(rows)
+        return ShardAttemptResult(
+            db_id=db_id,
+            db_url=f"s3://bucket/prefix/db={db_id:05d}/attempt=00",
+            attempt=0,
+            row_count=len(rows),
+            min_key=rows[0][0] if rows else None,
+            max_key=rows[-1][0] if rows else None,
+            checkpoint_id="ckpt",
+            writer_info=WriterInfo(),
+            all_attempt_urls=(),
+        )
+
+    monkeypatch.setattr(
+        dask_writer, "write_shard_with_retry_distributed", _fake_distributed
+    )
+
+    runtime = dask_writer._PartitionWriteRuntime(
+        run_id="run-test",
+        s3_prefix="s3://bucket/prefix",
+        shard_prefix="shards",
+        db_path_template="db={db_id:05d}",
+        local_root="/tmp/shardyfusion",
+        key_col="id",
+        key_encoding=KeyEncoding.U64BE,
+        key_encoder=make_key_encoder(KeyEncoding.U64BE),
+        value_spec=ValueSpec.callable_encoder(lambda row: f"v{row['id']}".encode()),
+        batch_size=2,
+        adapter_factory=_TrackingFactory(),  # type: ignore[arg-type]
+        credential_provider=None,
+        max_writes_per_second=None,
+        vector_fn=lambda row: (int(row["id"]), [0.1, 0.2], {"src": "dask"}),
+    )
+    pdf = pd.DataFrame({DB_ID_COL: [0, 0], "id": [1, 2]})
+
+    out = dask_writer._write_partition(pdf, runtime)
+
+    assert len(out) == 1
+    assert captured_rows[0][0] == 1
+    assert captured_rows[0][2][0] == 1
+    assert captured_rows[0][2][2] == {"src": "dask"}
+
+
 def test_min_max_key_tracking() -> None:
     factory = _TrackingFactory()
     config = _make_config(num_dbs=2, factory=factory)
@@ -342,16 +395,6 @@ def testresults_pdf_to_attempts_preserves_all_attempt_urls() -> None:
 # ---------------------------------------------------------------------------
 # Rate-limiter integration tests
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def _patch_token_bucket(monkeypatch: pytest.MonkeyPatch) -> list[RecordingTokenBucket]:
-    RecordingTokenBucket.instances = []
-    monkeypatch.setattr(
-        "shardyfusion._shard_writer.TokenBucket",
-        RecordingTokenBucket,
-    )
-    return RecordingTokenBucket.instances
 
 
 def test_rate_limiter_bucket_created_with_correct_rate(

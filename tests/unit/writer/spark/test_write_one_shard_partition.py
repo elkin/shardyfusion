@@ -5,7 +5,6 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 from pyspark.sql import Row
 
 from shardyfusion._writer_core import ShardAttemptResult
@@ -18,7 +17,12 @@ from shardyfusion.writer.spark.writer import (
     PartitionWriteConfig,
     write_one_shard_partition,
 )
-from tests.helpers.tracking import RecordingTokenBucket
+from tests.helpers.tracking import (
+    RecordingTokenBucket,
+    patch_token_bucket_fixture,
+)
+
+_patch_token_bucket = patch_token_bucket_fixture("shardyfusion.writer.spark.writer")
 
 # ---------------------------------------------------------------------------
 # Fake adapter infrastructure
@@ -54,6 +58,22 @@ class _FakeAdapter:
 
     def close(self) -> None:
         pass
+
+
+class _FakeVectorAdapter(_FakeAdapter):
+    def __init__(self, checkpoint_id: str | None = None) -> None:
+        super().__init__(checkpoint_id=checkpoint_id)
+        self.vector_calls: list[
+            tuple[object, object, list[dict[str, object] | None]]
+        ] = []
+
+    def write_vector_batch(
+        self,
+        ids: object,
+        vectors: object,
+        payloads: list[dict[str, object] | None] | None = None,
+    ) -> None:
+        self.vector_calls.append((ids, vectors, list(payloads or [])))
 
 
 def _make_factory(adapter: _FakeAdapter) -> DbAdapterFactory:
@@ -236,19 +256,28 @@ def test_rate_limited_partition_write(tmp_path) -> None:
     assert total_pairs == 5
 
 
+def test_vector_partition_uses_distributed_shard_writer(tmp_path) -> None:
+    adapter = _FakeVectorAdapter()
+    runtime = _make_runtime(tmp_path, adapter=adapter, batch_size=2)
+    runtime = replace(
+        runtime,
+        vector_fn=lambda row: (int(row["key"]), [0.1, 0.2], {"kind": "spark"}),
+    )
+
+    result = _run(0, _rows(1, 2, 3), runtime)
+
+    assert result.row_count == 3
+    assert len(adapter.write_calls) == 2
+    assert len(adapter.vector_calls) == 2
+    first_ids, first_vectors, first_payloads = adapter.vector_calls[0]
+    assert first_ids.shape == (2,)
+    assert first_vectors.shape == (2, 2)
+    assert first_payloads[0] == {"kind": "spark"}
+
+
 # ---------------------------------------------------------------------------
 # Rate-limiter integration tests
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def _patch_token_bucket(monkeypatch: pytest.MonkeyPatch) -> list[RecordingTokenBucket]:
-    RecordingTokenBucket.instances = []
-    monkeypatch.setattr(
-        "shardyfusion.writer.spark.writer.TokenBucket",
-        RecordingTokenBucket,
-    )
-    return RecordingTokenBucket.instances
 
 
 def _make_rate_limited_runtime(

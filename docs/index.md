@@ -1,99 +1,110 @@
 # shardyfusion
 
-`shardyfusion` builds and reads sharded snapshots backed by independent shard databases. The default backend uses [SlateDB](https://slatedb.io), and the project also supports SQLite shard databases. It lets you partition large datasets during a write pipeline, then route point lookups to the correct shard at read time.
+A library for **sharded SlateDB/SQLite snapshots** and **sharded vector search** — use either independently or together.
 
-## How the Pieces Fit Together
+The docs are organized by **what you want to do**. Pick a branch below.
 
-Writers ingest data (from Spark, Dask, Ray, or plain Python), assign each row to a shard, write the shards to S3-compatible storage, and publish a manifest describing the result. Readers load the manifest, build a routing table, and serve key lookups by directing each key to its shard. The CLI wraps a reader for interactive and batch use.
+## Use-case map
 
-```mermaid
-flowchart LR
-    subgraph Writers
-        Spark
-        Dask
-        Ray
-        Python
-    end
+Click any node to jump to its page. (See the [full index](use-cases/index.md) for a navigational tree.)
 
-    Writers --> Core["_writer_core\n(routing, winner selection,\nmanifest building)"]
-    Core --> MS["ManifestStore\n(S3 / DB / in-memory)"]
-    MS --> Readers
-
-    subgraph Readers
-        Sync["ShardedReader"]
-        Conc["ConcurrentShardedReader"]
-        Async["AsyncShardedReader"]
-    end
-
-    Readers --> CLI["CLI (shardy)"]
-
-    Obs["Metrics & Logging"] -.-> Writers
-    Obs -.-> Readers
-```
-
-All four writer backends share the same core logic (`_writer_core.py`) for routing, winner selection, manifest building, and two-phase publishing. This guarantees that any backend produces a manifest readable by any reader variant, whether the shard storage uses the default SlateDB adapter or SQLite.
-
-## Dependency Layers
-
-The codebase is organized into layers with strict dependency direction — lower layers never import higher ones:
+<div style="overflow:auto; max-width:100%;">
+<div style="min-width:1200px;">
 
 ```mermaid
-flowchart TB
-    L0["Layer 0 — Core Types\nerrors, type_defs, sharding_types,\nordering, logging, metrics protocol"]
-    L1["Layer 1 — Config & Serialization\nconfig, serde, _rate_limiter"]
-    L2["Layer 2 — Storage & Routing\nstorage, manifest, routing,\nmanifest_store, async_manifest_store,\ndb_manifest_store"]
-    L3["Layer 3 — Writer Core\n_writer_core"]
-    L4["Layer 4 — Entry Points\nwriter/{spark,dask,ray,python},\nreader, async_reader, CLI"]
-    L5["Layer 5 — Adapters & Testing\nslatedb_adapter, sqlite_adapter,\ntesting"]
+flowchart TD
+  ROOT([What do you want to do?])
 
-    L0 --> L1 --> L2 --> L3 --> L4 --> L5
+  ROOT --> KV[Sharded KV storage]
+  ROOT --> KVV[Sharded KV + Vector]
+  ROOT --> VEC[Sharded Vector search]
+  ROOT --> OP[Operate snapshots]
 
-    style L0 fill:#e8f5e9
-    style L1 fill:#e3f2fd
-    style L2 fill:#fff3e0
-    style L3 fill:#fce4ec
-    style L4 fill:#f3e5f5
-    style L5 fill:#e0f2f1
+  KV --> KV_OV[Overview]
+  KV --> KV_BUILD[Build]
+  KV --> KV_READ[Read]
+
+  KV_BUILD --> KV_PY[Python]
+  KV_BUILD --> KV_SP[Spark]
+  KV_BUILD --> KV_DK[Dask]
+  KV_BUILD --> KV_RY[Ray]
+
+  KV_READ --> KV_RD_SY[Sync]
+  KV_READ --> KV_RD_AS[Async]
+  KV_RD_SY --> KV_RD_SY_SL[SlateDB]
+  KV_RD_SY --> KV_RD_SY_SQ[SQLite]
+  KV_RD_AS --> KV_RD_AS_SL[SlateDB]
+  KV_RD_AS --> KV_RD_AS_SQ[SQLite]
+
+  KVV --> KVV_OV[Overview]
+  KVV --> KVV_BUILD[Build]
+  KVV --> KVV_READ[Read]
+
+  KVV_BUILD --> KVV_CO[Composite<br/>SlateDB+LanceDB]
+  KVV_BUILD --> KVV_UN[Unified<br/>sqlite-vec]
+
+  KVV_READ --> KVV_RD_SY[Sync]
+  KVV_READ --> KVV_RD_AS[Async]
+
+  VEC --> VEC_OV[Overview]
+  VEC --> VEC_BUILD[Build]
+  VEC --> VEC_READ[Read]
+
+  VEC_BUILD --> VEC_LN[LanceDB]
+  VEC_BUILD --> VEC_SV[sqlite-vec]
+
+  VEC_READ --> VEC_RD_SY[Sync]
+  VEC_READ --> VEC_RD_AS[Async]
+
+  OP --> OP_CLI[CLI]
+  OP --> OP_HIST[History &amp; rollback]
+  OP --> OP_PROM[Prometheus metrics]
+  OP --> OP_OTEL[OTel metrics]
+
+  click KV_OV href "use-cases/kv-storage/overview/"
+  click KV_PY href "use-cases/kv-storage/build/python/"
+  click KV_SP href "use-cases/kv-storage/build/spark/"
+  click KV_DK href "use-cases/kv-storage/build/dask/"
+  click KV_RY href "use-cases/kv-storage/build/ray/"
+  click KV_RD_SY_SL href "use-cases/kv-storage/read/sync/slatedb/"
+  click KV_RD_SY_SQ href "use-cases/kv-storage/read/sync/sqlite/"
+  click KV_RD_AS_SL href "use-cases/kv-storage/read/async/slatedb/"
+  click KV_RD_AS_SQ href "use-cases/kv-storage/read/async/sqlite/"
+
+  click KVV_OV href "use-cases/kv-vector/overview/"
+  click KVV_CO href "use-cases/kv-vector/build/composite/"
+  click KVV_UN href "use-cases/kv-vector/build/unified/"
+  click KVV_RD_SY href "use-cases/kv-vector/read/sync/"
+  click KVV_RD_AS href "use-cases/kv-vector/read/async/"
+
+  click VEC_OV href "use-cases/vector/overview/"
+  click VEC_LN href "use-cases/vector/build/lancedb/"
+  click VEC_SV href "use-cases/vector/build/sqlite-vec/"
+  click VEC_RD_SY href "use-cases/vector/read/sync/"
+  click VEC_RD_AS href "use-cases/vector/read/async/"
+
+  click OP_CLI href "operate/cli/"
+  click OP_HIST href "operate/history-rollback/"
+  click OP_PROM href "operate/prometheus-metrics/"
+  click OP_OTEL href "operate/otel-metrics/"
 ```
 
-## Writer Backends
+</div>
+</div>
 
-Four backends produce identical manifest formats. They differ in how they distribute work but share all core logic, and can write either SlateDB or SQLite shards depending on the installed backend extra:
+## Sections
 
-| Feature | Spark | Dask | Ray | Python |
-|---|---|---|---|---|
-| Input type | PySpark `DataFrame` | Dask `DataFrame` | Ray `Dataset` | `Iterable[T]` |
-| Requires Java | Yes | No | No | No |
-| Sharded write | `write_sharded` | `write_sharded` | `write_sharded` | `write_sharded` |
-| Single-shard write | `write_single_db` | `write_single_db` | `write_single_db` | — |
-| Hash sharding | Yes | Yes | Yes | Yes |
-| Range sharding | Yes | Yes | Yes | Yes |
-| Custom expr sharding | Yes | No | No | No |
-| Rate limiting (ops/sec) | Yes | Yes | Yes | Yes |
-| Rate limiting (bytes/sec) | Yes | Yes | Yes | Yes |
-| Parallel mode | Built-in (RDD) | Built-in (Dask) | Built-in (Ray) | `parallel=True` |
+- **[Use cases](use-cases/index.md)** — task-oriented guides organized by use-case type (KV, KV+Vector, Vector) with conceptual overviews and backend-specific leaf pages.
+- **[Operate](operate/index.md)** — CLI, history & rollback, metrics (Prometheus, OTel).
+- **[Architecture](architecture/writer-core.md)** — internal design: writer core, sharding, routing, manifest, run registry, adapters, observability, error model.
+- **[Reference](reference/api.md)** — public API, configuration objects, CLI, glossary.
+- **[Operations](operations/index.md)** — running shardyfusion in production, cloud testing, tox & dependency matrix.
+- **[Contributing](contributing/index.md)** — local development, testing, adding adapters/writers/use-cases, documentation policy.
+- **[History](history/index.md)** — ADRs, open plans, original engineering notes.
 
-## Reader Variants
+## Quick orientation
 
-| Variant | Thread-safe | Async | Best for |
-|---|---|---|---|
-| `ShardedReader` | No | No | Single-threaded scripts |
-| `ConcurrentShardedReader` | Yes | No | Multi-threaded web servers |
-| `AsyncShardedReader` | N/A | Yes | asyncio services (FastAPI, etc.) |
-
-All readers support [health checks](reader.md#reader-health), [cold-start fallback](reader.md#cold-start-fallback), [refresh](reader.md#refresh-semantics), and optional [rate limiting](reader.md#reader-side-rate-limiting).
-
-## Quick Links
-
-| Page | Description |
-|---|---|
-| [Getting Started](getting-started.md) | Installation, extras, and dev setup |
-| [Architecture](how-it-works.md) | Write/read pipeline deep dive and S3 layout |
-| [Writer Side](writer.md) | All writer backends, single-shard writers, rate limiting |
-| [Reader Side](reader.md) | Sync, concurrent, and async readers with health and fallback |
-| [Manifest Stores](manifest-stores.md) | S3, database, async, and in-memory manifest storage |
-| [CLI (shardy)](cli.md) | Interactive lookups, batch scripts, history, and rollback |
-| [Observability](observability.md) | Prometheus, OpenTelemetry, and structured logging |
-| [Error Handling](error-handling.md) | Error hierarchy and retry semantics |
-| [Operations](operations.md) | CI, rollback procedures, health monitoring, troubleshooting |
-| [API Reference](api.md) | Auto-generated API docs from docstrings |
+- Default storage backend: **SlateDB**.
+- Snapshot layout: per-shard databases under `s3_prefix/`, plus an immutable manifest under `manifests/<timestamp>_run_id=<run_id>/manifest`, plus a single mutable pointer `_CURRENT`.
+- Publish is **two-phase**: write manifest, swap `_CURRENT`. See [ADR-001](history/design-decisions/adr-001-two-phase-publish.md).
+- Python `>=3.11,<3.14`.

@@ -11,8 +11,13 @@
     "../shardyfusion/writer/ray",
     "../shardyfusion/writer/python",
     "../shardyfusion/cli",
+    "../shardyfusion/reader/unified_reader.py",
+    "../shardyfusion/vector",
+    "../shardyfusion/composite_adapter.py",
+    "../shardyfusion/sqlite_vec_adapter.py",
     "../shardyfusion/metrics/prometheus.py",
-    "../shardyfusion/metrics/otel.py"
+    "../shardyfusion/metrics/otel.py",
+    "../shardyfusion/reader/async_unified_reader.py"
   ],
   "extraPaths": [
     ".."

@@ -9,7 +9,7 @@ venv/
 .env/
 
 # Packaging/build artifacts
-build/
+/build/
 dist/
 site/
 *.egg-info/
@@ -51,3 +51,6 @@ uv.lock
 
 # Worktrees
 .worktrees/
+
+# MkDocs generated files
+.mkdocs-generated/

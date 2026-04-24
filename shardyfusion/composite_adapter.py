@@ -1,0 +1,378 @@
+"""Composite adapter — KV + vector sidecar in one lifecycle.
+
+Wraps a ``DbAdapter`` (KV storage, e.g. SlateDB) alongside a
+``VectorIndexWriter`` (e.g. LanceDB HNSW) so that both share
+the same shard prefix and are managed as a single unit.
+
+Writer side:
+    ``CompositeFactory`` / ``CompositeAdapter`` — delegates ``write_batch``
+    to the KV adapter and ``write_vector_batch`` to the vector writer.
+    ``checkpoint()`` and ``close()`` call both in sequence.
+
+Reader side:
+    ``CompositeReaderFactory`` / ``CompositeShardReader`` — combines
+    a KV ``ShardReader`` with a ``VectorShardReader`` for unified
+    ``get()`` + ``search()`` on one shard.
+"""
+
+from __future__ import annotations
+
+import logging
+import types as _types
+from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Self
+
+import numpy as np
+
+from .config import VectorSpec, vector_metric_to_str
+from .errors import ShardyfusionError
+from .logging import get_logger, log_event
+from .slatedb_adapter import DbAdapter, DbAdapterFactory
+from .type_defs import (
+    AsyncShardReader,
+    AsyncShardReaderFactory,
+    ShardReader,
+    ShardReaderFactory,
+)
+from .vector.types import (
+    AsyncVectorShardReader,
+    AsyncVectorShardReaderFactory,
+    SearchResult,
+    VectorIndexWriter,
+    VectorIndexWriterFactory,
+    VectorShardReader,
+    VectorShardReaderFactory,
+)
+
+_logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Errors
+# ---------------------------------------------------------------------------
+
+
+class CompositeAdapterError(ShardyfusionError):
+    """Composite adapter lifecycle error (non-retryable)."""
+
+    retryable = False
+
+
+# ---------------------------------------------------------------------------
+# Writer
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class CompositeFactory:
+    """Factory that creates unified KV + vector sidecar adapters.
+
+    Args:
+        kv_factory: Factory for the KV adapter (e.g. ``SlateDbFactory``).
+        vector_factory: Factory for the vector writer (e.g. ``LanceDBWriterFactory``).
+        vector_spec: Vector configuration from ``WriteConfig``.
+    """
+
+    kv_factory: DbAdapterFactory
+    vector_factory: VectorIndexWriterFactory
+    vector_spec: VectorSpec
+
+    def __call__(self, *, db_url: str, local_dir: Path) -> CompositeAdapter:
+        from .vector.config import VectorIndexConfig
+        from .vector.types import DistanceMetric
+
+        index_config = VectorIndexConfig(
+            dim=self.vector_spec.dim,
+            metric=DistanceMetric(vector_metric_to_str(self.vector_spec.metric)),
+            index_type=self.vector_spec.index_type,
+            index_params=self.vector_spec.index_params,
+            quantization=self.vector_spec.quantization,
+        )
+
+        kv_adapter = self.kv_factory(db_url=db_url, local_dir=local_dir)
+
+        # Vector writer gets a subdirectory to avoid file collisions
+        vector_dir = local_dir / "vector"
+        vector_dir.mkdir(parents=True, exist_ok=True)
+        vector_writer = self.vector_factory(
+            db_url=f"{db_url.rstrip('/')}/vector",
+            local_dir=vector_dir,
+            index_config=index_config,
+        )
+
+        return CompositeAdapter(
+            kv_adapter=kv_adapter,
+            vector_writer=vector_writer,
+        )
+
+
+class CompositeAdapter:
+    """Unified KV + vector write adapter with sidecar vector index.
+
+    Delegates KV operations to the wrapped ``DbAdapter`` and vector
+    operations to the wrapped ``VectorIndexWriter``.  Lifecycle methods
+    (flush, checkpoint, close) call both in sequence.
+    """
+
+    def __init__(
+        self,
+        *,
+        kv_adapter: DbAdapter,
+        vector_writer: VectorIndexWriter,
+    ) -> None:
+        self._kv = kv_adapter
+        self._vec = vector_writer
+        self._closed = False
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: _types.TracebackType | None,
+    ) -> None:
+        self.close()
+
+    # -- KV operations (DbAdapter protocol) --
+
+    def write_batch(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
+        """Write KV pairs to the underlying KV adapter."""
+        if self._closed:
+            raise CompositeAdapterError("Adapter already closed")
+        self._kv.write_batch(pairs)
+
+    # -- Vector operations --
+
+    def write_vector_batch(
+        self,
+        ids: np.ndarray,
+        vectors: np.ndarray,
+        payloads: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Write vectors to the sidecar vector index."""
+        if self._closed:
+            raise CompositeAdapterError("Adapter already closed")
+        self._vec.add_batch(ids, vectors, payloads)
+
+    # -- Lifecycle --
+
+    def flush(self) -> None:
+        self._kv.flush()
+        self._vec.flush()
+
+    def checkpoint(self) -> str | None:
+        kv_ckpt = self._kv.checkpoint()
+        self._vec.checkpoint()
+        # Return KV checkpoint ID as the primary identifier
+        return kv_ckpt
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        try:
+            self._vec.close()
+        finally:
+            try:
+                self._kv.close()
+            finally:
+                self._closed = True
+        log_event(
+            "composite_adapter_closed",
+            level=logging.DEBUG,
+            logger=_logger,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Reader
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class CompositeReaderFactory:
+    """Factory that creates unified KV + vector shard readers.
+
+    Args:
+        kv_factory: Factory for KV shard readers (e.g. ``SlateDbReaderFactory``).
+        vector_factory: Factory for vector shard readers (e.g. ``LanceDBReaderFactory``).
+        vector_spec: Vector configuration.
+    """
+
+    kv_factory: ShardReaderFactory
+    vector_factory: VectorShardReaderFactory
+    vector_spec: VectorSpec
+
+    def __call__(
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None = None,
+    ) -> CompositeShardReader:
+        from .vector.config import VectorIndexConfig
+        from .vector.types import DistanceMetric
+
+        index_config = VectorIndexConfig(
+            dim=self.vector_spec.dim,
+            metric=DistanceMetric(vector_metric_to_str(self.vector_spec.metric)),
+            index_type=self.vector_spec.index_type,
+            index_params=self.vector_spec.index_params,
+            quantization=self.vector_spec.quantization,
+        )
+
+        kv_reader = self.kv_factory(
+            db_url=db_url,
+            local_dir=local_dir,
+            checkpoint_id=checkpoint_id,
+        )
+
+        vector_dir = local_dir / "vector"
+        vector_dir.mkdir(parents=True, exist_ok=True)
+        vector_reader = self.vector_factory(
+            db_url=f"{db_url.rstrip('/')}/vector",
+            local_dir=vector_dir,
+            index_config=index_config,
+        )
+
+        return CompositeShardReader(
+            kv_reader=kv_reader,
+            vector_reader=vector_reader,
+        )
+
+
+class CompositeShardReader:
+    """Unified shard reader: KV point lookups + vector search.
+
+    Wraps a KV ``ShardReader`` and a ``VectorShardReader`` to support
+    both ``get()`` and ``search()`` on the same shard.
+    """
+
+    def __init__(
+        self,
+        *,
+        kv_reader: ShardReader,
+        vector_reader: VectorShardReader,
+    ) -> None:
+        self._kv = kv_reader
+        self._vec = vector_reader
+
+    def get(self, key: bytes) -> bytes | None:
+        """KV point lookup."""
+        return self._kv.get(key)
+
+    def search(
+        self,
+        query: np.ndarray,
+        top_k: int,
+    ) -> list[SearchResult]:
+        """Vector similarity search."""
+        return self._vec.search(query, top_k)
+
+    def close(self) -> None:
+        try:
+            self._vec.close()
+        finally:
+            self._kv.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+
+@dataclass(slots=True)
+class AsyncCompositeReaderFactory:
+    """Factory that creates async unified KV + vector shard readers.
+
+    Args:
+        kv_factory: Factory for KV async shard readers.
+        vector_factory: Factory for vector async shard readers.
+        vector_spec: Vector configuration.
+    """
+
+    kv_factory: AsyncShardReaderFactory
+    vector_factory: AsyncVectorShardReaderFactory
+    vector_spec: VectorSpec
+
+    async def __call__(
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None = None,
+    ) -> AsyncCompositeShardReader:
+        from .vector.config import VectorIndexConfig
+        from .vector.types import DistanceMetric
+
+        index_config = VectorIndexConfig(
+            dim=self.vector_spec.dim,
+            metric=DistanceMetric(vector_metric_to_str(self.vector_spec.metric)),
+            index_type=self.vector_spec.index_type,
+            index_params=self.vector_spec.index_params,
+            quantization=self.vector_spec.quantization,
+        )
+
+        kv_reader = await self.kv_factory(
+            db_url=db_url,
+            local_dir=local_dir,
+            checkpoint_id=checkpoint_id,
+        )
+
+        vector_dir = local_dir / "vector"
+        vector_dir.mkdir(parents=True, exist_ok=True)
+        vector_reader = await self.vector_factory(
+            db_url=f"{db_url.rstrip('/')}/vector",
+            local_dir=vector_dir,
+            index_config=index_config,
+        )
+
+        return AsyncCompositeShardReader(
+            kv_reader=kv_reader,
+            vector_reader=vector_reader,
+        )
+
+
+class AsyncCompositeShardReader:
+    """Async unified shard reader: KV point lookups + vector search.
+
+    Wraps an async KV ``AsyncShardReader`` and an ``AsyncVectorShardReader`` to support
+    both ``get()`` and ``search()`` on the same shard.
+    """
+
+    def __init__(
+        self,
+        *,
+        kv_reader: AsyncShardReader,
+        vector_reader: AsyncVectorShardReader,
+    ) -> None:
+        self._kv = kv_reader
+        self._vec = vector_reader
+
+    async def get(self, key: bytes) -> bytes | None:
+        """KV point lookup."""
+        return await self._kv.get(key)
+
+    async def search(
+        self,
+        query: np.ndarray,
+        top_k: int,
+    ) -> list[SearchResult]:
+        """Vector similarity search."""
+        return await self._vec.search(query, top_k)
+
+    async def close(self) -> None:
+        try:
+            await self._vec.close()
+        finally:
+            await self._kv.close()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()

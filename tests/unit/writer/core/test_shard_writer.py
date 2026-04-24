@@ -12,10 +12,13 @@ import pytest
 
 from shardyfusion._shard_writer import (
     ShardWriteParams,
+    iter_pandas_rows,
     make_shard_local_dir,
     make_shard_url,
+    results_pdf_to_attempts,
     write_shard_core,
     write_shard_with_retry,
+    write_shard_with_retry_distributed,
 )
 from shardyfusion.errors import (
     ConfigValidationError,
@@ -23,7 +26,7 @@ from shardyfusion.errors import (
 )
 from shardyfusion.manifest import WriterInfo
 from shardyfusion.metrics import MetricEvent
-from shardyfusion.serde import make_key_encoder
+from shardyfusion.serde import ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import KeyEncoding
 from shardyfusion.type_defs import RetryConfig
 from tests.helpers.tracking import TrackingFactory
@@ -531,3 +534,119 @@ class TestHelpers:
     def test_make_shard_local_dir(self) -> None:
         d = make_shard_local_dir("/tmp/sf", "run-1", 3, 1)
         assert d == Path("/tmp/sf/run_id=run-1/db=00003/attempt=01")
+
+
+class TestPandasInteropHelpers:
+    def test_iter_pandas_rows_coerces_numpy_scalar_keys(self) -> None:
+        pd = pytest.importorskip("pandas")
+        np = pytest.importorskip("numpy")
+
+        pdf = pd.DataFrame({"id": [np.int64(7)], "value": ["a"]})
+        value_spec = ValueSpec.callable_encoder(lambda row: str(row["value"]).encode())
+
+        rows = list(iter_pandas_rows(pdf, "id", value_spec))
+        assert rows == [(7, b"a")]
+
+    def test_results_pdf_to_attempts_normalizes_nan_and_attempt_urls(self) -> None:
+        pd = pytest.importorskip("pandas")
+
+        writer_info = WriterInfo(attempt=0, duration_ms=3)
+        pdf = pd.DataFrame(
+            [
+                {
+                    "db_id": 1,
+                    "db_url": "s3://bucket/db=00001/attempt=00",
+                    "attempt": 0,
+                    "row_count": 2,
+                    "min_key": 1.0,
+                    "max_key": float("nan"),
+                    "checkpoint_id": float("nan"),
+                    "writer_info": writer_info,
+                    "all_attempt_urls": [
+                        "s3://bucket/db=00001/attempt=00",
+                        "s3://bucket/db=00001/attempt=01",
+                    ],
+                }
+            ]
+        )
+
+        attempts = results_pdf_to_attempts(pdf)
+        assert len(attempts) == 1
+        attempt = attempts[0]
+        assert attempt.db_id == 1
+        assert attempt.min_key == 1
+        assert attempt.max_key is None
+        assert attempt.checkpoint_id is None
+        assert attempt.all_attempt_urls == (
+            "s3://bucket/db=00001/attempt=00",
+            "s3://bucket/db=00001/attempt=01",
+        )
+
+    def test_results_pdf_to_attempts_empty_returns_empty(self) -> None:
+        pd = pytest.importorskip("pandas")
+        assert results_pdf_to_attempts(pd.DataFrame()) == []
+
+
+class TestWriteShardWithRetryDistributed:
+    def test_distributed_retry_creates_rate_limiters(self, tmp_path: Path) -> None:
+        bucket_calls: list[tuple[float, str]] = []
+
+        class _TokenBucketStub:
+            def __init__(
+                self,
+                rate: float,
+                *,
+                metrics_collector: Any | None = None,
+                limiter_type: str = "ops",
+            ) -> None:
+                del metrics_collector
+                bucket_calls.append((rate, limiter_type))
+
+            def acquire(self, tokens: int) -> None:
+                del tokens
+
+        class _VectorAdapter:
+            def __enter__(self) -> _VectorAdapter:
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                return False
+
+            def write_batch(self, batch: list[tuple[bytes, bytes]]) -> None:
+                del batch
+
+            def write_vector_batch(
+                self,
+                ids: Any,
+                vectors: Any,
+                payloads: list[dict[str, Any] | None] | None = None,
+            ) -> None:
+                del ids, vectors, payloads
+
+            def flush(self) -> None:
+                pass
+
+            def checkpoint(self) -> str:
+                return "ckpt"
+
+        with patch("shardyfusion._shard_writer.TokenBucket", _TokenBucketStub):
+            result = write_shard_with_retry_distributed(
+                db_id=0,
+                rows_fn=lambda: iter([(1, b"v1", ("id-1", [0.1, 0.2], None))]),
+                run_id="run-1",
+                s3_prefix="s3://bucket/prefix",
+                shard_prefix="shards",
+                db_path_template="db={db_id:05d}",
+                local_root=str(tmp_path),
+                key_encoder=make_key_encoder(KeyEncoding.U64BE),
+                batch_size=1,
+                factory=lambda *, db_url, local_dir: _VectorAdapter(),
+                max_writes_per_second=100.0,
+                max_write_bytes_per_second=1000.0,
+                metrics_collector=None,
+                started=time.perf_counter(),
+                retry_config=None,
+            )
+
+        assert result.attempt == 0
+        assert bucket_calls == [(100.0, "ops"), (1000.0, "bytes")]

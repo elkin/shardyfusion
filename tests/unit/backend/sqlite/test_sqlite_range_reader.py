@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from shardyfusion.sqlite_adapter import SqliteAdapterError, _S3ReadOnlyFile
+from shardyfusion._sqlite_vfs import S3ReadOnlyFile, S3VfsError
 
 
 class TestS3ReadOnlyFile:
@@ -20,7 +20,7 @@ class TestS3ReadOnlyFile:
 
     def test_size_from_head(self, s3_client: MagicMock) -> None:
         with patch("shardyfusion.storage.create_s3_client", return_value=s3_client):
-            f = _S3ReadOnlyFile(bucket="b", key="k")
+            f = S3ReadOnlyFile(bucket="b", key="k")
         assert f.size == 8192
 
     def test_read_sends_range_header(self, s3_client: MagicMock) -> None:
@@ -29,7 +29,7 @@ class TestS3ReadOnlyFile:
         s3_client.get_object.return_value = {"Body": body}
 
         with patch("shardyfusion.storage.create_s3_client", return_value=s3_client):
-            f = _S3ReadOnlyFile(bucket="b", key="k")
+            f = S3ReadOnlyFile(bucket="b", key="k")
 
         data = f.read(0, 4096)
         s3_client.get_object.assert_called_once_with(
@@ -43,7 +43,7 @@ class TestS3ReadOnlyFile:
         s3_client.get_object.return_value = {"Body": body}
 
         with patch("shardyfusion.storage.create_s3_client", return_value=s3_client):
-            f = _S3ReadOnlyFile(bucket="b", key="k", page_cache_pages=10)
+            f = S3ReadOnlyFile(bucket="b", key="k", page_cache_pages=10)
 
         # First read — cache miss
         data1 = f.read(0, 100)
@@ -60,7 +60,7 @@ class TestS3ReadOnlyFile:
         s3_client.get_object.return_value = {"Body": body}
 
         with patch("shardyfusion.storage.create_s3_client", return_value=s3_client):
-            f = _S3ReadOnlyFile(bucket="b", key="k", page_cache_pages=2)
+            f = S3ReadOnlyFile(bucket="b", key="k", page_cache_pages=2)
 
         # Fill cache: 2 pages
         f.read(0, 10)
@@ -78,7 +78,7 @@ class TestS3ReadOnlyFile:
     def test_read_past_eof_returns_empty(self, s3_client: MagicMock) -> None:
         """Reads at or past the file size return empty bytes (no S3 call)."""
         with patch("shardyfusion.storage.create_s3_client", return_value=s3_client):
-            f = _S3ReadOnlyFile(bucket="b", key="k")  # size=8192
+            f = S3ReadOnlyFile(bucket="b", key="k")  # size=8192
 
         assert f.read(8192, 100) == b""
         assert f.read(9999, 50) == b""
@@ -90,7 +90,7 @@ class TestS3ReadOnlyFile:
         s3_client.get_object.return_value = {"Body": body}
 
         with patch("shardyfusion.storage.create_s3_client", return_value=s3_client):
-            f = _S3ReadOnlyFile(bucket="b", key="k", page_cache_pages=2)
+            f = S3ReadOnlyFile(bucket="b", key="k", page_cache_pages=2)
 
         f.read(0, 10)
         f.read(10, 10)
@@ -116,7 +116,7 @@ class TestS3ReadOnlyFile:
         s3_client.get_object.return_value = {"Body": body}
 
         with patch("shardyfusion.storage.create_s3_client", return_value=s3_client):
-            f = _S3ReadOnlyFile(bucket="b", key="k", page_cache_pages=0)
+            f = S3ReadOnlyFile(bucket="b", key="k", page_cache_pages=0)
 
         f.read(0, 10)
         f.read(0, 10)
@@ -125,10 +125,8 @@ class TestS3ReadOnlyFile:
 
     def test_negative_page_cache_size_is_rejected(self, s3_client: MagicMock) -> None:
         with patch("shardyfusion.storage.create_s3_client", return_value=s3_client):
-            with pytest.raises(
-                SqliteAdapterError, match="page_cache_pages must be >= 0"
-            ):
-                _S3ReadOnlyFile(bucket="b", key="k", page_cache_pages=-1)
+            with pytest.raises(S3VfsError, match="page_cache_pages must be >= 0"):
+                S3ReadOnlyFile(bucket="b", key="k", page_cache_pages=-1)
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +158,7 @@ class TestSqliteRangeShardReaderVFS:
         return _build_sqlite_db(tmp_path, [(b"key1", b"val1"), (b"key2", b"val2")])
 
     def _mock_s3_file(self, db_bytes: bytes) -> MagicMock:
-        mock = MagicMock(spec=_S3ReadOnlyFile)
+        mock = MagicMock(spec=S3ReadOnlyFile)
         mock.size = len(db_bytes)
         mock.read.side_effect = lambda offset, amount: db_bytes[
             offset : offset + amount
@@ -169,7 +167,7 @@ class TestSqliteRangeShardReaderVFS:
 
     def test_get_through_vfs(self, tmp_path: Path, db_bytes: bytes) -> None:
         mock = self._mock_s3_file(db_bytes)
-        with patch("shardyfusion.sqlite_adapter._S3ReadOnlyFile", return_value=mock):
+        with patch("shardyfusion.sqlite_adapter.S3ReadOnlyFile", return_value=mock):
             reader = SqliteRangeShardReader(
                 db_url="s3://bucket/shard",
                 local_dir=tmp_path / "read",
@@ -183,7 +181,7 @@ class TestSqliteRangeShardReaderVFS:
 
     def test_close_unregisters_vfs(self, tmp_path: Path, db_bytes: bytes) -> None:
         mock = self._mock_s3_file(db_bytes)
-        with patch("shardyfusion.sqlite_adapter._S3ReadOnlyFile", return_value=mock):
+        with patch("shardyfusion.sqlite_adapter.S3ReadOnlyFile", return_value=mock):
             reader = SqliteRangeShardReader(
                 db_url="s3://bucket/shard",
                 local_dir=tmp_path / "read",

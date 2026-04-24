@@ -10,11 +10,13 @@
   - Reader path (async): `reader/async_reader.py`, `routing.py`, `async_manifest_store.py` (`AsyncS3ManifestStore`)
   - CLI path: `cli/app.py`, `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
   - SQLite backend: `sqlite_adapter.py` (writer + download-and-cache reader + range-read VFS reader + async wrappers)
+  - Vector search: `vector/types.py`, `vector/config.py`, `vector/sharding.py`, `vector/_merge.py`, `vector/writer.py`, `vector/reader.py`, `vector/adapters/lancedb_adapter.py`
+  - Unified KV+vector: `sqlite_vec_adapter.py` (sqlite-vec unified adapter), `composite_adapter.py` (KV+vector composite), `reader/unified_reader.py` (UnifiedShardedReader)
   - Shared models/protocols: `config.py`, `credentials.py`, `manifest.py`, `manifest_store.py`, `async_manifest_store.py`, `run_registry.py`, `storage.py`, `testing.py`
   - Core utilities: `errors.py`, `type_defs.py`, `sharding_types.py`, `ordering.py`, `logging.py`, `serde.py`, `cel.py`, `_rate_limiter.py`, `metrics/`
 - Tests: `tests/`
-  - Unit: `tests/unit/shared`, `tests/unit/read`, `tests/unit/read_async`, `tests/unit/writer`, `tests/unit/backend/{slatedb,sqlite}`, `tests/unit/cel`, `tests/unit/metrics`, `tests/unit/cli`
-  - Integration: `tests/integration/read`, `tests/integration/writer`, `tests/integration/backend/sqlite`
+  - Unit: `tests/unit/shared`, `tests/unit/read`, `tests/unit/read_async`, `tests/unit/writer`, `tests/unit/backend/{slatedb,sqlite}`, `tests/unit/cel`, `tests/unit/metrics`, `tests/unit/cli`, `tests/unit/vector`
+  - Integration: `tests/integration/read`, `tests/integration/writer`, `tests/integration/backend/sqlite`, `tests/integration/vector`
   - E2E: `tests/e2e/read`, `tests/e2e/writer` (Garage S3 via compose)
   - Shared helpers: `tests/helpers/s3_test_scenarios.py`, `tests/helpers/smoke_scenarios.py`, `tests/helpers/run_record_assertions.py`
 - Docs: `docs/` with MkDocs config in `mkdocs.yml`
@@ -31,6 +33,7 @@
   - Ray writer: `uv sync --extra writer-ray` or `uv sync --extra writer-ray-sqlite`
   - CLI-only: `uv sync --extra cli`
   - Observability extras: `uv sync --extra metrics-prometheus`, `uv sync --extra metrics-otel`
+  - Vector search: `uv sync --extra vector` (LanceDB), `uv sync --extra vector-sqlite` (sqlite-vec), `uv sync --extra unified-vector` (KV+vector)
   - Full dev: `uv sync --all-extras --dev`
 - Lint: `uv run ruff check .`
 - Format check: `uv run ruff format --check .`
@@ -76,6 +79,7 @@
 - For behavior changes, add/adjust unit tests first, then integration tests where routing/publishing or Spark behavior is affected.
 
 ## Commit & Pull Request Guidelines
+- **Before requesting a review or concluding changes are ready, always run `just ci d-e2e` to ensure all tests (including E2E) pass.**
 - Follow concise, imperative commit subjects; Conventional Commit prefixes are used in history (`fix:`, `chore:`, `test:`, `feat:`) and recommended.
 - Keep commits scoped (single concern) and include tests for functional changes.
 - PRs should include:

@@ -30,22 +30,12 @@ from tests.helpers.tracking import (
     RecordingTokenBucket,
     TrackingAdapter,
     TrackingFactory,
+    patch_token_bucket_fixture,
 )
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="module")
-def spark() -> SparkSession:
-    return (
-        SparkSession.builder.master("local[1]")
-        .appName("test_single_db_writer")
-        .config("spark.ui.enabled", "false")
-        .getOrCreate()
-    )
-
+_patch_token_bucket = patch_token_bucket_fixture(
+    "shardyfusion.writer.spark.single_db_writer"
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -275,16 +265,6 @@ def test_rate_limiting(spark: SparkSession) -> None:
 # ---------------------------------------------------------------------------
 # Rate-limiter integration tests
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def _patch_token_bucket(monkeypatch: pytest.MonkeyPatch) -> list[RecordingTokenBucket]:
-    RecordingTokenBucket.instances = []
-    monkeypatch.setattr(
-        "shardyfusion.writer.spark.single_db_writer.TokenBucket",
-        RecordingTokenBucket,
-    )
-    return RecordingTokenBucket.instances
 
 
 @pytest.mark.spark

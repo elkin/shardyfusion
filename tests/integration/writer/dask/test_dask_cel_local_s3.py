@@ -6,7 +6,6 @@ import pytest
 
 cel_expr_python = pytest.importorskip("cel_expr_python")  # noqa: F841
 
-import dask
 import dask.dataframe as dd
 import pandas as pd
 
@@ -22,12 +21,6 @@ from shardyfusion.type_defs import S3ConnectionOptions
 from shardyfusion.writer.dask import write_sharded
 
 pytestmark = pytest.mark.cel
-
-
-@pytest.fixture(autouse=True)
-def _synchronous_scheduler():
-    with dask.config.set(scheduler="synchronous"):
-        yield
 
 
 def test_dask_cel_unified_publishes_manifest(local_s3_service, tmp_path):

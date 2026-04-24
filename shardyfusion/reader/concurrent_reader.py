@@ -493,6 +493,7 @@ class ConcurrentShardedReader(_BaseShardedReader):
         raise ReaderStateError("No valid manifest found after fallback")
 
     def _build_state(self, manifest_ref: str, manifest: ParsedManifest) -> _ReaderState:
+        self._validate_manifest_compatibility(manifest)
         router = SnapshotRouter(manifest.required_build, manifest.shards)
         handles: dict[int, _ShardHandle] = {}
 

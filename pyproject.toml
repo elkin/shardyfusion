@@ -28,7 +28,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Backend extras — storage engine deps only
-slatedb = ["slatedb", "boto3>=1.28"]
+slatedb = ["slatedb<0.12", "boto3>=1.28"]
 sqlite = ["boto3>=1.28"]
 sqlite-range = ["apsw>=3.44", "boto3>=1.28"]
 
@@ -72,6 +72,11 @@ cli = ["shardyfusion[read]", "click>=8.0"]
 cel = ["cel-expr-python>=0.1"]
 metrics-prometheus = ["prometheus-client>=0.20"]
 metrics-otel = ["opentelemetry-api>=1.28"]
+vector-lancedb = ["lancedb>=0.17", "pyarrow>=14.0", "numpy>=1.24", "boto3>=1.28"]
+vector = ["shardyfusion[vector-lancedb]"]
+vector-sqlite = ["sqlite-vec>=0.1", "numpy>=1.24", "boto3>=1.28"]
+unified-vector = ["shardyfusion[vector]", "shardyfusion[cel]"]
+unified-vector-sqlite = ["shardyfusion[vector-sqlite]", "shardyfusion[cel]"]
 all = [
   "shardyfusion[read-async]",
   "shardyfusion[read-sqlite]",
@@ -89,6 +94,10 @@ all = [
   "shardyfusion[cel]",
   "shardyfusion[metrics-prometheus]",
   "shardyfusion[metrics-otel]",
+  "shardyfusion[vector]",
+  "shardyfusion[vector-sqlite]",
+  "shardyfusion[unified-vector]",
+  "shardyfusion[unified-vector-sqlite]",
 ]
 test = [
   "pytest>=7.4",
@@ -124,24 +133,26 @@ shardy = "shardyfusion.cli.app:main"
 
 [dependency-groups]
 backend-slatedb = [
-  "slatedb",
+  "slatedb<0.12",
   "boto3>=1.28",
 ]
 backend-sqlite = [
   "boto3>=1.28",
 ]
+backend-sqlite-vec = [
+  "sqlite-vec>=0.1",
+]
+backend-vector-lancedb = [
+  "lancedb>=0.17",
+  "pyarrow>=14.0",
+]
 backend-sqlite-range = [
   "apsw>=3.44",
   "boto3>=1.28",
 ]
-# Capability groups carry no extra deps — the backend group (e.g.
-# backend-slatedb) supplies storage-engine deps separately.  These
-# exist as tox env-name fragments for composing dependency sets.
-cap-read = []
 cap-read-async = [
   "aiobotocore>=2.12",
 ]
-cap-writer-python = []
 cap-writer-spark = [
   "pyspark>=3.3",
   "pandas>=2.2",
@@ -270,4 +281,6 @@ markers = [
   "ray: tests requiring writer-ray extras",
   "cel: tests requiring cel extra (cel-expr-python)",
   "e2e: end-to-end tests requiring a container engine (podman/docker)",
+  "vector: tests requiring vector extras (lancedb, pyarrow, numpy)",
+  "vector_sqlite: tests requiring vector-sqlite extra (sqlite-vec)",
 ]

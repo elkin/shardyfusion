@@ -152,7 +152,7 @@ docs: _check-venv
 # Serve documentation locally with live reload
 [group('dev')]
 docs-serve: _check-venv
-    uv run mkdocs serve
+    uv run mkdocs serve --livereload --watch shardyfusion/
 
 # Regenerate .github/ci-matrix.json from tox env lists
 [group('dev')]

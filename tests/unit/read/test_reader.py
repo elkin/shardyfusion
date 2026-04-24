@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from shardyfusion.errors import (
+    ConfigValidationError,
     DbAdapterError,
     ManifestParseError,
     ReaderStateError,
@@ -116,6 +117,22 @@ def _manifest(db_url: str) -> ParsedManifest:
             )
         ],
         custom={},
+    )
+
+
+def _vector_only_manifest(db_url: str) -> ParsedManifest:
+    manifest = _manifest(db_url)
+    return ParsedManifest(
+        required_build=manifest.required_build,
+        shards=manifest.shards,
+        custom={
+            "vector": {
+                "dim": 4,
+                "metric": "cosine",
+                "backend": "lancedb",
+                "kv_backend": "slatedb",
+            }
+        },
     )
 
 
@@ -392,7 +409,6 @@ def test_metrics_reader_get_not_found(tmp_path) -> None:
 
 
 def test_sharded_reader_get_basic(tmp_path) -> None:
-
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
     manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
     stores: dict[str, dict[bytes, bytes]] = {
@@ -410,7 +426,6 @@ def test_sharded_reader_get_basic(tmp_path) -> None:
 
 
 def test_sharded_reader_multi_get_sequential(tmp_path) -> None:
-
     manifests = {
         "mem://manifest/one": _manifest_2shard("mem://db/zero", "mem://db/one")
     }
@@ -432,7 +447,6 @@ def test_sharded_reader_multi_get_sequential(tmp_path) -> None:
 
 
 def test_sharded_reader_multi_get_parallel(tmp_path) -> None:
-
     manifests = {
         "mem://manifest/one": _manifest_2shard("mem://db/zero", "mem://db/one")
     }
@@ -455,7 +469,6 @@ def test_sharded_reader_multi_get_parallel(tmp_path) -> None:
 
 
 def test_sharded_reader_refresh(tmp_path) -> None:
-
     manifests = {
         "mem://manifest/one": _manifest("mem://db/one"),
         "mem://manifest/two": _manifest("mem://db/two"),
@@ -481,7 +494,6 @@ def test_sharded_reader_refresh(tmp_path) -> None:
 
 
 def test_sharded_reader_refresh_unchanged(tmp_path) -> None:
-
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
     manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
     stores: dict[str, dict[bytes, bytes]] = {
@@ -498,7 +510,6 @@ def test_sharded_reader_refresh_unchanged(tmp_path) -> None:
 
 
 def test_sharded_reader_close_prevents_get(tmp_path) -> None:
-
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
     manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
 
@@ -515,7 +526,6 @@ def test_sharded_reader_close_prevents_get(tmp_path) -> None:
 
 
 def test_sharded_reader_close_prevents_refresh(tmp_path) -> None:
-
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
     manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
 
@@ -532,7 +542,6 @@ def test_sharded_reader_close_prevents_refresh(tmp_path) -> None:
 
 
 def test_sharded_reader_context_manager(tmp_path) -> None:
-
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
     manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
 
@@ -551,7 +560,6 @@ def test_sharded_reader_context_manager(tmp_path) -> None:
 
 
 def test_sharded_reader_missing_current_raises() -> None:
-
     with pytest.raises(ReaderStateError, match="CURRENT pointer not found"):
         ShardedReader(
             s3_prefix="s3://bucket/prefix",
@@ -560,8 +568,43 @@ def test_sharded_reader_missing_current_raises() -> None:
         )
 
 
-def test_sharded_reader_metrics_lifecycle(tmp_path) -> None:
+def test_sharded_reader_rejects_vector_only_manifest(tmp_path) -> None:
+    manifests = {"mem://manifest/one": _vector_only_manifest("mem://db/one")}
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
+    stores: dict[str, dict[bytes, bytes]] = {
+        "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"one"},
+    }
 
+    with pytest.raises(
+        ConfigValidationError, match="unsupported or incomplete vector metadata"
+    ):
+        ShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_store,
+            reader_factory=_fake_reader_factory(stores),
+        )
+
+
+def test_concurrent_reader_rejects_vector_only_manifest(tmp_path) -> None:
+    manifests = {"mem://manifest/one": _vector_only_manifest("mem://db/one")}
+    manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
+    stores: dict[str, dict[bytes, bytes]] = {
+        "mem://db/one": {(1).to_bytes(8, "big", signed=False): b"one"},
+    }
+
+    with pytest.raises(
+        ConfigValidationError, match="unsupported or incomplete vector metadata"
+    ):
+        ConcurrentShardedReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            manifest_store=manifest_store,
+            reader_factory=_fake_reader_factory(stores),
+        )
+
+
+def test_sharded_reader_metrics_lifecycle(tmp_path) -> None:
     mc = ListMetricsCollector()
     manifests = {"mem://manifest/one": _manifest("mem://db/one")}
     manifest_store = _MutableManifestStore(manifests, "mem://manifest/one")
@@ -585,7 +628,6 @@ def test_sharded_reader_metrics_lifecycle(tmp_path) -> None:
 
 
 def test_sharded_reader_multi_get_shard_failure(tmp_path) -> None:
-
     manifests = {
         "mem://manifest/one": _manifest_2shard("mem://db/zero", "mem://db/one")
     }

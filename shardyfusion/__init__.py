@@ -14,6 +14,7 @@ from .cel import CelColumn, CelType, cel_sharding, cel_sharding_by_columns
 from .config import (
     ManifestOptions,
     OutputOptions,
+    VectorSpec,
     WriteConfig,
 )
 from .credentials import (
@@ -37,7 +38,6 @@ from .errors import (
     ShardCoverageError,
     ShardWriteError,
     ShardyfusionError,
-    SlateDbApiError,
 )
 from .logging import (
     FailureSeverity,
@@ -116,6 +116,7 @@ __all__ = [
     "AsyncShardReaderHandle",
     "AsyncShardedReader",
     "AsyncSlateDbReaderFactory",
+    "AsyncUnifiedShardedReader",
     "BuildDurations",
     "BuildResult",
     "BuildStats",
@@ -177,7 +178,6 @@ __all__ = [
     "ShardLookup",
     "ShardingStrategy",
     "ShardyfusionError",
-    "SlateDbApiError",
     "SlateDbFactory",
     "SlateDbReaderFactory",
     "SnapshotInfo",
@@ -187,7 +187,9 @@ __all__ = [
     "StaticCredentialProvider",
     "ThreadSafeTokenBucket",
     "TokenBucket",
+    "UnifiedShardedReader",
     "ValueSpec",
+    "VectorSpec",
     "WriteConfig",
     "WriterInfo",
     "cel_sharding",
@@ -198,3 +200,15 @@ __all__ = [
     "parse_manifest_payload",
     "parse_sqlite_manifest",
 ]
+
+
+def __getattr__(name: str):  # noqa: ANN202
+    if name == "UnifiedShardedReader":
+        from .reader.unified_reader import UnifiedShardedReader
+
+        return UnifiedShardedReader
+    if name == "AsyncUnifiedShardedReader":
+        from .reader.async_unified_reader import AsyncUnifiedShardedReader
+
+        return AsyncUnifiedShardedReader
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

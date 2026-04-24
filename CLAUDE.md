@@ -15,14 +15,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Reader-side routing helpers for service-side `get` and `multi_get`
 - `shardy` CLI for interactive and batch lookups against published snapshots
 - Token-bucket rate limiting for all writer paths (`max_writes_per_second`, `max_write_bytes_per_second`)
+- Sharded vector search with pluggable backends (LanceDB HNSW sidecar, sqlite-vec) and CLUSTER/LSH/EXPLICIT/CEL sharding strategies
+- Unified KV + vector mode: single snapshot supporting both point lookups and ANN search via `UnifiedShardedReader`
 
 ## Tooling
 
-**Package manager**: uv. Extras: `read`, `read-async` (adds aiobotocore for native async S3), `read-sqlite`, `read-sqlite-range` (adds apsw), `sqlite-async`, `writer-spark` (requires Java), `writer-spark-sqlite`, `writer-python`, `writer-python-sqlite`, `writer-dask`, `writer-dask-sqlite`, `writer-ray`, `writer-ray-sqlite`, `cli`, `cel` (adds cel-expr-python), `metrics-prometheus`, `metrics-otel`. Core dependency: `pyyaml>=6.0`. Full dev: `uv sync --all-extras --dev`.
+**Package manager**: uv. Extras: `read`, `read-async` (adds aiobotocore for native async S3), `read-sqlite`, `read-sqlite-range` (adds apsw), `sqlite-async`, `writer-spark` (requires Java), `writer-spark-sqlite`, `writer-python`, `writer-python-sqlite`, `writer-dask`, `writer-dask-sqlite`, `writer-ray`, `writer-ray-sqlite`, `cli`, `cel` (adds cel-expr-python), `metrics-prometheus`, `metrics-otel`, `vector` (LanceDB + numpy + boto3), `vector-lancedb`, `vector-sqlite` (sqlite-vec + numpy + boto3), `unified-vector` (vector + cel), `unified-vector-sqlite`. Core dependency: `pyyaml>=6.0`. Full dev: `uv sync --all-extras --dev`.
 
 **Workflows**: Run `just --list` for all local and container (`d-*`) targets. Key entry points: `just setup` (bootstrap a fresh clone), `just doctor` (verify environment), `just fix` (auto-format), `just ci` (quality + unit + integration), `just clean` / `just clean-all` (remove caches/artifacts). Container default engine is Podman; override with `CONTAINER_ENGINE=docker`.
 
-**Test matrix**: tox labels — `quality`, `unit`, `integration`, `e2e`. Targeted pytest: `uv run pytest -q tests/unit/<area>` (areas: `shared`, `read`, `read_async`, `writer`, `backend/sqlite`, `metrics`, `cli`, `cel`).
+**Test matrix**: tox labels — `quality`, `unit`, `integration`, `e2e`. Targeted pytest: `uv run pytest -q tests/unit/<area>` (areas: `shared`, `read`, `read_async`, `writer`, `backend/sqlite`, `metrics`, `cli`, `cel`, `vector`).
 
 **Type checking**: `uv run pyright shardyfusion` (all code) or per-path configs in `pyright/` directory.
 
@@ -71,6 +73,16 @@ The library is split into six independent paths that share config, manifest mode
 **CLI path** (requires click + pyyaml):
 `cli/app.py` → `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
 
+**Vector writer path** (no Spark/Java needed; requires `vector` or `vector-sqlite` extra):
+`vector/writer.py` (`write_vector_sharded`) → `vector/sharding.py` (CLUSTER/LSH/EXPLICIT/CEL assignment) → `vector/adapters/lancedb_adapter.py` (LanceDB HNSW) or `sqlite_vec_adapter.py` (sqlite-vec unified)
+
+**Vector reader path** (no Spark/Java needed):
+`vector/reader.py` (`ShardedVectorReader`) → `vector/sharding.py` (query routing) → `vector/adapters/lancedb_adapter.py` or `sqlite_vec_adapter.py` → `vector/_merge.py` (top-k heap merge)
+
+**Unified KV + vector path** (no Spark/Java needed):
+`reader/unified_reader.py` (`UnifiedShardedReader`, extends `ShardedReader`) → `vector/_merge.py` for search merge
+`composite_adapter.py` (`CompositeAdapter`) → wraps KV adapter + vector adapter per shard
+
 ### Module Dependency Graph
 
 ```
@@ -79,7 +91,8 @@ Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py, cel.p
 Layer 2 — Storage, routing, manifest, run registry: storage.py (w/ RetryConfig, list_prefixes), manifest.py, routing.py, manifest_store.py (delegates to list_prefixes), async_manifest_store.py, db_manifest_store.py, run_registry.py
 Layer 3 — Writer core: _writer_core.py (shared by all writers; assemble_build_result, cleanup_losers, CleanupAction, cleanup_stale_attempts, cleanup_old_runs), _shard_writer.py (shared shard-write loop + retry: write_shard_core, write_shard_with_retry, ShardWriteParams)
 Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/ (reader.py, concurrent_reader.py, _base.py, _types.py, _state.py), reader/async_reader.py, cli/app.py
-Layer 5 — Adapters & testing: slatedb_adapter.py, sqlite_adapter.py (optional apsw for range-read VFS), testing.py
+Layer vec — Vector search: vector/types.py, vector/config.py (vector types/protocols/enums), vector/sharding.py (CLUSTER/LSH/EXPLICIT/CEL routing), vector/_merge.py (top-k heap merge), vector/writer.py (write_vector_sharded), vector/reader.py (ShardedVectorReader)
+Layer 5 — Adapters & testing: slatedb_adapter.py, sqlite_adapter.py (optional apsw for range-read VFS), sqlite_vec_adapter.py (unified KV+vector SQLite), vector/adapters/lancedb_adapter.py (LanceDB HNSW sidecar), composite_adapter.py (KV+vector composite), testing.py
 Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus extra), metrics/otel.py (metrics-otel extra)
 ```
 
@@ -285,7 +298,7 @@ All package-specific errors inherit from `ShardyfusionError` and expose `retryab
 | `ShardAssignmentError` | `False` | `errors.py` | Routing mismatch or invalid shard IDs |
 | `ShardCoverageError` | `False` | `errors.py` | Writer results did not cover expected shard IDs |
 | `ShardWriteError` | `True` | `errors.py` | Shard write failed with a potentially transient error; wraps unknown adapter exceptions |
-| `SlateDbApiError` | `False` | `errors.py` | SlateDB binding unavailable/incompatible or shard reader failure |
+| `DbAdapterError` | `False` | `errors.py` | SlateDB binding unavailable/incompatible or shard reader failure |
 | `ManifestBuildError` | `False` | `errors.py` | Manifest builder failed during artifact creation |
 | `PublishManifestError` | `True` | `errors.py` | Manifest upload failed; safe to retry |
 | `PublishCurrentError` | `True` | `errors.py` | `_CURRENT` update failed after manifest publish |
@@ -294,18 +307,21 @@ All package-specific errors inherit from `ShardyfusionError` and expose `retryab
 | `PoolExhaustedError` | `True` | `errors.py` | Concurrent reader pool checkout timed out |
 | `ManifestStoreError` | `True` | `errors.py` | Transient DB-backed manifest-store failure |
 | `S3TransientError` | `True` | `errors.py` | Retryable S3 throttle/5xx/timeout |
+| `DbAdapterError` | `False` | `errors.py` | Generic database adapter failure |
 | `SqliteAdapterError` | `False` | `sqlite_adapter.py` | SQLite adapter lifecycle or local DB misuse |
+| `VectorIndexError` | `False` | `errors.py` | Vector index construction or serialization failed |
+| `VectorSearchError` | `False` | `errors.py` | Vector search operation failed |
 
 ## Public API Summary
 
 Top-level exports from `shardyfusion.__init__` (`__all__`, grouped only for readability):
 
-- Config/build: `BuildDurations`, `BuildResult`, `BuildStats`, `CurrentPointer`, `ManifestOptions`, `OutputOptions`, `WriteConfig`, `WriterInfo`
+- Config/build: `BuildDurations`, `BuildResult`, `BuildStats`, `CurrentPointer`, `ManifestOptions`, `OutputOptions`, `VectorSpec`, `WriteConfig`, `WriterInfo`
 - Credentials/connectivity: `CredentialProvider`, `EnvCredentialProvider`, `RetryConfig`, `S3ConnectionOptions`, `S3Credentials`, `StaticCredentialProvider`
-- Errors: `ConfigValidationError`, `ManifestBuildError`, `ManifestParseError`, `ManifestStoreError`, `PoolExhaustedError`, `PublishCurrentError`, `PublishManifestError`, `ReaderStateError`, `S3TransientError`, `ShardAssignmentError`, `ShardCoverageError`, `ShardWriteError`, `ShardyfusionError`, `SlateDbApiError`
-- Manifest/store: `InMemoryManifestStore`, `ManifestArtifact`, `ManifestRef`, `ManifestShardingSpec`, `ManifestStore`, `RequiredBuildMeta`, `RequiredShardMeta`, `S3ManifestStore`, `SqliteManifestBuilder`, `parse_manifest_payload`, `parse_sqlite_manifest`
+- Errors: `ConfigValidationError`, `DbAdapterError`, `ManifestBuildError`, `ManifestParseError`, `ManifestStoreError`, `PoolExhaustedError`, `PublishCurrentError`, `PublishManifestError`, `ReaderStateError`, `S3TransientError`, `ShardAssignmentError`, `ShardCoverageError`, `ShardWriteError`, `ShardyfusionError`, `DbAdapterError`
+- Manifest/store: `InMemoryManifestStore`, `ManifestArtifact`, `ManifestRef`, `ManifestShardingSpec`, `ManifestStore`, `ParsedManifest`, `RequiredBuildMeta`, `RequiredShardMeta`, `S3ManifestStore`, `SQLITE_MANIFEST_CONTENT_TYPE`, `SqliteManifestBuilder`, `SqliteShardLookup`, `load_sqlite_build_meta`, `parse_manifest_payload`, `parse_sqlite_manifest`
 - Run registry: `InMemoryRunRegistry`, `RunRecord`, `RunRegistry`, `RunStatus`, `S3RunRegistry`
-- Reader/routing: `AsyncManifestStore`, `AsyncS3ManifestStore`, `AsyncShardReader`, `AsyncShardReaderFactory`, `AsyncShardReaderHandle`, `AsyncShardedReader`, `AsyncSlateDbReaderFactory`, `ConcurrentShardedReader`, `ReaderHealth`, `ShardDetail`, `ShardReader`, `ShardReaderFactory`, `ShardReaderHandle`, `ShardedReader`, `SlateDbReaderFactory`, `SnapshotInfo`, `SnapshotRouter`
+- Reader/routing: `AsyncManifestStore`, `AsyncS3ManifestStore`, `AsyncShardReader`, `AsyncShardReaderFactory`, `AsyncShardReaderHandle`, `AsyncShardedReader`, `AsyncSlateDbReaderFactory`, `ConcurrentShardedReader`, `ReaderHealth`, `ShardDetail`, `ShardLookup`, `ShardReader`, `ShardReaderFactory`, `ShardReaderHandle`, `ShardedReader`, `SlateDbReaderFactory`, `SnapshotInfo`, `SnapshotRouter`, `UnifiedShardedReader` (lazy import via `__getattr__`)
 - Adapters: `DbAdapter`, `DbAdapterFactory`, `SlateDbFactory`
 - Rate limiting: `AcquireResult`, `RateLimiter`, `ThreadSafeTokenBucket`, `TokenBucket`
 - Logging/metrics: `FailureSeverity`, `JsonFormatter`, `LogContext`, `MetricEvent`, `MetricsCollector`, `configure_logging`, `get_logger`
@@ -321,16 +337,24 @@ SQLite backend adapters are imported from their module (not re-exported at top l
 - `from shardyfusion.sqlite_adapter import SqliteFactory, SqliteReaderFactory, SqliteRangeReaderFactory`
 - `from shardyfusion.sqlite_adapter import AsyncSqliteReaderFactory, AsyncSqliteRangeReaderFactory`
 
+Vector types and functions are imported from subpackages (not re-exported at top level):
+- `from shardyfusion.vector.writer import write_vector_sharded`
+- `from shardyfusion.vector.reader import ShardedVectorReader`
+- `from shardyfusion.vector.types import VectorRecord, SearchResult, VectorSearchResponse, DistanceMetric, VectorShardingStrategy`
+- `from shardyfusion.vector.config import VectorIndexConfig, VectorShardingSpec, VectorWriteConfig`
+
 ## Testing Notes
 
-- **`tests/unit/`** — fast, no Spark; use pytest-xdist (`-n 2`). Areas: `shared/`, `read/`, `read_async/`, `writer/` (+ `writer/spark/`, `writer/python/`, `writer/dask/`, `writer/ray/`), `backend/sqlite/`, `metrics/`, `cli/`, `cel/`
+- **`tests/unit/`** — fast, no Spark; use pytest-xdist (`-n 2`). Areas: `shared/`, `read/`, `read_async/`, `writer/` (+ `writer/spark/`, `writer/python/`, `writer/dask/`, `writer/ray/`), `backend/sqlite/`, `metrics/`, `cli/`, `cel/`, `vector/`
 - **`tests/unit/metrics/`** — `PrometheusCollector` and `OtelCollector` tests. Run via dedicated tox envs (`prometheus-unit`, `otel-unit`) that install the `metrics-prometheus`/`metrics-otel` extras. OTel tests also need `opentelemetry-sdk` (provided via `test` extra). These tests require their respective extras and will fail with `ImportError` without them — run via tox or install the extras explicitly.
 - **Optional-dep test isolation** — Writer test directories (`tests/unit/writer/{dask,spark,ray}/`, `tests/integration/writer/{dask,ray}/`, `tests/e2e/writer/ray/`) use `conftest.py`-level `pytest.importorskip()` to skip entire suites when the framework extra is not installed. This allows `uv run pytest tests/` to work without all optional extras.
 - **`tests/unit/backend/sqlite/`** — SQLite adapter unit tests (`test_sqlite_adapter.py`, `test_sqlite_range_reader.py`). Range-read tests require `apsw`.
 - **`tests/integration/`** — S3 via `moto`; Spark writer tests require Spark + Java. `backend/sqlite/` tests SQLite adapter against moto S3.
 - **`tests/e2e/`** — Garage S3 via compose; `just d-e2e`
 - **`tests/helpers/`** — `s3_test_scenarios.py` (shared scenarios for moto/Garage), `smoke_scenarios.py` (shared smoke E2E data and scenarios for HASH/CEL sharding across all writer frameworks), `run_record_assertions.py` (shared run-record content assertions), `tracking.py` (test doubles: `TrackingAdapter`, `TrackingFactory`, `RecordingTokenBucket`, `InMemoryPublisher`)
-- Markers: `@pytest.mark.spark`, `@pytest.mark.dask`, `@pytest.mark.ray`, `@pytest.mark.cel`, `@pytest.mark.e2e`
+- **`tests/unit/vector/`** — Vector search unit tests (types, config, sharding, merge, writer, reader, adapters, unified reader, CEL vector routing). Included in the `core-unit` tox env. Tests requiring `lancedb` or `sqlite-vec` are skipped via `pytest.importorskip()` when extras are not installed.
+- **`tests/integration/vector/`** — Vector write→read round-trip against moto S3 using mock adapters (no lancedb/sqlite-vec dependency). Included in `all-integration` tox env.
+- Markers: `@pytest.mark.spark`, `@pytest.mark.dask`, `@pytest.mark.ray`, `@pytest.mark.cel`, `@pytest.mark.e2e`, `@pytest.mark.vector`, `@pytest.mark.vector_sqlite`
 - **CEL tests**: require `cel` extra (`cel-expr-python`). Use `@pytest.mark.cel` marker. Skipped via `pytest.importorskip()` when the extra is not installed.
 - **Contract tests**: hypothesis property tests in `tests/unit/writer/core/test_routing_contract.py`, framework cross-checks in `writer/spark/`, `writer/dask/`, and `writer/ray/`
 - **Cleanup tests**: `tests/unit/cli/test_cleanup.py` tests the `cleanup` CLI command; `tests/unit/writer/core/test_cleanup_core.py` tests core cleanup functions (`cleanup_stale_attempts`, `cleanup_old_runs`)
@@ -366,6 +390,11 @@ SQLite backend adapters are imported from their module (not re-exported at top l
 - **`try_acquire()` is pure arithmetic**: Guaranteed non-blocking (replenish + compare + deduct). Safe to call from async code directly without `to_thread()`.
 - **`RetryConfig` usage**: Used in two places: (1) `S3ManifestStore` / `AsyncS3ManifestStore` for transient S3 errors, and (2) `WriteConfig.shard_retry` for retryable writer paths. `shard_retry` currently covers Dask/Ray sharded writes, Spark/Dask/Ray `write_single_db()`, and Python parallel writes. Spark sharded writes still rely on Spark task retry/speculation. When `shard_retry` is set, the retry path writes each attempt to a fresh S3 prefix (`attempt=00`, `attempt=01`, ...).
 - **`cel-expr-python` does not support Python 3.14**: The `cel` extra depends on `cel-expr-python` which has no py3.14 wheels. CEL tests are skipped on py3.14 via `pytest.importorskip()`.
+- **UnifiedShardedReader is lazily imported**: `__init__.py` uses `__getattr__` to defer the import of `UnifiedShardedReader` (and its numpy transitive dependency) until first access. This prevents `import shardyfusion` from requiring numpy for non-vector users.
+- **LanceDB and sqlite-vec imports are deferred**: `lancedb_adapter.py` imports `lancedb.index` inside class methods. `sqlite_vec_adapter.py` imports `sqlite_vec` inside `_load_sqlite_vec()`. Both are optional dependencies.
+- **Vector adapters use always-synthetic internal IDs**: LanceDB and sqlite-vec adapters assign monotonically increasing internal IDs to prevent cross-batch collisions between int and string user IDs (e.g., `42` vs `"42"`). The original ID type is preserved via typed JSON in the `id_map`/`vec_id_map` table (`{"v": <value>, "t": "int"|"str"}`).
+- **CEL compilation is cached in vector routing**: `route_vector_to_shards()` caches compiled CEL expressions at module level (keyed on expression + columns) to avoid recompilation on every search call.
+- **Vector distance semantics**: All backends (LanceDB, sqlite-vec) return distances (lower = more similar) for all metrics including dot product. `merge_results()` uses `heapq.nsmallest` uniformly. There is no `nlargest` path.
 
 ## Environment Notes
 
