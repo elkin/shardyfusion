@@ -178,6 +178,7 @@ mod-metrics-otel = [
 ]
 dev = [
   "tox>=4.11",
+  "tox-uv>=1.0",
 ]
 
 [tool.setuptools.packages.find]

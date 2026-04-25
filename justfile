@@ -165,27 +165,27 @@ ci-matrix: _check-venv
 [group('test')]
 [arg('p', short='p', help='tox parallel envs')]
 quality p="2": _check-venv _check-java
-    uv run tox p -m quality -p {{p}}
+    uv run tox -m quality -p {{p}}
 
 # Unit tests
 [group('test')]
 [arg('n', short='n', help='pytest-xdist workers')]
 [arg('p', short='p', help='tox parallel envs')]
 unit n="4" p="2": _check-venv _check-java
-    PYTEST_WORKERS={{n}} uv run tox p -m unit -p {{p}}
+    PYTEST_WORKERS={{n}} uv run tox -m unit -p {{p}}
 
 # Integration tests
 [group('test')]
 [arg('p', short='p', help='tox parallel envs')]
 integration p="2": _check-venv _check-java
-    uv run tox p -m integration -p {{p}}
+    uv run tox -m integration -p {{p}}
 
 # Quality + unit + integration in sequence
 [group('test')]
 [arg('n', short='n', help='pytest-xdist workers')]
 [arg('p', short='p', help='tox parallel envs')]
 ci n="4" p="2":
-    just quality -p {{p}} && just unit -n {{n}} -p {{p}} && just integration -p {{p}}
+    PYTEST_WORKERS={{n}} uv run tox -m quality -m unit -m integration -p {{p}}
 
 # Run unit tests with coverage and produce a report
 [group('test')]
@@ -232,20 +232,20 @@ d +cmd:
 [group('container')]
 [arg('p', short='p', help='tox parallel envs')]
 d-quality p="2":
-    just d "uv run tox p -m quality -p {{p}}"
+    just d "uv run tox -m quality -p {{p}}"
 
 # Unit tests (in container)
 [group('container')]
 [arg('n', short='n', help='pytest-xdist workers')]
 [arg('p', short='p', help='tox parallel envs')]
 d-unit n="4" p="2":
-    just d "PYTEST_WORKERS={{n}} uv run tox p -m unit -p {{p}}"
+    just d "PYTEST_WORKERS={{n}} uv run tox -m unit -p {{p}}"
 
 # Integration tests (in container)
 [group('container')]
 [arg('p', short='p', help='tox parallel envs')]
 d-integration p="2":
-    just d "uv run tox p -m integration -p {{p}}"
+    just d "uv run tox -m integration -p {{p}}"
 
 # End-to-end tests against Garage (in container via compose)
 [group('container')]
@@ -257,7 +257,7 @@ d-e2e: d-build
 [arg('n', short='n', help='pytest-xdist workers')]
 [arg('p', short='p', help='tox parallel envs')]
 d-ci n="4" p="2":
-    just d-quality -p {{p}} && just d-unit -n {{n}} -p {{p}} && just d-integration -p {{p}}
+    PYTEST_WORKERS={{n}} just d "uv run tox -m quality -m unit -m integration -p {{p}}"
 
 # Remove container cache volumes
 [group('container')]
