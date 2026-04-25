@@ -214,6 +214,7 @@ See the [CLI docs](https://elkin.github.io/shardyfusion/operate/cli/) for all co
 | Page | Description |
 |---|---|
 | [Use cases](https://elkin.github.io/shardyfusion/use-cases/) | Task-oriented guides for KV, vector, and KV+vector snapshots |
+| [Shared Snapshot Workflow](https://elkin.github.io/shardyfusion/use-cases/shared-snapshot-workflow/) | Cross-use-case writer, manifest publish, reader, and rollback model |
 | [KV storage](https://elkin.github.io/shardyfusion/use-cases/kv-storage/overview/) | Sharded key-value snapshot model |
 | [Build snapshots](https://elkin.github.io/shardyfusion/use-cases/kv-storage/build/) | Python, Spark, Dask, and Ray writers |
 | [Read snapshots](https://elkin.github.io/shardyfusion/use-cases/kv-storage/read/) | Sync, concurrent, and async readers |

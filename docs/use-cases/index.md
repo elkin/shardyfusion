@@ -2,21 +2,15 @@
 
 The use-case docs follow the same branching structure as the clickable [use-case map on the home page](../index.md#use-case-map). Start with the conceptual overview for your use-case type, then drill down into writer or reader specifics.
 
-## Shared Snapshot Model
+## Shared Snapshot Workflow
 
-All use-case families publish immutable shard artifacts through the same manifest + `_CURRENT` pointer model:
-
-- the manifest records shard URLs, routing metadata, build metadata, and backend-specific custom fields
-- `_CURRENT` points readers at one manifest, so publishes and rollbacks are atomic at snapshot level
-- vector-only and KV+vector snapshots use the same model, with vector metadata stored in `custom["vector"]`
-
-For implementation details, see [Manifest & `_CURRENT`](../architecture/manifest-and-current.md) and [Manifest stores](../architecture/manifest-stores.md).
+All use-case families publish through the same manifest + `_CURRENT` pointer model. See [Shared Snapshot Workflow](shared-snapshot-workflow.md) for the project-wide flow, or [Manifest & `_CURRENT`](../architecture/manifest-and-current.md) and [Manifest stores](../architecture/manifest-stores.md) for implementation details.
 
 ## Sharded KV Storage
 
 The foundational use case: write key-value pairs into sharded immutable snapshots, read them back with routed lookups.
 
-- **[Overview](kv-storage/overview.md)** — shared snapshot model, sharding, manifests, two-phase publish, safety properties (start here)
+- **[Overview](kv-storage/overview.md)** — KV sharding, manifests, two-phase publish, safety properties (start here)
 - **Build**
   - [Choosing a writer](kv-storage/build/index.md)
   - [Python](kv-storage/build/python.md)

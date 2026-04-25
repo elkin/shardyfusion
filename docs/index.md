@@ -20,6 +20,7 @@ Click any node to jump to its page. (See the [full index](use-cases/index.md) fo
 flowchart TD
   ROOT([What do you want to do?])
 
+  ROOT --> SHARED[Shared snapshot workflow]
   ROOT --> KV[Sharded KV storage]
   ROOT --> KVV[Sharded KV + Vector]
   ROOT --> VEC[Sharded Vector search]
@@ -70,6 +71,7 @@ flowchart TD
   OP --> OP_TOX[Tox matrix]
 
   click KV_OV href "use-cases/kv-storage/overview/"
+  click SHARED href "use-cases/shared-snapshot-workflow/"
   click KV_PY href "use-cases/kv-storage/build/python/"
   click KV_SP href "use-cases/kv-storage/build/spark/"
   click KV_DK href "use-cases/kv-storage/build/dask/"
@@ -105,7 +107,7 @@ flowchart TD
 
 ## Sections
 
-- **[Use cases](use-cases/index.md)** — task-oriented guides organized by use-case type (KV, KV+Vector, Vector) with conceptual overviews and backend-specific leaf pages.
+- **[Use cases](use-cases/index.md)** — task-oriented guides organized by use-case type (KV, KV+Vector, Vector), plus the shared snapshot workflow behind all of them.
 - **[Operations](operate/index.md)** — CLI, history & rollback, metrics, production checks, cloud testing, and tox matrix.
 - **[Architecture](architecture/writer-core.md)** — internal design: writer core, sharding, routing, manifest, run registry, adapters, observability, error model.
 - **[Reference](reference/api.md)** — public API, configuration objects, CLI, glossary.
