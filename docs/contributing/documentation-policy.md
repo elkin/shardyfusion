@@ -7,7 +7,7 @@ Docs are first-class. They are part of the deliverable, not an afterthought, and
 ```
 docs/
 ├── index.md                          # landing page with mermaid use-case map
-├── use-cases/                        # 18 task-oriented pages (one per writer×backend, etc.)
+├── use-cases/                        # task-oriented pages plus the shared snapshot workflow
 ├── operate/                          # CLI, rollback, metrics, cloud testing, tox matrix
 ├── architecture/                     # 11 conceptual pages (shared internals)
 ├── contributing/                     # 8 operational pages for contributors

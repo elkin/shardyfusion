@@ -77,9 +77,9 @@ flowchart LR
 
 ## Shared snapshot properties
 
-KV+vector snapshots use the same manifest + `_CURRENT` pointer model as KV snapshots. The manifest is still the reader contract: it records shard locations, routing metadata, and the vector custom fields needed to select the correct vector backend. See [Manifest & `_CURRENT`](../../architecture/manifest-and-current.md) for the shared publish model.
+KV+vector snapshots use the same manifest + `_CURRENT` pointer model as KV and vector-only snapshots. The manifest is still the reader contract: it records shard locations, routing metadata, and the vector custom fields needed to select the correct vector backend. See [Shared Snapshot Workflow](../shared-snapshot-workflow.md) for the project-wide publish/read flow and [Manifest & `_CURRENT`](../../architecture/manifest-and-current.md) for implementation details.
 
-All the safety properties from [sharded KV storage](../kv-storage/overview.md) apply unchanged:
+All the safety properties from the shared workflow apply unchanged:
 
 - **Two-phase publish** — manifest first, then `_CURRENT`.
 - **Immutable shards** — once uploaded, never modified.

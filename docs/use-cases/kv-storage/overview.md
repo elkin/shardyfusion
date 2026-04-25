@@ -2,7 +2,7 @@
 
 shardyfusion builds **immutable sharded snapshots**: each snapshot is a collection of independent database files (shards), plus a manifest that describes them, plus a `_CURRENT` pointer that readers follow. Once a shard is written, it never changes. Readers see a snapshot atomically — there are no partial views.
 
-This page explains how sharding, manifests, publishing, and reading work for **all** KV use cases, regardless of writer flavor (Python, Spark, Dask, Ray) or backend (SlateDB, SQLite). Backend-specific details live in the child pages.
+This page explains how sharding, manifests, publishing, and reading work for **all** KV use cases, regardless of writer flavor (Python, Spark, Dask, Ray) or backend (SlateDB, SQLite). For the cross-use-case publish/read model shared by KV, vector-only, and KV+vector snapshots, see [Shared Snapshot Workflow](../shared-snapshot-workflow.md). Backend-specific details live in the child pages.
 
 ---
 
