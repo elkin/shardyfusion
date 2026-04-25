@@ -5,11 +5,20 @@ hide:
 
 # shardyfusion
 
-A library for **sharded SlateDB/SQLite snapshots** and **sharded vector search** — use either independently or together.
+shardyfusion turns Spark, Dask, Ray, or pure Python write jobs into immutable, S3-hosted snapshots split into shards for **fast key-value lookup** and **vector search**.
 
-The docs are organized by **what you want to do**. Pick a branch below.
+Every snapshot ships with a small manifest that tells readers which shard holds which data, so lookups only touch the relevant shards:
 
-## Use-case map
+- **KV routing**
+    - Stable hashing — uniform distribution via xxh3_64
+    - Data-aware rules — CEL expressions for tenant isolation, geo affinity, and custom logic
+- **Vector routing** — queries target learned clusters, hash-selected buckets, metadata-matched shards, or caller-chosen shards
+- **Backends** — SlateDB, SQLite, LanceDB, or sqlite-vec
+- **Scale** — millions of shards; the manifest stays compact and readers only fetch the shards they need
+
+Choose your use case in the diagram below.
+
+## Use cases
 
 Click any node to jump to its page. (See the [full index](use-cases/index.md) for a navigational tree.)
 
@@ -171,4 +180,3 @@ flowchart TD
 - **[Reference](reference/api.md)** — public API, configuration objects, CLI, glossary.
 - **[Contributing](contributing/index.md)** — local development, testing, adding adapters/writers/use-cases, documentation policy.
 - **[History](history/index.md)** — ADRs, open plans, original engineering notes.
-
