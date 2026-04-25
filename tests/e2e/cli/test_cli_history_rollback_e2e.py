@@ -3,10 +3,24 @@
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
 from tests.e2e.cli.conftest import _invoke_cli, _write_cli_configs
+
+
+def _get_with_retry(tmp_path, key: str, *, retries: int = 5, delay: float = 0.5) -> dict:
+    """Retry CLI get to work around Garage S3 eventual consistency."""
+    for attempt in range(retries):
+        result = _invoke_cli(tmp_path, ["get", key])
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        if parsed.get("value") is not None:
+            return parsed
+        if attempt < retries - 1:
+            time.sleep(delay)
+    return parsed
 
 
 @pytest.mark.e2e
@@ -58,10 +72,8 @@ class TestCliRollback:
         assert result.exit_code == 0
         assert "Rolled back _CURRENT" in result.output
 
-        # Verify rolled back
-        result = _invoke_cli(tmp_path, ["get", "0"])
-        assert result.exit_code == 0
-        parsed = json.loads(result.output)
+        # Verify rolled back (retry for S3 eventual consistency)
+        parsed = _get_with_retry(tmp_path, "0")
         assert parsed["value"] == "b2xkLTA="  # base64 of b"old-0"
 
 
