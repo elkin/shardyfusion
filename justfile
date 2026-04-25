@@ -249,8 +249,9 @@ d-integration p="2":
 
 # End-to-end tests against Garage (in container via compose)
 [group('container')]
-d-e2e: d-build
-    docker/run-e2e.sh {{engine}}
+[arg('p', short='p', help='tox parallel envs')]
+d-e2e p="2": d-build
+    E2E_PARALLEL={{p}} docker/run-e2e.sh {{engine}}
 
 # Quality + unit + integration in sequence (in container)
 [group('container')]

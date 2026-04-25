@@ -10,6 +10,7 @@ set -uo pipefail
 
 engine="${1:-podman}"
 project_name="shardyfusion-e2e"
+e2e_parallel="${E2E_PARALLEL:-2}"
 
 # Resolve paths relative to the repo root (where the justfile lives).
 script_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -17,6 +18,8 @@ repo_root="$(cd "$script_dir/.." && pwd)"
 compose_file="$repo_root/docker/compose-e2e.yaml"
 
 compose=("${engine}" compose -p "$project_name" -f "$compose_file")
+
+export E2E_PARALLEL
 
 "${compose[@]}" build
 
