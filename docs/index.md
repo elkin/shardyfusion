@@ -19,71 +19,92 @@ Click any node to jump to its page. (See the [full index](use-cases/index.md) fo
 ```mermaid
 %%{init: {'flowchart': {'ranksep': 30, 'nodesep': 4}}}%%
 flowchart TD
+  classDef default font-size:18px
+
   ROOT([What do you want to do?])
+  style ROOT font-size:24px,font-weight:bold
 
-  ROOT --> kv
-  ROOT --> kvv
-  ROOT --> vec
-  ROOT --> op
+  KV_HDR[KV storage]
+  style KV_HDR font-size:20px,font-weight:bold
+  KVV_HDR[KV + Vector]
+  style KVV_HDR font-size:20px,font-weight:bold
+  VEC_HDR[Vector search]
+  style VEC_HDR font-size:20px,font-weight:bold
+  OP_HDR[Operations]
+  style OP_HDR font-size:20px,font-weight:bold
 
-  subgraph kv["KV storage"]
+  ROOT --> KV_HDR
+  ROOT --> KVV_HDR
+  ROOT --> VEC_HDR
+  ROOT --> OP_HDR
+
+  KV_HDR --> kv
+  KVV_HDR --> kvv
+  VEC_HDR --> vec
+  OP_HDR --> op
+
+  subgraph kv[" "]
+    direction LR
+    KV_OV[Overview]
+    KV_BUILD[Build]
+    KV_RD_SY[Sync]
+    KV_RD_AS[Async]
     KV_PY[Python]
     KV_SP[Spark]
     KV_DK[Dask]
     KV_RY[Ray]
-    KV_BUILD[Build]
-    KV_RD_SY[Sync]
-    KV_RD_AS[Async]
     KV_RD_SY_SL[SlateDB]
     KV_RD_SY_SQ[SQLite]
     KV_RD_AS_SL[SlateDB]
     KV_RD_AS_SQ[SQLite]
-    KV_OV[Overview]
 
-    KV_PY --> KV_BUILD
-    KV_SP --> KV_BUILD
-    KV_DK --> KV_BUILD
-    KV_RY --> KV_BUILD
-    KV_RD_SY_SL --> KV_RD_SY
-    KV_RD_SY_SQ --> KV_RD_SY
-    KV_RD_AS_SL --> KV_RD_AS
-    KV_RD_AS_SQ --> KV_RD_AS
-    KV_BUILD --> KV_OV
-    KV_RD_SY --> KV_OV
-    KV_RD_AS --> KV_OV
+    KV_OV --> KV_BUILD
+    KV_OV --> KV_RD_SY
+    KV_OV --> KV_RD_AS
+    KV_BUILD --> KV_PY
+    KV_BUILD --> KV_SP
+    KV_BUILD --> KV_DK
+    KV_BUILD --> KV_RY
+    KV_RD_SY --> KV_RD_SY_SL
+    KV_RD_SY --> KV_RD_SY_SQ
+    KV_RD_AS --> KV_RD_AS_SL
+    KV_RD_AS --> KV_RD_AS_SQ
   end
 
-  subgraph kvv["KV + Vector"]
-    KVV_CO[Composite]
-    KVV_UN[Unified]
+  subgraph kvv[" "]
+    direction LR
+    KVV_OV[Overview]
     KVV_BUILD[Build]
     KVV_RD_SY[Sync]
     KVV_RD_AS[Async]
-    KVV_OV[Overview]
+    KVV_CO[Composite]
+    KVV_UN[Unified]
 
-    KVV_CO --> KVV_BUILD
-    KVV_UN --> KVV_BUILD
-    KVV_BUILD --> KVV_OV
-    KVV_RD_SY --> KVV_OV
-    KVV_RD_AS --> KVV_OV
+    KVV_OV --> KVV_BUILD
+    KVV_OV --> KVV_RD_SY
+    KVV_OV --> KVV_RD_AS
+    KVV_BUILD --> KVV_CO
+    KVV_BUILD --> KVV_UN
   end
 
-  subgraph vec["Vector search"]
-    VEC_LN[LanceDB]
-    VEC_SV[sqlite-vec]
+  subgraph vec[" "]
+    direction LR
+    VEC_OV[Overview]
     VEC_BUILD[Build]
     VEC_RD_SY[Sync]
     VEC_RD_AS[Async]
-    VEC_OV[Overview]
+    VEC_LN[LanceDB]
+    VEC_SV[sqlite-vec]
 
-    VEC_LN --> VEC_BUILD
-    VEC_SV --> VEC_BUILD
-    VEC_BUILD --> VEC_OV
-    VEC_RD_SY --> VEC_OV
-    VEC_RD_AS --> VEC_OV
+    VEC_OV --> VEC_BUILD
+    VEC_OV --> VEC_RD_SY
+    VEC_OV --> VEC_RD_AS
+    VEC_BUILD --> VEC_LN
+    VEC_BUILD --> VEC_SV
   end
 
-  subgraph op["Operations"]
+  subgraph op[" "]
+    direction LR
     OP_OV[Overview]
     OP_CLI[CLI]
     OP_HIST[History &amp; rollback]
