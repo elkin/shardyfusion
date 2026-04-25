@@ -19,27 +19,26 @@ Click any node to jump to its page. (See the [full index](use-cases/index.md) fo
 ```mermaid
 %%{init: {'flowchart': {'ranksep': 30, 'nodesep': 4}}}%%
 flowchart TD
-  classDef root fill:#ff6b6b,stroke:#c92a2a,color:#fff,stroke-width:2px
-  classDef category fill:#339af0,stroke:#1864ab,color:#fff,stroke-width:2px
-  classDef group fill:#e9ecef,stroke:#495057,color:#212529,stroke-width:1px
-  classDef leaf fill:#fff,stroke:#868e96,color:#212529,stroke-width:1px
-  classDef shared fill:#845ef7,stroke:#5f3dc4,color:#fff,stroke-width:2px
-  classDef op fill:#51cf66,stroke:#2b8a3e,color:#fff,stroke-width:2px
+  ROOT([What do you want to do?])
+
+  ROOT --> kv
+  ROOT --> kvv
+  ROOT --> vec
+  ROOT --> op
 
   subgraph kv["KV storage"]
-    direction TB
-    KV_PY[Python]:::leaf
-    KV_SP[Spark]:::leaf
-    KV_DK[Dask]:::leaf
-    KV_RY[Ray]:::leaf
-    KV_BUILD[Build]:::group
-    KV_RD_SY[Sync]:::group
-    KV_RD_AS[Async]:::group
-    KV_RD_SY_SL[SlateDB]:::leaf
-    KV_RD_SY_SQ[SQLite]:::leaf
-    KV_RD_AS_SL[SlateDB]:::leaf
-    KV_RD_AS_SQ[SQLite]:::leaf
-    KV_OV[Overview]:::leaf
+    KV_PY[Python]
+    KV_SP[Spark]
+    KV_DK[Dask]
+    KV_RY[Ray]
+    KV_BUILD[Build]
+    KV_RD_SY[Sync]
+    KV_RD_AS[Async]
+    KV_RD_SY_SL[SlateDB]
+    KV_RD_SY_SQ[SQLite]
+    KV_RD_AS_SL[SlateDB]
+    KV_RD_AS_SQ[SQLite]
+    KV_OV[Overview]
 
     KV_PY --> KV_BUILD
     KV_SP --> KV_BUILD
@@ -55,13 +54,12 @@ flowchart TD
   end
 
   subgraph kvv["KV + Vector"]
-    direction TB
-    KVV_CO[Composite]:::leaf
-    KVV_UN[Unified]:::leaf
-    KVV_BUILD[Build]:::group
-    KVV_RD_SY[Sync]:::leaf
-    KVV_RD_AS[Async]:::leaf
-    KVV_OV[Overview]:::leaf
+    KVV_CO[Composite]
+    KVV_UN[Unified]
+    KVV_BUILD[Build]
+    KVV_RD_SY[Sync]
+    KVV_RD_AS[Async]
+    KVV_OV[Overview]
 
     KVV_CO --> KVV_BUILD
     KVV_UN --> KVV_BUILD
@@ -71,13 +69,12 @@ flowchart TD
   end
 
   subgraph vec["Vector search"]
-    direction TB
-    VEC_LN[LanceDB]:::leaf
-    VEC_SV[sqlite-vec]:::leaf
-    VEC_BUILD[Build]:::group
-    VEC_RD_SY[Sync]:::leaf
-    VEC_RD_AS[Async]:::leaf
-    VEC_OV[Overview]:::leaf
+    VEC_LN[LanceDB]
+    VEC_SV[sqlite-vec]
+    VEC_BUILD[Build]
+    VEC_RD_SY[Sync]
+    VEC_RD_AS[Async]
+    VEC_OV[Overview]
 
     VEC_LN --> VEC_BUILD
     VEC_SV --> VEC_BUILD
@@ -86,31 +83,22 @@ flowchart TD
     VEC_RD_AS --> VEC_OV
   end
 
-  SHARED[Shared snapshot workflow]:::shared --> ROOT
-  kv --> ROOT
-  kvv --> ROOT
-  vec --> ROOT
+  subgraph op["Operations"]
+    OP_OV[Overview]
+    OP_CLI[CLI]
+    OP_HIST[History &amp; rollback]
+    OP_OBS[Observability]
+    OP_GUIDES[Guides]
+    OP_PROM[Prometheus]
+    OP_OTEL[OTel]
+    OP_PROD[Production]
+    OP_CLOUD[Cloud testing]
+    OP_TOX[Tox matrix]
 
-  ROOT([What do you want to do?]):::root
-
-  ROOT --> OP[Operations]:::op
-
-  subgraph ops[""]
-    direction TB
-    OP_CLI[CLI]:::leaf
-    OP_HIST[History &amp; rollback]:::leaf
-    OP_OBS[Observability]:::group
-    OP_GUIDES[Guides]:::group
-    OP_PROM[Prometheus]:::leaf
-    OP_OTEL[OTel]:::leaf
-    OP_PROD[Production]:::leaf
-    OP_CLOUD[Cloud testing]:::leaf
-    OP_TOX[Tox matrix]:::leaf
-
-    OP --> OP_CLI
-    OP --> OP_HIST
-    OP --> OP_OBS
-    OP --> OP_GUIDES
+    OP_OV --> OP_CLI
+    OP_OV --> OP_HIST
+    OP_OV --> OP_OBS
+    OP_OV --> OP_GUIDES
     OP_OBS --> OP_PROM
     OP_OBS --> OP_OTEL
     OP_GUIDES --> OP_PROD
@@ -119,7 +107,6 @@ flowchart TD
   end
 
   click KV_OV href "use-cases/kv-storage/overview/"
-  click SHARED href "use-cases/shared-snapshot-workflow/"
   click KV_PY href "use-cases/kv-storage/build/python/"
   click KV_SP href "use-cases/kv-storage/build/spark/"
   click KV_DK href "use-cases/kv-storage/build/dask/"
@@ -141,6 +128,7 @@ flowchart TD
   click VEC_RD_SY href "use-cases/vector/read/sync/"
   click VEC_RD_AS href "use-cases/vector/read/async/"
 
+  click OP_OV href "operate/"
   click OP_CLI href "operate/cli/"
   click OP_HIST href "operate/history-rollback/"
   click OP_PROM href "operate/prometheus-metrics/"
