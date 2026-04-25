@@ -45,6 +45,90 @@ from .output import (
 # ---------------------------------------------------------------------------
 
 _CTX_INIT_PARAMS = "shardy_init_params"
+_CTX_RAW_PARAMS = "shardy_raw_params"
+
+
+def _ensure_init_params(ctx: click.Context) -> dict[str, Any]:
+    """Resolve global CLI options into reader construction parameters once."""
+    ctx.ensure_object(dict)
+    if _CTX_INIT_PARAMS in ctx.obj:
+        return ctx.obj[_CTX_INIT_PARAMS]
+
+    raw_params = ctx.obj.get(_CTX_RAW_PARAMS)
+    if raw_params is None:
+        raise click.UsageError("CLI context was not initialised")
+
+    current_url: str | None = raw_params["current_url"]
+    config_path: str | None = raw_params["config_path"]
+    credentials_path: str | None = raw_params["credentials_path"]
+    s3_options: tuple[str, ...] = raw_params["s3_options"]
+    output_format: str | None = raw_params["output_format"]
+    manifest_ref: str | None = raw_params["manifest_ref"]
+    manifest_offset: int | None = raw_params["manifest_offset"]
+
+    # Parse --s3-option KEY=VALUE pairs
+    s3_overrides: dict[str, bool | int | str] = {}
+    for opt in s3_options:
+        if "=" not in opt:
+            raise click.UsageError(f"--s3-option must be KEY=VALUE, got: {opt!r}")
+        key, _, raw_value = opt.partition("=")
+        try:
+            s3_overrides[key.strip()] = coerce_s3_option(key.strip(), raw_value.strip())
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
+
+    # Load reader + manifest-store + output config
+    reader_cfg, store_cfg, output_cfg = load_reader_config(config_path)
+
+    # Apply --output-format override
+    if output_format:
+        output_cfg = OutputConfig(
+            format=output_format,
+            value_encoding=output_cfg.value_encoding,
+            null_repr=output_cfg.null_repr,
+        )
+
+    # Load credentials profile
+    profile = load_credentials_profile(
+        profile_name=reader_cfg.credentials_profile,
+        credentials_path=credentials_path,
+    )
+
+    # Build credential provider + connection options from profile + overrides
+    credential_provider, s3_connection_options = build_s3_config(profile, s3_overrides)
+
+    # Resolve S3 prefix and CURRENT name based on backend
+    if store_cfg.backend == "s3":
+        resolved_url = resolve_current_url(current_url, reader_cfg)
+        s3_prefix, current_pointer_key = split_current_url(resolved_url)
+    else:
+        # DB backends: s3_prefix is required in config (shard DBs are still on S3)
+        if current_url:
+            click.echo(
+                "Warning: --current-url is ignored for DB manifest store backends.",
+                err=True,
+            )
+        if not reader_cfg.s3_prefix:
+            raise click.UsageError(
+                f"s3_prefix is required in [reader] when using "
+                f"'{store_cfg.backend}' manifest store."
+            )
+        s3_prefix = reader_cfg.s3_prefix
+        current_pointer_key = "_CURRENT"
+
+    params = {
+        "s3_prefix": s3_prefix,
+        "current_pointer_key": current_pointer_key,
+        "reader_cfg": reader_cfg,
+        "store_cfg": store_cfg,
+        "output_cfg": output_cfg,
+        "credential_provider": credential_provider,
+        "s3_connection_options": s3_connection_options,
+        "manifest_ref": manifest_ref,
+        "manifest_offset": manifest_offset,
+    }
+    ctx.obj[_CTX_INIT_PARAMS] = params
+    return params
 
 
 def _build_manifest_store(
@@ -163,7 +247,7 @@ class _PinnedManifestStore:
 
 def _build_reader(ctx: click.Context) -> ConcurrentShardedReader:
     """Construct a ConcurrentShardedReader from the parameters stored in ctx.obj."""
-    params = ctx.obj[_CTX_INIT_PARAMS]
+    params = _ensure_init_params(ctx)
     reader_cfg: ReaderConfig = params["reader_cfg"]
     store_cfg: ManifestStoreConfig = params["store_cfg"]
 
@@ -209,7 +293,7 @@ def _build_reader(ctx: click.Context) -> ConcurrentShardedReader:
 
 
 def _get_output_cfg(ctx: click.Context) -> OutputConfig:
-    return ctx.obj[_CTX_INIT_PARAMS]["output_cfg"]
+    return _ensure_init_params(ctx)["output_cfg"]
 
 
 # ---------------------------------------------------------------------------
@@ -299,70 +383,12 @@ def cli(
     When no subcommand is given the tool enters interactive mode.
     """
     ctx.ensure_object(dict)
-
-    # schema subcommand needs no reader/S3 setup
-    if ctx.invoked_subcommand == "schema":
-        return
-
-    # Parse --s3-option KEY=VALUE pairs
-    s3_overrides: dict[str, bool | int | str] = {}
-    for opt in s3_options:
-        if "=" not in opt:
-            raise click.UsageError(f"--s3-option must be KEY=VALUE, got: {opt!r}")
-        key, _, raw_value = opt.partition("=")
-        try:
-            s3_overrides[key.strip()] = coerce_s3_option(key.strip(), raw_value.strip())
-        except ValueError as exc:
-            raise click.UsageError(str(exc)) from exc
-
-    # Load reader + manifest-store + output config
-    reader_cfg, store_cfg, output_cfg = load_reader_config(config_path)
-
-    # Apply --output-format override
-    if output_format:
-        output_cfg = OutputConfig(
-            format=output_format,
-            value_encoding=output_cfg.value_encoding,
-            null_repr=output_cfg.null_repr,
-        )
-
-    # Load credentials profile
-    profile = load_credentials_profile(
-        profile_name=reader_cfg.credentials_profile,
-        credentials_path=credentials_path,
-    )
-
-    # Build credential provider + connection options from profile + overrides
-    credential_provider, s3_connection_options = build_s3_config(profile, s3_overrides)
-
-    # Resolve S3 prefix and CURRENT name based on backend
-    if store_cfg.backend == "s3":
-        resolved_url = resolve_current_url(current_url, reader_cfg)
-        s3_prefix, current_pointer_key = split_current_url(resolved_url)
-    else:
-        # DB backends: s3_prefix is required in config (shard DBs are still on S3)
-        if current_url:
-            click.echo(
-                "Warning: --current-url is ignored for DB manifest store backends.",
-                err=True,
-            )
-        if not reader_cfg.s3_prefix:
-            raise click.UsageError(
-                f"s3_prefix is required in [reader] when using "
-                f"'{store_cfg.backend}' manifest store."
-            )
-        s3_prefix = reader_cfg.s3_prefix
-        current_pointer_key = "_CURRENT"
-
-    # Store init parameters in context for lazy reader construction in subcommands
-    ctx.obj[_CTX_INIT_PARAMS] = {
-        "s3_prefix": s3_prefix,
-        "current_pointer_key": current_pointer_key,
-        "reader_cfg": reader_cfg,
-        "store_cfg": store_cfg,
-        "output_cfg": output_cfg,
-        "credential_provider": credential_provider,
-        "s3_connection_options": s3_connection_options,
+    ctx.obj[_CTX_RAW_PARAMS] = {
+        "current_url": current_url,
+        "config_path": config_path,
+        "credentials_path": credentials_path,
+        "s3_options": s3_options,
+        "output_format": output_format,
         "manifest_ref": manifest_ref,
         "manifest_offset": manifest_offset,
     }
@@ -371,8 +397,9 @@ def cli(
     if ctx.invoked_subcommand is None:
         from .interactive import ShardyRepl
 
+        params = _ensure_init_params(ctx)
         with _build_reader(ctx) as reader:
-            repl = ShardyRepl(reader, output_cfg)
+            repl = ShardyRepl(reader, params["output_cfg"])
             repl.print_banner()
             repl.cmdloop()
 
@@ -613,7 +640,7 @@ def history_cmd(ctx: click.Context, limit: int) -> None:
     from .output import build_history_result
 
     output_cfg = _get_output_cfg(ctx)
-    params = ctx.obj[_CTX_INIT_PARAMS]
+    params = _ensure_init_params(ctx)
     store_cfg: ManifestStoreConfig = params["store_cfg"]
     manifest_store = _build_manifest_store(store_cfg, params)
 
@@ -659,7 +686,7 @@ def rollback_cmd(
 ) -> None:
     """Roll back the current pointer to a previous manifest."""
     output_cfg = _get_output_cfg(ctx)
-    params = ctx.obj[_CTX_INIT_PARAMS]
+    params = _ensure_init_params(ctx)
     store_cfg: ManifestStoreConfig = params["store_cfg"]
     manifest_store = _build_manifest_store(store_cfg, params)
 
@@ -764,7 +791,7 @@ def cleanup_cmd(
     from .output import build_cleanup_result
 
     output_cfg = _get_output_cfg(ctx)
-    params = ctx.obj[_CTX_INIT_PARAMS]
+    params = _ensure_init_params(ctx)
     store_cfg: ManifestStoreConfig = params["store_cfg"]
     manifest_store = _build_manifest_store(store_cfg, params)
 
@@ -880,7 +907,7 @@ def search_cmd(
     (e.g. ``0.1,0.2,0.3``) or a ``--vector-file`` pointing to a .npy file.
     """
     output_cfg = _get_output_cfg(ctx)
-    params = ctx.obj[_CTX_INIT_PARAMS]
+    params = _ensure_init_params(ctx)
     store_cfg: ManifestStoreConfig = params["store_cfg"]
 
     try:

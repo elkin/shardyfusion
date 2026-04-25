@@ -133,6 +133,21 @@ class TestVersionFlag:
         assert "shardy" in result.output
 
 
+class TestSubcommandHelp:
+    def test_subcommand_help_does_not_require_current_url(self) -> None:
+        runner = click.testing.CliRunner()
+
+        for command in ("get", "search", "cleanup", "history"):
+            result = runner.invoke(
+                cli,
+                [command, "--help"],
+                env={"SHARDY_CURRENT": ""},
+            )
+
+            assert result.exit_code == 0, command
+            assert f"Usage: cli {command}" in result.output
+
+
 class TestCurrentUrlOption:
     def test_get_subcommand_not_consumed_as_url(self) -> None:
         """Regression: 'get' should be parsed as a subcommand, not as CURRENT_URL."""
