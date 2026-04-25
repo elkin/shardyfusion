@@ -107,6 +107,7 @@ flowchart TD
   end
 
   click KV_OV href "use-cases/kv-storage/overview/"
+  click KV_BUILD href "use-cases/kv-storage/build/"
   click KV_PY href "use-cases/kv-storage/build/python/"
   click KV_SP href "use-cases/kv-storage/build/spark/"
   click KV_DK href "use-cases/kv-storage/build/dask/"
