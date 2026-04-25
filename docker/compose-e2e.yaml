@@ -31,7 +31,7 @@ services:
       - uv-venv:/opt/shardyfusion-venv
       - tox-cache:/workspace/.tox
     command: >-
-      /bin/bash -lc "uv sync --all-extras --dev --quiet && uv run tox p -m e2e -p 2 --parallel-no-spinner"
+      /bin/bash -lc "uv sync --all-extras --dev --quiet && uv run tox p -m e2e -p 8 --parallel-no-spinner"
 
 volumes:
   uv-cache:
