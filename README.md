@@ -35,10 +35,11 @@ flowchart LR
 
 ## Docs quick links
 
-- [Getting Started](https://elkin.github.io/shardyfusion/getting-started/)
+- [Use cases overview](https://elkin.github.io/shardyfusion/use-cases/)
+- [KV Storage use case](https://elkin.github.io/shardyfusion/use-cases/kv-storage/overview/)
 - [Vector Search use case](https://elkin.github.io/shardyfusion/use-cases/vector/overview/)
 - [KV + Vector use case](https://elkin.github.io/shardyfusion/use-cases/kv-vector/overview/)
-- [Architecture overview](https://elkin.github.io/shardyfusion/how-it-works/)
+- [Architecture overview](https://elkin.github.io/shardyfusion/architecture/)
 
 ## Core properties
 
@@ -144,7 +145,7 @@ pip install "shardyfusion[unified-vector-sqlite]" # unified KV+vector (sqlite-ve
 
 `read`, `read-async`, `read-sqlite`, `read-sqlite-range`, `sqlite-async`, `writer-spark`, `writer-spark-sqlite`, `writer-dask`, `writer-dask-sqlite`, `writer-ray`, `writer-ray-sqlite`, `writer-python`, `writer-python-sqlite`, `cli`, `cel`, `metrics-prometheus`, `metrics-otel`, `vector-lancedb`, `vector`, `vector-sqlite`, `unified-vector`, `unified-vector-sqlite`
 
-See [Getting Started](https://elkin.github.io/shardyfusion/getting-started/) for full installation and dev setup.
+See the [use-case docs](https://elkin.github.io/shardyfusion/use-cases/) for backend-specific setup and [local development](https://elkin.github.io/shardyfusion/contributing/local-development/) for contributor setup.
 </details>
 
 **Write** a sharded snapshot (Python writer — simplest, no Java):
@@ -176,7 +177,7 @@ with ShardedReader(
     reader.refresh()  # atomic swap to latest snapshot
 ```
 
-See the [Writer docs](https://elkin.github.io/shardyfusion/writer/) and [Reader docs](https://elkin.github.io/shardyfusion/reader/) for all backends and configuration options.
+See the [build docs](https://elkin.github.io/shardyfusion/use-cases/kv-storage/build/) and [read docs](https://elkin.github.io/shardyfusion/use-cases/kv-storage/read/) for all KV backends and configuration options.
 For vector-specific flows, see [Vector Search](https://elkin.github.io/shardyfusion/use-cases/vector/overview/) and [KV + Vector](https://elkin.github.io/shardyfusion/use-cases/kv-vector/overview/).
 
 ## Key design decisions
@@ -194,16 +195,16 @@ The `shardy` CLI provides interactive and batch access to published snapshots:
 ```bash
 pip install "shardyfusion[cli]"
 
-shardy --s3-prefix s3://bucket/prefix get 42
-shardy --s3-prefix s3://bucket/prefix info
-shardy --s3-prefix s3://bucket/prefix       # interactive REPL
+shardy --current-url s3://bucket/prefix/_CURRENT get 42
+shardy --current-url s3://bucket/prefix/_CURRENT info
+SHARDY_CURRENT=s3://bucket/prefix/_CURRENT shardy  # interactive REPL
 ```
 
-See the [CLI docs](https://elkin.github.io/shardyfusion/cli/) for all commands including `multiget`, `history`, `rollback`, and `cleanup`.
+See the [CLI docs](https://elkin.github.io/shardyfusion/operate/cli/) for all commands including `multiget`, `history`, `rollback`, `cleanup`, and vector `search`.
 
 ## Future directions
 
-- **Reliable cleanup** — Deferred retry for cleaning stale write attempts and old snapshot runs
+- **Cleanup automation** — Richer stale-run policies and operational reporting for large S3 prefixes
 - **Global rate limiting** — Cross-worker coordination for distributed write pipelines
 - **Additional framework integrations** — DuckDB, Polars writer backends
 - **Enhanced observability** — Richer metrics, tracing spans, dashboard templates
@@ -212,21 +213,22 @@ See the [CLI docs](https://elkin.github.io/shardyfusion/cli/) for all commands i
 
 | Page | Description |
 |---|---|
-| [Getting Started](https://elkin.github.io/shardyfusion/getting-started/) | Installation, dev setup, container workflow |
-| [Architecture](https://elkin.github.io/shardyfusion/how-it-works/) | Internals, sharding, publish protocol |
-| [Writer Side](https://elkin.github.io/shardyfusion/writer/) | All 4 backends, config, rate limiting |
-| [Reader Side](https://elkin.github.io/shardyfusion/reader/) | Sync, concurrent, async readers |
+| [Use cases](https://elkin.github.io/shardyfusion/use-cases/) | Task-oriented guides for KV, vector, and KV+vector snapshots |
+| [KV storage](https://elkin.github.io/shardyfusion/use-cases/kv-storage/overview/) | Sharded key-value snapshot model |
+| [Build snapshots](https://elkin.github.io/shardyfusion/use-cases/kv-storage/build/) | Python, Spark, Dask, and Ray writers |
+| [Read snapshots](https://elkin.github.io/shardyfusion/use-cases/kv-storage/read/) | Sync, concurrent, and async readers |
 | [Vector Search](https://elkin.github.io/shardyfusion/use-cases/vector/overview/) | Vector-only build/read flows |
 | [KV + Vector](https://elkin.github.io/shardyfusion/use-cases/kv-vector/overview/) | Unified point lookup + ANN snapshots |
-| [Manifest Stores](https://elkin.github.io/shardyfusion/manifest-stores/) | S3, DB-backed, custom stores |
-| [CLI](https://elkin.github.io/shardyfusion/cli/) | Commands, REPL, batch mode |
-| [Observability](https://elkin.github.io/shardyfusion/observability/) | Metrics, logging, Prometheus, OTel |
-| [Error Handling](https://elkin.github.io/shardyfusion/error-handling/) | Error hierarchy, retry behavior |
-| [Operations](https://elkin.github.io/shardyfusion/operations/) | Cleanup, rollback, history |
-| [Cloud Testing](https://elkin.github.io/shardyfusion/cloud-testing/) | AWS integration tests |
-| [Release Process](https://elkin.github.io/shardyfusion/release/) | Versioning, PyPI publishing |
-| [Glossary](https://elkin.github.io/shardyfusion/glossary/) | Terms and concepts |
-| [API Reference](https://elkin.github.io/shardyfusion/api/) | Full API docs |
+| [Operate](https://elkin.github.io/shardyfusion/operate/) | CLI, rollback, cleanup, and metrics |
+| [CLI](https://elkin.github.io/shardyfusion/operate/cli/) | Commands, REPL, batch mode, vector search |
+| [Architecture](https://elkin.github.io/shardyfusion/architecture/) | Internals, sharding, routing, publish protocol |
+| [Manifest Stores](https://elkin.github.io/shardyfusion/architecture/manifest-stores/) | S3, DB-backed, custom stores |
+| [Observability](https://elkin.github.io/shardyfusion/architecture/observability/) | Metrics, logging, Prometheus, OTel |
+| [Error Handling](https://elkin.github.io/shardyfusion/architecture/error-model/) | Error hierarchy, retry behavior |
+| [Operations](https://elkin.github.io/shardyfusion/operations/) | Cloud testing and tox matrix |
+| [Cloud Testing](https://elkin.github.io/shardyfusion/operations/cloud-testing/) | AWS integration tests |
+| [Glossary](https://elkin.github.io/shardyfusion/reference/glossary/) | Terms and concepts |
+| [API Reference](https://elkin.github.io/shardyfusion/reference/api/) | Full API docs |
 
 ## Contributing
 
@@ -236,4 +238,4 @@ just doctor   # verify everything works
 just ci       # quality + unit + integration tests
 ```
 
-See [Getting Started](https://elkin.github.io/shardyfusion/getting-started/) for the full development workflow.
+See [local development](https://elkin.github.io/shardyfusion/contributing/local-development/) for the full development workflow.

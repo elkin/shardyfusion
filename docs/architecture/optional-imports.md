@@ -80,7 +80,7 @@ Importing `shardyfusion` does not pull `unified_reader`, which would in turn pul
 | `vector-sqlite` | sqlite-vec unified KV+vector | |
 | `unified-vector` | Composite KV+vector wiring (LanceDB) | For `UnifiedShardedReader`. |
 | `unified-vector-sqlite` | Composite KV+vector wiring (sqlite-vec) | |
-| `all` | Convenience bundle | Does **not** include vector extras. |
+| `all` | Convenience runtime bundle | Includes readers, writers, CLI, metrics, CEL, and vector extras; excludes dev/test/quality/docs extras. |
 | `test` | Test runner deps | Dev. |
 | `quality` | Lint / typecheck deps | Dev. |
 | `docs` | MkDocs + plugins | Dev. |
