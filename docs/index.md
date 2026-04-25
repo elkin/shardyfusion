@@ -172,9 +172,3 @@ flowchart TD
 - **[Contributing](contributing/index.md)** — local development, testing, adding adapters/writers/use-cases, documentation policy.
 - **[History](history/index.md)** — ADRs, open plans, original engineering notes.
 
-## Quick orientation
-
-- Default storage backends: **SlateDB** (KV), **LanceDB** (vector search).
-- Snapshot layout: per-shard databases under `s3_prefix/`, plus an immutable manifest under `manifests/<timestamp>_run_id=<run_id>/manifest`, plus a single mutable pointer `_CURRENT`.
-- Publish is **two-phase**: write manifest, swap `_CURRENT`. See [ADR-001](history/design-decisions/adr-001-two-phase-publish.md).
-- Python `>=3.11,<3.14`.
