@@ -1,5 +1,15 @@
 # Documentation reorganization
 
+## 2026-04-25 — Top tabs and unified operations section
+
+The MkDocs Material layout now uses top-level tabs for the main documentation sections. The former **Operate** and **Operations** top-level nav groups were merged into one **Operations** tab.
+
+Path changes:
+
+- `operations/index.md` → `operate/production.md`
+- `operations/cloud-testing.md` → `operate/cloud-testing.md`
+- `operations/tox-matrix.md` → `operate/tox-matrix.md`
+
 ## 2026-04-22 — Tree-structured use cases
 
 The use-case docs were reorganized from a flat list (18 pages at the same level) into a **decision tree**:

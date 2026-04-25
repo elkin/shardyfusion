@@ -156,5 +156,5 @@ Removing an extra is a breaking change. Steps:
 ## See also
 
 - [`architecture/optional-imports.md`](../architecture/optional-imports.md) — the pattern's design.
-- [`operations/tox-matrix.md`](../operations/tox-matrix.md) — full env list.
+- [`operate/tox-matrix.md`](../operate/tox-matrix.md) — full env list.
 - [`adding-an-adapter.md`](adding-an-adapter.md) — the canonical worked example.

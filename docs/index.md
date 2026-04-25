@@ -1,3 +1,8 @@
+---
+hide:
+  - navigation
+---
+
 # shardyfusion
 
 A library for **sharded SlateDB/SQLite snapshots** and **sharded vector search** — use either independently or together.
@@ -18,7 +23,7 @@ flowchart TD
   ROOT --> KV[Sharded KV storage]
   ROOT --> KVV[Sharded KV + Vector]
   ROOT --> VEC[Sharded Vector search]
-  ROOT --> OP[Operate snapshots]
+  ROOT --> OP[Operations]
 
   KV --> KV_OV[Overview]
   KV --> KV_BUILD[Build]
@@ -60,6 +65,9 @@ flowchart TD
   OP --> OP_HIST[History &amp; rollback]
   OP --> OP_PROM[Prometheus metrics]
   OP --> OP_OTEL[OTel metrics]
+  OP --> OP_PROD[Production guide]
+  OP --> OP_CLOUD[Cloud testing]
+  OP --> OP_TOX[Tox matrix]
 
   click KV_OV href "use-cases/kv-storage/overview/"
   click KV_PY href "use-cases/kv-storage/build/python/"
@@ -87,6 +95,9 @@ flowchart TD
   click OP_HIST href "operate/history-rollback/"
   click OP_PROM href "operate/prometheus-metrics/"
   click OP_OTEL href "operate/otel-metrics/"
+  click OP_PROD href "operate/production/"
+  click OP_CLOUD href "operate/cloud-testing/"
+  click OP_TOX href "operate/tox-matrix/"
 ```
 
 </div>
@@ -95,10 +106,9 @@ flowchart TD
 ## Sections
 
 - **[Use cases](use-cases/index.md)** — task-oriented guides organized by use-case type (KV, KV+Vector, Vector) with conceptual overviews and backend-specific leaf pages.
-- **[Operate](operate/index.md)** — CLI, history & rollback, metrics (Prometheus, OTel).
+- **[Operations](operate/index.md)** — CLI, history & rollback, metrics, production checks, cloud testing, and tox matrix.
 - **[Architecture](architecture/writer-core.md)** — internal design: writer core, sharding, routing, manifest, run registry, adapters, observability, error model.
 - **[Reference](reference/api.md)** — public API, configuration objects, CLI, glossary.
-- **[Operations](operations/index.md)** — running shardyfusion in production, cloud testing, tox & dependency matrix.
 - **[Contributing](contributing/index.md)** — local development, testing, adding adapters/writers/use-cases, documentation policy.
 - **[History](history/index.md)** — ADRs, open plans, original engineering notes.
 

@@ -8,10 +8,10 @@ Docs are first-class. They are part of the deliverable, not an afterthought, and
 docs/
 ├── index.md                          # landing page with mermaid use-case map
 ├── use-cases/                        # 18 task-oriented pages (one per writer×backend, etc.)
+├── operate/                          # CLI, rollback, metrics, cloud testing, tox matrix
 ├── architecture/                     # 11 conceptual pages (shared internals)
 ├── contributing/                     # 8 operational pages for contributors
 ├── reference/                        # API surface, config schema, CLI, glossary
-├── operations/                       # cloud testing, tox matrix, container workflows
 └── history/
     ├── design-decisions/             # ADRs (Architecture Decision Records)
     ├── implementation-plans/         # Open or recently-completed plans
@@ -25,10 +25,10 @@ This is **not** strict Diátaxis — there's no "tutorial" / "how-to" split beca
 | Question the reader is asking | Page type |
 |---|---|
 | "How do I do X?" | `use-cases/` |
+| "How do I run or verify shardyfusion?" | `operate/` |
 | "Why does X work the way it does internally?" | `architecture/` |
 | "How do I change shardyfusion to do Y?" | `contributing/` |
 | "What is the exact signature of `Z()`?" | `reference/` |
-| "How do I run the tests against real S3?" | `operations/` |
 | "Why was decision D made?" | `history/design-decisions/` |
 | "What was the plan for feature F?" | `history/implementation-plans/` |
 | "What did we learn during incident I?" | `history/historical-notes/` |

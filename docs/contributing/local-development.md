@@ -74,4 +74,4 @@ Switch engines: `CONTAINER_ENGINE=docker just d-build`.
 
 - [`testing.md`](testing.md) — what the test labels mean and how to scope a run.
 - [`extras-and-dependencies.md`](extras-and-dependencies.md) — when to add a dependency vs. an extra.
-- [`operations/tox-matrix.md`](../operations/tox-matrix.md) — the full tox env list.
+- [`operate/tox-matrix.md`](../operate/tox-matrix.md) — the full tox env list.

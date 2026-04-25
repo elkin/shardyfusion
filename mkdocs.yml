@@ -25,6 +25,8 @@ theme:
         name: Switch to light mode
   features:
     - navigation.instant
+    - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
     - navigation.top
     - content.code.copy
@@ -76,12 +78,18 @@ nav:
       - Read:
         - Sync: use-cases/vector/read/sync.md
         - Async: use-cases/vector/read/async.md
-  - Operate:
+  - Operations:
     - Overview: operate/index.md
-    - CLI: operate/cli.md
-    - History & rollback: operate/history-rollback.md
-    - Prometheus metrics: operate/prometheus-metrics.md
-    - OTel metrics: operate/otel-metrics.md
+    - Runtime:
+      - CLI: operate/cli.md
+      - History & rollback: operate/history-rollback.md
+    - Metrics:
+      - Prometheus metrics: operate/prometheus-metrics.md
+      - OTel metrics: operate/otel-metrics.md
+    - Production:
+      - Production guide: operate/production.md
+      - Cloud testing: operate/cloud-testing.md
+      - Tox & dependency matrix: operate/tox-matrix.md
   - Architecture:
     - Overview: architecture/index.md
     - Writer core: architecture/writer-core.md
@@ -100,10 +108,6 @@ nav:
     - Configuration: reference/config.md
     - CLI: reference/cli.md
     - Glossary: reference/glossary.md
-  - Operations:
-    - Overview: operations/index.md
-    - Cloud testing: operations/cloud-testing.md
-    - Tox & dependency matrix: operations/tox-matrix.md
   - Contributing:
     - Overview: contributing/index.md
     - Local development: contributing/local-development.md

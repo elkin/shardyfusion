@@ -219,14 +219,14 @@ See the [CLI docs](https://elkin.github.io/shardyfusion/operate/cli/) for all co
 | [Read snapshots](https://elkin.github.io/shardyfusion/use-cases/kv-storage/read/) | Sync, concurrent, and async readers |
 | [Vector Search](https://elkin.github.io/shardyfusion/use-cases/vector/overview/) | Vector-only build/read flows |
 | [KV + Vector](https://elkin.github.io/shardyfusion/use-cases/kv-vector/overview/) | Unified point lookup + ANN snapshots |
-| [Operate](https://elkin.github.io/shardyfusion/operate/) | CLI, rollback, cleanup, and metrics |
+| [Operations](https://elkin.github.io/shardyfusion/operate/) | CLI, rollback, cleanup, metrics, cloud testing, and tox matrix |
 | [CLI](https://elkin.github.io/shardyfusion/operate/cli/) | Commands, REPL, batch mode, vector search |
+| [Cloud Testing](https://elkin.github.io/shardyfusion/operate/cloud-testing/) | AWS integration tests |
+| [Tox Matrix](https://elkin.github.io/shardyfusion/operate/tox-matrix/) | Supported dependency and CI combinations |
 | [Architecture](https://elkin.github.io/shardyfusion/architecture/) | Internals, sharding, routing, publish protocol |
 | [Manifest Stores](https://elkin.github.io/shardyfusion/architecture/manifest-stores/) | S3, DB-backed, custom stores |
 | [Observability](https://elkin.github.io/shardyfusion/architecture/observability/) | Metrics, logging, Prometheus, OTel |
 | [Error Handling](https://elkin.github.io/shardyfusion/architecture/error-model/) | Error hierarchy, retry behavior |
-| [Operations](https://elkin.github.io/shardyfusion/operations/) | Cloud testing and tox matrix |
-| [Cloud Testing](https://elkin.github.io/shardyfusion/operations/cloud-testing/) | AWS integration tests |
 | [Glossary](https://elkin.github.io/shardyfusion/reference/glossary/) | Terms and concepts |
 | [API Reference](https://elkin.github.io/shardyfusion/reference/api/) | Full API docs |
 

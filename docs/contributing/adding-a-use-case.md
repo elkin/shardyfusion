@@ -1,6 +1,6 @@
 # Adding a use-case page
 
-Use-case pages are organized as a **decision tree**:
+Use-case pages follow the branching structure shown in the [home page use-case map](../index.md#use-case-map):
 
 1. **Conceptual overview** (e.g. `kv-storage/overview.md`) — explains shared concepts: sharding, manifests, two-phase publish, safety properties. These are the primary entry points for users.
 2. **Leaf pages** (e.g. `kv-storage/build/python.md`, `kv-storage/read/sync/slatedb.md`) — backend-specific or writer-specific details. These can be thinner because shared concepts live in the parent overview.

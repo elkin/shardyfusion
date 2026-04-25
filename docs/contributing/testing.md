@@ -63,7 +63,7 @@ Examples:
 - `py311-sparkwriter-spark35-slatedb-integration` — Spark 3.5 writer with SlateDB, integration tests.
 - `py313-vector-lancedb-unit` — LanceDB vector adapter, unit tests, Python 3.13.
 
-Capability/backend factors map to dependency groups in `pyproject.toml` via `[testenv].dependency_groups` in `tox.ini`. The full list is in [`operations/tox-matrix.md`](../operations/tox-matrix.md).
+Capability/backend factors map to dependency groups in `pyproject.toml` via `[testenv].dependency_groups` in `tox.ini`. The full list is in [`operate/tox-matrix.md`](../operate/tox-matrix.md).
 
 ## Targeted runs while developing
 
@@ -121,6 +121,6 @@ Quality + unit + integration on the host, then end-to-end inside containers agai
 
 ## See also
 
-- [`operations/tox-matrix.md`](../operations/tox-matrix.md) — full env list.
-- [`operations/cloud-testing.md`](../operations/cloud-testing.md) — running e2e against real S3.
+- [`operate/tox-matrix.md`](../operate/tox-matrix.md) — full env list.
+- [`operate/cloud-testing.md`](../operate/cloud-testing.md) — running e2e against real S3.
 - [`extras-and-dependencies.md`](extras-and-dependencies.md) — keeping `pyproject.toml` and `tox.ini` in sync.
