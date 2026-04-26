@@ -167,18 +167,19 @@ ci-matrix: _check-venv
 quality p="2": _check-venv _check-java
     uv run tox p -m quality -p {{p}}
 
-# Unit tests
+# Unit tests (pass path to run a specific test directory/module)
 [group('test')]
 [arg('n', short='n', help='pytest-xdist workers')]
 [arg('p', short='p', help='tox parallel envs')]
-unit n="4" p="2": _check-venv _check-java
-    PYTEST_WORKERS={{n}} uv run tox p -m unit -p {{p}}
+unit n="4" p="2" path="": _check-venv _check-java
+    PYTEST_WORKERS={{n}} uv run tox p -m unit -p {{p}} {{if path != "" { "-- " + path } else { "" }}}
 
-# Integration tests
+# Integration tests (pass path to run a specific test directory/module)
 [group('test')]
+[arg('n', short='n', help='pytest-xdist workers')]
 [arg('p', short='p', help='tox parallel envs')]
-integration p="2": _check-venv _check-java
-    uv run tox p -m integration -p {{p}}
+integration n="4" p="2" path="": _check-venv _check-java
+    PYTEST_WORKERS={{n}} uv run tox p -m integration -p {{p}} {{if path != "" { "-- " + path } else { "" }}}
 
 # Quality + unit + integration in sequence
 [group('test')]
@@ -234,18 +235,19 @@ d +cmd:
 d-quality p="2":
     just d "uv run tox p -m quality -p {{p}}"
 
-# Unit tests (in container)
+# Unit tests (in container; pass path to run a specific test directory/module)
 [group('container')]
 [arg('n', short='n', help='pytest-xdist workers')]
 [arg('p', short='p', help='tox parallel envs')]
-d-unit n="4" p="2":
-    just d "PYTEST_WORKERS={{n}} uv run tox p -m unit -p {{p}}"
+d-unit n="4" p="2" path="":
+    just d "PYTEST_WORKERS={{n}} uv run tox p -m unit -p {{p}} {{if path != "" { "-- " + path } else { "" }}}"
 
-# Integration tests (in container)
+# Integration tests (in container; pass path to run a specific test directory/module)
 [group('container')]
+[arg('n', short='n', help='pytest-xdist workers')]
 [arg('p', short='p', help='tox parallel envs')]
-d-integration p="2":
-    just d "uv run tox p -m integration -p {{p}}"
+d-integration n="4" p="2" path="":
+    just d "PYTEST_WORKERS={{n}} uv run tox p -m integration -p {{p}} {{if path != "" { "-- " + path } else { "" }}}"
 
 # End-to-end tests against Garage (in container via compose)
 [group('container')]
