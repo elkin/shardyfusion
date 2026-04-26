@@ -1,5 +1,7 @@
 # Repository Guidelines
 
+`shardyfusion` — sharded snapshot writer/reader for S3-compatible object storage.
+
 > **Keep this file accurate.** After any code change that affects architecture, module organization, CLI commands, or public API, verify that `AGENTS.md` remains accurate and update it if needed. Do not let it go stale. Breaking or otherwise important changes should also be recorded in `CHANGELOG.md`.
 
 ## Project Structure & Module Organization
