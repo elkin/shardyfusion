@@ -42,7 +42,7 @@ Readers are split into sync and async, and into "download-and-cache" vs "range-r
 ### SQLite: download vs range-read
 
 - **Download-and-cache** (`SqliteShardReader`, `sqlite_adapter.py:250`) — fetches the entire shard `.db` file to local disk on first access, then opens it with the standard `sqlite3` driver. Best for small shards or when local disk is plentiful.
-- **Range-read VFS** (`SqliteRangeShardReader`, `sqlite_adapter.py:456`) — uses APSW with a custom VFS (`_create_apsw_vfs`, `sqlite_adapter.py:541`) that issues HTTP range requests against S3 for individual SQLite pages. Best for large shards with sparse access patterns. Page cache is sized by `_normalize_page_cache_pages` (`sqlite_adapter.py:446`).
+- **Range-read VFS** (`SqliteRangeShardReader`, `sqlite_adapter.py:456`) — uses APSW with a custom VFS (`create_apsw_vfs`, `_sqlite_vfs.py:284`) that issues S3 range requests for individual SQLite pages via [obstore](https://developmentseed.org/obstore/) (Rust `object_store` Python bindings). Reads are decomposed into fixed-size pages (`_PAGE_SIZE = 4096`) keyed by index in an LRU cache; missing pages from a single SQLite read are fetched together via `obstore.get_ranges`, which coalesces adjacent ranges into one HTTP request and parallelises disjoint ones. Best for large shards with sparse access patterns. Page cache is sized by `_normalize_page_cache_pages` (`_sqlite_vfs.py:39`).
 
 ### sqlite-vec adapter
 

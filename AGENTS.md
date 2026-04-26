@@ -14,7 +14,7 @@
   - Reader path (sync): `reader/reader.py`, `reader/concurrent_reader.py`, `reader/_base.py`, `reader/_types.py`, `reader/_state.py` → `routing.py` → `manifest_store.py`, `db_manifest_store.py`
   - Reader path (async): `reader/async_reader.py` → `routing.py` → `async_manifest_store.py` (`AsyncS3ManifestStore`)
   - CLI path: `cli/app.py`, `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
-  - SQLite backend: `sqlite_adapter.py` (writer + download-and-cache reader + range-read VFS reader + async wrappers), `_sqlite_vfs.py` (S3 range-read VFS)
+  - SQLite backend: `sqlite_adapter.py` (writer + download-and-cache reader + range-read VFS reader + async wrappers), `_sqlite_vfs.py` (S3 range-read VFS via `obstore`)
   - Vector search: `vector/types.py`, `vector/config.py`, `vector/sharding.py`, `vector/_merge.py`, `vector/_distributed.py`, `vector/writer.py`, `vector/reader.py`, `vector/async_reader.py`, `vector/adapters/lancedb_adapter.py`
   - Unified KV+vector: `sqlite_vec_adapter.py` (sqlite-vec unified adapter), `composite_adapter.py` (KV+vector composite), `reader/unified_reader.py` (`UnifiedShardedReader`), `reader/async_unified_reader.py` (`AsyncUnifiedShardedReader`)
   - Shared models/protocols: `config.py`, `credentials.py`, `manifest.py`, `manifest_store.py`, `async_manifest_store.py`, `run_registry.py`, `storage.py`, `testing.py`
@@ -99,7 +99,7 @@ Layer 2 — Storage, routing, manifest, run registry: storage.py (w/ RetryConfig
 Layer 3 — Writer core: _writer_core.py (shared by all writers; assemble_build_result, cleanup_losers, CleanupAction, cleanup_stale_attempts, cleanup_old_runs), _shard_writer.py (shared shard-write loop + retry: write_shard_core, write_shard_with_retry, ShardWriteParams)
 Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/ (reader.py, concurrent_reader.py, _base.py, _types.py, _state.py), reader/async_reader.py, reader/unified_reader.py, reader/async_unified_reader.py, cli/app.py
 Layer vec — Vector search: vector/types.py, vector/config.py (vector types/protocols/enums), vector/sharding.py (CLUSTER/LSH/EXPLICIT/CEL routing), vector/_merge.py (top-k heap merge), vector/_distributed.py (shared write core), vector/writer.py (write_vector_sharded), vector/reader.py (ShardedVectorReader), vector/async_reader.py (AsyncShardedVectorReader)
-Layer 5 — Adapters & testing: slatedb_adapter.py, sqlite_adapter.py (optional apsw for range-read VFS), _sqlite_vfs.py (S3 range-read VFS with LRU page cache), sqlite_vec_adapter.py (unified KV+vector SQLite), vector/adapters/lancedb_adapter.py (LanceDB HNSW sidecar), composite_adapter.py (KV+vector composite), testing.py
+Layer 5 — Adapters & testing: slatedb_adapter.py, sqlite_adapter.py (optional apsw for range-read VFS), _sqlite_vfs.py (S3 range-read VFS with page-aligned LRU cache via obstore), sqlite_vec_adapter.py (unified KV+vector SQLite), vector/adapters/lancedb_adapter.py (LanceDB HNSW sidecar), composite_adapter.py (KV+vector composite), testing.py
 Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus extra), metrics/otel.py (metrics-otel extra)
 Layer internal — Symbols & compatibility: _slatedb_symbols.py (lazy SlateDB symbol checks), writer/ray/_compat.py (pandas 3.0+ patches)
 ```
@@ -239,7 +239,7 @@ These are all Protocols, allowing user-provided implementations:
 SQLite backend alternatives (imported from `shardyfusion.sqlite_adapter`):
 - **Writer**: `SqliteFactory` → `SqliteAdapter` (builds local SQLite DB, uploads to S3 on close; `checkpoint()` computes SHA-256 hash)
 - **Reader (download-and-cache)**: `SqliteReaderFactory` → `SqliteShardReader` (one S3 GET, then local lookups)
-- **Reader (range-read VFS)**: `SqliteRangeReaderFactory` → `SqliteRangeShardReader` (S3 Range requests with LRU page cache; requires `apsw`; uses per-instance UUID-based VFS names to avoid collisions)
+- **Reader (range-read VFS)**: `SqliteRangeReaderFactory` → `SqliteRangeShardReader` (S3 range requests via `obstore` with page-aligned LRU cache; requires `apsw` and `obstore`; uses per-instance UUID-based VFS names to avoid collisions)
 - **Async wrappers**: `AsyncSqliteReaderFactory`, `AsyncSqliteRangeReaderFactory` (delegate blocking I/O via `asyncio.to_thread`)
 
 Vector backend alternatives:
@@ -423,7 +423,8 @@ Vector types and functions are imported from subpackages (not re-exported at top
 ## Gotchas & Non-obvious Behavior
 
 - **SlateDB import is deferred**: `slatedb_adapter.py` imports the `slatedb` module inside `__init__`, not at module load. Tests monkeypatch `sys.modules["slatedb"]` to provide fakes.
-- **APSW import is deferred**: `sqlite_adapter.py` imports `apsw` inside `SqliteRangeShardReader.__init__` and `_create_apsw_vfs()`. Only the range-read VFS tier requires `apsw`; the download-and-cache tier uses stdlib `sqlite3`.
+- **APSW import is deferred**: `sqlite_adapter.py` imports `apsw` inside `SqliteRangeShardReader.__init__`, and `_sqlite_vfs.py` imports it inside `create_apsw_vfs()`. Only the range-read VFS tier requires `apsw`; the download-and-cache tier uses stdlib `sqlite3`.
+- **obstore import is deferred**: `_sqlite_vfs.py` imports `obstore` (and `obstore.store.S3Store`) inside `S3ReadOnlyFile.__init__` / `_build_obstore_client` / `_fetch_pages`. Only the range-read VFS tier requires `obstore`.
 - **SQLite adapter lifecycle**: `SqliteAdapter` builds a local SQLite DB during writes, then uploads the `.db` file to S3 on `close()`. The reader downloads (or range-reads) the file from S3. The `checkpoint()` method computes a SHA-256 hash of the DB file as the checkpoint ID.
 - **SQLite range-read VFS uses per-instance VFS names**: Each `SqliteRangeShardReader` registers a unique APSW VFS (via `uuid4`) to avoid name collisions when multiple readers are open simultaneously. The VFS is unregistered on `close()`.
 - **Python writer parallel mode uses `spawn`**: `multiprocessing.get_context("spawn")` is hardcoded. All objects passed to workers must be picklable. Min/max key tracking happens in the main process. Workers communicate via shared memory; configurable budgets via `max_parallel_shared_memory_bytes` and `max_parallel_shared_memory_bytes_per_worker`.

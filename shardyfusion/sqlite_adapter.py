@@ -429,8 +429,8 @@ class SqliteRangeShardReader:
             import apsw  # pyright: ignore[reportMissingImports]
         except ImportError as exc:
             raise SqliteAdapterError(
-                "apsw is required for the range-read VFS reader. "
-                "Install via: pip install apsw"
+                "apsw and obstore are required for the range-read VFS reader. "
+                "Install via: pip install 'shardyfusion[sqlite-range]'"
             ) from exc
 
         from .storage import parse_s3_url

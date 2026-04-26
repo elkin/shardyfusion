@@ -30,7 +30,7 @@ dependencies = [
 # Backend extras — storage engine deps only
 slatedb = ["slatedb<0.12", "boto3>=1.28"]
 sqlite = ["boto3>=1.28"]
-sqlite-range = ["apsw>=3.44", "boto3>=1.28"]
+sqlite-range = ["apsw>=3.44", "obstore>=0.4"]
 
 # Convenience extras — default backend is SlateDB
 read = ["shardyfusion[slatedb]"]
@@ -148,7 +148,7 @@ backend-vector-lancedb = [
 ]
 backend-sqlite-range = [
   "apsw>=3.44",
-  "boto3>=1.28",
+  "obstore>=0.4",
 ]
 cap-read-async = [
   "aiobotocore>=2.12",

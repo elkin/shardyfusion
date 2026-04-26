@@ -1,8 +1,12 @@
-"""Tests for _sqlite_vfs.S3ReadOnlyFile with mocked S3."""
+"""Tests for _sqlite_vfs.S3ReadOnlyFile with mocked obstore."""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+import sys
+import types
+from collections.abc import Iterator
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -11,6 +15,140 @@ from shardyfusion._sqlite_vfs import (
     S3VfsError,
     _normalize_page_cache_pages,
 )
+
+# ---------------------------------------------------------------------------
+# Helpers — fake obstore module
+# ---------------------------------------------------------------------------
+
+
+_PAGE = 4096
+
+
+class _FakeBytes:
+    """Stand-in for obstore.Bytes; supports the buffer protocol via bytes()."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    def __bytes__(self) -> bytes:
+        return self._data
+
+    def __len__(self) -> int:  # pragma: no cover - convenience
+        return len(self._data)
+
+
+class _FakeObstoreModule:
+    """In-memory fake of the ``obstore`` top-level module.
+
+    Backs every ``S3Store`` instance with a dict of ``key -> bytes`` so
+    tests can drive ``head``/``get_ranges`` realistically while still
+    asserting on call counts.
+    """
+
+    def __init__(self) -> None:
+        self._objects: dict[tuple[int, str], bytes] = {}
+        self.head_calls: list[tuple[Any, str]] = []
+        self.get_ranges_calls: list[tuple[Any, str, list[int], list[int]]] = []
+
+    # store-construction helper
+    def make_store_module(self) -> types.ModuleType:
+        outer = self
+
+        class _S3Store:
+            def __init__(self, bucket: str, **kwargs: Any) -> None:
+                self.bucket = bucket
+                self.kwargs = kwargs
+
+            def __repr__(self) -> str:  # pragma: no cover - debug
+                return f"_S3Store(bucket={self.bucket!r})"
+
+        store_mod = types.ModuleType("obstore.store")
+        store_mod.S3Store = _S3Store  # type: ignore[attr-defined]
+        outer._S3Store = _S3Store  # type: ignore[attr-defined]
+        return store_mod
+
+    # public API used by _sqlite_vfs
+    def head(self, store: Any, path: str) -> dict[str, Any]:
+        self.head_calls.append((store, path))
+        data = self._objects.get((id(store), path), b"")
+        return {"size": len(data), "path": path}
+
+    def get_ranges(
+        self,
+        store: Any,
+        path: str,
+        *,
+        starts: list[int],
+        ends: list[int],
+        coalesce: int = 1024 * 1024,
+    ) -> list[_FakeBytes]:
+        self.get_ranges_calls.append((store, path, list(starts), list(ends)))
+        data = self._objects.get((id(store), path), b"")
+        out: list[_FakeBytes] = []
+        for s, e in zip(starts, ends, strict=True):
+            out.append(_FakeBytes(data[s:e]))
+        return out
+
+    # test helper
+    def put(self, store: Any, path: str, data: bytes) -> None:
+        self._objects[(id(store), path)] = data
+
+
+@pytest.fixture()
+def fake_obstore() -> Iterator[_FakeObstoreModule]:
+    """Install a fake ``obstore`` package in ``sys.modules`` for the test."""
+    fake = _FakeObstoreModule()
+    obstore_mod = types.ModuleType("obstore")
+    # Dispatch through lambdas so reassigning ``fake.head`` (e.g. in
+    # ``_build``) takes effect for in-flight callers.
+    obstore_mod.head = lambda *a, **kw: fake.head(*a, **kw)  # type: ignore[attr-defined]
+    obstore_mod.get_ranges = lambda *a, **kw: fake.get_ranges(*a, **kw)  # type: ignore[attr-defined]
+    obstore_mod.store = fake.make_store_module()  # type: ignore[attr-defined]
+
+    saved = {name: sys.modules.get(name) for name in ("obstore", "obstore.store")}
+    sys.modules["obstore"] = obstore_mod
+    sys.modules["obstore.store"] = obstore_mod.store  # type: ignore[attr-defined]
+    try:
+        yield fake
+    finally:
+        for name, mod in saved.items():
+            if mod is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = mod
+
+
+def _build(
+    fake: _FakeObstoreModule,
+    *,
+    data: bytes,
+    page_cache_pages: int = 1024,
+    bucket: str = "b",
+    key: str = "k",
+) -> S3ReadOnlyFile:
+    """Construct an S3ReadOnlyFile with ``data`` as the backing object.
+
+    We patch ``head`` to return the size first, then run the constructor,
+    then register the data on the actual store instance for ``get_ranges``.
+    """
+    # Patch head to return correct size for any store/key during init.
+    real_head = fake.head
+
+    def head_with_size(store: Any, path: str) -> dict[str, Any]:
+        fake.head_calls.append((store, path))
+        return {"size": len(data), "path": path}
+
+    fake.head = head_with_size  # type: ignore[assignment]
+    try:
+        f = S3ReadOnlyFile(bucket=bucket, key=key, page_cache_pages=page_cache_pages)
+    finally:
+        fake.head = real_head  # type: ignore[assignment]
+
+    # Now register the data against the actual store object so subsequent
+    # get_ranges calls return the correct slices.
+    fake.put(f._store, key, data)
+    return f
+
 
 # ---------------------------------------------------------------------------
 # _normalize_page_cache_pages
@@ -34,105 +172,179 @@ class TestNormalizePageCachePages:
 # ---------------------------------------------------------------------------
 
 
-def _mock_s3_client(content_length: int = 1000) -> MagicMock:
-    client = MagicMock()
-    client.head_object.return_value = {"ContentLength": content_length}
-
-    def get_object(*, Bucket: str, Key: str, Range: str) -> dict:
-        # Parse range header "bytes=start-end"
-        _, range_spec = Range.split("=")
-        start, end = range_spec.split("-")
-        length = int(end) - int(start) + 1
-        body = MagicMock()
-        body.read.return_value = b"x" * length
-        return {"Body": body}
-
-    client.get_object.side_effect = get_object
-    return client
-
-
 class TestS3ReadOnlyFile:
-    @patch("shardyfusion.storage.create_s3_client")
-    def test_init_and_size(self, mock_create: MagicMock) -> None:
-        mock_create.return_value = _mock_s3_client(500)
-        f = S3ReadOnlyFile(bucket="b", key="k")
+    def test_init_and_size(self, fake_obstore: _FakeObstoreModule) -> None:
+        f = _build(fake_obstore, data=b"x" * 500)
         assert f.size == 500
+        assert len(fake_obstore.head_calls) == 1
 
-    @patch("shardyfusion.storage.create_s3_client")
-    def test_read_basic(self, mock_create: MagicMock) -> None:
-        mock_create.return_value = _mock_s3_client(100)
-        f = S3ReadOnlyFile(bucket="b", key="k")
+    def test_read_basic(self, fake_obstore: _FakeObstoreModule) -> None:
+        f = _build(fake_obstore, data=b"abcdefghij" * 10)  # 100 bytes
         data = f.read(0, 10)
-        assert len(data) == 10
-        assert data == b"x" * 10
+        assert data == b"abcdefghij"
 
-    @patch("shardyfusion.storage.create_s3_client")
-    def test_read_past_eof_returns_empty(self, mock_create: MagicMock) -> None:
-        mock_create.return_value = _mock_s3_client(100)
-        f = S3ReadOnlyFile(bucket="b", key="k")
-        data = f.read(200, 10)
-        assert data == b""
+    def test_read_past_eof_returns_empty(
+        self, fake_obstore: _FakeObstoreModule
+    ) -> None:
+        f = _build(fake_obstore, data=b"x" * 100)
+        assert f.read(200, 10) == b""
+        assert fake_obstore.get_ranges_calls == []
 
-    @patch("shardyfusion.storage.create_s3_client")
-    def test_zero_length_read_returns_empty(self, mock_create: MagicMock) -> None:
-        client = _mock_s3_client(100)
-        mock_create.return_value = client
-        f = S3ReadOnlyFile(bucket="b", key="k")
-
+    def test_zero_length_read_returns_empty(
+        self, fake_obstore: _FakeObstoreModule
+    ) -> None:
+        f = _build(fake_obstore, data=b"x" * 100)
         assert f.read(0, 0) == b""
-        client.get_object.assert_not_called()
+        assert fake_obstore.get_ranges_calls == []
 
-    @patch("shardyfusion.storage.create_s3_client")
-    def test_negative_length_read_returns_empty(self, mock_create: MagicMock) -> None:
-        client = _mock_s3_client(100)
-        mock_create.return_value = client
-        f = S3ReadOnlyFile(bucket="b", key="k")
-
+    def test_negative_length_read_returns_empty(
+        self, fake_obstore: _FakeObstoreModule
+    ) -> None:
+        f = _build(fake_obstore, data=b"x" * 100)
         assert f.read(0, -1) == b""
-        client.get_object.assert_not_called()
+        assert fake_obstore.get_ranges_calls == []
 
-    @patch("shardyfusion.storage.create_s3_client")
-    def test_read_cache_hit(self, mock_create: MagicMock) -> None:
-        client = _mock_s3_client(100)
-        mock_create.return_value = client
-        f = S3ReadOnlyFile(bucket="b", key="k", page_cache_pages=10)
+    def test_read_clamps_to_file_end(self, fake_obstore: _FakeObstoreModule) -> None:
+        f = _build(fake_obstore, data=b"x" * 100)
+        # Request past EOF: should return remaining bytes only.
+        data = f.read(95, 50)
+        assert data == b"x" * 5
 
-        # First read — cache miss
+    def test_read_cache_hit(self, fake_obstore: _FakeObstoreModule) -> None:
+        f = _build(fake_obstore, data=b"x" * 100, page_cache_pages=10)
+
+        # First read — cache miss, one get_ranges call
         f.read(0, 10)
-        call_count_1 = client.get_object.call_count
+        assert len(fake_obstore.get_ranges_calls) == 1
 
-        # Second read — cache hit, no new S3 call
+        # Second read (same page) — cache hit, no new fetch
         f.read(0, 10)
-        assert client.get_object.call_count == call_count_1
+        assert len(fake_obstore.get_ranges_calls) == 1
 
-    @patch("shardyfusion.storage.create_s3_client")
-    def test_read_cache_disabled(self, mock_create: MagicMock) -> None:
-        client = _mock_s3_client(100)
-        mock_create.return_value = client
-        f = S3ReadOnlyFile(bucket="b", key="k", page_cache_pages=0)
+    def test_read_cache_disabled(self, fake_obstore: _FakeObstoreModule) -> None:
+        f = _build(fake_obstore, data=b"x" * 100, page_cache_pages=0)
 
         f.read(0, 10)
         f.read(0, 10)
-        # Without cache, every read calls S3
-        assert client.get_object.call_count == 2
+        assert len(fake_obstore.get_ranges_calls) == 2
 
-    @patch("shardyfusion.storage.create_s3_client")
-    def test_lru_eviction(self, mock_create: MagicMock) -> None:
-        client = _mock_s3_client(100)
-        mock_create.return_value = client
-        f = S3ReadOnlyFile(bucket="b", key="k", page_cache_pages=1)
+    def test_lru_eviction(self, fake_obstore: _FakeObstoreModule) -> None:
+        # Need data spanning at least 3 pages to exercise eviction with
+        # page-aligned cache.
+        size = _PAGE * 3
+        f = _build(fake_obstore, data=b"a" * size, page_cache_pages=1)
 
-        # Fill the cache with one entry
+        # Fill the cache with page 0
         f.read(0, 10)
-        assert client.get_object.call_count == 1
+        assert len(fake_obstore.get_ranges_calls) == 1
 
-        # Evict first entry by reading a different range
-        f.read(20, 10)
-        assert client.get_object.call_count == 2
+        # Read from page 1 — evicts page 0
+        f.read(_PAGE, 10)
+        assert len(fake_obstore.get_ranges_calls) == 2
 
-        # The first entry was evicted — re-reading it requires S3
+        # Page 0 was evicted — re-reading it requires a new fetch
         f.read(0, 10)
-        assert client.get_object.call_count == 3
+        assert len(fake_obstore.get_ranges_calls) == 3
+
+    def test_multi_page_read_uses_single_get_ranges_call(
+        self, fake_obstore: _FakeObstoreModule
+    ) -> None:
+        # Distinct content per page so we can verify assembly.
+        data = b"".join(bytes([i % 256]) * _PAGE for i in range(3))
+        f = _build(fake_obstore, data=data, page_cache_pages=10)
+
+        # Read straddling pages 0 and 1.
+        out = f.read(_PAGE - 5, 10)
+        assert out == data[_PAGE - 5 : _PAGE + 5]
+        # Single underlying fetch covering both pages.
+        assert len(fake_obstore.get_ranges_calls) == 1
+        _, _, starts, ends = fake_obstore.get_ranges_calls[0]
+        assert starts == [0, _PAGE]
+        assert ends == [_PAGE, _PAGE * 2]
+
+    def test_partial_cache_hit_only_fetches_missing(
+        self, fake_obstore: _FakeObstoreModule
+    ) -> None:
+        data = b"".join(bytes([i % 256]) * _PAGE for i in range(3))
+        f = _build(fake_obstore, data=data, page_cache_pages=10)
+
+        # Prime page 0
+        f.read(0, 10)
+        assert len(fake_obstore.get_ranges_calls) == 1
+
+        # Read straddling pages 0 (cached) and 1 (missing).
+        f.read(_PAGE - 5, 10)
+        # Only page 1 should be fetched.
+        assert len(fake_obstore.get_ranges_calls) == 2
+        _, _, starts, ends = fake_obstore.get_ranges_calls[1]
+        assert starts == [_PAGE]
+        assert ends == [_PAGE * 2]
+
+
+# ---------------------------------------------------------------------------
+# Page-aligned cache assembly — hypothesis property test
+# ---------------------------------------------------------------------------
+
+
+from hypothesis import given  # noqa: E402
+from hypothesis import strategies as st  # noqa: E402
+
+
+class TestReadCorrectness:
+    @given(
+        size=st.integers(min_value=1, max_value=20_000),
+        seed=st.integers(min_value=0, max_value=2**32 - 1),
+        cache_pages=st.integers(min_value=0, max_value=8),
+        ops=st.lists(
+            st.tuples(
+                st.integers(min_value=0, max_value=25_000),
+                st.integers(min_value=0, max_value=10_000),
+            ),
+            min_size=1,
+            max_size=20,
+        ),
+    )
+    def test_random_reads_match_ground_truth(
+        self,
+        size: int,
+        seed: int,
+        cache_pages: int,
+        ops: list[tuple[int, int]],
+    ) -> None:
+        import random
+
+        rng = random.Random(seed)
+        data = bytes(rng.randrange(256) for _ in range(size))
+
+        # Hypothesis runs many examples; build a fresh fake obstore each time.
+        fake = _FakeObstoreModule()
+        obstore_mod = types.ModuleType("obstore")
+        obstore_mod.head = lambda *a, **kw: fake.head(*a, **kw)  # type: ignore[attr-defined]
+        obstore_mod.get_ranges = lambda *a, **kw: fake.get_ranges(*a, **kw)  # type: ignore[attr-defined]
+        obstore_mod.store = fake.make_store_module()  # type: ignore[attr-defined]
+
+        saved = {name: sys.modules.get(name) for name in ("obstore", "obstore.store")}
+        sys.modules["obstore"] = obstore_mod
+        sys.modules["obstore.store"] = obstore_mod.store  # type: ignore[attr-defined]
+        try:
+            f = _build(fake, data=data, page_cache_pages=cache_pages)
+            for offset, amount in ops:
+                got = f.read(offset, amount)
+                # Ground truth: same clamping rules as S3ReadOnlyFile.
+                if amount <= 0 or offset >= size:
+                    expected = b""
+                else:
+                    expected = data[offset : offset + amount]
+                assert got == expected, (
+                    f"Mismatch at offset={offset} amount={amount}: "
+                    f"got {got!r}, expected {expected!r}"
+                )
+        finally:
+            for name, mod in saved.items():
+                if mod is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = mod
 
 
 # ---------------------------------------------------------------------------
@@ -172,14 +384,10 @@ class TestCreateApswVfs:
         return mock_apsw
 
     def test_creates_vfs_instance(self) -> None:
-        import sys
-
         mock_apsw = self._make_mock_apsw()
-        # Temporarily inject mock apsw into sys.modules
         original = sys.modules.get("apsw")
         sys.modules["apsw"] = mock_apsw
         try:
-            # Force re-import of the function to pick up our mock
             from shardyfusion._sqlite_vfs import create_apsw_vfs
 
             mock_s3_file = MagicMock()
@@ -196,8 +404,6 @@ class TestCreateApswVfs:
                 sys.modules["apsw"] = original
 
     def test_vfs_xopen_returns_file(self) -> None:
-        import sys
-
         mock_apsw = self._make_mock_apsw()
         original = sys.modules.get("apsw")
         sys.modules["apsw"] = mock_apsw
@@ -218,8 +424,6 @@ class TestCreateApswVfs:
                 sys.modules["apsw"] = original
 
     def test_vfs_file_operations(self) -> None:
-        import sys
-
         mock_apsw = self._make_mock_apsw()
         original = sys.modules.get("apsw")
         sys.modules["apsw"] = mock_apsw
@@ -272,8 +476,6 @@ class TestCreateApswVfs:
                 sys.modules["apsw"] = original
 
     def test_vfs_xaccess_returns_false(self) -> None:
-        import sys
-
         mock_apsw = self._make_mock_apsw()
         original = sys.modules.get("apsw")
         sys.modules["apsw"] = mock_apsw
@@ -290,8 +492,6 @@ class TestCreateApswVfs:
                 sys.modules["apsw"] = original
 
     def test_vfs_xfullpathname(self) -> None:
-        import sys
-
         mock_apsw = self._make_mock_apsw()
         original = sys.modules.get("apsw")
         sys.modules["apsw"] = mock_apsw
