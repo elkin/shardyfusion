@@ -6,7 +6,11 @@ import json
 
 import pytest
 
-from tests.e2e.cli.conftest import _invoke_cli, _invoke_cli_with_retry, _write_cli_configs
+from tests.e2e.cli.conftest import (
+    _invoke_cli,
+    _invoke_cli_with_retry,
+    _write_cli_configs,
+)
 
 
 @pytest.mark.e2e

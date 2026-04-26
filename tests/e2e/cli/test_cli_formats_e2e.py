@@ -76,9 +76,7 @@ class TestCliFormats:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli_with_retry(
-            tmp_path, ["--output-format", "text", "shards"]
-        )
+        result = _invoke_cli_with_retry(tmp_path, ["--output-format", "text", "shards"])
         assert result.exit_code == 0
         assert "db_id=" in result.output
 
@@ -89,8 +87,6 @@ class TestCliFormats:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli_with_retry(
-            tmp_path, ["--output-format", "text", "health"]
-        )
+        result = _invoke_cli_with_retry(tmp_path, ["--output-format", "text", "health"])
         assert result.exit_code == 0
         assert "status=" in result.output

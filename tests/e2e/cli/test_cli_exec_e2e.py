@@ -34,9 +34,7 @@ commands:
   - op: info
 """,
         )
-        result = _invoke_cli_with_retry(
-            tmp_path, ["exec", "--script", str(script)]
-        )
+        result = _invoke_cli_with_retry(tmp_path, ["exec", "--script", str(script)])
         assert result.exit_code == 0, result.output + (result.stderr or "")
         lines = result.output.strip().split("\n")
         assert len(lines) == 2

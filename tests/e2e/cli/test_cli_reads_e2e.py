@@ -6,7 +6,10 @@ import json
 
 import pytest
 
-from tests.e2e.cli.conftest import _invoke_cli, _invoke_cli_with_retry, _write_cli_configs
+from tests.e2e.cli.conftest import (
+    _invoke_cli_with_retry,
+    _write_cli_configs,
+)
 
 
 @pytest.mark.e2e
@@ -47,7 +50,9 @@ class TestCliGet:
         result = _invoke_cli_with_retry(
             tmp_path, ["get", "--strict", "999"], expect_success=False
         )
-        assert result.exit_code == 1, f"stdout={result.output!r} stderr={result.stderr!r}"
+        assert result.exit_code == 1, (
+            f"stdout={result.output!r} stderr={result.stderr!r}"
+        )
         parsed = json.loads(result.output)
         assert parsed.get("found") is False, f"unexpected output: {parsed!r}"
 

@@ -28,7 +28,9 @@ class TestCliInteractive:
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
         result = _invoke_cli_with_retry(tmp_path, [], input="multiget 1 2\nquit\n")
-        assert result.exit_code == 0, f"exit_code={result.exit_code} stdout={result.output!r} stderr={result.stderr!r}"
+        assert result.exit_code == 0, (
+            f"exit_code={result.exit_code} stdout={result.output!r} stderr={result.stderr!r}"
+        )
         # Interactive mode uses pretty-printed JSON which spans multiple lines,
         # so parse by extracting the JSON block containing "multiget".
         output = result.output
@@ -45,7 +47,9 @@ class TestCliInteractive:
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
         result = _invoke_cli_with_retry(tmp_path, [], input="info\nquit\n")
-        assert result.exit_code == 0, f"exit_code={result.exit_code} stdout={result.output!r} stderr={result.stderr!r}"
+        assert result.exit_code == 0, (
+            f"exit_code={result.exit_code} stdout={result.output!r} stderr={result.stderr!r}"
+        )
         # The banner + info output should contain the run_id
         assert "cli-e2e-run" in result.output
 
@@ -56,8 +60,12 @@ class TestCliInteractive:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli_with_retry(tmp_path, [], input="use --offset 1\ninfo\nquit\n")
-        assert result.exit_code == 0, f"exit_code={result.exit_code} stdout={result.output!r} stderr={result.stderr!r}"
+        result = _invoke_cli_with_retry(
+            tmp_path, [], input="use --offset 1\ninfo\nquit\n"
+        )
+        assert result.exit_code == 0, (
+            f"exit_code={result.exit_code} stdout={result.output!r} stderr={result.stderr!r}"
+        )
         # After use --offset 1, info should show the older run_id
         assert "cli-e2e-run-v1" in result.output
 
@@ -69,5 +77,7 @@ class TestCliInteractive:
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
         result = _invoke_cli_with_retry(tmp_path, [], input="get 1\n")
-        assert result.exit_code == 0, f"exit_code={result.exit_code} stdout={result.output!r} stderr={result.stderr!r}"
+        assert result.exit_code == 0, (
+            f"exit_code={result.exit_code} stdout={result.output!r} stderr={result.stderr!r}"
+        )
         assert "b25l" in result.output

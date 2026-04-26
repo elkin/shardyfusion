@@ -22,7 +22,10 @@ from shardyfusion.vector.types import (
     VectorShardingStrategy,
 )
 from shardyfusion.vector.writer import write_vector_sharded
-from tests.e2e.cli.conftest import _invoke_cli, _invoke_cli_with_retry, _write_cli_configs
+from tests.e2e.cli.conftest import (
+    _invoke_cli_with_retry,
+    _write_cli_configs,
+)
 from tests.e2e.conftest import (
     credential_provider_from_service,
     s3_connection_options_from_service,
