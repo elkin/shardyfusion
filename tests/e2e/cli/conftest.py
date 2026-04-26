@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import click.testing
 import pytest
@@ -16,6 +17,36 @@ from shardyfusion.writer.python import write_sharded
 if TYPE_CHECKING:
     from tests.conftest import LocalS3Service
     from tests.e2e.conftest import BackendFixture
+
+
+def _invoke_cli_with_retry(
+    tmp_path: Path,
+    args: list[str],
+    *,
+    input: str | None = None,  # noqa: A002
+    env: dict[str, str] | None = None,
+    retries: int = 5,
+    delay: float = 0.5,
+    expect_success: bool = True,
+) -> click.testing.Result:
+    """Invoke the CLI with retry logic to work around Garage S3 eventual consistency.
+
+    After a write (publish/rollback) the ``_CURRENT`` pointer may not be
+    immediately visible to subsequent reads.  This helper retries the
+    invocation until it succeeds (exit code 0) or the retry budget is
+    exhausted.
+
+    Set *expect_success* to ``False`` when the test expects a non-zero exit
+    code (e.g. ``--strict`` not-found) — in that case the first result is
+    returned without retrying.
+    """
+    for attempt in range(retries):
+        result = _invoke_cli(tmp_path, args, input=input, env=env)
+        if not expect_success or result.exit_code == 0:
+            return result
+        if attempt < retries - 1:
+            time.sleep(delay)
+    return result
 
 
 # Override the parametrized backend fixture so CLI e2e tests only run

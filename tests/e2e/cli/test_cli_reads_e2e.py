@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from tests.e2e.cli.conftest import _invoke_cli, _write_cli_configs
+from tests.e2e.cli.conftest import _invoke_cli, _invoke_cli_with_retry, _write_cli_configs
 
 
 @pytest.mark.e2e
@@ -18,7 +18,7 @@ class TestCliGet:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["get", "1"])
+        result = _invoke_cli_with_retry(tmp_path, ["get", "1"])
         assert result.exit_code == 0, result.output + (result.stderr or "")
         parsed = json.loads(result.output)
         assert parsed["op"] == "get"
@@ -32,7 +32,7 @@ class TestCliGet:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["get", "999"])
+        result = _invoke_cli_with_retry(tmp_path, ["get", "999"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["found"] is False
@@ -44,7 +44,9 @@ class TestCliGet:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["get", "--strict", "999"])
+        result = _invoke_cli_with_retry(
+            tmp_path, ["get", "--strict", "999"], expect_success=False
+        )
         assert result.exit_code == 1, f"stdout={result.output!r} stderr={result.stderr!r}"
         parsed = json.loads(result.output)
         assert parsed.get("found") is False, f"unexpected output: {parsed!r}"
@@ -59,7 +61,7 @@ class TestCliMultiget:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["multiget", "1", "2", "3"])
+        result = _invoke_cli_with_retry(tmp_path, ["multiget", "1", "2", "3"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["op"] == "multiget"
@@ -73,7 +75,7 @@ class TestCliMultiget:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["multiget", "-"], input="1\n2\n3\n")
+        result = _invoke_cli_with_retry(tmp_path, ["multiget", "-"], input="1\n2\n3\n")
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["op"] == "multiget"
@@ -87,7 +89,7 @@ class TestCliRoute:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["route", "5"])
+        result = _invoke_cli_with_retry(tmp_path, ["route", "5"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["op"] == "route"
@@ -101,7 +103,7 @@ class TestCliInfo:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["info"])
+        result = _invoke_cli_with_retry(tmp_path, ["info"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["op"] == "info"
@@ -115,7 +117,7 @@ class TestCliShards:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["shards"])
+        result = _invoke_cli_with_retry(tmp_path, ["shards"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["op"] == "shards"
@@ -131,7 +133,7 @@ class TestCliHealth:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["health"])
+        result = _invoke_cli_with_retry(tmp_path, ["health"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["op"] == "health"
@@ -144,7 +146,9 @@ class TestCliHealth:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["health", "--staleness-threshold", "0.001"])
+        result = _invoke_cli_with_retry(
+            tmp_path, ["health", "--staleness-threshold", "0.001"], expect_success=False
+        )
         assert result.exit_code == 1
         parsed = json.loads(result.output)
         assert parsed["status"] == "degraded"

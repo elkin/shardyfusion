@@ -3,24 +3,10 @@
 from __future__ import annotations
 
 import json
-import time
 
 import pytest
 
-from tests.e2e.cli.conftest import _invoke_cli, _write_cli_configs
-
-
-def _get_with_retry(tmp_path, key: str, *, retries: int = 5, delay: float = 0.5) -> dict:
-    """Retry CLI get to work around Garage S3 eventual consistency."""
-    for attempt in range(retries):
-        result = _invoke_cli(tmp_path, ["get", key])
-        assert result.exit_code == 0
-        parsed = json.loads(result.output)
-        if parsed.get("value") is not None:
-            return parsed
-        if attempt < retries - 1:
-            time.sleep(delay)
-    return parsed
+from tests.e2e.cli.conftest import _invoke_cli, _invoke_cli_with_retry, _write_cli_configs
 
 
 @pytest.mark.e2e
@@ -62,7 +48,7 @@ class TestCliRollback:
         )
 
         # Verify latest is v2
-        result = _invoke_cli(tmp_path, ["get", "0"])
+        result = _invoke_cli_with_retry(tmp_path, ["get", "0"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["value"] == "bmV3LTA="  # base64 of b"new-0"
@@ -73,7 +59,7 @@ class TestCliRollback:
         assert "Rolled back _CURRENT" in result.output
 
         # Verify rolled back (retry for S3 eventual consistency)
-        parsed = _get_with_retry(tmp_path, "0")
+        parsed = json.loads(_invoke_cli_with_retry(tmp_path, ["get", "0"]).output)
         assert parsed["value"] == "b2xkLTA="  # base64 of b"old-0"
 
 
@@ -88,7 +74,7 @@ class TestCliRefDoesNotMutateCurrent:
         )
 
         # Get latest info (should be v2)
-        result = _invoke_cli(tmp_path, ["info"])
+        result = _invoke_cli_with_retry(tmp_path, ["info"])
         assert result.exit_code == 0
         latest_run_id = json.loads(result.output)["run_id"]
 
@@ -99,6 +85,6 @@ class TestCliRefDoesNotMutateCurrent:
         assert older_run_id != latest_run_id
 
         # Verify un-pinned info still shows latest
-        result = _invoke_cli(tmp_path, ["info"])
+        result = _invoke_cli_with_retry(tmp_path, ["info"])
         assert result.exit_code == 0
         assert json.loads(result.output)["run_id"] == latest_run_id
