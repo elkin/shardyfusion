@@ -85,7 +85,7 @@ class TestCliVectorSearchLanceDb:
         s3_prefix = _write_lancedb_vector_data(garage_s3_service, tmp_path)
         current_url = f"{s3_prefix}/_CURRENT"
         _write_cli_configs(tmp_path, garage_s3_service, current_url)
-        result = _invoke_cli(
+        result = _invoke_cli_with_retry(
             tmp_path, ["search", "1.0,5.0", "--top-k", "3", "--shard-ids", "0,1"]
         )
         assert result.exit_code == 0, result.output + (result.stderr or "")
@@ -115,7 +115,9 @@ class TestCliVectorSearchLanceDb:
         s3_prefix = _write_lancedb_vector_data(garage_s3_service, tmp_path)
         current_url = f"{s3_prefix}/_CURRENT"
         _write_cli_configs(tmp_path, garage_s3_service, current_url)
-        result = _invoke_cli(tmp_path, ["search", "1.0,5.0", "--shard-ids", "0"])
+        result = _invoke_cli_with_retry(
+            tmp_path, ["search", "1.0,5.0", "--shard-ids", "0"]
+        )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["op"] == "search"

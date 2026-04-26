@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from tests.e2e.cli.conftest import _invoke_cli, _write_cli_configs
+from tests.e2e.cli.conftest import _invoke_cli_with_retry, _write_cli_configs
 
 
 @pytest.mark.e2e
@@ -18,7 +18,7 @@ class TestCliCleanup:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["cleanup", "--dry-run"])
+        result = _invoke_cli_with_retry(tmp_path, ["cleanup", "--dry-run"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["op"] == "cleanup"
@@ -31,7 +31,9 @@ class TestCliCleanup:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["cleanup", "--older-than", "7d", "--dry-run"])
+        result = _invoke_cli_with_retry(
+            tmp_path, ["cleanup", "--older-than", "7d", "--dry-run"]
+        )
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["op"] == "cleanup"

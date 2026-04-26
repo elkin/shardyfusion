@@ -18,7 +18,7 @@ class TestCliHistory:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["history"])
+        result = _invoke_cli_with_retry(tmp_path, ["history"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert parsed["op"] == "history"
@@ -31,7 +31,7 @@ class TestCliHistory:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["history", "--limit", "1"])
+        result = _invoke_cli_with_retry(tmp_path, ["history", "--limit", "1"])
         assert result.exit_code == 0
         parsed = json.loads(result.output)
         assert len(parsed["manifests"]) == 1

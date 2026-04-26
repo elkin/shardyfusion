@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from tests.e2e.cli.conftest import _invoke_cli, _write_cli_configs
+from tests.e2e.cli.conftest import _invoke_cli_with_retry, _write_cli_configs
 
 
 @pytest.mark.e2e
@@ -18,7 +18,7 @@ class TestCliFormats:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["get", "1"])
+        result = _invoke_cli_with_retry(tmp_path, ["get", "1"])
         assert result.exit_code == 0
         # jsonl is single-line JSON
         lines = result.output.strip().split("\n")
@@ -33,7 +33,9 @@ class TestCliFormats:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["--output-format", "json", "get", "1"])
+        result = _invoke_cli_with_retry(
+            tmp_path, ["--output-format", "json", "get", "1"]
+        )
         assert result.exit_code == 0
         # json is pretty-printed (multi-line)
         assert "\n" in result.output
@@ -47,7 +49,9 @@ class TestCliFormats:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["--output-format", "text", "get", "1"])
+        result = _invoke_cli_with_retry(
+            tmp_path, ["--output-format", "text", "get", "1"]
+        )
         assert result.exit_code == 0
         assert "1=" in result.output
 
@@ -58,7 +62,7 @@ class TestCliFormats:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(
+        result = _invoke_cli_with_retry(
             tmp_path, ["--output-format", "table", "multiget", "1", "2"]
         )
         assert result.exit_code == 0
@@ -72,7 +76,9 @@ class TestCliFormats:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["--output-format", "text", "shards"])
+        result = _invoke_cli_with_retry(
+            tmp_path, ["--output-format", "text", "shards"]
+        )
         assert result.exit_code == 0
         assert "db_id=" in result.output
 
@@ -83,6 +89,8 @@ class TestCliFormats:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, ["--output-format", "text", "health"])
+        result = _invoke_cli_with_retry(
+            tmp_path, ["--output-format", "text", "health"]
+        )
         assert result.exit_code == 0
         assert "status=" in result.output

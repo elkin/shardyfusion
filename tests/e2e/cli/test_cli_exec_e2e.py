@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.e2e.cli.conftest import _invoke_cli, _write_cli_configs
+from tests.e2e.cli.conftest import _invoke_cli_with_retry, _write_cli_configs
 
 
 def _write_script(tmp_path: Path, content: str) -> Path:
@@ -34,7 +34,9 @@ commands:
   - op: info
 """,
         )
-        result = _invoke_cli(tmp_path, ["exec", "--script", str(script)])
+        result = _invoke_cli_with_retry(
+            tmp_path, ["exec", "--script", str(script)]
+        )
         assert result.exit_code == 0, result.output + (result.stderr or "")
         lines = result.output.strip().split("\n")
         assert len(lines) == 2
@@ -57,7 +59,9 @@ commands:
   - op: info
 """,
         )
-        result = _invoke_cli(tmp_path, ["exec", "--script", str(script)])
+        result = _invoke_cli_with_retry(
+            tmp_path, ["exec", "--script", str(script)], expect_success=False
+        )
         assert result.exit_code == 1
         lines = result.output.strip().split("\n")
         assert len(lines) == 1
@@ -79,7 +83,7 @@ commands:
 """,
         )
         out_path = tmp_path / "out.jsonl"
-        result = _invoke_cli(
+        result = _invoke_cli_with_retry(
             tmp_path, ["exec", "--script", str(script), "--output", str(out_path)]
         )
         assert result.exit_code == 0
