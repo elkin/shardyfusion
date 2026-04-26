@@ -45,9 +45,9 @@ class TestCliGet:
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
         result = _invoke_cli(tmp_path, ["get", "--strict", "999"])
-        assert result.exit_code == 1
+        assert result.exit_code == 1, f"stdout={result.output!r} stderr={result.stderr!r}"
         parsed = json.loads(result.output)
-        assert parsed["found"] is False
+        assert parsed.get("found") is False, f"unexpected output: {parsed!r}"
 
 
 @pytest.mark.e2e
