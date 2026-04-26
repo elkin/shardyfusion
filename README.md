@@ -23,6 +23,11 @@ flowchart LR
     C1 --> D1[Feature store / config distribution / fast lookups]
     C2 --> D2[Semantic search / recommendations / retrieval]
     C3 --> D3[Hybrid APIs: point lookup + ANN in one snapshot]
+
+    click B "https://elkin.github.io/shardyfusion/use-cases/shared-snapshot-workflow/" "Shared Snapshot Workflow"
+    click C1 "https://elkin.github.io/shardyfusion/use-cases/kv-storage/overview/" "KV Storage Use Cases"
+    click C2 "https://elkin.github.io/shardyfusion/use-cases/vector/overview/" "Vector Search Use Cases"
+    click C3 "https://elkin.github.io/shardyfusion/use-cases/kv-vector/overview/" "Unified KV + Vector Use Cases"
 ```
 
 - **Immutable snapshots** — two-phase publish with atomic reader refresh; readers never see half-written data
