@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import click.testing
 import pytest
@@ -28,6 +28,7 @@ def _invoke_cli_with_retry(
     retries: int = 5,
     delay: float = 0.5,
     expect_success: bool = True,
+    check_output: Callable[[click.testing.Result], bool] | None = None,
 ) -> click.testing.Result:
     """Invoke the CLI with retry logic to work around Garage S3 eventual consistency.
 
@@ -39,10 +40,18 @@ def _invoke_cli_with_retry(
     Set *expect_success* to ``False`` when the test expects a non-zero exit
     code (e.g. ``--strict`` not-found) — in that case the first result is
     returned without retrying.
+
+    Provide *check_output* for additional success criteria beyond exit code.
+    The callback receives the result and should return ``True`` when the
+    output is acceptable.  This is useful for REPL tests where the process
+    exits 0 even when a sub-command produced an error result.
     """
     for attempt in range(retries):
         result = _invoke_cli(tmp_path, args, input=input, env=env)
-        if not expect_success or result.exit_code == 0:
+        ok = (not expect_success or result.exit_code == 0) and (
+            check_output is None or check_output(result)
+        )
+        if ok:
             return result
         if attempt < retries - 1:
             time.sleep(delay)

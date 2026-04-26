@@ -61,11 +61,12 @@ class TestCliInteractive:
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
         result = _invoke_cli_with_retry(
-            tmp_path, [], input="use --offset 1\ninfo\nquit\n"
+            tmp_path,
+            [],
+            input="use --offset 1\ninfo\nquit\n",
+            check_output=lambda r: "cli-e2e-run-v1" in r.output,
         )
-        assert result.exit_code == 0, (
-            f"exit_code={result.exit_code} stdout={result.output!r} stderr={result.stderr!r}"
-        )
+        assert result.exit_code == 0, f"exit_code={result.exit_code} stdout={result.output!r} stderr={result.stderr!r}"
         # After use --offset 1, info should show the older run_id
         assert "cli-e2e-run-v1" in result.output
 
