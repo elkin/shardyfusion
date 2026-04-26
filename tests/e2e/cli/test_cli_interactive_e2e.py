@@ -2,9 +2,23 @@
 
 from __future__ import annotations
 
+import json
+import time
+
 import pytest
 
 from tests.e2e.cli.conftest import _invoke_cli, _write_cli_configs
+
+
+def _interactive_with_retry(tmp_path, input_text: str, *, retries: int = 5, delay: float = 0.5):
+    """Retry interactive CLI invocation to work around Garage S3 eventual consistency."""
+    for attempt in range(retries):
+        result = _invoke_cli(tmp_path, [], input=input_text)
+        if result.exit_code == 0:
+            return result
+        if attempt < retries - 1:
+            time.sleep(delay)
+    return result
 
 
 @pytest.mark.e2e
@@ -16,7 +30,7 @@ class TestCliInteractive:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, [], input="get 1\nquit\n")
+        result = _interactive_with_retry(tmp_path, "get 1\nquit\n")
         assert result.exit_code == 0, result.output + (result.stderr or "")
         assert "b25l" in result.output  # base64 of b"one"
 
@@ -27,8 +41,8 @@ class TestCliInteractive:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, [], input="multiget 1 2\nquit\n")
-        assert result.exit_code == 0
+        result = _interactive_with_retry(tmp_path, "multiget 1 2\nquit\n")
+        assert result.exit_code == 0, f"exit_code={result.exit_code} stdout={result.output!r} stderr={result.stderr!r}"
         # Interactive mode uses pretty-printed JSON which spans multiple lines,
         # so parse by extracting the JSON block containing "multiget".
         output = result.output
@@ -44,8 +58,8 @@ class TestCliInteractive:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, [], input="info\nquit\n")
-        assert result.exit_code == 0
+        result = _interactive_with_retry(tmp_path, "info\nquit\n")
+        assert result.exit_code == 0, f"exit_code={result.exit_code} stdout={result.output!r} stderr={result.stderr!r}"
         # The banner + info output should contain the run_id
         assert "cli-e2e-run" in result.output
 
@@ -56,8 +70,8 @@ class TestCliInteractive:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, [], input="use --offset 1\ninfo\nquit\n")
-        assert result.exit_code == 0
+        result = _interactive_with_retry(tmp_path, "use --offset 1\ninfo\nquit\n")
+        assert result.exit_code == 0, f"exit_code={result.exit_code} stdout={result.output!r} stderr={result.stderr!r}"
         # After use --offset 1, info should show the older run_id
         assert "cli-e2e-run-v1" in result.output
 
@@ -68,6 +82,6 @@ class TestCliInteractive:
         _write_cli_configs(
             tmp_path, garage_s3_service, current_url, reader_backend=backend.name
         )
-        result = _invoke_cli(tmp_path, [], input="get 1\n")
-        assert result.exit_code == 0
+        result = _interactive_with_retry(tmp_path, "get 1\n")
+        assert result.exit_code == 0, f"exit_code={result.exit_code} stdout={result.output!r} stderr={result.stderr!r}"
         assert "b25l" in result.output
