@@ -1025,54 +1025,6 @@ def search_cmd(
         sys.exit(1)
 
 
-@cli.command("schema")
-@click.option(
-    "--type",
-    "schema_type",
-    default="manifest",
-    type=click.Choice(
-        ["manifest", "current-pointer", "sqlite-manifest"], case_sensitive=False
-    ),
-    help="Which schema to print (default: manifest).",
-)
-def schema_cmd(schema_type: str) -> None:
-    """Print the JSON Schema for manifest or current-pointer formats."""
-    import json
-
-    from ..manifest import (
-        _SQLITE_BUILD_META_DDL,
-        _SQLITE_SHARDS_DDL,
-        CurrentPointer,
-        ParsedManifest,
-    )
-
-    if schema_type == "manifest":
-        schema = {
-            **ParsedManifest.model_json_schema(mode="serialization"),
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$id": "https://github.com/elkin/shardyfusion/schemas/manifest.schema.json",
-            "title": "SlateDB/SQLite Sharded Manifest",
-            "description": "JSON manifest published to S3 by the sharded writer.",
-        }
-        click.echo(json.dumps(schema, indent=2))
-    elif schema_type == "sqlite-manifest":
-        click.echo("-- SQLite manifest schema (two tables)")
-        click.echo("-- Used when manifest_content_type = 'application/x-sqlite3'")
-        click.echo()
-        click.echo(f"{_SQLITE_BUILD_META_DDL};")
-        click.echo()
-        click.echo(f"{_SQLITE_SHARDS_DDL};")
-    else:
-        schema = {
-            **CurrentPointer.model_json_schema(),
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$id": "https://github.com/elkin/shardyfusion/schemas/current-pointer.schema.json",
-            "title": "SlateDB/SQLite Sharded CURRENT Pointer",
-            "description": "JSON pointer published to S3 at _CURRENT.",
-        }
-        click.echo(json.dumps(schema, indent=2))
-
-
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------

@@ -44,3 +44,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ManifestBuilder`** protocol and **`YamlManifestBuilder`** class — `SqliteManifestBuilder` is now the sole manifest format, used internally by `S3ManifestStore`.
 - **`parse_manifest()`** function — replaced by `parse_manifest_payload()` which only accepts SQLite manifests.
 - **`ManifestOptions.manifest_builder`** parameter — manifest format is no longer pluggable via config.
+- **`shardy schema`** CLI subcommand and its REPL counterpart — JSON Schemas remain accessible programmatically via `ParsedManifest.model_json_schema()` and `CurrentPointer.model_json_schema()`.

@@ -29,7 +29,6 @@ Snapshot location and reader settings come from `reader.toml` + `credentials.tom
 | `health [--staleness-threshold SECONDS]` | Reader health (exit `0`/`1`/`2` = healthy/degraded/unhealthy). | no |
 | `route <key>` | Show which shard a key routes to. `--routing-context` repeatable. | no |
 | `history [--limit N]` | List recent published manifests (default 10). | no |
-| `schema [--type {manifest,current-pointer,sqlite-manifest}]` | Print JSON Schema or SQLite manifest DDL. | no |
 | `exec --script FILE [--output FILE]` | Run a YAML batch script. | no |
 | `rollback (--ref REF \| --run-id RUN_ID \| --offset N)` | Atomically swap `_CURRENT` to a previous manifest. Exactly one selector required. | **yes** |
 | `cleanup [--dry-run] [--include-old-runs] [--older-than DURATION] [--keep-last N] [--max-retries N]` | Delete stale attempts and optionally old runs. `DURATION` = `7d`, `24h`. | **yes** (without `--dry-run`) |
@@ -54,7 +53,7 @@ Use `--output FILE` to redirect results to a file instead of stdout.
 
 ## Interactive mode
 
-Invoke `shardy` (or `shardy --current-url …`) with **no subcommand** to enter the `cmd.Cmd`-based REPL (`shardyfusion/cli/interactive.py`). Available REPL commands: `get`, `multiget`, `refresh`, `info`, `shards`, `health`, `route`, `schema`, `history`, `use`, `quit`/`exit`.
+Invoke `shardy` (or `shardy --current-url …`) with **no subcommand** to enter the `cmd.Cmd`-based REPL (`shardyfusion/cli/interactive.py`). Available REPL commands: `get`, `multiget`, `refresh`, `info`, `shards`, `health`, `route`, `history`, `use`, `quit`/`exit`.
 
 The REPL `use` command is **session-local** — it changes which snapshot the REPL reads from. It does **not** mutate `_CURRENT` on the bucket.
 

@@ -518,43 +518,6 @@ reader_backend = "sqlite"
 
 
 # ---------------------------------------------------------------------------
-# Schema subcommand (no reader needed)
-# ---------------------------------------------------------------------------
-
-
-class TestSchemaSubcommand:
-    def test_manifest_schema_default(self) -> None:
-        runner = click.testing.CliRunner()
-        result = runner.invoke(cli, ["schema"])
-        assert result.exit_code == 0
-        parsed = json.loads(result.output)
-        assert parsed["$schema"] == "https://json-schema.org/draft/2020-12/schema"
-        assert parsed["title"] == "SlateDB/SQLite Sharded Manifest"
-        assert "properties" in parsed
-
-    def test_manifest_schema_explicit(self) -> None:
-        runner = click.testing.CliRunner()
-        result = runner.invoke(cli, ["schema", "--type", "manifest"])
-        assert result.exit_code == 0
-        parsed = json.loads(result.output)
-        assert parsed["title"] == "SlateDB/SQLite Sharded Manifest"
-
-    def test_current_pointer_schema(self) -> None:
-        runner = click.testing.CliRunner()
-        result = runner.invoke(cli, ["schema", "--type", "current-pointer"])
-        assert result.exit_code == 0
-        parsed = json.loads(result.output)
-        assert parsed["$schema"] == "https://json-schema.org/draft/2020-12/schema"
-        assert parsed["title"] == "SlateDB/SQLite Sharded CURRENT Pointer"
-        assert "manifest_ref" in parsed["properties"]
-
-    def test_invalid_type_rejected(self) -> None:
-        runner = click.testing.CliRunner()
-        result = runner.invoke(cli, ["schema", "--type", "bogus"])
-        assert result.exit_code != 0
-
-
-# ---------------------------------------------------------------------------
 # --ref / --offset must never call set_current()
 # ---------------------------------------------------------------------------
 

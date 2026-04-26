@@ -94,7 +94,6 @@ Top-level group at `shardyfusion/cli/app.py:209`. Subcommands:
 | `history [--limit N]` | List recent published manifests (default 10). |
 | `rollback (--ref REF \| --run-id RUN_ID \| --offset N)` | Atomically swap `_CURRENT` to a previous manifest. Exactly one selector required. |
 | `cleanup [--dry-run] [--include-old-runs] [--older-than DURATION] [--keep-last N] [--max-retries N]` | Delete stale attempt directories and optionally old run data. `DURATION` is e.g. `7d`, `24h`. |
-| `schema [--type {manifest,current-pointer,sqlite-manifest}]` | Print the JSON Schema for the manifest, current pointer, or SQLite manifest DDL. |
 
 There is **no `publish`/`delete`** subcommand — publishing happens through writers; deletion goes through `cleanup`.
 
@@ -112,7 +111,7 @@ shardy --output-format json get user-123
 
 ## Interactive mode
 
-Invoking `shardy` with **no subcommand** drops you into a `cmd.Cmd`-based REPL (`shardyfusion/cli/interactive.py`). Available commands include `get`, `multiget`, `refresh`, `info`, `shards`, `health`, `route`, `schema`, `history`, `use`, and `quit`/`exit`. The REPL `use` command is **session-local** — it does **not** mutate `_CURRENT` on the bucket.
+Invoking `shardy` with **no subcommand** drops you into a `cmd.Cmd`-based REPL (`shardyfusion/cli/interactive.py`). Available commands include `get`, `multiget`, `refresh`, `info`, `shards`, `health`, `route`, `history`, `use`, and `quit`/`exit`. The REPL `use` command is **session-local** — it does **not** mutate `_CURRENT` on the bucket.
 
 ## Functional / Non-functional properties
 
