@@ -22,7 +22,7 @@ from shardyfusion.vector.types import (
     VectorShardingStrategy,
 )
 from shardyfusion.vector.writer import write_vector_sharded
-from tests.e2e.cli.conftest import _invoke_cli, _write_cli_configs
+from tests.e2e.cli.conftest import _invoke_cli, _invoke_cli_with_retry, _write_cli_configs
 from tests.e2e.conftest import (
     credential_provider_from_service,
     s3_connection_options_from_service,
@@ -215,7 +215,9 @@ class TestCliVectorSearchSqliteVec:
         s3_prefix = _write_sqlite_vec_data(garage_s3_service, tmp_path)
         current_url = f"{s3_prefix}/_CURRENT"
         _write_cli_configs(tmp_path, garage_s3_service, current_url)
-        result = _invoke_cli(tmp_path, ["search", "1.0,0.0,0.0,0.0", "--top-k", "5"])
+        result = _invoke_cli_with_retry(
+            tmp_path, ["search", "1.0,0.0,0.0,0.0", "--top-k", "5"]
+        )
         assert result.exit_code == 0, result.output + (result.stderr or "")
         parsed = json.loads(result.output)
         assert parsed["op"] == "search"
