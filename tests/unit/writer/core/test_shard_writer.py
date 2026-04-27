@@ -726,4 +726,3 @@ class TestRequireDbBytes:
 
         result = write_shard_core(params, iter(_simple_rows(1)))
         assert result.row_count == 1
-

@@ -1097,9 +1097,7 @@ sqlite_mode = "{sqlite_mode}"
             return mock_reader
 
         with (
-            patch(
-                "shardyfusion.cli.app._build_manifest_store", return_value=store
-            ),
+            patch("shardyfusion.cli.app._build_manifest_store", return_value=store),
             patch(
                 "shardyfusion.reader.unified_reader.UnifiedShardedReader",
                 side_effect=_capture_unified,
@@ -1173,9 +1171,7 @@ sqlite_mode = "{sqlite_mode}"
         assert isinstance(factory, SqliteVecReaderFactory)
         assert not isinstance(factory, AdaptiveSqliteVecReaderFactory)
 
-    def test_lancedb_with_sqlite_kv_uses_composite_factory(
-        self, tmp_path: Any
-    ) -> None:
+    def test_lancedb_with_sqlite_kv_uses_composite_factory(self, tmp_path: Any) -> None:
         from shardyfusion.composite_adapter import CompositeReaderFactory
         from shardyfusion.sqlite_adapter import AdaptiveSqliteReaderFactory
 

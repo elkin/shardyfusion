@@ -156,7 +156,7 @@ class S3ReadOnlyFile:
             raise S3VfsError(
                 "obstore is required for the SQLite range-read VFS. "
                 "Install via: pip install 'shardyfusion[sqlite-range]' "
-            "or 'shardyfusion[sqlite-adaptive]' for the adaptive reader."
+                "or 'shardyfusion[sqlite-adaptive]' for the adaptive reader."
             ) from exc
 
         page_cache_pages = _normalize_page_cache_pages(page_cache_pages)
