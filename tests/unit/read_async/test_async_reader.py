@@ -43,7 +43,9 @@ class _AsyncFakeReader:
 def _async_fake_reader_factory(stores: dict[str, dict[bytes, bytes]]):
     """Return an AsyncShardReaderFactory that routes db_url → in-memory store."""
 
-    async def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
+    async def factory(
+        *, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs
+    ):
         _ = (local_dir, checkpoint_id)
         return _AsyncFakeReader(stores[db_url])
 
@@ -145,6 +147,7 @@ def _manifest(db_url: str) -> ParsedManifest:
                 max_key=None,
                 checkpoint_id=None,
                 writer_info={},
+                db_bytes=0,
             )
         ],
         custom={},
@@ -179,6 +182,7 @@ def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
                 max_key=None,
                 checkpoint_id=None,
                 writer_info={},
+                db_bytes=0,
             ),
             RequiredShardMeta(
                 db_id=1,
@@ -189,6 +193,7 @@ def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
                 max_key=None,
                 checkpoint_id=None,
                 writer_info={},
+                db_bytes=0,
             ),
         ],
         custom={},
@@ -212,14 +217,20 @@ def _categorical_manifest() -> ParsedManifest:
         ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
-        format_version=3,
+        format_version=4,
     )
     return ParsedManifest(
         required_build=required,
         shards=[
-            RequiredShardMeta(db_id=0, db_url="mem://db/ap", attempt=0, row_count=1),
-            RequiredShardMeta(db_id=1, db_url="mem://db/eu", attempt=0, row_count=1),
-            RequiredShardMeta(db_id=2, db_url="mem://db/us", attempt=0, row_count=1),
+            RequiredShardMeta(
+                db_id=0, db_url="mem://db/ap", attempt=0, row_count=1, db_bytes=0
+            ),
+            RequiredShardMeta(
+                db_id=1, db_url="mem://db/eu", attempt=0, row_count=1, db_bytes=0
+            ),
+            RequiredShardMeta(
+                db_id=2, db_url="mem://db/us", attempt=0, row_count=1, db_bytes=0
+            ),
         ],
         custom={},
     )
@@ -861,7 +872,9 @@ class _SlowAsyncFakeReader:
 def _slow_async_fake_reader_factory(
     stores: dict[str, dict[bytes, bytes]], delay: timedelta = timedelta(seconds=0.1)
 ):
-    async def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
+    async def factory(
+        *, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs
+    ):
         _ = (local_dir, checkpoint_id)
         return _SlowAsyncFakeReader(stores[db_url], delay=delay)
 
@@ -1026,6 +1039,7 @@ def _manifest_with_empty_shard() -> ParsedManifest:
                 min_key=0,
                 max_key=4,
                 checkpoint_id="ckpt-0",
+                db_bytes=0,
             ),
         ],
         custom={},
@@ -1084,7 +1098,7 @@ async def test_async_reader_factory_not_called_for_null_shard(tmp_path: Path) ->
     factory_calls: list[str] = []
 
     async def tracking_factory(
-        *, db_url: str, local_dir: Path, checkpoint_id: str | None
+        *, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs
     ):
         factory_calls.append(db_url)
         return _AsyncFakeReader({})

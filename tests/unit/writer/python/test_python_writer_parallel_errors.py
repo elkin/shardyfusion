@@ -60,6 +60,9 @@ class _CrashingAdapter:
     def checkpoint(self) -> str | None:
         return None
 
+    def db_bytes(self) -> int:
+        return 0
+
     def close(self) -> None:
         pass
 
@@ -81,6 +84,9 @@ class _GoodAdapter:
 
     def checkpoint(self) -> str | None:
         return "cp"
+
+    def db_bytes(self) -> int:
+        return 0
 
     def close(self) -> None:
         pass
@@ -116,6 +122,9 @@ class _FailOnceMarkerAdapter:
     def checkpoint(self) -> str | None:
         return "cp"
 
+    def db_bytes(self) -> int:
+        return 0
+
     def close(self) -> None:
         pass
 
@@ -149,6 +158,9 @@ class _ExitOnceMarkerAdapter:
 
     def checkpoint(self) -> str | None:
         return "cp"
+
+    def db_bytes(self) -> int:
+        return 0
 
     def close(self) -> None:
         pass

@@ -45,6 +45,7 @@ def _make_shard(db_id=0, **overrides):
         db_url=f"s3://bucket/prefix/shards/db={db_id:05d}",
         attempt=0,
         row_count=100,
+        db_bytes=0,
     )
     defaults.update(overrides)
     return RequiredShardMeta(**defaults)

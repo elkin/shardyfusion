@@ -48,6 +48,9 @@ class _MockWriter:
     def checkpoint(self) -> str | None:
         return self._checkpoint_id
 
+    def db_bytes(self) -> int:
+        return 0
+
     def close(self) -> None:
         self.closed = True
 
@@ -530,7 +533,9 @@ class TestPublishVectorManifest:
 
         centroids_ref = "s3://bucket/vector_meta/centroids.npy"
         winners = [
-            RequiredShardMeta(db_id=0, db_url="s3://a", attempt=0, row_count=5),
+            RequiredShardMeta(
+                db_id=0, db_url="s3://a", attempt=0, row_count=5, db_bytes=0
+            ),
         ]
 
         ref = _publish_vector_manifest(

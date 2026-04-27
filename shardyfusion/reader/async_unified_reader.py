@@ -42,11 +42,20 @@ def _auto_async_reader_factory(
     credential_provider: CredentialProvider | None = None,
     s3_connection_options: S3ConnectionOptions | None = None,
 ) -> AsyncShardReaderFactory:
-    """Auto-select the async reader factory based on the manifest backend field."""
-    if meta.backend == "sqlite-vec":
-        from shardyfusion.sqlite_vec_adapter import AsyncSqliteVecReaderFactory
+    """Auto-select the async reader factory based on the manifest backend field.
 
-        return AsyncSqliteVecReaderFactory(
+    For SQLite-based backends (``sqlite-vec`` or ``sqlite`` KV), this selects
+    the *adaptive* factory so each snapshot's access mode (download vs range)
+    is decided per-shard size distribution.  Users that need a fixed mode
+    must construct the concrete factory themselves and pass it via the
+    reader's ``reader_factory=`` parameter.
+    """
+    if meta.backend == "sqlite-vec":
+        from shardyfusion.sqlite_vec_adapter import (
+            AsyncAdaptiveSqliteVecReaderFactory,
+        )
+
+        return AsyncAdaptiveSqliteVecReaderFactory(
             credential_provider=credential_provider,
             s3_connection_options=s3_connection_options,
         )
@@ -67,9 +76,9 @@ def _auto_async_reader_factory(
         kv_backend = getattr(meta, "kv_backend", None) or "slatedb"
         kv_factory: AsyncShardReaderFactory
         if kv_backend == "sqlite":
-            from shardyfusion.sqlite_adapter import AsyncSqliteReaderFactory
+            from shardyfusion.sqlite_adapter import AsyncAdaptiveSqliteReaderFactory
 
-            kv_factory = AsyncSqliteReaderFactory(
+            kv_factory = AsyncAdaptiveSqliteReaderFactory(
                 credential_provider=credential_provider,
                 s3_connection_options=s3_connection_options,
             )

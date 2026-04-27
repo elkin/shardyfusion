@@ -31,6 +31,7 @@ def _winner(db_id: int, attempt: int = 0) -> RequiredShardMeta:
         max_key=10,
         checkpoint_id=None,
         writer_info=WriterInfo(task_attempt_id=attempt),
+        db_bytes=0,
     )
 
 

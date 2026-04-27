@@ -517,7 +517,7 @@ class ConcurrentShardedReader(_BaseShardedReader):
                             ),
                         )
                 elif self.thread_safety == "lock":
-                    reader = self._open_one_reader(shard)
+                    reader = self._open_one_reader(shard, manifest)
                     handles[shard.db_id] = _ShardHandle(
                         mode="lock",
                         reader=reader,
@@ -528,7 +528,7 @@ class ConcurrentShardedReader(_BaseShardedReader):
                     readers: list[ShardReader] = []
                     try:
                         for _ in range(pool_size):
-                            readers.append(self._open_one_reader(shard))
+                            readers.append(self._open_one_reader(shard, manifest))
                     except Exception:
                         for r in readers:
                             try:

@@ -1,5 +1,6 @@
 """Shared type aliases and protocols used across the package."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -10,6 +11,43 @@ JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
 
 KeyInput: TypeAlias = int | str | bytes
+
+
+class ShardSizeMeta(Protocol):
+    """Minimal per-shard metadata exposed to snapshot-aware factories.
+
+    Concrete implementation is :class:`shardyfusion.manifest.RequiredShardMeta`,
+    which duck-types as this Protocol via attribute matching.
+    """
+
+    @property
+    def db_url(self) -> str | None: ...
+
+    @property
+    def db_bytes(self) -> int: ...
+
+
+class BuildMeta(Protocol):
+    """Minimal manifest build-meta exposed to snapshot-aware factories."""
+
+    @property
+    def run_id(self) -> str: ...
+
+
+class Manifest(Protocol):
+    """Minimal manifest shape exposed to snapshot-aware reader factories.
+
+    The concrete implementation is :class:`shardyfusion.manifest.ParsedManifest`,
+    which duck-types as this Protocol via attribute matching. Defined here
+    (rather than imported from ``manifest.py``) to keep ``type_defs`` at the
+    base of the dependency graph.
+    """
+
+    @property
+    def required_build(self) -> BuildMeta: ...
+
+    @property
+    def shards(self) -> Sequence[ShardSizeMeta]: ...
 
 
 class ShardReader(Protocol):
@@ -25,10 +63,22 @@ class ShardReader(Protocol):
 
 
 class ShardReaderFactory(Protocol):
-    """Factory for opening one shard reader."""
+    """Factory for opening one shard reader.
+
+    The ``manifest`` argument carries the parsed manifest for the snapshot
+    being opened, allowing snapshot-aware factories (e.g.
+    :class:`shardyfusion.sqlite_adapter.AdaptiveSqliteReaderFactory`) to
+    pick a backend tier from the shard size distribution. Concrete
+    factories that do not need it should accept and ignore the argument.
+    """
 
     def __call__(
-        self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None,
+        manifest: Manifest,
     ) -> ShardReader:
         """Construct an opened reader instance."""
         ...
@@ -43,10 +93,18 @@ class AsyncShardReader(Protocol):
 
 
 class AsyncShardReaderFactory(Protocol):
-    """Factory for opening one async shard reader."""
+    """Factory for opening one async shard reader.
+
+    See :class:`ShardReaderFactory` for the role of ``manifest``.
+    """
 
     async def __call__(
-        self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None,
+        manifest: Manifest,
     ) -> AsyncShardReader: ...
 
 

@@ -40,7 +40,7 @@ class _FakeReader:
 
 
 def _fake_factory(stores: dict[str, dict[bytes, bytes]]):
-    def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
+    def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs):
         return _FakeReader(stores[db_url])
 
     return factory
@@ -91,6 +91,7 @@ def _cel_key_only_manifest(num_dbs: int = 4) -> ParsedManifest:
             db_url=f"mem://db/{i}",
             attempt=0,
             row_count=10,
+            db_bytes=0,
         )
         for i in range(num_dbs)
     ]
@@ -121,6 +122,7 @@ def _cel_multi_column_manifest(num_dbs: int = 3) -> ParsedManifest:
             db_url=f"mem://db/{i}",
             attempt=0,
             row_count=10,
+            db_bytes=0,
         )
         for i in range(num_dbs)
     ]
@@ -144,7 +146,7 @@ def _cel_categorical_manifest(num_dbs: int = 3) -> ParsedManifest:
         ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
-        format_version=3,
+        format_version=4,
     )
     shards = [
         RequiredShardMeta(
@@ -152,6 +154,7 @@ def _cel_categorical_manifest(num_dbs: int = 3) -> ParsedManifest:
             db_url=f"mem://db/{i}",
             attempt=0,
             row_count=10,
+            db_bytes=0,
         )
         for i in range(num_dbs)
     ]

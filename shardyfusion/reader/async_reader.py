@@ -41,6 +41,7 @@ from shardyfusion.type_defs import (
     AsyncShardReader,
     AsyncShardReaderFactory,
     KeyInput,
+    Manifest,
     S3ConnectionOptions,
 )
 
@@ -166,7 +167,12 @@ class AsyncSlateDbReaderFactory:
     credential_provider: CredentialProvider | None = None
 
     async def __call__(
-        self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None,
+        manifest: Manifest,
     ) -> AsyncShardReader:
         try:
             reader_cls = get_slatedb_reader_class()
@@ -737,6 +743,7 @@ class AsyncShardedReader:
                         db_url=shard.db_url,
                         local_dir=local_path,
                         checkpoint_id=shard.checkpoint_id,
+                        manifest=manifest,
                     )
         except Exception:
             for reader in readers.values():

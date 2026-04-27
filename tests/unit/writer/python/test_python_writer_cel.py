@@ -484,7 +484,7 @@ class TestCelCategoricalMode:
 
         assert len(result.winners) == 3
         manifest = store.load_manifest(result.manifest_ref)
-        assert manifest.required_build.format_version == 3
+        assert manifest.required_build.format_version == 4
         assert manifest.required_build.sharding.routing_values == ["ap", "eu", "us"]
 
         router = SnapshotRouter(manifest.required_build, manifest.shards)

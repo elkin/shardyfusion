@@ -85,7 +85,7 @@ class MockReaderFactory:
         self.created: dict[str, MockShardReader] = {}
 
     def __call__(
-        self, *, db_url: str, local_dir: Path, index_config: Any
+        self, *, db_url: str, local_dir: Path, index_config: Any, **_kwargs
     ) -> MockShardReader:
         _ = (local_dir, index_config)
         shard_id = len(self.created)
@@ -109,7 +109,7 @@ class BlockingReaderFactory(MockReaderFactory):
         self._release_search = release_search
 
     def __call__(
-        self, *, db_url: str, local_dir: Path, index_config: Any
+        self, *, db_url: str, local_dir: Path, index_config: Any, **_kwargs
     ) -> MockShardReader:
         _ = (local_dir, index_config)
         shard_id = len(self.created)
@@ -141,6 +141,7 @@ def _make_manifest(
                 attempt=0,
                 row_count=100,
                 writer_info=WriterInfo(),
+                db_bytes=0,
             )
         )
 

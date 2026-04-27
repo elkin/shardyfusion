@@ -56,6 +56,9 @@ class _FakeAdapter:
     def checkpoint(self) -> str | None:
         return self._checkpoint_id
 
+    def db_bytes(self) -> int:
+        return 0
+
     def close(self) -> None:
         pass
 

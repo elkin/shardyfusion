@@ -127,11 +127,12 @@ class SnapshotRouter:
         self.required_build = required_build
         # Build a complete shard list covering all db_ids in [0, num_dbs).
         # Missing db_ids (empty shards omitted from the manifest) get synthetic
-        # metadata-only entries with db_url=None and row_count=0.
+        # metadata-only entries with db_url=None, row_count=0, and db_bytes=0.
         shard_by_id = {s.db_id: s for s in shards}
         self.shards: list[RequiredShardMeta] = [
             shard_by_id.get(
-                db_id, RequiredShardMeta(db_id=db_id, attempt=0, row_count=0)
+                db_id,
+                RequiredShardMeta(db_id=db_id, attempt=0, row_count=0, db_bytes=0),
             )
             for db_id in range(required_build.num_dbs)
         ]

@@ -73,6 +73,9 @@ class FakeUnifiedAdapter:
     def checkpoint(self) -> str | None:
         return "fake-ckpt"
 
+    def db_bytes(self) -> int:
+        return 0
+
     def close(self) -> None:
         if self._closed:
             return

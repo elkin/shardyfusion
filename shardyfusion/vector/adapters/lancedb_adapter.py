@@ -15,6 +15,7 @@ import numpy as np
 from ...errors import VectorIndexError, VectorSearchError
 from ...logging import get_logger, log_event
 from ...storage import put_bytes
+from ...type_defs import Manifest
 from ..types import (
     DistanceMetric,
     SearchResult,
@@ -80,6 +81,7 @@ class LanceDbWriter:
         self._table = None
         self._closed = False
         self._count = 0
+        self._db_bytes = 0
         self._table_name = "vector_index"
 
     def add_batch(
@@ -187,9 +189,25 @@ class LanceDbWriter:
         self.flush()
         if self._table is None:
             return None
+        # Sum the local .lance dataset directory size for db_bytes reporting.
+        dataset_dir = self._local_dir / f"{self._table_name}.lance"
+        if dataset_dir.exists():
+            import os
+
+            total = 0
+            for root, _dirs, files in os.walk(dataset_dir):
+                for f in files:
+                    try:
+                        total += (Path(root) / f).stat().st_size
+                    except OSError:
+                        pass
+            self._db_bytes = total
         return (
             "checkpoint"  # LanceDB checkpoints could use version but we just use string
         )
+
+    def db_bytes(self) -> int:
+        return self._db_bytes
 
     def close(self) -> None:
         if self._closed:
@@ -448,7 +466,9 @@ class LanceDbReaderFactory:
         db_url: str,
         local_dir: Path,
         index_config: Any,
+        manifest: Manifest,
     ) -> LanceDbShardReader:
+        del manifest  # unused in concrete factory
         return LanceDbShardReader(
             db_url=db_url,
             local_dir=local_dir,
@@ -581,7 +601,9 @@ class AsyncLanceDbReaderFactory:
         db_url: str,
         local_dir: Path,
         index_config: Any,
+        manifest: Manifest,
     ) -> AsyncLanceDbShardReader:
+        del manifest  # unused in concrete factory
         return await AsyncLanceDbShardReader.open(
             db_url=db_url,
             local_dir=local_dir,

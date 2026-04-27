@@ -112,7 +112,9 @@ class _BaseShardedReader:
                 "ShardedVectorReader instead."
             )
 
-    def _open_one_reader(self, shard: RequiredShardMeta) -> ShardReader:
+    def _open_one_reader(
+        self, shard: RequiredShardMeta, manifest: ParsedManifest
+    ) -> ShardReader:
         """Create local dir and open a single shard reader.
 
         Callers must only pass shards with ``db_url is not None``
@@ -126,6 +128,7 @@ class _BaseShardedReader:
             db_url=shard.db_url,
             local_dir=local_path,
             checkpoint_id=shard.checkpoint_id,
+            manifest=manifest,
         )
 
     def _emit(self, event: MetricEvent, payload: dict[str, Any]) -> None:

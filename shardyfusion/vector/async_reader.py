@@ -605,10 +605,12 @@ class AsyncShardedVectorReader:
                     return cache_entry
 
             local_dir = self._local_root / f"shard_{shard_id:05d}"
+            assert self._manifest is not None
             reader = await self._reader_factory(
                 db_url=db_url,
                 local_dir=local_dir,
                 index_config=index_config,
+                manifest=self._manifest,
             )
             new_entry = _CachedAsyncShardReader(reader=reader, borrow_count=1)
             stale_reader_to_close: AsyncVectorShardReader | None = None

@@ -46,7 +46,7 @@ from .storage import (
 from .type_defs import S3ConnectionOptions
 
 _logger = get_logger(__name__)
-_SUPPORTED_MANIFEST_FORMAT_VERSIONS = frozenset({1, 2, 3})
+_SUPPORTED_MANIFEST_FORMAT_VERSIONS = frozenset({4})
 
 # Shared timestamp format for manifest S3 key prefixes.
 MANIFEST_TIMESTAMP_FMT = "%Y-%m-%dT%H:%M:%S.%fZ"
@@ -382,6 +382,7 @@ def parse_sqlite_manifest(payload: bytes) -> ParsedManifest:
                     "db_url": sr["db_url"],
                     "attempt": sr["attempt"],
                     "row_count": sr["row_count"],
+                    "db_bytes": sr["db_bytes"],
                     "min_key": json.loads(sr["min_key"])
                     if sr["min_key"] is not None
                     else None,
@@ -452,10 +453,6 @@ def _validate_manifest(
 
     routing_values = required_build.sharding.routing_values
     if routing_values is not None:
-        if required_build.format_version < 3:
-            raise ManifestParseError(
-                "Manifest sharding.routing_values requires format_version >= 3"
-            )
         expected_num_dbs = max(1, len(routing_values))
         if num_dbs != expected_num_dbs:
             raise ManifestParseError(
@@ -571,7 +568,7 @@ class SqliteShardLookup:
             self._con.row_factory = old_factory
 
         if row is None:
-            return RequiredShardMeta(db_id=db_id, attempt=0, row_count=0)
+            return RequiredShardMeta(db_id=db_id, attempt=0, row_count=0, db_bytes=0)
 
         return RequiredShardMeta.model_validate(
             {
@@ -579,6 +576,7 @@ class SqliteShardLookup:
                 "db_url": row["db_url"],
                 "attempt": row["attempt"],
                 "row_count": row["row_count"],
+                "db_bytes": row["db_bytes"],
                 "min_key": json.loads(row["min_key"])
                 if row["min_key"] is not None
                 else None,

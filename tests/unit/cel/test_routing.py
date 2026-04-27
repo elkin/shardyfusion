@@ -52,6 +52,7 @@ def _make_shards(num_dbs: int) -> list[RequiredShardMeta]:
             db_url=f"s3://bucket/prefix/db={i:05d}",
             attempt=0,
             row_count=10,
+            db_bytes=0,
         )
         for i in range(num_dbs)
     ]

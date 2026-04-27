@@ -35,7 +35,7 @@ class _FakeReader:
 
 
 def _fake_factory(stores: dict[str, dict[bytes, bytes]]):
-    def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
+    def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs):
         return _FakeReader(stores.get(db_url, {}))
 
     return factory
@@ -87,6 +87,7 @@ def _manifest(
             db_url=f"mem://db/n{num_dbs}/s{i}",
             attempt=0,
             row_count=10,
+            db_bytes=0,
         )
         for i in range(num_dbs)
     ]
@@ -170,8 +171,12 @@ class TestSparseToFullTransition:
         )
         # Only shard 0 and 2 present (shard 1 is empty/missing)
         shards = [
-            RequiredShardMeta(db_id=0, db_url="mem://db/s0", attempt=0, row_count=5),
-            RequiredShardMeta(db_id=2, db_url="mem://db/s2", attempt=0, row_count=5),
+            RequiredShardMeta(
+                db_id=0, db_url="mem://db/s0", attempt=0, row_count=5, db_bytes=0
+            ),
+            RequiredShardMeta(
+                db_id=2, db_url="mem://db/s2", attempt=0, row_count=5, db_bytes=0
+            ),
         ]
         manifest = ParsedManifest(required_build=required, shards=shards, custom={})
         stores = {"mem://db/s0": {}, "mem://db/s2": {}}
@@ -211,10 +216,18 @@ class TestSparseToFullTransition:
             required_build=required_sparse,
             shards=[
                 RequiredShardMeta(
-                    db_id=0, db_url="mem://db/a0", attempt=0, row_count=5
+                    db_id=0,
+                    db_url="mem://db/a0",
+                    attempt=0,
+                    row_count=5,
+                    db_bytes=0,
                 ),
                 RequiredShardMeta(
-                    db_id=2, db_url="mem://db/a2", attempt=0, row_count=5
+                    db_id=2,
+                    db_url="mem://db/a2",
+                    attempt=0,
+                    row_count=5,
+                    db_bytes=0,
                 ),
             ],
             custom={},

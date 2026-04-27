@@ -33,6 +33,7 @@ from .slatedb_adapter import DbAdapter, DbAdapterFactory
 from .type_defs import (
     AsyncShardReader,
     AsyncShardReaderFactory,
+    Manifest,
     ShardReader,
     ShardReaderFactory,
 )
@@ -170,6 +171,11 @@ class CompositeAdapter:
         # Return KV checkpoint ID as the primary identifier
         return kv_ckpt
 
+    def db_bytes(self) -> int:
+        kv_bytes = self._kv.db_bytes() if hasattr(self._kv, "db_bytes") else 0
+        vec_bytes = self._vec.db_bytes() if hasattr(self._vec, "db_bytes") else 0
+        return int(kv_bytes) + int(vec_bytes)
+
     def close(self) -> None:
         if self._closed:
             return
@@ -212,6 +218,7 @@ class CompositeReaderFactory:
         db_url: str,
         local_dir: Path,
         checkpoint_id: str | None = None,
+        manifest: Manifest,
     ) -> CompositeShardReader:
         from .vector.config import VectorIndexConfig
         from .vector.types import DistanceMetric
@@ -228,6 +235,7 @@ class CompositeReaderFactory:
             db_url=db_url,
             local_dir=local_dir,
             checkpoint_id=checkpoint_id,
+            manifest=manifest,
         )
 
         vector_dir = local_dir / "vector"
@@ -236,6 +244,7 @@ class CompositeReaderFactory:
             db_url=f"{db_url.rstrip('/')}/vector",
             local_dir=vector_dir,
             index_config=index_config,
+            manifest=manifest,
         )
 
         return CompositeShardReader(
@@ -305,6 +314,7 @@ class AsyncCompositeReaderFactory:
         db_url: str,
         local_dir: Path,
         checkpoint_id: str | None = None,
+        manifest: Manifest,
     ) -> AsyncCompositeShardReader:
         from .vector.config import VectorIndexConfig
         from .vector.types import DistanceMetric
@@ -321,6 +331,7 @@ class AsyncCompositeReaderFactory:
             db_url=db_url,
             local_dir=local_dir,
             checkpoint_id=checkpoint_id,
+            manifest=manifest,
         )
 
         vector_dir = local_dir / "vector"
@@ -329,6 +340,7 @@ class AsyncCompositeReaderFactory:
             db_url=f"{db_url.rstrip('/')}/vector",
             local_dir=vector_dir,
             index_config=index_config,
+            manifest=manifest,
         )
 
         return AsyncCompositeShardReader(

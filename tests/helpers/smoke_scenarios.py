@@ -140,6 +140,9 @@ def _verify_shard_placement(
     route_fn: Callable[[int], int],
     reader_factory: ShardReaderFactory,
     local_root: str,
+    s3_prefix: str,
+    credential_provider: CredentialProvider | None,
+    s3_connection_options: S3ConnectionOptions | None,
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
 ) -> None:
     """Verify each SMOKE_DATA key landed in the shard predicted by route_fn.
@@ -151,6 +154,16 @@ def _verify_shard_placement(
 
     encode_key = make_key_encoder(key_encoding)
 
+    # Concrete reader factories require a Manifest argument; load the
+    # published manifest from S3 via S3ManifestStore so direct shard reads
+    # match the contract used by ShardedReader.
+    manifest_store = S3ManifestStore(
+        s3_prefix,
+        credential_provider=credential_provider,
+        s3_connection_options=s3_connection_options,
+    )
+    manifest = manifest_store.load_manifest(result.manifest_ref)
+
     winner_by_db_id: dict[int, RequiredShardMeta] = {w.db_id: w for w in result.winners}
     readers: dict[int, Any] = {}
     try:
@@ -160,6 +173,7 @@ def _verify_shard_placement(
                 db_url=winner.db_url,
                 local_dir=Path(local_root) / f"verify-{db_id}",
                 checkpoint_id=winner.checkpoint_id,
+                manifest=manifest,
             )
 
         for key, _value, _group in SMOKE_DATA:
@@ -272,6 +286,9 @@ def run_smoke_write_then_read_scenario(
         route_fn=lambda key: xxh3_db_id(key, effective_num_dbs),
         reader_factory=reader_factory,
         local_root=local_root,
+        s3_prefix=s3_prefix,
+        credential_provider=cred_provider,
+        s3_connection_options=conn_options,
     )
 
     # ---- Read ----
@@ -390,6 +407,9 @@ def run_smoke_cel_scenario(
             ),
             reader_factory=reader_factory,
             local_root=local_root,
+            s3_prefix=s3_prefix,
+            credential_provider=cred_provider,
+            s3_connection_options=conn_options,
         )
     else:
         _verify_shard_placement(
@@ -401,6 +421,9 @@ def run_smoke_cel_scenario(
             ),
             reader_factory=reader_factory,
             local_root=local_root,
+            s3_prefix=s3_prefix,
+            credential_provider=cred_provider,
+            s3_connection_options=conn_options,
         )
 
     # ---- Read ----

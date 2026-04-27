@@ -131,6 +131,7 @@ def run_reader_loads_manifest_scenario(
             max_key=15,
             checkpoint_id=db0_ckpt,
             writer_info={},
+            db_bytes=0,
         ),
     ]
 

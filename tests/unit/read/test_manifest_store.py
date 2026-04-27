@@ -46,6 +46,7 @@ def _make_shards(ids: list[int]) -> list[RequiredShardMeta]:
             min_key=i + 1,
             max_key=i + 1,
             checkpoint_id=None,
+            db_bytes=0,
         )
         for i in ids
     ]
@@ -101,13 +102,13 @@ def test_parse_manifest_round_trip_categorical_cel() -> None:
         ),
         db_path_template="db={db_id:05d}",
         shard_prefix="shards",
-        format_version=3,
+        format_version=4,
     )
     shards = _make_shards([0, 1, 2])
     payload = _to_sqlite(build, shards)
 
     parsed = parse_sqlite_manifest(payload)
-    assert parsed.required_build.format_version == 3
+    assert parsed.required_build.format_version == 4
     assert parsed.required_build.sharding.routing_values == ["ap", "eu", "us"]
 
 
@@ -118,8 +119,8 @@ def test_parse_manifest_rejects_bad_shard_coverage() -> None:
     # Add extra shard beyond num_dbs
     payload = _tamper(
         payload,
-        "INSERT INTO shards (db_id, db_url, attempt, row_count, writer_info)"
-        " VALUES (1, 's3://x', 0, 1, '{}')",
+        "INSERT INTO shards (db_id, db_url, attempt, row_count, db_bytes, writer_info)"
+        " VALUES (1, 's3://x', 0, 1, 0, '{}')",
     )
 
     with pytest.raises(ManifestParseError, match="exceeds num_dbs"):

@@ -41,6 +41,7 @@ def _make_shards(num: int) -> list[RequiredShardMeta]:
             db_url=f"s3://bucket/prefix/shards/db={i:05d}",
             attempt=0,
             row_count=100,
+            db_bytes=0,
         )
         for i in range(num)
     ]
@@ -92,8 +93,8 @@ def test_shard_count_exceeds_num_dbs() -> None:
     # Add extra shard beyond num_dbs
     payload = _tamper_sqlite(
         payload,
-        "INSERT INTO shards (db_id, db_url, attempt, row_count, writer_info)"
-        " VALUES (2, 's3://x', 0, 1, '{}')",
+        "INSERT INTO shards (db_id, db_url, attempt, row_count, db_bytes, writer_info)"
+        " VALUES (2, 's3://x', 0, 1, 0, '{}')",
     )
     with pytest.raises(ManifestParseError, match="exceeds num_dbs"):
         parse_sqlite_manifest(payload)
@@ -129,8 +130,8 @@ def test_duplicate_shard_ids() -> None:
     con.execute("DROP TABLE shards")
     con.execute("ALTER TABLE shards_new RENAME TO shards")
     con.execute(
-        "INSERT INTO shards (db_id, db_url, attempt, row_count, writer_info)"
-        " VALUES (0, 's3://dup', 0, 1, '{}')"
+        "INSERT INTO shards (db_id, db_url, attempt, row_count, db_bytes, writer_info)"
+        " VALUES (0, 's3://dup', 0, 1, 0, '{}')"
     )
     con.commit()
     payload = con.serialize()
@@ -155,7 +156,7 @@ def test_corrupt_sqlite_payload() -> None:
         parse_sqlite_manifest(payload)
 
 
-def _make_cel_build(num_dbs: int = 2, format_version: int = 3) -> RequiredBuildMeta:
+def _make_cel_build(num_dbs: int = 2, format_version: int = 4) -> RequiredBuildMeta:
     return RequiredBuildMeta(
         run_id="test-run",
         created_at="2026-01-01T00:00:00+00:00",
@@ -174,20 +175,6 @@ def _make_cel_build(num_dbs: int = 2, format_version: int = 3) -> RequiredBuildM
         shard_prefix="shards",
         format_version=format_version,
     )
-
-
-def test_routing_values_require_format_version_3() -> None:
-
-    build = _make_cel_build(num_dbs=2, format_version=3)
-    shards = _make_shards(2)
-    payload = _to_sqlite(build, shards)
-    # Downgrade format_version to 2 in the SQLite payload
-    payload = _tamper_sqlite(
-        payload,
-        "UPDATE build_meta SET format_version = 2",
-    )
-    with pytest.raises(ManifestParseError, match="format_version >= 3"):
-        parse_sqlite_manifest(payload)
 
 
 def test_manifest_rejects_removed_boundaries_field() -> None:
@@ -249,7 +236,7 @@ def test_manifest_rejects_unsupported_hash_algorithm() -> None:
 def test_manifest_rejects_unsupported_categorical_token_types() -> None:
     import json
 
-    build = _make_cel_build(num_dbs=2, format_version=3)
+    build = _make_cel_build(num_dbs=2, format_version=4)
     shards = _make_shards(2)
     payload = _to_sqlite(build, shards)
     # Replace routing_values with floats
@@ -273,7 +260,7 @@ def test_manifest_rejects_unsupported_categorical_token_types() -> None:
 def test_categorical_manifest_num_dbs_must_match_routing_values() -> None:
     import json
 
-    build = _make_cel_build(num_dbs=3, format_version=3)
+    build = _make_cel_build(num_dbs=3, format_version=4)
     shards = _make_shards(3)
     payload = _to_sqlite(build, shards)
     # Set routing_values to only 2 items while num_dbs=3

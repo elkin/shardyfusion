@@ -50,6 +50,7 @@ def _shard(db_id: int = 0) -> RequiredShardMeta:
         row_count=10,
         checkpoint_id=None,
         writer_info={},
+        db_bytes=0,
     )
 
 

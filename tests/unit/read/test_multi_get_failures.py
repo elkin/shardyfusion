@@ -87,8 +87,12 @@ def _2shard_manifest() -> ParsedManifest:
     return ParsedManifest(
         required_build=required,
         shards=[
-            RequiredShardMeta(db_id=0, db_url="mem://db/0", attempt=0, row_count=10),
-            RequiredShardMeta(db_id=1, db_url="mem://db/1", attempt=0, row_count=10),
+            RequiredShardMeta(
+                db_id=0, db_url="mem://db/0", attempt=0, row_count=10, db_bytes=0
+            ),
+            RequiredShardMeta(
+                db_id=1, db_url="mem://db/1", attempt=0, row_count=10, db_bytes=0
+            ),
         ],
         custom={},
     )
@@ -114,7 +118,9 @@ class TestMultiGetPartialFailure:
         manifest = _2shard_manifest()
         keys_by_shard = _find_keys_for_shards(2)
 
-        def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
+        def factory(
+            *, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs
+        ):
             if db_url == "mem://db/1":
                 return _FailingReader(error=RuntimeError("shard 1 down"))
             key = keys_by_shard[0]
@@ -140,7 +146,9 @@ class TestMultiGetPartialFailure:
         manifest = _2shard_manifest()
         keys_by_shard = _find_keys_for_shards(2)
 
-        def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
+        def factory(
+            *, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs
+        ):
             if db_url == "mem://db/1":
                 return _FailingReader(error=RuntimeError("shard 1 down"))
             return _FakeReader({})
@@ -161,7 +169,9 @@ class TestMultiGetPartialFailure:
         manifest = _2shard_manifest()
         keys_by_shard = _find_keys_for_shards(2)
 
-        def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
+        def factory(
+            *, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs
+        ):
             return _FailingReader(error=DbAdapterError("all down"))
 
         store = _FixedStore(manifest)
@@ -180,7 +190,9 @@ class TestMultiGetPartialFailure:
         manifest = _2shard_manifest()
         keys_by_shard = _find_keys_for_shards(2)
 
-        def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
+        def factory(
+            *, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs
+        ):
             if db_url == "mem://db/0":
                 return _FailingReader(error=DbAdapterError("shard 0 down"))
             return _FakeReader({})
@@ -204,7 +216,9 @@ class TestMultiGetPartialFailure:
         manifest = _2shard_manifest()
         keys_by_shard = _find_keys_for_shards(2)
 
-        def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
+        def factory(
+            *, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs
+        ):
             if db_url == "mem://db/1":
                 return _FailingReader(error=DbAdapterError("shard 1 read error"))
             return _FakeReader({})

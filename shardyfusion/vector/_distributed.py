@@ -57,6 +57,7 @@ class VectorShardState:
     payloads: list[dict[str, Any] | None] = field(default_factory=list)
     row_count: int = 0
     checkpoint_id: str | None = None
+    db_bytes: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -391,6 +392,7 @@ def write_vector_shard(
             flush_vector_shard_batch(state)
 
         state.checkpoint_id = adapter.checkpoint()
+        state.db_bytes = adapter.db_bytes() if hasattr(adapter, "db_bytes") else 0
 
     if metrics_collector is not None:
         metrics_collector.emit(
@@ -405,6 +407,7 @@ def write_vector_shard(
         row_count=state.row_count,
         checkpoint_id=state.checkpoint_id,
         writer_info=WriterInfo(),
+        db_bytes=state.db_bytes,
     )
 
 
@@ -480,7 +483,7 @@ def publish_vector_manifest(
         ),
         db_path_template=config.output.db_path_template,
         shard_prefix=config.output.shard_prefix,
-        format_version=2,
+        format_version=4,
         key_encoding=KeyEncoding.RAW,
     )
 

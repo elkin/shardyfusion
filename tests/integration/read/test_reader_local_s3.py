@@ -18,7 +18,14 @@ def test_reader_loads_current_and_manifest_from_local_s3(
 
     object_store_root = str(tmp_path / "object-store")
 
-    def _reader(*, db_url: str, local_dir: Path, checkpoint_id: str | None):  # type: ignore[no-untyped-def]
+    def _reader(  # type: ignore[no-untyped-def]
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None,
+        manifest=None,  # ignored — slatedb reader doesn't need it
+    ):
+        del manifest
         return slatedb.SlateDBReader(
             str(local_dir_for_file_shard(object_store_root, db_url)),
             url=map_s3_db_url_to_file_url(db_url, object_store_root),

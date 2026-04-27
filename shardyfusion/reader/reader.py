@@ -438,7 +438,7 @@ class ShardedReader(_BaseShardedReader):
                 if shard.db_url is None:
                     readers[shard.db_id] = _NullShardReader()
                 else:
-                    readers[shard.db_id] = self._open_one_reader(shard)
+                    readers[shard.db_id] = self._open_one_reader(shard, manifest)
         except Exception:
             for reader in readers.values():
                 try:

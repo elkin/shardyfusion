@@ -37,7 +37,9 @@ class _AsyncFakeReader:
 
 
 def _async_factory(stores: dict[str, dict[bytes, bytes]]):
-    async def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
+    async def factory(
+        *, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs
+    ):
         return _AsyncFakeReader(stores.get(db_url, {}))
 
     return factory
@@ -77,7 +79,11 @@ def _manifest(db_url: str, run_id: str = "run") -> ParsedManifest:
     )
     return ParsedManifest(
         required_build=required,
-        shards=[RequiredShardMeta(db_id=0, db_url=db_url, attempt=0, row_count=1)],
+        shards=[
+            RequiredShardMeta(
+                db_id=0, db_url=db_url, attempt=0, row_count=1, db_bytes=0
+            )
+        ],
         custom={},
     )
 

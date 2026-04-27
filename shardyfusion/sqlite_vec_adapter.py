@@ -27,7 +27,7 @@ import types
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 import numpy as np
 
@@ -35,8 +35,14 @@ from .config import VectorSpec
 from .credentials import CredentialProvider, S3Credentials
 from .errors import ConfigValidationError, ShardyfusionError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
+from .sqlite_adapter import (
+    DEFAULT_AUTO_PER_SHARD_THRESHOLD_BYTES,
+    DEFAULT_AUTO_TOTAL_BUDGET_BYTES,
+    SqliteAccessPolicy,
+    _ThresholdPolicy,
+)
 from .storage import create_s3_client, get_bytes, put_bytes
-from .type_defs import S3ConnectionOptions
+from .type_defs import Manifest, S3ConnectionOptions
 from .vector.types import SearchResult
 
 _logger = get_logger(__name__)
@@ -152,10 +158,11 @@ class SqliteVecAdapter:
         self._db_url = db_url
         self._local_dir = local_dir
         self._db_path = local_dir / _DB_FILENAME
-        self._vector_spec = vector_spec
+
         self._uploaded = False
         self._closed = False
         self._checkpointed = False
+        self._db_bytes = 0
         self._s3_conn_opts = s3_connection_options
         self._s3_creds: S3Credentials | None = (
             credential_provider.resolve() if credential_provider else None
@@ -318,6 +325,7 @@ class SqliteVecAdapter:
 
         with open(self._db_path, "rb") as f:
             file_hash = hashlib.file_digest(f, "sha256").hexdigest()
+        self._db_bytes = self._db_path.stat().st_size
         log_event(
             "sqlite_vec_adapter_checkpointed",
             level=logging.DEBUG,
@@ -326,6 +334,9 @@ class SqliteVecAdapter:
             checkpoint_id=file_hash,
         )
         return file_hash
+
+    def db_bytes(self) -> int:
+        return self._db_bytes
 
     def close(self) -> None:
         if self._closed:
@@ -391,7 +402,9 @@ class SqliteVecReaderFactory:
         local_dir: Path,
         checkpoint_id: str | None = None,
         index_config: Any | None = None,
+        manifest: Manifest | None = None,
     ) -> SqliteVecShardReader:
+        del manifest  # unused in concrete factory
         return SqliteVecShardReader(
             db_url=db_url,
             local_dir=local_dir,
@@ -462,52 +475,7 @@ class SqliteVecShardReader:
         """Vector similarity search via sqlite-vec."""
         if self._conn is None:
             raise SqliteVecAdapterError("Reader already closed")
-
-        query_bytes = query.astype(np.float32).tobytes()
-        rows = self._conn.execute(
-            "SELECT rowid, distance FROM vec_index WHERE embedding MATCH ? AND k = ?",
-            (query_bytes, top_k),
-        ).fetchall()
-
-        row_ids = [int(row_id) for row_id, _distance in rows]
-        id_map: dict[int, int | str] = {}
-        if row_ids:
-            placeholders = ",".join("?" for _ in row_ids)
-            try:
-                id_rows = self._conn.execute(
-                    f"SELECT internal_id, original_id FROM vec_id_map WHERE internal_id IN ({placeholders})",  # noqa: S608
-                    row_ids,
-                ).fetchall()
-            except sqlite3.OperationalError:
-                id_rows = []
-            for internal_id, original_id in id_rows:
-                id_map[int(internal_id)] = _decode_id_map_value(original_id)
-
-        payload_map: dict[int, dict[str, Any]] = {}
-        if row_ids:
-            placeholders = ",".join("?" for _ in row_ids)
-            payload_rows = self._conn.execute(
-                f"SELECT rowid, payload FROM vec_payloads WHERE rowid IN ({placeholders})",  # noqa: S608
-                row_ids,
-            ).fetchall()
-            payload_map = {
-                int(payload_row_id): json.loads(payload)
-                for payload_row_id, payload in payload_rows
-            }
-
-        results: list[SearchResult] = []
-        for row_id, distance in rows:
-            original_id = id_map.get(int(row_id), int(row_id))
-            payload = payload_map.get(int(row_id))
-
-            results.append(
-                SearchResult(
-                    id=original_id,
-                    score=float(distance),
-                    payload=payload,
-                )
-            )
-        return results
+        return _run_vec_search(self._conn, query, top_k)
 
     def close(self) -> None:
         if self._conn is not None:
@@ -541,7 +509,9 @@ class AsyncSqliteVecReaderFactory:
         local_dir: Path,
         checkpoint_id: str | None = None,
         index_config: Any | None = None,
+        manifest: Manifest | None = None,
     ) -> AsyncSqliteVecShardReader:
+        del manifest  # unused in concrete factory
         # Offload sync operations (download, connect, extension load) to thread
         sync_factory = SqliteVecReaderFactory(
             mmap_size=self.mmap_size,
@@ -631,3 +601,522 @@ def _is_cached_snapshot_current(
         )
     except (json.JSONDecodeError, OSError):
         return False
+
+
+# ---------------------------------------------------------------------------
+# Search helper (shared by download-and-cache and range-read tiers)
+# ---------------------------------------------------------------------------
+
+
+def _run_vec_search(
+    conn: Any,
+    query: np.ndarray,
+    top_k: int,
+) -> list[SearchResult]:
+    """Execute the sqlite-vec MATCH search against ``conn``.
+
+    ``conn`` may be a stdlib :class:`sqlite3.Connection` or an
+    :class:`apsw.Connection`; both expose ``execute(sql, params).fetchall()``.
+    """
+
+    query_bytes = query.astype(np.float32).tobytes()
+    rows = list(
+        conn.execute(
+            "SELECT rowid, distance FROM vec_index WHERE embedding MATCH ? AND k = ?",
+            (query_bytes, top_k),
+        )
+    )
+
+    row_ids = [int(row_id) for row_id, _distance in rows]
+    id_map: dict[int, int | str] = {}
+    if row_ids:
+        placeholders = ",".join("?" for _ in row_ids)
+        try:
+            id_rows = list(
+                conn.execute(
+                    f"SELECT internal_id, original_id FROM vec_id_map WHERE internal_id IN ({placeholders})",  # noqa: S608
+                    row_ids,
+                )
+            )
+        except Exception:
+            # Older snapshots may not have the vec_id_map table; fall back to
+            # using internal rowids as the surfaced id (matches stdlib path).
+            id_rows = []
+        for internal_id, original_id in id_rows:
+            id_map[int(internal_id)] = _decode_id_map_value(original_id)
+
+    payload_map: dict[int, dict[str, Any]] = {}
+    if row_ids:
+        placeholders = ",".join("?" for _ in row_ids)
+        payload_rows = list(
+            conn.execute(
+                f"SELECT rowid, payload FROM vec_payloads WHERE rowid IN ({placeholders})",  # noqa: S608
+                row_ids,
+            )
+        )
+        payload_map = {
+            int(payload_row_id): json.loads(payload)
+            for payload_row_id, payload in payload_rows
+        }
+
+    results: list[SearchResult] = []
+    for row_id, distance in rows:
+        original_id = id_map.get(int(row_id), int(row_id))
+        payload = payload_map.get(int(row_id))
+        results.append(
+            SearchResult(
+                id=original_id,
+                score=float(distance),
+                payload=payload,
+            )
+        )
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Reader: S3 range-read VFS (Tier 2, requires apsw + obstore)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class SqliteVecRangeReaderFactory:
+    """Picklable factory for the range-read sqlite-vec shard reader.
+
+    Requires ``apsw`` and ``obstore`` (bundled with the ``vector-sqlite`` extra).
+    """
+
+    page_cache_pages: int = 1024  # ~4 MB at 4 KB/page; 0 disables caching
+    s3_connection_options: S3ConnectionOptions | None = None
+    credential_provider: CredentialProvider | None = None
+
+    def __call__(
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None = None,
+        index_config: Any | None = None,
+        manifest: Manifest | None = None,
+    ) -> SqliteVecRangeShardReader:
+        del manifest  # unused in concrete factory
+        return SqliteVecRangeShardReader(
+            db_url=db_url,
+            local_dir=local_dir,
+            checkpoint_id=checkpoint_id,
+            page_cache_pages=self.page_cache_pages,
+            s3_connection_options=self.s3_connection_options,
+            credential_provider=self.credential_provider,
+        )
+
+
+class SqliteVecRangeShardReader:
+    """Range-read unified KV+vector reader: fetches only the SQLite pages
+    needed via S3 Range requests, with an LRU page cache.
+
+    Mirrors :class:`~shardyfusion.sqlite_adapter.SqliteRangeShardReader` but
+    additionally loads the ``sqlite-vec`` extension so vector ``MATCH``
+    queries work against ``vec_index``.
+
+    Requires ``apsw`` and ``obstore``.
+    """
+
+    def __init__(
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None = None,
+        page_cache_pages: int = 1024,
+        s3_connection_options: S3ConnectionOptions | None = None,
+        credential_provider: CredentialProvider | None = None,
+    ) -> None:
+        del local_dir, checkpoint_id  # range reader does not cache locally
+
+        try:
+            import apsw  # pyright: ignore[reportMissingImports]
+        except ImportError as exc:
+            raise SqliteVecAdapterError(
+                "apsw and obstore are required for the range-read sqlite-vec reader. "
+                "Install via: pip install 'shardyfusion[vector-sqlite]'"
+            ) from exc
+
+        try:
+            import sqlite_vec  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise SqliteVecAdapterError(_SQLITE_VEC_IMPORT_ERROR) from exc
+
+        from ._sqlite_vfs import S3ReadOnlyFile, S3VfsError, create_apsw_vfs
+        from .storage import parse_s3_url
+
+        self._db_url = db_url
+        self._conn: Any | None = None
+        self._vfs: Any | None = None
+
+        s3_key_full = f"{db_url.rstrip('/')}/{_DB_FILENAME}"
+        bucket, key = parse_s3_url(s3_key_full)
+        creds = credential_provider.resolve() if credential_provider else None
+
+        try:
+            self._s3_file = S3ReadOnlyFile(
+                bucket=bucket,
+                key=key,
+                page_cache_pages=page_cache_pages,
+                s3_connection_options=s3_connection_options,
+                s3_credentials=creds,
+            )
+        except S3VfsError as exc:
+            raise SqliteVecAdapterError(str(exc)) from exc
+
+        # Register a unique VFS name for this reader instance to avoid
+        # collisions between multiple concurrent readers.
+        import uuid
+
+        vfs_name = f"s3vec_range_{uuid.uuid4().hex}"
+        self._vfs = create_apsw_vfs(vfs_name, self._s3_file)
+        conn = apsw.Connection(
+            f"file:{_DB_FILENAME}?mode=ro",
+            flags=apsw.SQLITE_OPEN_READONLY | apsw.SQLITE_OPEN_URI,
+            vfs=vfs_name,
+        )
+        # Load the sqlite-vec extension on this connection.
+        conn.enable_load_extension(True)
+        conn.load_extension(sqlite_vec.loadable_path())
+        self._conn = conn
+
+    def get(self, key: bytes) -> bytes | None:
+        """KV point lookup."""
+        conn = self._conn
+        if conn is None:
+            raise SqliteVecAdapterError("Reader already closed")
+        cursor = conn.cursor()
+        cursor.execute("SELECT v FROM kv WHERE k = ?", (key,))
+        row = cursor.fetchone()
+        return row[0] if row else None
+
+    def search(
+        self,
+        query: np.ndarray,
+        top_k: int,
+    ) -> list[SearchResult]:
+        """Vector similarity search via sqlite-vec."""
+        conn = self._conn
+        if conn is None:
+            raise SqliteVecAdapterError("Reader already closed")
+        return _run_vec_search(conn, query, top_k)
+
+    def close(self) -> None:
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+        if self._vfs is not None:
+            self._vfs.unregister()
+            self._vfs = None
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+
+# ---------------------------------------------------------------------------
+# Reader: async range-read wrapper
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class AsyncSqliteVecRangeReaderFactory:
+    """Async factory for the range-read sqlite-vec shard reader.
+
+    Delegates to the synchronous :class:`SqliteVecRangeReaderFactory` and
+    runs the construction in :func:`asyncio.to_thread` to avoid blocking
+    the event loop on the initial S3 head/page reads.
+    """
+
+    page_cache_pages: int = 1024
+    s3_connection_options: S3ConnectionOptions | None = None
+    credential_provider: CredentialProvider | None = None
+
+    async def __call__(
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None = None,
+        index_config: Any | None = None,
+        manifest: Manifest | None = None,
+    ) -> AsyncSqliteVecRangeShardReader:
+        del manifest  # unused in concrete factory
+        sync_factory = SqliteVecRangeReaderFactory(
+            page_cache_pages=self.page_cache_pages,
+            s3_connection_options=self.s3_connection_options,
+            credential_provider=self.credential_provider,
+        )
+        inner = await asyncio.to_thread(
+            sync_factory,
+            db_url=db_url,
+            local_dir=local_dir,
+            checkpoint_id=checkpoint_id,
+            index_config=index_config,
+        )
+        return AsyncSqliteVecRangeShardReader(inner)
+
+
+class AsyncSqliteVecRangeShardReader:
+    """Async wrapper around :class:`SqliteVecRangeShardReader`.
+
+    All blocking SQLite/APSW calls are dispatched via
+    :func:`asyncio.to_thread`.  This wrapper does not guard against
+    concurrent ``close()`` and ``get()``/``search()`` calls.
+    """
+
+    def __init__(self, inner: SqliteVecRangeShardReader) -> None:
+        self._inner = inner
+
+    async def get(self, key: bytes) -> bytes | None:
+        return await asyncio.to_thread(self._inner.get, key)
+
+    async def search(
+        self,
+        query: np.ndarray,
+        top_k: int,
+    ) -> list[SearchResult]:
+        return await asyncio.to_thread(self._inner.search, query, top_k)
+
+    async def close(self) -> None:
+        await asyncio.to_thread(self._inner.close)
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
+
+
+# ---------------------------------------------------------------------------
+# Access-mode factory selectors
+# ---------------------------------------------------------------------------
+
+
+def make_sqlite_vec_reader_factory(
+    *,
+    mode: Literal["download", "range"],
+    mmap_size: int = 268_435_456,
+    page_cache_pages: int = 1024,
+    s3_connection_options: S3ConnectionOptions | None = None,
+    credential_provider: CredentialProvider | None = None,
+) -> SqliteVecReaderFactory | SqliteVecRangeReaderFactory:
+    """Build a sync sqlite-vec reader factory for a *concrete* access mode.
+
+    ``mode`` must be ``"download"`` or ``"range"``; ``"auto"`` is resolved
+    by the reader state builder before it calls this helper.
+    """
+
+    if mode == "download":
+        return SqliteVecReaderFactory(
+            mmap_size=mmap_size,
+            s3_connection_options=s3_connection_options,
+            credential_provider=credential_provider,
+        )
+    if mode == "range":
+        return SqliteVecRangeReaderFactory(
+            page_cache_pages=page_cache_pages,
+            s3_connection_options=s3_connection_options,
+            credential_provider=credential_provider,
+        )
+    raise SqliteVecAdapterError(
+        f"make_sqlite_vec_reader_factory: unsupported mode {mode!r}; "
+        "expected 'download' or 'range' (resolve 'auto' before calling)"
+    )
+
+
+def make_async_sqlite_vec_reader_factory(
+    *,
+    mode: Literal["download", "range"],
+    mmap_size: int = 268_435_456,
+    page_cache_pages: int = 1024,
+    s3_connection_options: S3ConnectionOptions | None = None,
+    credential_provider: CredentialProvider | None = None,
+) -> AsyncSqliteVecReaderFactory | AsyncSqliteVecRangeReaderFactory:
+    """Build an async sqlite-vec reader factory for a *concrete* access mode."""
+
+    if mode == "download":
+        return AsyncSqliteVecReaderFactory(
+            mmap_size=mmap_size,
+            s3_connection_options=s3_connection_options,
+            credential_provider=credential_provider,
+        )
+    if mode == "range":
+        return AsyncSqliteVecRangeReaderFactory(
+            page_cache_pages=page_cache_pages,
+            s3_connection_options=s3_connection_options,
+            credential_provider=credential_provider,
+        )
+    raise SqliteVecAdapterError(
+        f"make_async_sqlite_vec_reader_factory: unsupported mode {mode!r}; "
+        "expected 'download' or 'range' (resolve 'auto' before calling)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Adaptive (auto) factories
+# ---------------------------------------------------------------------------
+
+
+class AdaptiveSqliteVecReaderFactory:
+    """Sync sqlite-vec reader factory that auto-selects ``download`` vs ``range``.
+
+    Mirrors :class:`shardyfusion.sqlite_adapter.AdaptiveSqliteReaderFactory`:
+    on the first invocation for a given snapshot (keyed by
+    ``manifest.required_build.run_id``) it inspects every shard's
+    ``db_bytes`` and asks the configured :class:`SqliteAccessPolicy` for a
+    decision, then caches a concrete factory
+    (:class:`SqliteVecReaderFactory` or :class:`SqliteVecRangeReaderFactory`)
+    for all subsequent shards in the same snapshot.
+
+    The cache is a single slot: a new ``run_id`` replaces the previous
+    factory.  ``ShardedReader.refresh()`` rebuilds all shard readers, so any
+    retired sub-factory is dropped naturally.
+    """
+
+    __slots__ = (
+        "_policy",
+        "_mmap_size",
+        "_page_cache_pages",
+        "_s3_connection_options",
+        "_credential_provider",
+        "_cached_run_id",
+        "_cached_factory",
+    )
+
+    def __init__(
+        self,
+        *,
+        policy: SqliteAccessPolicy | None = None,
+        per_shard_threshold: int = DEFAULT_AUTO_PER_SHARD_THRESHOLD_BYTES,
+        total_budget: int = DEFAULT_AUTO_TOTAL_BUDGET_BYTES,
+        mmap_size: int = 268_435_456,
+        page_cache_pages: int = 1024,
+        s3_connection_options: S3ConnectionOptions | None = None,
+        credential_provider: CredentialProvider | None = None,
+    ) -> None:
+        self._policy: SqliteAccessPolicy = policy or _ThresholdPolicy(
+            per_shard_threshold=per_shard_threshold,
+            total_budget=total_budget,
+        )
+        self._mmap_size = mmap_size
+        self._page_cache_pages = page_cache_pages
+        self._s3_connection_options = s3_connection_options
+        self._credential_provider = credential_provider
+        self._cached_run_id: str | None = None
+        self._cached_factory: (
+            SqliteVecReaderFactory | SqliteVecRangeReaderFactory | None
+        ) = None
+
+    def _resolve_factory(
+        self, manifest: Manifest
+    ) -> SqliteVecReaderFactory | SqliteVecRangeReaderFactory:
+        run_id = manifest.required_build.run_id
+        if run_id == self._cached_run_id and self._cached_factory is not None:
+            return self._cached_factory
+        sizes = [shard.db_bytes for shard in manifest.shards]
+        mode = self._policy.decide(sizes)
+        factory = make_sqlite_vec_reader_factory(
+            mode=mode,
+            mmap_size=self._mmap_size,
+            page_cache_pages=self._page_cache_pages,
+            s3_connection_options=self._s3_connection_options,
+            credential_provider=self._credential_provider,
+        )
+        self._cached_run_id = run_id
+        self._cached_factory = factory
+        return factory
+
+    def __call__(
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None,
+        manifest: Manifest,
+    ) -> SqliteVecShardReader | SqliteVecRangeShardReader:
+        factory = self._resolve_factory(manifest)
+        return factory(
+            db_url=db_url,
+            local_dir=local_dir,
+            checkpoint_id=checkpoint_id,
+            manifest=manifest,
+        )
+
+
+class AsyncAdaptiveSqliteVecReaderFactory:
+    """Async counterpart of :class:`AdaptiveSqliteVecReaderFactory`."""
+
+    __slots__ = (
+        "_policy",
+        "_mmap_size",
+        "_page_cache_pages",
+        "_s3_connection_options",
+        "_credential_provider",
+        "_cached_run_id",
+        "_cached_factory",
+    )
+
+    def __init__(
+        self,
+        *,
+        policy: SqliteAccessPolicy | None = None,
+        per_shard_threshold: int = DEFAULT_AUTO_PER_SHARD_THRESHOLD_BYTES,
+        total_budget: int = DEFAULT_AUTO_TOTAL_BUDGET_BYTES,
+        mmap_size: int = 268_435_456,
+        page_cache_pages: int = 1024,
+        s3_connection_options: S3ConnectionOptions | None = None,
+        credential_provider: CredentialProvider | None = None,
+    ) -> None:
+        self._policy: SqliteAccessPolicy = policy or _ThresholdPolicy(
+            per_shard_threshold=per_shard_threshold,
+            total_budget=total_budget,
+        )
+        self._mmap_size = mmap_size
+        self._page_cache_pages = page_cache_pages
+        self._s3_connection_options = s3_connection_options
+        self._credential_provider = credential_provider
+        self._cached_run_id: str | None = None
+        self._cached_factory: (
+            AsyncSqliteVecReaderFactory | AsyncSqliteVecRangeReaderFactory | None
+        ) = None
+
+    def _resolve_factory(
+        self, manifest: Manifest
+    ) -> AsyncSqliteVecReaderFactory | AsyncSqliteVecRangeReaderFactory:
+        run_id = manifest.required_build.run_id
+        if run_id == self._cached_run_id and self._cached_factory is not None:
+            return self._cached_factory
+        sizes = [shard.db_bytes for shard in manifest.shards]
+        mode = self._policy.decide(sizes)
+        factory = make_async_sqlite_vec_reader_factory(
+            mode=mode,
+            mmap_size=self._mmap_size,
+            page_cache_pages=self._page_cache_pages,
+            s3_connection_options=self._s3_connection_options,
+            credential_provider=self._credential_provider,
+        )
+        self._cached_run_id = run_id
+        self._cached_factory = factory
+        return factory
+
+    async def __call__(
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None,
+        manifest: Manifest,
+    ) -> AsyncSqliteVecShardReader | AsyncSqliteVecRangeShardReader:
+        factory = self._resolve_factory(manifest)
+        return await factory(
+            db_url=db_url,
+            local_dir=local_dir,
+            checkpoint_id=checkpoint_id,
+            manifest=manifest,
+        )

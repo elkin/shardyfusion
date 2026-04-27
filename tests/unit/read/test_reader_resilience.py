@@ -92,6 +92,7 @@ def _manifest(db_url: str) -> ParsedManifest:
                 max_key=None,
                 checkpoint_id=None,
                 writer_info={},
+                db_bytes=0,
             )
         ],
         custom={},
@@ -99,7 +100,7 @@ def _manifest(db_url: str) -> ParsedManifest:
 
 
 def _fake_reader_factory(stores: dict[str, dict[bytes, bytes]]):
-    def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
+    def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs):
         return _FakeReader(stores[db_url])
 
     return factory
@@ -126,7 +127,7 @@ class TestPoolModePartialConstructionLeak:
                 close_count[0] += 1
 
         def failing_factory(
-            *, db_url: str, local_dir: Path, checkpoint_id: str | None
+            *, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs
         ) -> Any:
             open_count[0] += 1
             if open_count[0] == 3:

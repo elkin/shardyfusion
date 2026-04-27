@@ -229,6 +229,7 @@ def _stream_to_single_db(
     min_key: KeyInput | None = None
     max_key: KeyInput | None = None
     checkpoint_id: str | None = None
+    db_bytes = 0
 
     write_started = time.perf_counter()
 
@@ -270,6 +271,7 @@ def _stream_to_single_db(
 
             adapter.flush()
             checkpoint_id = adapter.checkpoint()
+            db_bytes = adapter.db_bytes() if hasattr(adapter, "db_bytes") else 0
     except ShardyfusionError:
         raise
     except Exception as exc:
@@ -299,5 +301,6 @@ def _stream_to_single_db(
             attempt=attempt,
             duration_ms=int((time.perf_counter() - write_started) * 1000),
         ),
+        db_bytes=db_bytes,
         all_attempt_urls=(*attempt_ctx.prior_attempt_urls, db_url),
     )

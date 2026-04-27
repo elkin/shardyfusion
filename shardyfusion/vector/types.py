@@ -11,6 +11,8 @@ import numpy as np
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from shardyfusion.type_defs import Manifest
+
     from .config import VectorIndexConfig
 
 
@@ -145,6 +147,8 @@ class VectorIndexWriter(Protocol):
 
     def checkpoint(self) -> str | None: ...
 
+    def db_bytes(self) -> int: ...
+
     def close(self) -> None: ...
 
     def __enter__(self) -> Self: ...
@@ -177,7 +181,12 @@ class VectorShardReader(Protocol):
 
 
 class VectorShardReaderFactory(Protocol):
-    """Factory for creating per-shard readers."""
+    """Factory for creating per-shard readers.
+
+    The ``manifest`` argument carries the full parsed manifest for the
+    snapshot, mirroring :class:`shardyfusion.type_defs.ShardReaderFactory`.
+    Concrete factories that do not need it should accept and ignore it.
+    """
 
     def __call__(
         self,
@@ -185,6 +194,7 @@ class VectorShardReaderFactory(Protocol):
         db_url: str,
         local_dir: Path,
         index_config: VectorIndexConfig,
+        manifest: Manifest,
     ) -> VectorShardReader: ...
 
 
@@ -201,7 +211,10 @@ class AsyncVectorShardReader(Protocol):
 
 
 class AsyncVectorShardReaderFactory(Protocol):
-    """Factory for creating async per-shard readers."""
+    """Factory for creating async per-shard readers.
+
+    See :class:`VectorShardReaderFactory` for the role of ``manifest``.
+    """
 
     async def __call__(
         self,
@@ -209,4 +222,5 @@ class AsyncVectorShardReaderFactory(Protocol):
         db_url: str,
         local_dir: Path,
         index_config: VectorIndexConfig,
+        manifest: Manifest,
     ) -> AsyncVectorShardReader: ...

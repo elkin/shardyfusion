@@ -515,6 +515,7 @@ def _shard_worker(
     min_key: KeyInput | None = None
     max_key: KeyInput | None = None
     checkpoint_id: str | None = None
+    db_bytes = 0
 
     try:
         with factory(db_url=db_url, local_dir=local_dir) as adapter:
@@ -546,6 +547,7 @@ def _shard_worker(
 
             adapter.flush()
             checkpoint_id = adapter.checkpoint()
+            db_bytes = adapter.db_bytes() if hasattr(adapter, "db_bytes") else 0
     except Exception as exc:
         log_failure(
             "python_shard_worker_failed",
@@ -567,6 +569,7 @@ def _shard_worker(
             max_key=max_key,
             checkpoint_id=checkpoint_id,
             writer_info=WriterInfo(attempt=attempt),
+            db_bytes=db_bytes,
         )
     )
 
@@ -601,6 +604,7 @@ def _file_shard_worker(
 
     row_count = 0
     checkpoint_id: str | None = None
+    db_bytes = 0
     started = time.perf_counter()
 
     first_chunk = queue.get()
@@ -618,6 +622,7 @@ def _file_shard_worker(
                     attempt=attempt,
                     duration_ms=int((time.perf_counter() - started) * 1000),
                 ),
+                db_bytes=0,
             )
         )
         return
@@ -652,6 +657,7 @@ def _file_shard_worker(
 
             adapter.flush()
             checkpoint_id = adapter.checkpoint()
+            db_bytes = adapter.db_bytes() if hasattr(adapter, "db_bytes") else 0
     except ShardyfusionError as exc:
         log_failure(
             "python_file_spool_worker_failed",
@@ -696,6 +702,7 @@ def _file_shard_worker(
                 attempt=attempt,
                 duration_ms=int((time.perf_counter() - started) * 1000),
             ),
+            db_bytes=db_bytes,
         )
     )
 

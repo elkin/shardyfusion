@@ -629,6 +629,9 @@ class TestWriteShardWithRetryDistributed:
             def checkpoint(self) -> str:
                 return "ckpt"
 
+            def db_bytes(self) -> int:
+                return 0
+
         with patch("shardyfusion._shard_writer.TokenBucket", _TokenBucketStub):
             result = write_shard_with_retry_distributed(
                 db_id=0,

@@ -218,6 +218,7 @@ def write_shard_core(
 
             adapter.flush()
             checkpoint_id = adapter.checkpoint()
+            db_bytes = adapter.db_bytes() if hasattr(adapter, "db_bytes") else 0
     except ShardyfusionError:
         raise
     except Exception as exc:
@@ -274,6 +275,7 @@ def write_shard_core(
         max_key=max_key,
         checkpoint_id=checkpoint_id,
         writer_info=info,
+        db_bytes=db_bytes,
         all_attempt_urls=(*prior_attempt_urls, params.db_url),
     )
 
@@ -367,6 +369,7 @@ def write_shard_core_distributed(
             _flush_vector_batch(vector_ids, vector_data, vector_payloads, adapter)
             adapter.flush()
             checkpoint_id = adapter.checkpoint()
+            db_bytes = adapter.db_bytes() if hasattr(adapter, "db_bytes") else 0
     except ShardyfusionError:
         raise
     except Exception as exc:
@@ -390,6 +393,7 @@ def write_shard_core_distributed(
         max_key=max_key,
         checkpoint_id=checkpoint_id,
         writer_info=info,
+        db_bytes=db_bytes,
         all_attempt_urls=(*prior_attempt_urls, params.db_url),
     )
 
@@ -698,6 +702,7 @@ def results_pdf_to_attempts(
                 max_key=max_key,
                 checkpoint_id=None if checkpoint_id is None else str(checkpoint_id),
                 writer_info=r["writer_info"],
+                db_bytes=int(r["db_bytes"]) if "db_bytes" in r.index else 0,
                 all_attempt_urls=normalized_attempt_urls,
             )
         )

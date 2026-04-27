@@ -64,6 +64,7 @@ def test_s3_manifest_store_builds_expected_urls(monkeypatch) -> None:
             row_count=10,
             checkpoint_id=None,
             writer_info={},
+            db_bytes=0,
         ),
     ]
 

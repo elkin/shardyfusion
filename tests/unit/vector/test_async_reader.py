@@ -44,7 +44,7 @@ class MockAsyncReaderFactory:
         self.created: dict[str, MockAsyncShardReader] = {}
 
     async def __call__(
-        self, *, db_url: str, local_dir: Path, index_config: Any
+        self, *, db_url: str, local_dir: Path, index_config: Any, **_kwargs
     ) -> MockAsyncShardReader:
         shard_id = len(self.created)
         reader = MockAsyncShardReader(shard_id, self._num_results)

@@ -360,6 +360,7 @@ class TestReaderCelSearch:
                 attempt=0,
                 row_count=100,
                 writer_info=WriterInfo(),
+                db_bytes=0,
             )
             for i in range(3)
         ]
@@ -434,7 +435,7 @@ class TestReaderCelSearch:
                 self.created = {}
                 self._counter = 0
 
-            def __call__(self, *, db_url, local_dir, index_config):
+            def __call__(self, *, db_url, local_dir, index_config, **_kwargs):
                 reader = MockShardReader(self._counter)
                 self._counter += 1
                 self.created[db_url] = reader

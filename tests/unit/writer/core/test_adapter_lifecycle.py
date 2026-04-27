@@ -44,6 +44,9 @@ class _FlushFailAdapter:
     def checkpoint(self) -> str:
         return "ckpt"
 
+    def db_bytes(self) -> int:
+        return 0
+
 
 class _BadCheckpointAdapter:
     """Adapter whose checkpoint() returns None."""
@@ -66,6 +69,9 @@ class _BadCheckpointAdapter:
     def checkpoint(self) -> str | None:
         return None
 
+    def db_bytes(self) -> int:
+        return 0
+
 
 class _ExitFailAdapter:
     """Adapter whose __exit__ raises."""
@@ -87,6 +93,9 @@ class _ExitFailAdapter:
 
     def checkpoint(self) -> str:
         return "ckpt"
+
+    def db_bytes(self) -> int:
+        return 0
 
 
 class _FactoryFailFactory:

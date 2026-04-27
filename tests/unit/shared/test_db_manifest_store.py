@@ -105,6 +105,7 @@ def _sqlite_ddl_fixup(store: PostgresManifestStore) -> None:
         f"  db_url        TEXT,"
         f"  attempt       INTEGER NOT NULL DEFAULT 0,"
         f"  row_count     INTEGER NOT NULL DEFAULT 0,"
+        f"  db_bytes      INTEGER NOT NULL DEFAULT 0,"
         f"  checkpoint_id TEXT,"
         f"  min_key       TEXT,"
         f"  max_key       TEXT,"
@@ -188,6 +189,7 @@ def _shard(
         max_key=max_key,
         checkpoint_id=f"chk-{db_id}",
         writer_info=writer_info or WriterInfo(),
+        db_bytes=0,
     )
 
 

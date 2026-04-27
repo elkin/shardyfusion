@@ -45,6 +45,10 @@ class DbAdapter(Protocol):
         """Create a durable checkpoint if supported."""
         ...
 
+    def db_bytes(self) -> int:
+        """Return the materialized shard size in bytes (0 if unknown)."""
+        ...
+
     def close(self) -> None:
         """Close DB handle if supported."""
         ...
@@ -169,6 +173,11 @@ class DefaultSlateDbAdapter:
             checkpoint_id=checkpoint_id,
         )
         return checkpoint_id
+
+    def db_bytes(self) -> int:
+        # SlateDB checkpoints live in S3; materialized size is unknown to the
+        # writer. Auto SQLite access policies do not consult SlateDB sizes.
+        return 0
 
     def close(self) -> None:
         try:

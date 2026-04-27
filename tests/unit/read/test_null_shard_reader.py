@@ -90,6 +90,7 @@ def _manifest_with_empty_shard() -> ParsedManifest:
                 min_key=0,
                 max_key=4,
                 checkpoint_id="ckpt-0",
+                db_bytes=0,
             ),
         ],
         custom={},
@@ -97,7 +98,7 @@ def _manifest_with_empty_shard() -> ParsedManifest:
 
 
 def _fake_reader_factory(stores: dict[str, dict[bytes, bytes]]):
-    def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
+    def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs):
         return _FakeReader(stores[db_url])
 
     return factory
@@ -157,7 +158,7 @@ class TestShardedReaderNullShards:
         factory_calls: list[str] = []
 
         def tracking_factory(
-            *, db_url: str, local_dir: Path, checkpoint_id: str | None
+            *, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs
         ):
             factory_calls.append(db_url)
             return _FakeReader({})
@@ -245,12 +246,14 @@ class TestManifestSparseShards:
                 db_url="s3://bucket/prefix/db=00000",
                 attempt=0,
                 row_count=5,
+                db_bytes=0,
             ),
             RequiredShardMeta(
                 db_id=2,
                 db_url="s3://bucket/prefix/db=00002",
                 attempt=0,
                 row_count=3,
+                db_bytes=0,
             ),
         ]
 

@@ -80,7 +80,7 @@ class _FakeReader:
 def _fake_reader_factory(stores: dict[str, dict[bytes, bytes]]):
     """Return a ShardReaderFactory that routes db_url → in-memory store."""
 
-    def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
+    def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs):
         _ = (local_dir, checkpoint_id)
         return _FakeReader(stores[db_url])
 
@@ -117,6 +117,7 @@ def _manifest(db_url: str) -> ParsedManifest:
                 max_key=None,
                 checkpoint_id=None,
                 writer_info={},
+                db_bytes=0,
             )
         ],
         custom={},
@@ -187,6 +188,7 @@ def test_slate_db_reader_factory_uses_official_slatedbreader_signature(
         db_url="s3://bucket/db",
         local_dir=Path("/tmp/local"),
         checkpoint_id="ckpt-1",
+        manifest=None,  # type: ignore[arg-type]
     )
 
     assert reader is sentinel
@@ -241,7 +243,9 @@ def test_closed_reader_get_raises_reader_state_error(tmp_path) -> None:
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_store=manifest_store,
-        reader_factory=lambda *, db_url, local_dir, checkpoint_id: _FakeReader({}),
+        reader_factory=lambda *, db_url, local_dir, checkpoint_id, **_kwargs: (
+            _FakeReader({})
+        ),
     )
     reader.close()
 
@@ -257,7 +261,9 @@ def test_closed_reader_refresh_raises_reader_state_error(tmp_path) -> None:
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_store=manifest_store,
-        reader_factory=lambda *, db_url, local_dir, checkpoint_id: _FakeReader({}),
+        reader_factory=lambda *, db_url, local_dir, checkpoint_id, **_kwargs: (
+            _FakeReader({})
+        ),
     )
     reader.close()
 
@@ -273,7 +279,9 @@ def test_context_manager_returns_self_and_calls_close(tmp_path) -> None:
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_store=manifest_store,
-        reader_factory=lambda *, db_url, local_dir, checkpoint_id: _FakeReader({}),
+        reader_factory=lambda *, db_url, local_dir, checkpoint_id, **_kwargs: (
+            _FakeReader({})
+        ),
     )
 
     with reader as ctx:
@@ -312,6 +320,7 @@ def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
                 max_key=None,
                 checkpoint_id=None,
                 writer_info={},
+                db_bytes=0,
             ),
             RequiredShardMeta(
                 db_id=1,
@@ -322,6 +331,7 @@ def _manifest_2shard(db_url_0: str, db_url_1: str) -> ParsedManifest:
                 max_key=None,
                 checkpoint_id=None,
                 writer_info={},
+                db_bytes=0,
             ),
         ],
         custom={},
@@ -345,7 +355,9 @@ def test_multi_get_shard_failure_raises_slate_db_api_error(tmp_path) -> None:
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_store=manifest_store,
-        reader_factory=lambda *, db_url, local_dir, checkpoint_id: _BrokenReader(),
+        reader_factory=lambda *, db_url, local_dir, checkpoint_id, **_kwargs: (
+            _BrokenReader()
+        ),
         max_workers=2,
     ) as reader:
         # key=1 routes to shard 0, key=6 routes to shard 1 via xxh3 → both shards in executor
@@ -523,7 +535,9 @@ def test_sharded_reader_close_prevents_get(tmp_path) -> None:
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_store=manifest_store,
-        reader_factory=lambda *, db_url, local_dir, checkpoint_id: _FakeReader({}),
+        reader_factory=lambda *, db_url, local_dir, checkpoint_id, **_kwargs: (
+            _FakeReader({})
+        ),
     )
     reader.close()
 
@@ -539,7 +553,9 @@ def test_sharded_reader_close_prevents_refresh(tmp_path) -> None:
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_store=manifest_store,
-        reader_factory=lambda *, db_url, local_dir, checkpoint_id: _FakeReader({}),
+        reader_factory=lambda *, db_url, local_dir, checkpoint_id, **_kwargs: (
+            _FakeReader({})
+        ),
     )
     reader.close()
 
@@ -555,7 +571,9 @@ def test_sharded_reader_context_manager(tmp_path) -> None:
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_store=manifest_store,
-        reader_factory=lambda *, db_url, local_dir, checkpoint_id: _FakeReader({}),
+        reader_factory=lambda *, db_url, local_dir, checkpoint_id, **_kwargs: (
+            _FakeReader({})
+        ),
     )
 
     with reader as ctx:
@@ -650,7 +668,9 @@ def test_sharded_reader_multi_get_shard_failure(tmp_path) -> None:
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_store=manifest_store,
-        reader_factory=lambda *, db_url, local_dir, checkpoint_id: _BrokenReader(),
+        reader_factory=lambda *, db_url, local_dir, checkpoint_id, **_kwargs: (
+            _BrokenReader()
+        ),
         max_workers=2,
     ) as reader:
         with pytest.raises(DbAdapterError, match="db_id="):
@@ -1052,8 +1072,8 @@ def test_concurrent_reader_serialized_refresh_cleans_up(tmp_path) -> None:
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_store=manifest_store,
-        reader_factory=lambda *, db_url, local_dir, checkpoint_id: _TrackingReader(
-            db_url
+        reader_factory=lambda *, db_url, local_dir, checkpoint_id, **_kwargs: (
+            _TrackingReader(db_url)
         ),
     )
     assert reader._state.manifest_ref == "mem://manifest/v1"
@@ -1128,7 +1148,9 @@ def test_concurrent_metadata_methods_raise_when_closed(tmp_path) -> None:
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_store=manifest_store,
-        reader_factory=lambda *, db_url, local_dir, checkpoint_id: _FakeReader({}),
+        reader_factory=lambda *, db_url, local_dir, checkpoint_id, **_kwargs: (
+            _FakeReader({})
+        ),
     )
     reader.close()
 
@@ -1170,7 +1192,9 @@ def test_pool_checkout_timeout_raises(tmp_path) -> None:
         s3_prefix="s3://bucket/prefix",
         local_root=str(tmp_path),
         manifest_store=manifest_store,
-        reader_factory=lambda *, db_url, local_dir, checkpoint_id: _SlowReader(),
+        reader_factory=lambda *, db_url, local_dir, checkpoint_id, **_kwargs: (
+            _SlowReader()
+        ),
         thread_safety="pool",
         pool_checkout_timeout=timedelta(seconds=0.1),
         max_workers=1,

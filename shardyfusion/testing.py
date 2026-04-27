@@ -57,6 +57,9 @@ class FakeSlateDbAdapter:
     def checkpoint(self) -> str | None:
         return "fake-checkpoint"
 
+    def db_bytes(self) -> int:
+        return 0
+
     def close(self) -> None:
         return None
 
@@ -127,6 +130,9 @@ class FileBackedSlateDbAdapter:
 
     def checkpoint(self) -> str | None:
         return "file-backed-checkpoint"
+
+    def db_bytes(self) -> int:
+        return 0
 
     def close(self) -> None:
         return None
@@ -267,6 +273,9 @@ class RealSlateDbFileAdapter:
         checkpoint = self._db.create_checkpoint(scope="durable")
         return checkpoint["id"]
 
+    def db_bytes(self) -> int:
+        return 0
+
     def close(self) -> None:
         self._db.close()
 
@@ -358,6 +367,9 @@ class _FailOnceAdapter:
 
     def checkpoint(self) -> str | None:
         return self._inner.checkpoint()
+
+    def db_bytes(self) -> int:
+        return self._inner.db_bytes() if hasattr(self._inner, "db_bytes") else 0
 
     def close(self) -> None:
         self._inner.close()

@@ -65,6 +65,9 @@ class _TrackingAdapter:
     def checkpoint(self) -> str | None:
         return "fake-checkpoint"
 
+    def db_bytes(self) -> int:
+        return 0
+
     def close(self) -> None:
         self.closed = True
 

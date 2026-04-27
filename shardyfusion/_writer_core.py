@@ -79,6 +79,7 @@ class ShardAttemptResult:
     max_key: KeyInput | None
     checkpoint_id: str | None
     writer_info: WriterInfo
+    db_bytes: int = 0
     all_attempt_urls: tuple[str, ...] = ()
 
 
@@ -95,6 +96,7 @@ def empty_shard_result(
         max_key=None,
         checkpoint_id=None,
         writer_info=writer_info or WriterInfo(),
+        db_bytes=0,
         all_attempt_urls=(),
     )
 
@@ -354,6 +356,7 @@ def select_winners(
                 max_key=winner.max_key,
                 checkpoint_id=winner.checkpoint_id,
                 writer_info=winner.writer_info,
+                db_bytes=winner.db_bytes,
             )
         )
 
@@ -795,7 +798,8 @@ def manifest_safe_sharding(sharding: ShardingSpec) -> ManifestShardingSpec:
 
 
 def _manifest_format_version_for_sharding(sharding: ShardingSpec) -> int:
-    return 3 if sharding.routing_values is not None else 2
+    del sharding  # All snapshots use the unified format_version=4
+    return 4
 
 
 def update_min_max(

@@ -106,6 +106,7 @@ def _manifest() -> ParsedManifest:
                 max_key=None,
                 checkpoint_id=None,
                 writer_info={},
+                db_bytes=0,
             )
         ],
         custom={},
@@ -113,7 +114,9 @@ def _manifest() -> ParsedManifest:
 
 
 def _make_factory(stores: dict[str, dict[bytes, bytes]]) -> Any:
-    def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None) -> Any:
+    def factory(
+        *, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs
+    ) -> Any:
         return _FakeReader(stores[db_url])
 
     return factory
@@ -282,7 +285,7 @@ class _AsyncStaticManifestStore:
 
 def _make_async_factory(stores: dict[str, dict[bytes, bytes]]) -> Any:
     async def factory(
-        *, db_url: str, local_dir: Path, checkpoint_id: str | None
+        *, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs
     ) -> Any:
         return _FakeAsyncReader(stores[db_url])
 

@@ -23,6 +23,7 @@ from shardyfusion.sharding_types import (
     ShardingStrategy,
 )
 from shardyfusion.type_defs import (
+    Manifest,
     ShardReader,
 )
 
@@ -88,7 +89,12 @@ class SlateDbReaderFactory:
     credential_provider: CredentialProvider | None = None
 
     def __call__(
-        self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None,
+        manifest: Manifest,
     ) -> ShardReader:
         try:
             reader_cls = get_slatedb_reader_class()

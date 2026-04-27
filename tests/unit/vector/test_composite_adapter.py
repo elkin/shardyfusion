@@ -51,6 +51,9 @@ class FakeKvAdapter:
         self.checkpointed = True
         return "kv-ckpt-abc"
 
+    def db_bytes(self) -> int:
+        return 0
+
     def close(self) -> None:
         self.closed = True
 
@@ -84,6 +87,9 @@ class FakeVectorWriter:
     def checkpoint(self) -> str | None:
         self.checkpointed = True
         return "vec-ckpt-xyz"
+
+    def db_bytes(self) -> int:
+        return 0
 
     def close(self) -> None:
         self.closed = True
@@ -311,7 +317,7 @@ class TestCompositeFactory:
             return FakeKvAdapter()
 
         def vec_factory(
-            *, db_url: str, local_dir: Path, index_config: Any
+            *, db_url: str, local_dir: Path, index_config: Any, **_kwargs
         ) -> FakeVectorWriter:
             vec_created.append(
                 {"db_url": db_url, "local_dir": local_dir, "config": index_config}
@@ -343,12 +349,16 @@ class TestCompositeReaderFactory:
         from shardyfusion.composite_adapter import CompositeReaderFactory
 
         def kv_factory(
-            *, db_url: str, local_dir: Path, checkpoint_id: str | None = None
+            *,
+            db_url: str,
+            local_dir: Path,
+            checkpoint_id: str | None = None,
+            **_kwargs: Any,
         ) -> FakeKvReader:
             return FakeKvReader({b"k": b"v"})
 
         def vec_factory(
-            *, db_url: str, local_dir: Path, index_config: Any
+            *, db_url: str, local_dir: Path, index_config: Any, **_kwargs
         ) -> FakeVectorReader:
             return FakeVectorReader([SearchResult(id=1, score=0.5)])
 
@@ -364,6 +374,7 @@ class TestCompositeReaderFactory:
             db_url="s3://bucket/shard",
             local_dir=tmp_path,
             checkpoint_id="abc",
+            manifest=None,  # type: ignore[arg-type]
         )
 
         assert isinstance(reader, CompositeShardReader)
@@ -417,13 +428,17 @@ class TestAsyncCompositeReaderFactory:
         vec_created: list[dict[str, Any]] = []
 
         async def kv_factory(
-            *, db_url: str, local_dir: Path, checkpoint_id: str | None = None
+            *,
+            db_url: str,
+            local_dir: Path,
+            checkpoint_id: str | None = None,
+            **_kwargs: Any,
         ) -> FakeAsyncKvReader:
             kv_created.append({"db_url": db_url, "local_dir": local_dir})
             return FakeAsyncKvReader({b"k": b"v"})
 
         async def vec_factory(
-            *, db_url: str, local_dir: Path, index_config: Any
+            *, db_url: str, local_dir: Path, index_config: Any, **_kwargs
         ) -> FakeAsyncVectorReader:
             vec_created.append(
                 {"db_url": db_url, "local_dir": local_dir, "config": index_config}
@@ -439,7 +454,10 @@ class TestAsyncCompositeReaderFactory:
             vector_spec=vs,
         )
         reader = await factory(
-            db_url="s3://bucket/shard", local_dir=tmp_path, checkpoint_id="abc"
+            db_url="s3://bucket/shard",
+            local_dir=tmp_path,
+            checkpoint_id="abc",
+            manifest=None,  # type: ignore[arg-type]
         )
 
         from shardyfusion.composite_adapter import AsyncCompositeShardReader

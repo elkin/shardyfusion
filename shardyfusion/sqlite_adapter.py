@@ -22,17 +22,17 @@ import json
 import logging
 import sqlite3
 import types
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Literal, Protocol, Self, runtime_checkable
 
 from ._sqlite_vfs import S3ReadOnlyFile, S3VfsError, create_apsw_vfs
 from .credentials import CredentialProvider, S3Credentials
 from .errors import ShardyfusionError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
 from .storage import create_s3_client, get_bytes, put_bytes
-from .type_defs import S3ConnectionOptions
+from .type_defs import Manifest, S3ConnectionOptions
 
 _logger = get_logger(__name__)
 
@@ -101,6 +101,7 @@ class SqliteAdapter:
         self._uploaded = False
         self._closed = False
         self._checkpointed = False
+        self._db_bytes = 0
         self._s3_conn_opts = s3_connection_options
         self._s3_creds: S3Credentials | None = (
             credential_provider.resolve() if credential_provider else None
@@ -162,6 +163,7 @@ class SqliteAdapter:
 
         with open(self._db_path, "rb") as f:
             file_hash = hashlib.file_digest(f, "sha256").hexdigest()
+        self._db_bytes = self._db_path.stat().st_size
         log_event(
             "sqlite_adapter_checkpointed",
             level=logging.DEBUG,
@@ -170,6 +172,9 @@ class SqliteAdapter:
             checkpoint_id=file_hash,
         )
         return file_hash
+
+    def db_bytes(self) -> int:
+        return self._db_bytes
 
     def close(self) -> None:
         if self._closed:
@@ -236,8 +241,14 @@ class SqliteReaderFactory:
     credential_provider: CredentialProvider | None = None
 
     def __call__(
-        self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None,
+        manifest: Manifest,
     ) -> SqliteShardReader:
+        del manifest  # unused in concrete factory
         return SqliteShardReader(
             db_url=db_url,
             local_dir=local_dir,
@@ -340,8 +351,14 @@ class AsyncSqliteReaderFactory:
     credential_provider: CredentialProvider | None = None
 
     async def __call__(
-        self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None,
+        manifest: Manifest,
     ) -> AsyncSqliteShardReader:
+        del manifest  # unused in concrete factory
         inner = await asyncio.to_thread(
             SqliteShardReader,
             db_url=db_url,
@@ -392,8 +409,14 @@ class SqliteRangeReaderFactory:
     credential_provider: CredentialProvider | None = None
 
     def __call__(
-        self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None,
+        manifest: Manifest,
     ) -> SqliteRangeShardReader:
+        del manifest  # unused in concrete factory
         return SqliteRangeShardReader(
             db_url=db_url,
             local_dir=local_dir,
@@ -497,8 +520,14 @@ class AsyncSqliteRangeReaderFactory:
     credential_provider: CredentialProvider | None = None
 
     async def __call__(
-        self, *, db_url: str, local_dir: Path, checkpoint_id: str | None
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None,
+        manifest: Manifest,
     ) -> AsyncSqliteRangeShardReader:
+        del manifest  # unused in concrete factory
         inner = await asyncio.to_thread(
             SqliteRangeShardReader,
             db_url=db_url,
@@ -527,3 +556,328 @@ class AsyncSqliteRangeShardReader:
 
     async def close(self) -> None:
         await asyncio.to_thread(self._inner.close)
+
+
+# ---------------------------------------------------------------------------
+# Access-mode policy + factory selectors
+# ---------------------------------------------------------------------------
+
+
+SqliteAccessMode = Literal["download", "range", "auto"]
+"""User-facing SQLite shard access mode.
+
+"download" downloads each shard file once and serves all lookups locally
+(cheap RAM/disk, expensive cold start).  "range" opens shards via the
+APSW range-read VFS, fetching only the SQLite pages needed (cheap cold
+start, more S3 GETs).  "auto" picks one of the two per snapshot based on
+the published ``db_bytes`` distribution; see :func:`decide_access_mode`.
+"""
+
+
+# Default thresholds for ``auto`` resolution (used by readers when no
+# explicit value is provided).
+DEFAULT_AUTO_PER_SHARD_THRESHOLD_BYTES = 16 * 1024 * 1024  # 16 MiB
+DEFAULT_AUTO_TOTAL_BUDGET_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB
+
+
+def decide_access_mode(
+    *,
+    db_bytes_per_shard: Sequence[int],
+    per_shard_threshold: int = DEFAULT_AUTO_PER_SHARD_THRESHOLD_BYTES,
+    total_budget: int = DEFAULT_AUTO_TOTAL_BUDGET_BYTES,
+) -> Literal["download", "range"]:
+    """Decide between ``download`` and ``range`` for a snapshot.
+
+    Returns ``"range"`` when *any* shard exceeds ``per_shard_threshold`` or
+    the *cumulative* size exceeds ``total_budget``; otherwise ``"download"``.
+
+    The two thresholds protect distinct cost dimensions:
+
+    * ``per_shard_threshold`` — guards against a single oversized shard
+      blowing local disk on cold start.
+    * ``total_budget`` — guards against many small shards summing to a huge
+      working set when the reader holds them all simultaneously.
+
+    Args:
+        db_bytes_per_shard: Sequence of shard sizes in bytes (typically from
+            ``RequiredShardMeta.db_bytes`` for every shard in the manifest).
+            Empty input → ``"download"`` (no data to motivate ranged reads).
+        per_shard_threshold: Maximum allowed individual shard size before
+            switching to range-read.  Defaults to 16 MiB.
+        total_budget: Maximum allowed cumulative shard footprint before
+            switching to range-read.  Defaults to 2 GiB.
+    """
+
+    if not db_bytes_per_shard:
+        return "download"
+    if max(db_bytes_per_shard) >= per_shard_threshold:
+        return "range"
+    if sum(db_bytes_per_shard) >= total_budget:
+        return "range"
+    return "download"
+
+
+@runtime_checkable
+class SqliteAccessPolicy(Protocol):
+    """Library-only hook for advanced ``auto`` overrides.
+
+    Implementations receive the snapshot's per-shard byte sizes and return
+    ``"download"`` or ``"range"``.  Used by reader state builders when the
+    user supplies a custom policy instead of the default thresholds.
+    """
+
+    def decide(
+        self, db_bytes_per_shard: Sequence[int]
+    ) -> Literal["download", "range"]: ...
+
+
+@dataclass(slots=True)
+class _ThresholdPolicy:
+    """Default :class:`SqliteAccessPolicy` backed by :func:`decide_access_mode`."""
+
+    per_shard_threshold: int = DEFAULT_AUTO_PER_SHARD_THRESHOLD_BYTES
+    total_budget: int = DEFAULT_AUTO_TOTAL_BUDGET_BYTES
+
+    def decide(self, db_bytes_per_shard: Sequence[int]) -> Literal["download", "range"]:
+        return decide_access_mode(
+            db_bytes_per_shard=db_bytes_per_shard,
+            per_shard_threshold=self.per_shard_threshold,
+            total_budget=self.total_budget,
+        )
+
+
+def make_threshold_policy(
+    *,
+    per_shard_threshold: int = DEFAULT_AUTO_PER_SHARD_THRESHOLD_BYTES,
+    total_budget: int = DEFAULT_AUTO_TOTAL_BUDGET_BYTES,
+) -> SqliteAccessPolicy:
+    """Construct a default threshold-based :class:`SqliteAccessPolicy`."""
+
+    return _ThresholdPolicy(
+        per_shard_threshold=per_shard_threshold,
+        total_budget=total_budget,
+    )
+
+
+def make_sqlite_reader_factory(
+    *,
+    mode: Literal["download", "range"],
+    mmap_size: int = 268435456,
+    page_cache_pages: int = 1024,
+    s3_connection_options: S3ConnectionOptions | None = None,
+    credential_provider: CredentialProvider | None = None,
+) -> SqliteReaderFactory | SqliteRangeReaderFactory:
+    """Build a sync SQLite reader factory for a *concrete* access mode.
+
+    ``mode`` must be ``"download"`` or ``"range"``; ``"auto"`` is resolved
+    by the reader state builder before it calls this helper.
+    """
+
+    if mode == "download":
+        return SqliteReaderFactory(
+            mmap_size=mmap_size,
+            s3_connection_options=s3_connection_options,
+            credential_provider=credential_provider,
+        )
+    if mode == "range":
+        return SqliteRangeReaderFactory(
+            page_cache_pages=page_cache_pages,
+            s3_connection_options=s3_connection_options,
+            credential_provider=credential_provider,
+        )
+    raise SqliteAdapterError(
+        f"make_sqlite_reader_factory: unsupported mode {mode!r}; "
+        "expected 'download' or 'range' (resolve 'auto' before calling)"
+    )
+
+
+def make_async_sqlite_reader_factory(
+    *,
+    mode: Literal["download", "range"],
+    mmap_size: int = 268435456,
+    page_cache_pages: int = 1024,
+    s3_connection_options: S3ConnectionOptions | None = None,
+    credential_provider: CredentialProvider | None = None,
+) -> AsyncSqliteReaderFactory | AsyncSqliteRangeReaderFactory:
+    """Build an async SQLite reader factory for a *concrete* access mode."""
+
+    if mode == "download":
+        return AsyncSqliteReaderFactory(
+            mmap_size=mmap_size,
+            s3_connection_options=s3_connection_options,
+            credential_provider=credential_provider,
+        )
+    if mode == "range":
+        return AsyncSqliteRangeReaderFactory(
+            page_cache_pages=page_cache_pages,
+            s3_connection_options=s3_connection_options,
+            credential_provider=credential_provider,
+        )
+    raise SqliteAdapterError(
+        f"make_async_sqlite_reader_factory: unsupported mode {mode!r}; "
+        "expected 'download' or 'range' (resolve 'auto' before calling)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Adaptive (auto) factories
+# ---------------------------------------------------------------------------
+
+
+class AdaptiveSqliteReaderFactory:
+    """Sync SQLite reader factory that auto-selects ``download`` vs ``range``.
+
+    On first invocation for a given snapshot (keyed by
+    ``manifest.required_build.run_id``) the factory inspects every shard's
+    ``db_bytes`` and asks the configured :class:`SqliteAccessPolicy` for a
+    decision.  The resulting concrete factory
+    (:class:`SqliteReaderFactory` or :class:`SqliteRangeReaderFactory`) is
+    cached and reused for all subsequent shards in the same snapshot.
+
+    The cache is a single slot: when a new ``run_id`` arrives the previous
+    factory is replaced.  This matches the reader lifecycle —
+    ``ShardedReader.refresh()`` rebuilds all shard readers, so any retired
+    sub-factory is dropped naturally.
+    """
+
+    __slots__ = (
+        "_policy",
+        "_mmap_size",
+        "_page_cache_pages",
+        "_s3_connection_options",
+        "_credential_provider",
+        "_cached_run_id",
+        "_cached_factory",
+    )
+
+    def __init__(
+        self,
+        *,
+        policy: SqliteAccessPolicy | None = None,
+        per_shard_threshold: int = DEFAULT_AUTO_PER_SHARD_THRESHOLD_BYTES,
+        total_budget: int = DEFAULT_AUTO_TOTAL_BUDGET_BYTES,
+        mmap_size: int = 268435456,
+        page_cache_pages: int = 1024,
+        s3_connection_options: S3ConnectionOptions | None = None,
+        credential_provider: CredentialProvider | None = None,
+    ) -> None:
+        self._policy: SqliteAccessPolicy = policy or _ThresholdPolicy(
+            per_shard_threshold=per_shard_threshold,
+            total_budget=total_budget,
+        )
+        self._mmap_size = mmap_size
+        self._page_cache_pages = page_cache_pages
+        self._s3_connection_options = s3_connection_options
+        self._credential_provider = credential_provider
+        self._cached_run_id: str | None = None
+        self._cached_factory: SqliteReaderFactory | SqliteRangeReaderFactory | None = (
+            None
+        )
+
+    def _resolve_factory(
+        self, manifest: Any
+    ) -> SqliteReaderFactory | SqliteRangeReaderFactory:
+        run_id = manifest.required_build.run_id
+        if run_id == self._cached_run_id and self._cached_factory is not None:
+            return self._cached_factory
+        sizes = [shard.db_bytes for shard in manifest.shards]
+        mode = self._policy.decide(sizes)
+        factory = make_sqlite_reader_factory(
+            mode=mode,
+            mmap_size=self._mmap_size,
+            page_cache_pages=self._page_cache_pages,
+            s3_connection_options=self._s3_connection_options,
+            credential_provider=self._credential_provider,
+        )
+        self._cached_run_id = run_id
+        self._cached_factory = factory
+        return factory
+
+    def __call__(
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None,
+        manifest: Manifest,
+    ) -> SqliteShardReader | SqliteRangeShardReader:
+        factory = self._resolve_factory(manifest)
+        return factory(
+            db_url=db_url,
+            local_dir=local_dir,
+            checkpoint_id=checkpoint_id,
+            manifest=manifest,
+        )
+
+
+class AsyncAdaptiveSqliteReaderFactory:
+    """Async counterpart of :class:`AdaptiveSqliteReaderFactory`."""
+
+    __slots__ = (
+        "_policy",
+        "_mmap_size",
+        "_page_cache_pages",
+        "_s3_connection_options",
+        "_credential_provider",
+        "_cached_run_id",
+        "_cached_factory",
+    )
+
+    def __init__(
+        self,
+        *,
+        policy: SqliteAccessPolicy | None = None,
+        per_shard_threshold: int = DEFAULT_AUTO_PER_SHARD_THRESHOLD_BYTES,
+        total_budget: int = DEFAULT_AUTO_TOTAL_BUDGET_BYTES,
+        mmap_size: int = 268435456,
+        page_cache_pages: int = 1024,
+        s3_connection_options: S3ConnectionOptions | None = None,
+        credential_provider: CredentialProvider | None = None,
+    ) -> None:
+        self._policy: SqliteAccessPolicy = policy or _ThresholdPolicy(
+            per_shard_threshold=per_shard_threshold,
+            total_budget=total_budget,
+        )
+        self._mmap_size = mmap_size
+        self._page_cache_pages = page_cache_pages
+        self._s3_connection_options = s3_connection_options
+        self._credential_provider = credential_provider
+        self._cached_run_id: str | None = None
+        self._cached_factory: (
+            AsyncSqliteReaderFactory | AsyncSqliteRangeReaderFactory | None
+        ) = None
+
+    def _resolve_factory(
+        self, manifest: Any
+    ) -> AsyncSqliteReaderFactory | AsyncSqliteRangeReaderFactory:
+        run_id = manifest.required_build.run_id
+        if run_id == self._cached_run_id and self._cached_factory is not None:
+            return self._cached_factory
+        sizes = [shard.db_bytes for shard in manifest.shards]
+        mode = self._policy.decide(sizes)
+        factory = make_async_sqlite_reader_factory(
+            mode=mode,
+            mmap_size=self._mmap_size,
+            page_cache_pages=self._page_cache_pages,
+            s3_connection_options=self._s3_connection_options,
+            credential_provider=self._credential_provider,
+        )
+        self._cached_run_id = run_id
+        self._cached_factory = factory
+        return factory
+
+    async def __call__(
+        self,
+        *,
+        db_url: str,
+        local_dir: Path,
+        checkpoint_id: str | None,
+        manifest: Manifest,
+    ) -> AsyncSqliteShardReader | AsyncSqliteRangeShardReader:
+        factory = self._resolve_factory(manifest)
+        return await factory(
+            db_url=db_url,
+            local_dir=local_dir,
+            checkpoint_id=checkpoint_id,
+            manifest=manifest,
+        )

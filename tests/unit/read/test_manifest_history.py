@@ -49,6 +49,7 @@ def _one_shard() -> list[RequiredShardMeta]:
             db_url="s3://bucket/prefix/db=00000",
             attempt=0,
             row_count=1,
+            db_bytes=0,
         )
     ]
 
@@ -61,7 +62,9 @@ class _FakeReader:
         pass
 
 
-def _fake_factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
+def _fake_factory(
+    *, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs
+):
     return _FakeReader()
 
 

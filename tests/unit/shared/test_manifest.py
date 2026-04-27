@@ -16,7 +16,13 @@ _REQUIRED_BUILD_DATA = {
 }
 
 _SHARD_DATA = [
-    {"db_id": 0, "db_url": "s3://b/p/db=00000", "attempt": 0, "row_count": 1}
+    {
+        "db_id": 0,
+        "db_url": "s3://b/p/db=00000",
+        "attempt": 0,
+        "row_count": 1,
+        "db_bytes": 0,
+    }
 ]
 
 

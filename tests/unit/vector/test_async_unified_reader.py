@@ -47,7 +47,7 @@ class TestAutoAsyncReaderFactory:
             kv_backend="sqlite-vec",
         )
         with patch(
-            "shardyfusion.sqlite_vec_adapter.AsyncSqliteVecReaderFactory"
+            "shardyfusion.sqlite_vec_adapter.AsyncAdaptiveSqliteVecReaderFactory"
         ) as MockFactory:
             factory = _auto_async_reader_factory(meta)
             MockFactory.assert_called_once()
@@ -85,7 +85,7 @@ class TestAutoAsyncReaderFactory:
             kv_backend="sqlite",
         )
         with patch(
-            "shardyfusion.sqlite_adapter.AsyncSqliteReaderFactory"
+            "shardyfusion.sqlite_adapter.AsyncAdaptiveSqliteReaderFactory"
         ) as MockSqlite:
             with patch(
                 "shardyfusion.composite_adapter.AsyncCompositeReaderFactory"
@@ -186,7 +186,9 @@ def _vector_manifest(num_dbs: int = 2, null_db_id: int | None = None) -> ParsedM
     for i in range(num_dbs):
         db_url = None if i == null_db_id else f"mem://db/{i}"
         shards.append(
-            RequiredShardMeta(db_id=i, db_url=db_url, attempt=0, row_count=10)
+            RequiredShardMeta(
+                db_id=i, db_url=db_url, attempt=0, row_count=10, db_bytes=0
+            )
         )
     custom = {
         "vector": {

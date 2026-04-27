@@ -46,6 +46,7 @@ def _make_shard(db_id=0, **overrides):
         db_url=f"s3://bucket/prefix/shards/db={db_id:05d}",
         attempt=0,
         row_count=100,
+        db_bytes=0,
     )
     defaults.update(overrides)
     return RequiredShardMeta(**defaults)
@@ -95,7 +96,7 @@ class TestSqliteManifestBuilder:
             routing_values=[250, 500, 750],
             hash_algorithm="xxh3_64",
         )
-        rb = _make_required_build(sharding=sharding, format_version=3, num_dbs=3)
+        rb = _make_required_build(sharding=sharding, format_version=4, num_dbs=3)
         shards = [_make_shard(i) for i in range(3)]
         artifact = builder.build(required_build=rb, shards=shards, custom_fields={})
 

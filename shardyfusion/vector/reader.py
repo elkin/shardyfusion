@@ -609,10 +609,12 @@ class ShardedVectorReader:
                     return cache_entry
 
             local_dir = self._local_root / f"shard_{shard_id:05d}"
+            assert self._manifest is not None
             reader = self._reader_factory(
                 db_url=db_url,
                 local_dir=local_dir,
                 index_config=index_config,
+                manifest=self._manifest,
             )
             new_entry = _CachedShardReader(reader=reader, borrow_count=1)
             stale_reader_to_close: VectorShardReader | None = None

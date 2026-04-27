@@ -92,9 +92,13 @@ class TestCleanupLosersWithNoneDbUrl:
 
         winners = [
             RequiredShardMeta(
-                db_id=0, db_url="s3://b/p/db=0/attempt=00", attempt=0, row_count=5
+                db_id=0,
+                db_url="s3://b/p/db=0/attempt=00",
+                attempt=0,
+                row_count=5,
+                db_bytes=0,
             ),
-            RequiredShardMeta(db_id=1, db_url=None, attempt=0, row_count=0),
+            RequiredShardMeta(db_id=1, db_url=None, attempt=0, row_count=0, db_bytes=0),
         ]
         all_urls = ["s3://b/p/db=0/attempt=00", "s3://b/p/db=0/attempt=01"]
 

@@ -37,6 +37,9 @@ class _CloseFailAdapter:
     def checkpoint(self) -> str:
         return "ckpt"
 
+    def db_bytes(self) -> int:
+        return 0
+
     def close(self) -> None:
         raise RuntimeError("close explosion")
 
@@ -56,6 +59,9 @@ class _GoodAdapter:
 
     def checkpoint(self) -> str:
         return "ckpt"
+
+    def db_bytes(self) -> int:
+        return 0
 
     def close(self) -> None:
         pass

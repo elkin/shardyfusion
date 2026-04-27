@@ -40,6 +40,7 @@ def test_hash_router_is_deterministic_and_in_range() -> None:
             max_key=None,
             checkpoint_id=None,
             writer_info={},
+            db_bytes=0,
         )
         for i in range(8)
     ]
@@ -66,6 +67,7 @@ def test_hash_router_matches_xxh3_db_id_for_integers() -> None:
             max_key=None,
             checkpoint_id=None,
             writer_info={},
+            db_bytes=0,
         )
         for i in range(num_dbs)
     ]
@@ -90,6 +92,7 @@ def test_hash_router_supports_string_and_bytes_keys() -> None:
             max_key=None,
             checkpoint_id=None,
             writer_info={},
+            db_bytes=0,
         )
         for i in range(8)
     ]
@@ -144,6 +147,7 @@ def _make_shards(num_dbs: int) -> list[RequiredShardMeta]:
             max_key=None,
             checkpoint_id=None,
             writer_info={},
+            db_bytes=0,
         )
         for i in range(num_dbs)
     ]

@@ -133,6 +133,7 @@ _RESULT_COLUMNS = [
     "max_key",
     "checkpoint_id",
     "writer_info",
+    "db_bytes",
     "all_attempt_urls",
 ]
 
@@ -147,6 +148,7 @@ def _vector_result_row(result: RequiredShardMeta) -> dict[str, object]:
         "max_key": result.max_key,
         "checkpoint_id": result.checkpoint_id,
         "writer_info": result.writer_info,
+        "db_bytes": result.db_bytes,
         "all_attempt_urls": (),
     }
 
@@ -639,6 +641,7 @@ def _write_partition(
                 "max_key": attempt_result.max_key,
                 "checkpoint_id": attempt_result.checkpoint_id,
                 "writer_info": attempt_result.writer_info,
+                "db_bytes": attempt_result.db_bytes,
                 "all_attempt_urls": attempt_result.all_attempt_urls,
             }
         )
@@ -850,6 +853,7 @@ def write_vector_sharded(
                 row_count=int(row_count),
                 checkpoint_id=checkpoint_id,
                 writer_info=writer_info,
+                db_bytes=int(db_bytes),
             )
             for (
                 db_id,
@@ -860,6 +864,7 @@ def write_vector_sharded(
                 _max_key,
                 checkpoint_id,
                 writer_info,
+                db_bytes,
                 _all_attempt_urls,
             ) in results.itertuples(index=False, name=None)
         ]

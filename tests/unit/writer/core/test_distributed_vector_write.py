@@ -52,6 +52,9 @@ class _VectorAdapter:
     def checkpoint(self) -> str:
         return "ckpt"
 
+    def db_bytes(self) -> int:
+        return 0
+
 
 class _NoVectorAdapter(_VectorAdapter):
     write_vector_batch = None  # type: ignore[assignment]

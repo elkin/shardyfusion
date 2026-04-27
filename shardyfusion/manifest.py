@@ -88,7 +88,7 @@ class RequiredBuildMeta(BaseModel):
     sharding: ManifestShardingSpec
     db_path_template: str
     shard_prefix: str
-    format_version: int = 2
+    format_version: int = 4
     key_encoding: KeyEncoding = KeyEncoding.U64BE
 
 
@@ -109,6 +109,7 @@ class RequiredShardMeta(BaseModel):
     db_url: str | None = None
     attempt: int = Field(ge=0)
     row_count: int = Field(ge=0)
+    db_bytes: int = Field(ge=0)
     min_key: int | str | bytes | None = None
     max_key: int | str | bytes | None = None
     checkpoint_id: str | None = None
@@ -203,6 +204,7 @@ CREATE TABLE shards (
     db_url        TEXT,
     attempt       INTEGER NOT NULL,
     row_count     INTEGER NOT NULL,
+    db_bytes      INTEGER NOT NULL,
     min_key       TEXT,
     max_key       TEXT,
     checkpoint_id TEXT,
@@ -274,14 +276,15 @@ class SqliteManifestBuilder:
                 sd = shard.model_dump(mode="json")
                 con.execute(
                     "INSERT INTO shards"
-                    " (db_id, db_url, attempt, row_count,"
+                    " (db_id, db_url, attempt, row_count, db_bytes,"
                     "  min_key, max_key, checkpoint_id, writer_info)"
-                    " VALUES (?,?,?,?,?,?,?,?)",
+                    " VALUES (?,?,?,?,?,?,?,?,?)",
                     (
                         sd["db_id"],
                         sd["db_url"],
                         sd["attempt"],
                         sd["row_count"],
+                        sd["db_bytes"],
                         json.dumps(sd["min_key"])
                         if sd["min_key"] is not None
                         else None,

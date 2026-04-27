@@ -70,6 +70,7 @@ def _make_shards(num_dbs: int) -> list[RequiredShardMeta]:
             max_key=None,
             checkpoint_id=None,
             writer_info=WriterInfo(),
+            db_bytes=0,
         )
         for i in range(num_dbs)
     ]

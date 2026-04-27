@@ -102,6 +102,7 @@ def _shard(db_id: int) -> RequiredShardMeta:
         attempt=0,
         row_count=100,
         writer_info={},
+        db_bytes=0,
     )
 
 
@@ -109,7 +110,7 @@ def _make_factory() -> Any:
     key_bytes = (42).to_bytes(8, byteorder="big")
     store = {key_bytes: b"value-42"}
 
-    def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None):
+    def factory(*, db_url: str, local_dir: Path, checkpoint_id: str | None, **_kwargs):
         return _FakeReader(store)
 
     return factory

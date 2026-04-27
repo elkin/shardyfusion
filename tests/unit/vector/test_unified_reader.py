@@ -143,7 +143,7 @@ class TestAutoReaderFactory:
             kv_backend="sqlite-vec",
         )
         with patch(
-            "shardyfusion.sqlite_vec_adapter.SqliteVecReaderFactory"
+            "shardyfusion.sqlite_vec_adapter.AdaptiveSqliteVecReaderFactory"
         ) as mock_cls:
             _auto_reader_factory(meta)
             mock_cls.assert_called_once()
@@ -185,7 +185,9 @@ class TestAutoReaderFactory:
             patch(
                 "shardyfusion.composite_adapter.CompositeReaderFactory"
             ) as mock_composite,
-            patch("shardyfusion.sqlite_adapter.SqliteReaderFactory") as mock_sqlite_kv,
+            patch(
+                "shardyfusion.sqlite_adapter.AdaptiveSqliteReaderFactory"
+            ) as mock_sqlite_kv,
             patch("shardyfusion.vector.adapters.lancedb_adapter.LanceDbReaderFactory"),
             patch("shardyfusion.storage.create_s3_client"),
         ):
@@ -532,7 +534,9 @@ def _vector_manifest(num_dbs: int = 2) -> ParsedManifest:
         shard_prefix="shards",
     )
     shards = [
-        RequiredShardMeta(db_id=i, db_url=f"mem://db/{i}", attempt=0, row_count=10)
+        RequiredShardMeta(
+            db_id=i, db_url=f"mem://db/{i}", attempt=0, row_count=10, db_bytes=0
+        )
         for i in range(num_dbs)
     ]
     custom = {

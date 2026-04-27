@@ -129,6 +129,7 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
             max_key=None,
             checkpoint_id=db0_ckpt,
             writer_info={},
+            db_bytes=0,
         ),
         RequiredShardMeta(
             db_id=1,
@@ -139,6 +140,7 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
             max_key=None,
             checkpoint_id=db1_ckpt,
             writer_info={},
+            db_bytes=0,
         ),
         RequiredShardMeta(
             db_id=2,
@@ -149,6 +151,7 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
             max_key=None,
             checkpoint_id=db2_ckpt,
             writer_info={},
+            db_bytes=0,
         ),
     ]
 
