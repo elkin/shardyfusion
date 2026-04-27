@@ -16,7 +16,7 @@ These pages are the operational counterpart to [`architecture/`](../architecture
 
 ## Non-negotiables
 
-1. **Source is the truth.** Docs must match what `shardyfusion/` actually does. The `validate-docs` (skill at `.claude/skills/validate-docs/SKILL.md`) skill is run on every PR.
+1. **Source is the truth.** Docs must match what `shardyfusion/` actually does. The `validate` skill (`.opencode/skills/validate/SKILL.md`) is run on every PR.
 2. **Optional imports.** New backend or framework deps go behind an extra. Never import them at the top of `shardyfusion/__init__.py`. See [`architecture/optional-imports.md`](../architecture/optional-imports.md).
 3. **Tests first for behavior changes.** Add a unit test (and integration where routing or publishing is affected) before changing `_writer_core.py`, `routing.py`, `manifest_store.py`, or any adapter.
 4. **Run `just ci d-e2e` before requesting review.** Quality + unit + integration + end-to-end against Garage.

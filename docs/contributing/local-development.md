@@ -68,7 +68,7 @@ Switch engines: `CONTAINER_ENGINE=docker just d-build`.
 
 - **`shardyfusion not importable` after a pull**: dependencies drifted. Run `just setup`.
 - **Spark tests skipped silently**: Java not on `PATH` or version <17. Check with `just doctor`.
-- **`mkdocs build --strict` fails after a doc edit**: a link broke or `validate-docs` flagged drift. Run the `validate-docs` skill (`.claude/skills/validate-docs/SKILL.md`).
+- **`mkdocs build --strict` fails after a doc edit**: a link broke or `validate` flagged drift. Run the `validate` skill (`.opencode/skills/validate/SKILL.md`).
 
 ## See also
 

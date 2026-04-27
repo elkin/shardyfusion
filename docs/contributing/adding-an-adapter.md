@@ -192,7 +192,7 @@ just fix
 just quality
 just unit
 just integration
-uv run python .claude/skills/validate-docs/scripts/check_docs.py
+uv run python scripts/check_docs.py
 just d-e2e
 ```
 

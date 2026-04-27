@@ -89,7 +89,7 @@ Importing `shardyfusion` does not pull `unified_reader`, which would in turn pul
 | `quality` | Lint / typecheck deps | Dev. |
 | `docs` | MkDocs + plugins | Dev. |
 
-For the canonical list, see `pyproject.toml`. The validate-docs skill (`.claude/skills/validate-docs/`) cross-checks every extra documented in docs against the canonical list.
+For the canonical list, see `pyproject.toml`. The `validate` skill (`.opencode/skills/validate/SKILL.md`) cross-checks every extra documented in docs against the canonical list.
 
 ## Why not "just pip install everything"
 

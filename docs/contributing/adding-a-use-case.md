@@ -145,7 +145,7 @@ When you add a use-case page, `validate-docs` will check:
 Run before pushing:
 
 ```bash
-uv run python .claude/skills/validate-docs/scripts/check_docs.py
+uv run python scripts/check_docs.py
 ```
 
 ## Index updates
@@ -168,4 +168,4 @@ All are checked by `mkdocs build --strict`.
 
 - [`documentation-policy.md`](documentation-policy.md) — overall docs structure.
 - [`architecture/index.md`](../architecture/index.md) — what the architecture pages cover (so you don't duplicate).
-- The validate-docs skill in `.claude/skills/validate-docs/`.
+- The `validate` skill in `.opencode/skills/validate/`.

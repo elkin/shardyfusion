@@ -39,7 +39,7 @@ If a topic could plausibly go in two places, prefer the more user-facing one. Ar
 
 Every claim in docs must match source behavior. When source changes, docs change in the same PR. When docs say something happens at `foo.py:123`, line 123 must contain the thing.
 
-The `validate-docs` (skill at `.claude/skills/validate-docs/SKILL.md`) skill checks:
+The `validate` skill (`.opencode/skills/validate/SKILL.md`) checks:
 
 - Symbol references (`file:line`) point at real code.
 - Documented extras exist in `pyproject.toml`.
@@ -139,4 +139,4 @@ When a use-case page mentions a concept that has its own architecture page, link
 
 - [`adding-a-use-case.md`](adding-a-use-case.md) — the locked template.
 - [`testing.md`](testing.md) — how validate-docs fits into CI.
-- The `validate-docs` skill in `.claude/skills/validate-docs/SKILL.md`.
+- The `validate` skill in `.opencode/skills/validate/SKILL.md`.

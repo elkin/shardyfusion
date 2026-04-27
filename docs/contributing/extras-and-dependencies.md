@@ -101,7 +101,7 @@ uv run python scripts/generate_extras_matrix.py
 ### 6. Verify with `validate-docs`
 
 ```bash
-uv run python .claude/skills/validate-docs/scripts/check_docs.py
+uv run python scripts/check_docs.py
 ```
 
 The skill cross-checks:

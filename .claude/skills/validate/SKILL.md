@@ -25,7 +25,7 @@ If no files have changed, report "Nothing to validate" and stop.
 
 Verify that documentation is consistent with the code changes:
 
-1. **README.md** — Reflects the current public API, install instructions, usage examples, and development workflow. Any new features, changed commands, or modified APIs are documented.
+1. **README.md** — Reflects the current public API, install instructions, usage examples, and development workflow.
 2. **CLAUDE.md** — Reflects the current module structure, commands, architecture, testing notes, and error hierarchy. Specifically:
    - The "Architecture" section matches actual module dependencies
    - The "Commands" section lists current build/test/lint commands
@@ -33,7 +33,20 @@ Verify that documentation is consistent with the code changes:
    - The "Public API Summary" lists all exports from `__init__.py`
    - The "Testing Notes" section covers any new test directories or markers
 3. **AGENTS.md** — Reflects the current project structure, build commands, test commands, and coding style.
-4. **docs/ directory** — MkDocs source files are consistent with code changes (API reference, guides, configuration docs).
+4. **docs/ directory** — MkDocs source files are consistent with code changes. Run the automated docs validation script:
+
+   ```bash
+   uv run python scripts/check_docs.py
+   ```
+
+   This script verifies:
+   - **Public-API references** — every `::: shardyfusion.<symbol>` mkdocstrings reference and every qualified `shardyfusion.X.Y` mention in inline code or fenced Python blocks resolves to a real attribute.
+   - **Config dataclass fields** — every field name listed in a docs configuration table for tracked dataclasses (`WriteConfig`, `ShardingSpec`, `OutputOptions`, `ManifestOptions`, `VectorSpec`, `RetryConfig`, `S3ConnectionOptions`) exists on that class.
+   - **Pyproject extras** — every `--extra <name>` and `shardyfusion[<name>]` line in `docs/**/*.md` references an extra defined in `[project.optional-dependencies]`.
+   - **Extras matrix sync** — every runtime extra is documented in `docs/use-cases/extras-matrix.md`.
+   - **CLI surface** — every `shardy <subcommand>` invocation and every `--flag` referenced in CLI pages exists in `shardyfusion/cli/app.py`.
+
+   Exit code is `0` when everything passes, `1` when any check fails. The output is a structured Markdown report grouped by check and file. Fix any `NOT FOUND`, `NO SUCH FIELD`, or `not found in` failures before continuing.
 
 If any documentation is stale or missing coverage, **fix it** before continuing.
 

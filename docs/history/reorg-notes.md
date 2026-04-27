@@ -134,4 +134,4 @@ The project has no users yet. Old paths are deleted, not redirected.
 
 ## Validation
 
-A repo-local `validate-docs` skill at `.claude/skills/validate-docs/` cross-checks documented facts against source code.
+A repo-local `validate` skill at `.opencode/skills/validate/` cross-checks documented facts against source code.
