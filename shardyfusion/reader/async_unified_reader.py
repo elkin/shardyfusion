@@ -172,18 +172,22 @@ class AsyncUnifiedShardedReader(AsyncShardedReader):
         vector_meta = _parse_vector_custom(manifest.custom)
         previous_factory = self._reader_factory
 
+        new_factory = previous_factory
         if self._user_reader_factory is None:
-            self._reader_factory = _auto_async_reader_factory(
+            new_factory = _auto_async_reader_factory(
                 vector_meta,
                 credential_provider=self._credential_provider_for_auto,
                 s3_connection_options=self._s3_conn_opts_for_auto,
             )
 
+        self._reader_factory = new_factory
+        committed = False
         try:
             state = await super()._build_state(manifest_ref, manifest)
-        except Exception:
-            self._reader_factory = previous_factory
-            raise
+            committed = True
+        finally:
+            if not committed:
+                self._reader_factory = previous_factory
 
         self._manifest_custom = manifest.custom
         self._vector_meta = vector_meta

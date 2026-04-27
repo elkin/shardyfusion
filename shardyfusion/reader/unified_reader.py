@@ -211,21 +211,26 @@ class UnifiedShardedReader(ShardedReader):
         previous_factory = self._reader_factory
 
         # Auto-dispatch reader factory from manifest backend on first load and
-        # on every refresh, but only keep the new factory if state construction
-        # succeeds. This avoids committing a factory/metadata change before the
-        # parent reader swaps to the new manifest state.
+        # on every refresh, but only commit the new factory if state
+        # construction succeeds. This avoids leaking a half-applied factory
+        # change when _auto_reader_factory or super()._build_simple_state
+        # raises.
+        new_factory = previous_factory
         if self._user_reader_factory is None:
-            self._reader_factory = _auto_reader_factory(
+            new_factory = _auto_reader_factory(
                 vector_meta,
                 credential_provider=self._credential_provider_for_auto,
                 s3_connection_options=self._s3_conn_opts_for_auto,
             )
 
+        self._reader_factory = new_factory
+        committed = False
         try:
             state = super()._build_simple_state(manifest_ref, manifest)
-        except Exception:
-            self._reader_factory = previous_factory
-            raise
+            committed = True
+        finally:
+            if not committed:
+                self._reader_factory = previous_factory
 
         self._manifest_custom = manifest.custom
         self._vector_meta = vector_meta

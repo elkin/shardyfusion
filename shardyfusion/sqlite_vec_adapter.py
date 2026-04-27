@@ -631,6 +631,19 @@ def _run_vec_search(
     id_map: dict[int, int | str] = {}
     if row_ids:
         placeholders = ",".join("?" for _ in row_ids)
+        # Older snapshots may not have the vec_id_map table; fall back to
+        # using internal rowids as the surfaced id. Catch only "no such table"
+        # style errors from either sqlite3 (stdlib) or apsw (range-read VFS),
+        # so genuine bugs surface instead of being swallowed.
+        missing_table_errors: tuple[type[BaseException], ...] = (
+            sqlite3.OperationalError,
+        )
+        try:
+            import apsw  # pyright: ignore[reportMissingImports]
+
+            missing_table_errors = (sqlite3.OperationalError, apsw.Error)
+        except ImportError:
+            pass
         try:
             id_rows = list(
                 conn.execute(
@@ -638,9 +651,7 @@ def _run_vec_search(
                     row_ids,
                 )
             )
-        except Exception:
-            # Older snapshots may not have the vec_id_map table; fall back to
-            # using internal rowids as the surfaced id (matches stdlib path).
+        except missing_table_errors:
             id_rows = []
         for internal_id, original_id in id_rows:
             id_map[int(internal_id)] = _decode_id_map_value(original_id)

@@ -738,6 +738,25 @@ class AdaptiveSqliteReaderFactory:
     factory is replaced.  This matches the reader lifecycle —
     ``ShardedReader.refresh()`` rebuilds all shard readers, so any retired
     sub-factory is dropped naturally.
+
+    Thread-safety
+    -------------
+    The single-slot cache (``_cached_run_id`` / ``_cached_factory``) is **not**
+    internally synchronised.  Concurrent calls into ``_resolve_factory`` from
+    multiple threads against different snapshots could race and leave the
+    cache in a momentarily inconsistent state (no corruption, but a redundant
+    factory build).
+
+    In practice this is safe because every supported caller serialises
+    refresh-time state construction:
+
+    * :class:`ConcurrentShardedReader` holds ``_refresh_lock`` while building
+      a new ``_ReaderState`` (which is when ``__call__`` invocations happen).
+    * :class:`AsyncShardedReader` serialises ``_build_state`` via an
+      ``asyncio.Lock``.
+
+    Callers wiring ``AdaptiveSqliteReaderFactory`` into custom reader plumbing
+    must preserve this single-writer-during-refresh invariant.
     """
 
     __slots__ = (
@@ -811,7 +830,12 @@ class AdaptiveSqliteReaderFactory:
 
 
 class AsyncAdaptiveSqliteReaderFactory:
-    """Async counterpart of :class:`AdaptiveSqliteReaderFactory`."""
+    """Async counterpart of :class:`AdaptiveSqliteReaderFactory`.
+
+    Shares the same single-slot cache contract: callers must serialise
+    snapshot-state construction (``AsyncShardedReader`` does so via its
+    refresh ``asyncio.Lock``).
+    """
 
     __slots__ = (
         "_policy",
