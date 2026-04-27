@@ -18,7 +18,7 @@ Every snapshot ships with a small manifest that tells readers which shard holds 
 
 Choose your use case in the diagram below.
 
-## Use cases
+## Use case map
 
 Click any node to jump to its page. (See the [full index](use-cases/index.md) for a navigational tree.)
 
@@ -174,7 +174,7 @@ flowchart TD
 
 ## Sections
 
-- **[Use cases](use-cases/index.md)** — task-oriented guides organized by use-case type (KV, KV+Vector, Vector), plus the shared snapshot workflow behind all of them.
+- **[Use cases](use-cases/index.md)** — task-oriented guides organized by use-case type (KV, KV+Vector, Vector), plus the shared snapshot workflow behind all of them. Start with the [Extras matrix](use-cases/extras-matrix.md) to find the right `pip install` target for your use case.
 - **[Operations](operate/index.md)** — CLI, history & rollback, metrics, production checks, cloud testing, and tox matrix.
 - **[Architecture](architecture/writer-core.md)** — internal design: writer core, sharding, routing, manifest, run registry, adapters, observability, error model.
 - **[Reference](reference/api.md)** — public API, configuration objects, CLI, glossary.

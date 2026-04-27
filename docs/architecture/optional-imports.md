@@ -110,5 +110,6 @@ When adding a new optional dependency:
 
 ## See also
 
+- [`use-cases/extras-matrix.md`](../use-cases/extras-matrix.md) — visual map from every use case to the extra you need.
 - [`contributing/extras-and-dependencies.md`](../contributing/extras-and-dependencies.md) — operational guide.
 - [`contributing/adding-an-adapter.md`](../contributing/adding-an-adapter.md) — worked example.

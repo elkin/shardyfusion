@@ -372,6 +372,47 @@ def check_extras(findings: list[Finding]) -> None:
                     )
 
 
+# Runtime extras that must be documented in the generated matrix page.
+_DEV_EXTRAS = {"test", "quality", "docs"}
+_MATRIX_PAGE = DOCS_ROOT / "use-cases" / "extras-matrix.md"
+_MATRIX_EXTRA_RE = re.compile(r"`([A-Za-z0-9_\-]+)`")
+
+
+def check_extras_matrix(findings: list[Finding]) -> None:
+    """Every runtime extra must appear inside backticks in extras-matrix.md."""
+    known = load_extras()
+    runtime = {e for e in known if e not in _DEV_EXTRAS}
+    if not _MATRIX_PAGE.exists():
+        findings.append(
+            Finding(
+                check="extras",
+                file=str(_MATRIX_PAGE.relative_to(REPO_ROOT)),
+                line=1,
+                message="extras-matrix.md is missing; run `uv run python scripts/generate_extras_matrix.py`",
+                severity="fail",
+            )
+        )
+        return
+    text = _MATRIX_PAGE.read_text(encoding="utf-8")
+    documented: set[str] = set()
+    for m in _MATRIX_EXTRA_RE.finditer(text):
+        documented.add(m.group(1))
+    missing = sorted(runtime - documented)
+    for name in missing:
+        findings.append(
+            Finding(
+                check="extras",
+                file=str(_MATRIX_PAGE.relative_to(REPO_ROOT)),
+                line=1,
+                message=(
+                    f"runtime extra `{name}` not documented in extras-matrix.md; "
+                    "run `uv run python scripts/generate_extras_matrix.py`"
+                ),
+                severity="fail",
+            )
+        )
+
+
 # ---------------------------------------------------------------------------
 # Check 4: CLI
 
@@ -475,6 +516,7 @@ def main() -> int:
     check_api(findings)
     check_config(findings)
     check_extras(findings)
+    check_extras_matrix(findings)
     check_cli(findings)
     return emit_report(findings)
 

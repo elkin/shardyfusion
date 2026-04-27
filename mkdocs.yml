@@ -48,6 +48,7 @@ nav:
   - Home: index.md
   - Use cases:
     - Overview: use-cases/index.md
+    - Extras matrix: use-cases/extras-matrix.md
     - Shared snapshot workflow: use-cases/shared-snapshot-workflow.md
     - Sharded KV storage:
       - Overview: use-cases/kv-storage/overview.md

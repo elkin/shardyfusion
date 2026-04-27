@@ -2,6 +2,8 @@
 
 The use-case docs follow the same branching structure as the clickable [use-case map on the home page](../index.md#use-case-map). Start with the conceptual overview for your use-case type, then drill down into writer or reader specifics.
 
+> **Not sure which extras to install?** See the [Extras matrix](extras-matrix.md) for a visual map from every use case to the `pip install` / `uv sync --extra` target you need.
+
 ## Shared Snapshot Workflow
 
 All use-case families publish through the same manifest + `_CURRENT` pointer model. See [Shared Snapshot Workflow](shared-snapshot-workflow.md) for the project-wide flow, or [Manifest & `_CURRENT`](../architecture/manifest-and-current.md) and [Manifest stores](../architecture/manifest-stores.md) for implementation details.

@@ -88,8 +88,15 @@ py{311,312,313}-vector-foo-integration
 
 Add a row to:
 
+- `scripts/generate_extras_matrix.py` (`EXTRA_META`) — regenerates the [Extras matrix](../use-cases/extras-matrix.md).
 - [`architecture/optional-imports.md`](../architecture/optional-imports.md) — the canonical extras index.
 - A new use-case page (e.g. `docs/use-cases/vector/build/foo.md`) — see [`adding-a-use-case.md`](adding-a-use-case.md).
+
+Then regenerate the matrix page:
+
+```bash
+uv run python scripts/generate_extras_matrix.py
+```
 
 ### 6. Verify with `validate-docs`
 
