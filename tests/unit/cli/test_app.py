@@ -484,6 +484,7 @@ current_url = "s3://bucket/prefix/_CURRENT"
         assert captured_kwargs.get("reader_factory") is None
 
     def test_sqlite_injects_sqlite_reader_factory(self, tmp_path: Any) -> None:
+        """Default sqlite_mode='auto' wires up AdaptiveSqliteReaderFactory."""
         cfg_path = tmp_path / "reader.toml"
         cfg_path.write_text(
             """\
@@ -512,9 +513,182 @@ reader_backend = "sqlite"
             result = runner.invoke(cli, ["--config", str(cfg_path), "info"])
 
         assert result.exit_code == 0
+        from shardyfusion.sqlite_adapter import AdaptiveSqliteReaderFactory
+
+        assert isinstance(
+            captured_kwargs.get("reader_factory"), AdaptiveSqliteReaderFactory
+        )
+
+    def test_sqlite_mode_download_injects_download_factory(self, tmp_path: Any) -> None:
+        cfg_path = tmp_path / "reader.toml"
+        cfg_path.write_text(
+            """\
+[reader]
+current_url = "s3://bucket/prefix/_CURRENT"
+reader_backend = "sqlite"
+sqlite_mode = "download"
+"""
+        )
+        captured_kwargs: dict[str, Any] = {}
+
+        def _capture_reader(**kwargs: Any) -> _FakeReader:
+            captured_kwargs.update(kwargs)
+            return _FakeReader()
+
+        with (
+            patch(
+                "shardyfusion.reader.ConcurrentShardedReader",
+                side_effect=_capture_reader,
+            ),
+            patch(
+                "shardyfusion.cli.app._build_manifest_store",
+                return_value=MagicMock(),
+            ),
+        ):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(cli, ["--config", str(cfg_path), "info"])
+
+        assert result.exit_code == 0
         from shardyfusion.sqlite_adapter import SqliteReaderFactory
 
         assert isinstance(captured_kwargs.get("reader_factory"), SqliteReaderFactory)
+
+    def test_sqlite_mode_range_injects_range_factory(self, tmp_path: Any) -> None:
+        cfg_path = tmp_path / "reader.toml"
+        cfg_path.write_text(
+            """\
+[reader]
+current_url = "s3://bucket/prefix/_CURRENT"
+reader_backend = "sqlite"
+sqlite_mode = "range"
+"""
+        )
+        captured_kwargs: dict[str, Any] = {}
+
+        def _capture_reader(**kwargs: Any) -> _FakeReader:
+            captured_kwargs.update(kwargs)
+            return _FakeReader()
+
+        with (
+            patch(
+                "shardyfusion.reader.ConcurrentShardedReader",
+                side_effect=_capture_reader,
+            ),
+            patch(
+                "shardyfusion.cli.app._build_manifest_store",
+                return_value=MagicMock(),
+            ),
+        ):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(cli, ["--config", str(cfg_path), "info"])
+
+        assert result.exit_code == 0
+        from shardyfusion.sqlite_adapter import SqliteRangeReaderFactory
+
+        assert isinstance(
+            captured_kwargs.get("reader_factory"), SqliteRangeReaderFactory
+        )
+
+    def test_sqlite_mode_cli_flag_overrides_toml(self, tmp_path: Any) -> None:
+        """`--sqlite-mode download` on the CLI overrides reader.toml's value."""
+        cfg_path = tmp_path / "reader.toml"
+        cfg_path.write_text(
+            """\
+[reader]
+current_url = "s3://bucket/prefix/_CURRENT"
+reader_backend = "sqlite"
+sqlite_mode = "auto"
+"""
+        )
+        captured_kwargs: dict[str, Any] = {}
+
+        def _capture_reader(**kwargs: Any) -> _FakeReader:
+            captured_kwargs.update(kwargs)
+            return _FakeReader()
+
+        with (
+            patch(
+                "shardyfusion.reader.ConcurrentShardedReader",
+                side_effect=_capture_reader,
+            ),
+            patch(
+                "shardyfusion.cli.app._build_manifest_store",
+                return_value=MagicMock(),
+            ),
+        ):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(
+                cli,
+                [
+                    "--config",
+                    str(cfg_path),
+                    "--sqlite-mode",
+                    "download",
+                    "info",
+                ],
+            )
+
+        assert result.exit_code == 0
+        from shardyfusion.sqlite_adapter import (
+            AdaptiveSqliteReaderFactory,
+            SqliteReaderFactory,
+        )
+
+        factory = captured_kwargs.get("reader_factory")
+        assert isinstance(factory, SqliteReaderFactory)
+        assert not isinstance(factory, AdaptiveSqliteReaderFactory)
+
+    def test_sqlite_auto_threshold_overrides_propagate(self, tmp_path: Any) -> None:
+        cfg_path = tmp_path / "reader.toml"
+        cfg_path.write_text(
+            """\
+[reader]
+current_url = "s3://bucket/prefix/_CURRENT"
+reader_backend = "sqlite"
+"""
+        )
+        captured_kwargs: dict[str, Any] = {}
+
+        def _capture_reader(**kwargs: Any) -> _FakeReader:
+            captured_kwargs.update(kwargs)
+            return _FakeReader()
+
+        with (
+            patch(
+                "shardyfusion.reader.ConcurrentShardedReader",
+                side_effect=_capture_reader,
+            ),
+            patch(
+                "shardyfusion.cli.app._build_manifest_store",
+                return_value=MagicMock(),
+            ),
+        ):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(
+                cli,
+                [
+                    "--config",
+                    str(cfg_path),
+                    "--sqlite-auto-per-shard-bytes",
+                    "1024",
+                    "--sqlite-auto-total-bytes",
+                    "8192",
+                    "info",
+                ],
+            )
+
+        assert result.exit_code == 0
+        from shardyfusion.sqlite_adapter import (
+            AdaptiveSqliteReaderFactory,
+            _ThresholdPolicy,
+        )
+
+        factory = captured_kwargs.get("reader_factory")
+        assert isinstance(factory, AdaptiveSqliteReaderFactory)
+        policy = factory._policy
+        assert isinstance(policy, _ThresholdPolicy)
+        assert policy.per_shard_threshold == 1024
+        assert policy.total_budget == 8192
 
 
 # ---------------------------------------------------------------------------

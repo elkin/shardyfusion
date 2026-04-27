@@ -57,7 +57,7 @@ def _slatedb_backend(tmp_path: Path) -> BackendFixture:
 
     object_store_root = str(tmp_path / "object-store")
 
-    def _reader(*, db_url: str, local_dir: Path, checkpoint_id: str | None):  # type: ignore[no-untyped-def]
+    def _reader(*, db_url: str, local_dir: Path, checkpoint_id: str | None, manifest=None):  # type: ignore[no-untyped-def]
         return slatedb.SlateDBReader(
             str(local_dir_for_file_shard(object_store_root, db_url)),
             url=map_s3_db_url_to_file_url(db_url, object_store_root),

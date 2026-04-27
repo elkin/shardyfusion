@@ -117,6 +117,9 @@ addressing_style = "path"
     creds_path = tmp_path / "credentials.toml"
     reader_path.write_text(reader_toml)
     creds_path.write_text(creds_toml)
+    # Avoid the CLI's "permissions wider than 0600" warning being emitted to
+    # stdout and interfering with JSON parsing in tests.
+    creds_path.chmod(0o600)
     return reader_path, creds_path
 
 
@@ -128,7 +131,10 @@ def _invoke_cli(
 ) -> click.testing.Result:
     """Invoke the shardy CLI with config files resolved from *tmp_path*."""
     runner = click.testing.CliRunner()
-    base_env = {"SHARDY_CONFIG": str(tmp_path / "reader.toml")}
+    base_env = {
+        "SHARDY_CONFIG": str(tmp_path / "reader.toml"),
+        "SHARDY_CREDENTIALS": str(tmp_path / "credentials.toml"),
+    }
     if env:
         base_env.update(env)
     return runner.invoke(cli, args, input=input, env=base_env)

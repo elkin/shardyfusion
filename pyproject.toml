@@ -68,7 +68,16 @@ writer-ray-sqlite = [
   "shardyfusion[sqlite]",
   "ray[data]>=2.20",
 ]
-cli = ["shardyfusion[read]", "click>=8.0"]
+cli = [
+  "shardyfusion[read]",
+  "shardyfusion[read-async]",
+  "shardyfusion[read-sqlite]",
+  "shardyfusion[read-sqlite-range]",
+  "shardyfusion[sqlite-async]",
+  "shardyfusion[unified-vector]",
+  "shardyfusion[unified-vector-sqlite]",
+  "click>=8.0",
+]
 cel = ["cel-expr-python>=0.1"]
 metrics-prometheus = ["prometheus-client>=0.20"]
 metrics-otel = ["opentelemetry-api>=1.28"]

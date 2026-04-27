@@ -45,6 +45,9 @@ class ReaderConfig(BaseModel):
     slate_env_file: str | None = None
     credentials_profile: str = "default"
     reader_backend: Literal["slatedb", "sqlite"] = "slatedb"
+    sqlite_mode: Literal["download", "range", "auto"] = "auto"
+    sqlite_auto_per_shard_threshold_bytes: int = Field(default=16 * 1024 * 1024, ge=0)
+    sqlite_auto_total_budget_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=0)
 
     @field_validator("current_url", "s3_prefix", mode="before")
     @classmethod

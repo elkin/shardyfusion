@@ -80,6 +80,20 @@ def _ensure_init_params(ctx: click.Context) -> dict[str, Any]:
     # Load reader + manifest-store + output config
     reader_cfg, store_cfg, output_cfg = load_reader_config(config_path)
 
+    # Apply --sqlite-mode and threshold overrides
+    sqlite_overrides: dict[str, Any] = {}
+    sqlite_mode_override = raw_params.get("sqlite_mode")
+    if sqlite_mode_override is not None:
+        sqlite_overrides["sqlite_mode"] = sqlite_mode_override.lower()
+    per_shard_override = raw_params.get("sqlite_auto_per_shard_threshold_bytes")
+    if per_shard_override is not None:
+        sqlite_overrides["sqlite_auto_per_shard_threshold_bytes"] = per_shard_override
+    total_override = raw_params.get("sqlite_auto_total_budget_bytes")
+    if total_override is not None:
+        sqlite_overrides["sqlite_auto_total_budget_bytes"] = total_override
+    if sqlite_overrides:
+        reader_cfg = reader_cfg.model_copy(update=sqlite_overrides)
+
     # Apply --output-format override
     if output_format:
         output_cfg = OutputConfig(
@@ -267,12 +281,30 @@ def _build_reader(ctx: click.Context) -> ConcurrentShardedReader:
 
     reader_factory = None
     if reader_cfg.reader_backend == "sqlite":
-        from ..sqlite_adapter import SqliteReaderFactory
+        mode = reader_cfg.sqlite_mode
+        if mode == "download":
+            from ..sqlite_adapter import SqliteReaderFactory
 
-        reader_factory = SqliteReaderFactory(
-            credential_provider=params["credential_provider"],
-            s3_connection_options=params["s3_connection_options"],
-        )
+            reader_factory = SqliteReaderFactory(
+                credential_provider=params["credential_provider"],
+                s3_connection_options=params["s3_connection_options"],
+            )
+        elif mode == "range":
+            from ..sqlite_adapter import SqliteRangeReaderFactory
+
+            reader_factory = SqliteRangeReaderFactory(
+                credential_provider=params["credential_provider"],
+                s3_connection_options=params["s3_connection_options"],
+            )
+        else:  # "auto"
+            from ..sqlite_adapter import AdaptiveSqliteReaderFactory
+
+            reader_factory = AdaptiveSqliteReaderFactory(
+                per_shard_threshold=reader_cfg.sqlite_auto_per_shard_threshold_bytes,
+                total_budget=reader_cfg.sqlite_auto_total_budget_bytes,
+                credential_provider=params["credential_provider"],
+                s3_connection_options=params["s3_connection_options"],
+            )
 
     try:
         return ConcurrentShardedReader(
@@ -362,6 +394,40 @@ def _get_output_cfg(ctx: click.Context) -> OutputConfig:
     metavar="N",
     help="Load the Nth previous manifest (0=latest, 1=previous, etc.).",
 )
+@click.option(
+    "--sqlite-mode",
+    "sqlite_mode",
+    default=None,
+    type=click.Choice(["download", "range", "auto"], case_sensitive=False),
+    help=(
+        "SQLite shard access mode: 'download' (fetch full DB to local disk), "
+        "'range' (S3 range-read VFS), or 'auto' (per-snapshot decision based on "
+        "shard sizes). Overrides reader.toml; only consulted when "
+        "reader_backend='sqlite'."
+    ),
+)
+@click.option(
+    "--sqlite-auto-per-shard-bytes",
+    "sqlite_auto_per_shard_threshold_bytes",
+    default=None,
+    type=int,
+    metavar="BYTES",
+    help=(
+        "Threshold (bytes): in 'auto' mode, switch to range-read when any shard's "
+        "db_bytes is at or above this value. Default 16 MiB."
+    ),
+)
+@click.option(
+    "--sqlite-auto-total-bytes",
+    "sqlite_auto_total_budget_bytes",
+    default=None,
+    type=int,
+    metavar="BYTES",
+    help=(
+        "Threshold (bytes): in 'auto' mode, switch to range-read when the cumulative "
+        "shard footprint is at or above this value. Default 2 GiB."
+    ),
+)
 @click.pass_context
 def cli(
     ctx: click.Context,
@@ -372,6 +438,9 @@ def cli(
     output_format: str | None,
     manifest_ref: str | None,
     manifest_offset: int | None,
+    sqlite_mode: str | None,
+    sqlite_auto_per_shard_threshold_bytes: int | None,
+    sqlite_auto_total_budget_bytes: int | None,
 ) -> None:
     """shardy — interactive and batch lookups for sharded SlateDB snapshots.
 
@@ -391,6 +460,11 @@ def cli(
         "output_format": output_format,
         "manifest_ref": manifest_ref,
         "manifest_offset": manifest_offset,
+        "sqlite_mode": sqlite_mode,
+        "sqlite_auto_per_shard_threshold_bytes": (
+            sqlite_auto_per_shard_threshold_bytes
+        ),
+        "sqlite_auto_total_budget_bytes": sqlite_auto_total_budget_bytes,
     }
 
     # If no subcommand was invoked, enter interactive mode
