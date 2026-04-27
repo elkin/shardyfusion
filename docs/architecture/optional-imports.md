@@ -62,7 +62,10 @@ Importing `shardyfusion` does not pull `unified_reader`, which would in turn pul
 | `read-async` | SlateDB async reader (aiobotocore) | Async reader. |
 | `read-sqlite` | SQLite download-and-cache reader | Sync. |
 | `read-sqlite-range` | SQLite range-read reader (APSW) | Sync. |
+| `sqlite-adaptive` | Composes `sqlite` + `sqlite-range` | Required by `AdaptiveSqliteReaderFactory` (default reader mode). |
+| `read-sqlite-adaptive` | Alias for `sqlite-adaptive` | Sync adaptive reader. |
 | `sqlite-async` | Async SQLite readers (download + range) | Async. |
+| `sqlite-adaptive-async` | Async adaptive SQLite reader (`aiobotocore`) | Required by `AsyncAdaptiveSqliteReaderFactory`. |
 | `writer-spark` | Spark writer (SlateDB) | Requires Java. |
 | `writer-spark-sqlite` | Spark writer (SQLite) | Requires Java. |
 | `writer-python` | Python writer (SlateDB) | Pure Python. |
@@ -71,7 +74,8 @@ Importing `shardyfusion` does not pull `unified_reader`, which would in turn pul
 | `writer-dask-sqlite` | Dask writer (SQLite) | |
 | `writer-ray` | Ray writer (SlateDB) | |
 | `writer-ray-sqlite` | Ray writer (SQLite) | |
-| `cli` | `click>=8.0` | PyYAML is a base dep, not part of this extra. |
+| `cli-minimal` | `click>=8.0` only | CLI binary without any backend. Combine with a reader extra (e.g. `[cli-minimal,read-sqlite]`). PyYAML is a base dep, not part of this extra. |
+| `cli` | Kitchen-sink CLI | Includes `cli-minimal` plus all read backends (slatedb sync/async, sqlite download/range/adaptive sync/async, unified-vector + unified-vector-sqlite). |
 | `cel` | `cel-expr-python` | CEL routing. |
 | `metrics-prometheus` | `prometheus_client` | Prometheus metrics backend. |
 | `metrics-otel` | `opentelemetry` SDK | OTel metrics backend. |

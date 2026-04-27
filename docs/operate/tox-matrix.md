@@ -68,6 +68,9 @@ uv sync --extra read-async
 # SQLite shards instead of SlateDB
 uv sync --extra read-sqlite
 
+# Adaptive SQLite reader (download + range, auto-picked per snapshot)
+uv sync --extra read-sqlite-adaptive
+
 # Spark writer (requires Java)
 uv sync --extra writer-spark
 
@@ -77,8 +80,11 @@ uv sync --extra writer-dask
 # Ray writer
 uv sync --extra writer-ray
 
-# CLI tool
+# CLI tool — kitchen-sink (every read backend bundled)
 uv sync --extra cli
+
+# CLI tool — slim (bring your own backend)
+uv sync --extra cli-minimal --extra read-sqlite-adaptive
 
 # Full install (all use cases)
 uv sync --all-extras

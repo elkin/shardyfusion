@@ -16,10 +16,18 @@ Use the **`shardy` CLI** to inspect, query, and manage published snapshots.
 ## Install
 
 ```bash
-uv add 'shardyfusion[cli,read]'
+# Kitchen-sink: includes every read backend (slatedb, sqlite download/range/adaptive,
+# their async variants, plus unified-vector / unified-vector-sqlite).
+uv add 'shardyfusion[cli]'
+
+# Slim install: bare CLI; pair with whichever read backend you actually need.
+uv add 'shardyfusion[cli-minimal,read-sqlite-adaptive]'
 ```
 
-The `cli` extra pulls only `click>=8.0`. `pyyaml>=6.0` is a base dependency.
+Both extras pull `click>=8.0`. `pyyaml>=6.0` is a base dependency. The kitchen-sink
+`cli` extra adds every documented read backend so any published snapshot opens
+without an additional install. Use `cli-minimal` when you want to control the
+backend dependency set yourself.
 
 Entry point: `shardy = "shardyfusion.cli.app:main"`.
 

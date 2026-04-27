@@ -23,8 +23,12 @@ Use **`ShardedReader`** with a SQLite reader factory to read sharded SQLite snap
 # Download-and-cache (uses stdlib sqlite3)
 uv add 'shardyfusion[read-sqlite]'
 
-# Range-read VFS (requires apsw)
+# Range-read VFS (requires apsw + obstore)
 uv add 'shardyfusion[read-sqlite-range]'
+
+# Adaptive (auto-pick download or range per snapshot — recommended default).
+# Composes both backends so AdaptiveSqliteReaderFactory can resolve to either tier.
+uv add 'shardyfusion[read-sqlite-adaptive]'
 ```
 
 ## Minimal example

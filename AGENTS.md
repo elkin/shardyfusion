@@ -42,7 +42,7 @@ Key workflows:
 
 **Package manager**: uv. Core dependency: `pyyaml>=6.0`.
 
-Many optional extras are defined in `pyproject.toml` (e.g. `read`, `read-async`, `writer-spark`, `writer-dask`, `writer-ray`, `cli`, `cel`, `metrics-prometheus`, `metrics-otel`, `vector`, `vector-sqlite`, `all`). Container commands mirror local ones with a `d-` prefix (e.g. `just d-e2e`). Container runs use an isolated uv project env at `/opt/shardyfusion-venv`.
+Many optional extras are defined in `pyproject.toml` (e.g. `read`, `read-async`, `read-sqlite`, `read-sqlite-range`, `read-sqlite-adaptive` / `sqlite-adaptive`, `sqlite-async`, `sqlite-adaptive-async`, `writer-spark`, `writer-dask`, `writer-ray`, `cli-minimal`, `cli` (kitchen-sink), `cel`, `metrics-prometheus`, `metrics-otel`, `vector`, `vector-sqlite`, `all`). Container commands mirror local ones with a `d-` prefix (e.g. `just d-e2e`). Container runs use an isolated uv project env at `/opt/shardyfusion-venv`.
 
 ## CI Pipeline (GitHub Actions)
 

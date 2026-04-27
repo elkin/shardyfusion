@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`decide_access_mode()`** policy function in `shardyfusion.sqlite_adapter` — OR-semantics over `per_shard_threshold` (default 16 MiB) and `total_budget` (default 2 GiB).
 - **`SqliteAccessPolicy`** Protocol + **`make_threshold_policy()`** helper for advanced users who want to override the built-in heuristic.
 - **CLI flags**: `--sqlite-mode {download,range,auto}`, `--sqlite-auto-per-shard-bytes BYTES`, `--sqlite-auto-total-bytes BYTES` on the root `shardy` group. CLI flags override TOML; TOML supports the same keys (`sqlite_mode`, `sqlite_auto_per_shard_threshold_bytes`, `sqlite_auto_total_budget_bytes`) under `[reader]`.
+- **`sqlite-adaptive`** / **`read-sqlite-adaptive`** extras: composes `sqlite` + `sqlite-range` so `AdaptiveSqliteReaderFactory` (the default reader mode) can resolve to either tier. **`sqlite-adaptive-async`** is the async counterpart (adds `aiobotocore`).
+- **`cli-minimal`** extra: bare CLI binary (`click>=8.0` only). Combine with any backend extra (e.g. `pip install 'shardyfusion[cli-minimal,read-sqlite]'`) for a slim install. The kitchen-sink `cli` extra still bundles every read backend.
 
 ### Changed
 - **Manifest `format_version` bumped to `4`** (was `2`/`3`). Readers strictly accept only `{4}`; older manifests are rejected with `ManifestParseError`. **No backward compatibility** — re-publish snapshots after upgrading.

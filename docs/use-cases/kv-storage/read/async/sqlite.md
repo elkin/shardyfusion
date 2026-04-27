@@ -15,11 +15,16 @@ Use **`AsyncShardedReader`** with an async SQLite reader factory for async looku
 ## Install
 
 ```bash
-# Async SQLite wrappers
+# Async SQLite wrappers (download-and-cache)
 uv add 'shardyfusion[sqlite-async]'
 
 # If you also need range-read VFS
 uv add 'shardyfusion[sqlite-async]' 'shardyfusion[read-sqlite-range]'
+
+# Adaptive (auto-pick download or range per snapshot — recommended).
+# Pulls aiobotocore + both backends so AsyncAdaptiveSqliteReaderFactory works
+# without a follow-up install.
+uv add 'shardyfusion[sqlite-adaptive-async]'
 ```
 
 ## Minimal example
