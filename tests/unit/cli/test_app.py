@@ -1199,6 +1199,37 @@ sqlite_mode = "{sqlite_mode}"
         # The KV side must respect sqlite_mode = "auto"
         assert isinstance(factory.kv_factory, AdaptiveSqliteReaderFactory)
 
+    def test_lancedb_with_sqlite_kv_range_mode_uses_range_factory(
+        self, tmp_path: Any
+    ) -> None:
+        """``--sqlite-mode=range`` on a composite (LanceDB sidecar + SQLite KV)
+        snapshot must wire ``SqliteRangeReaderFactory`` as the KV factory."""
+        from shardyfusion.composite_adapter import CompositeReaderFactory
+        from shardyfusion.sqlite_adapter import SqliteRangeReaderFactory
+
+        store = self._make_store(
+            {
+                "dim": 2,
+                "metric": "l2",
+                "unified": True,
+                "backend": "lancedb",
+                "kv_backend": "sqlite",
+            }
+        )
+        captured: dict[str, Any] = {}
+        cfg_path = self._cfg(tmp_path, sqlite_mode="range")
+
+        result = self._invoke(
+            ["--config", str(cfg_path), "search", "1.0,2.0"],
+            store=store,
+            captured=captured,
+        )
+
+        assert result.exit_code == 0, result.output
+        factory = captured.get("reader_factory")
+        assert isinstance(factory, CompositeReaderFactory)
+        assert isinstance(factory.kv_factory, SqliteRangeReaderFactory)
+
     def test_lancedb_with_slatedb_kv_falls_back_to_auto_dispatch(
         self, tmp_path: Any
     ) -> None:
