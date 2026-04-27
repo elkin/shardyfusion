@@ -422,10 +422,13 @@ def detect_kv_backend(factory: Any) -> str:
     from shardyfusion.composite_adapter import CompositeFactory
 
     actual = factory.kv_factory if isinstance(factory, CompositeFactory) else factory
-    from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
+    try:
+        from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
 
-    if isinstance(actual, SqliteVecFactory):
-        return "sqlite-vec"
+        if isinstance(actual, SqliteVecFactory):
+            return "sqlite-vec"
+    except ImportError:
+        pass
     try:
         from shardyfusion.sqlite_adapter import SqliteFactory
 
