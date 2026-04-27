@@ -1,0 +1,1 @@
+../.claude/skills/validate-docs/scripts/check_docs.py
