@@ -29,18 +29,18 @@
 
 ## Development Workflow
 
-Use `just` for all development tasks. Run `just --list` for available recipes.
+Use `just` for all development tasks. Run `just --list` for available recipes. Avoid calling `uv` directly unless absolutely necessary — `just` recipes handle the correct environment setup, flags, and tox orchestration for you.
 
 Key workflows:
 - **Bootstrap**: `just setup` (fresh clone), `just doctor` (health check)
-- **Dependencies**: `uv sync --all-extras --dev` (full dev), or `uv sync --extra <extra>` for specific features
+- **Dependencies**: `just sync` (full dev), or `just setup` (idempotent bootstrap)
 - **Quality**: `just quality` (lint, format, type check, package, docs-check)
-- **Tests**: `just unit`, `just integration`, `just d-e2e` (E2E in container)
+- **Tests**: `just unit`, `just integration`, `just d-e2e` (E2E in container). Use `-p=N` for tox parallel envs and `-n=M` for pytest-xdist workers (e.g. `just unit -p=4 -n=6`).
 - **Fix**: `just fix` (auto-format and lint-fix)
 - **Docs**: `just docs`, `just docs-serve`
 - **Coverage**: `just coverage` (unit tests with HTML report)
 
-**Package manager**: uv. Core dependency: `pyyaml>=6.0`.
+**Package manager**: uv (invoked internally by `just` recipes). Core dependency: `pyyaml>=6.0`, `obstore>=0.4`.
 
 Many optional extras are defined in `pyproject.toml` (e.g. `read`, `read-async`, `read-sqlite`, `read-sqlite-range`, `read-sqlite-adaptive` / `sqlite-adaptive`, `sqlite-async`, `sqlite-adaptive-async`, `writer-spark`, `writer-dask`, `writer-ray`, `cli-minimal`, `cli` (kitchen-sink), `cel`, `metrics-prometheus`, `metrics-otel`, `vector`, `vector-sqlite`, `all`). Container commands mirror local ones with a `d-` prefix (e.g. `just d-e2e`). Container runs use an isolated uv project env at `/opt/shardyfusion-venv`.
 
@@ -71,8 +71,8 @@ The library is split into six independent paths that share config, manifest mode
 **Reader path (sync)** (no Spark/Java needed):
 `reader/reader.py` (`ShardedReader`) / `reader/concurrent_reader.py` (`ConcurrentShardedReader`) → `reader/_base.py` → `reader/_types.py`, `reader/_state.py` → `routing.py` → `manifest_store.py`, `db_manifest_store.py`
 
-**Reader path (async)** (no Spark/Java needed; optional `aiobotocore` for native async S3):
-`reader/async_reader.py` → `routing.py` → `async_manifest_store.py` (`AsyncS3ManifestStore`)
+**Reader path (async)** (no Spark/Java needed):
+`reader/async_reader.py` → `routing.py` → `async_manifest_store.py` (`AsyncS3ManifestStore` via `AsyncObstoreBackend`)
 
 **CLI path** (requires click + pyyaml):
 `cli/app.py` → `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
@@ -95,7 +95,7 @@ The library is split into six independent paths that share config, manifest mode
 ```
 Layer 0 — Core types & errors: errors.py (incl. VectorIndexError, VectorSearchError), type_defs.py (incl. RetryConfig), sharding_types.py, ordering.py, logging.py (incl. LogContext/JsonFormatter), metrics/ (package: _events.py, _protocol.py, prometheus.py, otel.py)
 Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py, cel.py (CEL compile/evaluate/boundaries, optional cel extra), run_registry.py (RunRecord, S3RunRegistry, RunRecordLifecycle), credentials.py
-Layer 2 — Storage, routing, manifest, run registry: storage.py (w/ RetryConfig, list_prefixes), manifest.py, routing.py, manifest_store.py (delegates to list_prefixes), async_manifest_store.py, db_manifest_store.py (PostgresManifestStore)
+Layer 2 — Storage, routing, manifest, run registry: storage.py (`StorageBackend` + `AsyncStorageBackend` Protocols, `ObstoreBackend`/`AsyncObstoreBackend`, `MemoryBackend`/`AsyncMemoryBackend`, `create_s3_store()`), manifest.py, routing.py, manifest_store.py, async_manifest_store.py, db_manifest_store.py (PostgresManifestStore)
 Layer 3 — Writer core: _writer_core.py (shared by all writers; assemble_build_result, cleanup_losers, CleanupAction, cleanup_stale_attempts, cleanup_old_runs), _shard_writer.py (shared shard-write loop + retry: write_shard_core, write_shard_with_retry, ShardWriteParams)
 Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/ (reader.py, concurrent_reader.py, _base.py, _types.py, _state.py), reader/async_reader.py, reader/unified_reader.py, reader/async_unified_reader.py, cli/app.py
 Layer vec — Vector search: vector/types.py, vector/config.py (vector types/protocols/enums), vector/sharding.py (CLUSTER/LSH/EXPLICIT/CEL routing), vector/_merge.py (top-k heap merge), vector/_distributed.py (shared write core), vector/writer.py (write_vector_sharded), vector/reader.py (ShardedVectorReader), vector/async_reader.py (AsyncShardedVectorReader)
@@ -148,7 +148,7 @@ Layer internal — Symbols & compatibility: _slatedb_symbols.py (lazy SlateDB sy
 `AsyncShardedReader` in `reader/async_reader.py` mirrors the sync reader API using asyncio:
 
 1. Constructed via `@classmethod async def open(...)` (since `__init__` can't do async I/O). On cold start, if `load_manifest()` raises `ManifestParseError`, falls back to previous manifests via `list_manifests()` (up to `max_fallback_attempts`, default 3).
-2. S3 manifest loading uses `AsyncS3ManifestStore` (native aiobotocore).
+2. S3 manifest loading uses `AsyncS3ManifestStore` (native `AsyncObstoreBackend`).
 3. `async get(key)` / `async multi_get(keys)` route keys and read from async shard readers. Both hold borrow count increments during reads, preventing `refresh()`/`close()` from closing shard readers while reads are in-flight. The borrow is acquired after the rate limiter to avoid blocking state cleanup during throttling. `multi_get` fans out via `asyncio.TaskGroup` with optional `asyncio.Semaphore` for concurrency limiting (`max_concurrency`).
 4. `async refresh()` serialises via `asyncio.Lock`. Swaps state and defers cleanup of retired readers via `state.aclose()` (scheduled as a task via `loop.create_task()`) when their borrow count hits 0. `_AsyncReaderState` supports the async context manager protocol. A malformed manifest is silently skipped (returns `False`), keeping the previous good state.
 5. Sync metadata methods (`key_encoding`, `snapshot_info()`, `shard_details()`, `route_key()`) and borrow methods (`reader_for_key()`, `readers_for_keys()`) work identically to the sync reader.
@@ -229,6 +229,8 @@ These are all Protocols, allowing user-provided implementations:
 | Protocol | Default Implementation | Purpose |
 |---|---|---|
 | — | `SqliteManifestBuilder` | Manifest serialization (SQLite format, used internally by `S3ManifestStore`) |
+| `StorageBackend` | `ObstoreBackend`, `MemoryBackend` | Sync S3/object-store I/O (get/put/delete/list) |
+| `AsyncStorageBackend` | `AsyncObstoreBackend`, `AsyncMemoryBackend` | Async S3/object-store I/O (get/put/delete/list) |
 | `ManifestStore` | `S3ManifestStore`, `PostgresManifestStore` | Unified manifest read/write (publish + load + list + set_current) |
 | `RunRegistry` | `S3RunRegistry` | Run-scoped writer lifecycle record storage |
 | `AsyncManifestStore` | `AsyncS3ManifestStore` | Async read-only manifest loading (load + list) |
@@ -380,11 +382,11 @@ Vector types and functions are imported from subpackages (not re-exported at top
 - Framework: `pytest`; parallel unit execution uses `pytest-xdist`.
 - Test files: `test_*.py`; keep reader and writer tests in their flavor directories.
 - Prefer targeted runs while developing:
-  - `uv run pytest -q tests/unit/writer`
-  - `uv run pytest -q tests/unit/cli`
-  - `uv run pytest -q tests/integration/read`
+  - `just unit -- tests/unit/writer`
+  - `just unit -- tests/unit/cli`
+  - `just integration -- tests/integration/read`
 - Integration writer tests require Spark + Java and local S3 emulation (`moto`).
-- E2E tests require a container engine and run via `just d-e2e`.
+- E2E tests require a container engine and run via `just d-e2e` (preferred). Use `-p=2` to run two tox envs in parallel.
 - Contract tests in `tests/unit/writer/core/test_routing_contract.py` verify writer-reader sharding invariant with hypothesis property tests.
 - Shared test scenarios in `tests/helpers/s3_test_scenarios.py` are reused across moto and Garage backends.
 - Test adapters in `testing.py`: `FakeSlateDbAdapter`, `FileBackedSlateDbAdapter`, `RealSlateDbFileAdapter`.
@@ -433,7 +435,7 @@ Vector types and functions are imported from subpackages (not re-exported at top
 - **Reader reference counting**: `refresh()` serialises I/O via `_refresh_lock`, atomically swaps `_ReaderState` with a compare-and-swap guard, and defers closing old handles until `refcount` drops to zero. Pool-mode checkout has a configurable timeout (default 30s) — raises `PoolExhaustedError` (retryable) when exhausted. Metadata methods (`key_encoding`, `snapshot_info`, `shard_details`, `route_key`) use `_use_state()` and raise `ReaderStateError` on a closed reader.
 - **Borrow handle safety nets**: `ShardReaderHandle` and `AsyncShardReaderHandle` implement `__del__()` that logs a warning and releases the borrow if the handle was not explicitly closed. Prefer explicit `close()` or `with`/`async with` context managers.
 - **Async reader uses `open()` classmethod**: `AsyncShardedReader.__init__` does no I/O. Use `await AsyncShardedReader.open(...)` and then `await reader.close()`, or `async with await AsyncShardedReader.open(...) as reader`. The default `AsyncS3ManifestStore` requires `aiobotocore` (`read-async`, or another install path that brings it in).
-- **Async manifest store**: `AsyncShardedReader` accepts `AsyncManifestStore` only (not sync `ManifestStore`). When `manifest_store=None`, uses `AsyncS3ManifestStore` (native aiobotocore).
+- **Async manifest store**: `AsyncShardedReader` accepts `AsyncManifestStore` only (not sync `ManifestStore`). When `manifest_store=None`, uses `AsyncS3ManifestStore` (native `AsyncObstoreBackend`).
 - **Reader cold-start fallback**: When `load_manifest()` raises `ManifestParseError` during initialization, readers walk backward through `list_manifests()` to find a valid manifest (up to `max_fallback_attempts`, default 3). Set to 0 to disable fallback. During `refresh()`, a malformed manifest is silently skipped and the reader keeps its current good state (returns `False`).
 - **Garage requires path-style addressing**: E2E tests set `addressing_style: "path"` in `S3ClientConfig` because Garage doesn't support virtual-hosted-style.
 - **Session-scoped test fixtures**: PySpark and S3 (moto/Garage) fixtures are session-scoped for performance. Tests share the same Spark session and S3 service.
@@ -442,7 +444,7 @@ Vector types and functions are imported from subpackages (not re-exported at top
 - **Ray tests need `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0`**: Ray ≥ 2.47 auto-detects `uv run` in the process tree and overrides worker Python to create fresh venvs. The env var is set in `tox.ini` for raywriter envs. For direct pytest, either set the var or use `uv run --extra writer-ray pytest ...`.
 - **`acquire_async()` is part of the `RateLimiter` Protocol**: Uses `asyncio.sleep` — safe for event loops. The sync `acquire()` uses `time.sleep` and must not be called from async code.
 - **`try_acquire()` is pure arithmetic**: Guaranteed non-blocking (replenish + compare + deduct). Safe to call from async code directly without `to_thread()`.
-- **`RetryConfig` usage**: Used in two places: (1) `S3ManifestStore` / `AsyncS3ManifestStore` for transient S3 errors, and (2) `WriteConfig.shard_retry` for retryable writer paths. `shard_retry` currently covers Dask/Ray sharded writes, Spark/Dask/Ray `write_single_db()`, and Python parallel writes. Spark sharded writes still rely on Spark task retry/speculation. When `shard_retry` is set, the retry path writes each attempt to a fresh S3 prefix (`attempt=00`, `attempt=01`, ...).
+- **`RetryConfig` usage**: Used in `WriteConfig.shard_retry` for retryable writer paths. `shard_retry` currently covers Dask/Ray sharded writes, Spark/Dask/Ray `write_single_db()`, and Python parallel writes. Spark sharded writes still rely on Spark task retry/speculation. When `shard_retry` is set, the retry path writes each attempt to a fresh S3 prefix (`attempt=00`, `attempt=01`, ...). S3 I/O retries are delegated to obstore's Rust layer with shardyfusion-tuned aggressive defaults (`max_retries=5`, `init_backoff=200ms`, `max_backoff=4s`, `retry_timeout=30s`). A single Python-level fallback retry (2s delay) is applied for PUT operations on `GenericError` only.
 - **`cel-expr-python` does not support Python 3.14**: The `cel` extra depends on `cel-expr-python` which has no py3.14 wheels. CEL tests are skipped on py3.14 via `pytest.importorskip()`.
 - **UnifiedShardedReader and AsyncUnifiedShardedReader are lazily imported**: `__init__.py` uses `__getattr__` to defer the import of both classes (and their numpy transitive dependency) until first access. This prevents `import shardyfusion` from requiring numpy for non-vector users.
 - **LanceDB and sqlite-vec imports are deferred**: `lancedb_adapter.py` imports `lancedb.index` inside class methods. `sqlite_vec_adapter.py` imports `sqlite_vec` inside `_load_sqlite_vec()`. Both are optional dependencies.
@@ -459,3 +461,4 @@ Vector types and functions are imported from subpackages (not re-exported at top
 - `SPARK_LOCAL_IP=127.0.0.1` is set in tox and devcontainer to avoid hostname resolution issues.
 - Reader-only, Python writer, Dask writer, and Ray writer usage do not require Spark/Java.
 - **Ray does not run on py3.14** (same as Dask and CEL).
+- **obstore** (`obstore>=0.4`) is a core dependency used for all S3 I/O (sync and async). No separate `boto3` or `aiobotocore` installation is required.
