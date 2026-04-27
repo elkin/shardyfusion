@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict
 from .credentials import CredentialProvider
 from .logging import FailureSeverity, get_logger, log_failure
 from .metrics import MetricsCollector
-from .storage import create_s3_client, get_bytes, join_s3, put_bytes
+from .storage import ObstoreBackend, StorageBackend, create_s3_store, join_s3
 from .type_defs import S3ConnectionOptions
 
 _logger = get_logger(__name__)
@@ -110,17 +110,15 @@ class S3RunRegistry:
 
     def __init__(
         self,
+        backend: StorageBackend,
         s3_prefix: str,
         *,
         run_registry_prefix: str = "runs",
-        credential_provider: CredentialProvider | None = None,
-        s3_connection_options: S3ConnectionOptions | None = None,
         metrics_collector: MetricsCollector | None = None,
     ) -> None:
+        self._backend = backend
         self.s3_prefix = s3_prefix.rstrip("/")
         self.run_registry_prefix = run_registry_prefix
-        credentials = credential_provider.resolve() if credential_provider else None
-        self._s3_client = create_s3_client(credentials, s3_connection_options)
         self._metrics = metrics_collector
 
     def create(self, record: RunRecord) -> str:
@@ -134,20 +132,14 @@ class S3RunRegistry:
         return ref
 
     def update(self, ref: str, record: RunRecord) -> None:
-        put_bytes(
+        self._backend.put(
             ref,
             _build_run_payload(record),
             "application/x-yaml",
-            s3_client=self._s3_client,
-            metrics_collector=self._metrics,
         )
 
     def load(self, ref: str) -> RunRecord:
-        payload = get_bytes(
-            ref,
-            s3_client=self._s3_client,
-            metrics_collector=self._metrics,
-        )
+        payload = self._backend.get(ref)
         return parse_run_record(payload)
 
 
@@ -180,13 +172,21 @@ def resolve_run_registry(config: _RunRecordConfig) -> RunRegistry:
     if isinstance(config.manifest.store, InMemoryManifestStore):
         return InMemoryRunRegistry()
 
+    credentials = config.manifest.credential_provider or config.credential_provider
+    conn_opts = config.manifest.s3_connection_options or config.s3_connection_options
+    from .storage import parse_s3_url
+
+    bucket, _ = parse_s3_url(config.s3_prefix)
+    store = create_s3_store(
+        bucket=bucket,
+        credentials=credentials.resolve() if credentials else None,
+        connection_options=conn_opts,
+    )
+    backend = ObstoreBackend(store)
     return S3RunRegistry(
-        config.s3_prefix,
+        backend=backend,
+        s3_prefix=config.s3_prefix,
         run_registry_prefix=config.output.run_registry_prefix,
-        credential_provider=config.manifest.credential_provider
-        or config.credential_provider,
-        s3_connection_options=config.manifest.s3_connection_options
-        or config.s3_connection_options,
         metrics_collector=config.metrics_collector,
     )
 

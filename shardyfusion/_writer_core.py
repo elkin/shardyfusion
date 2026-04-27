@@ -38,8 +38,14 @@ from .sharding_types import (
     ShardingStrategy,
     validate_routing_values,
 )
-from .storage import create_s3_client, delete_prefix, join_s3, list_prefixes
-from .type_defs import KeyInput, RetryConfig
+from .storage import (
+    ObstoreBackend,
+    StorageBackend,
+    create_s3_store,
+    join_s3,
+    parse_s3_url,
+)
+from .type_defs import KeyInput
 
 _logger = get_logger(__name__)
 
@@ -382,18 +388,11 @@ def wrap_factory_for_vector(factory: Any, config: WriteConfig) -> Any:
         return factory
 
     from shardyfusion.composite_adapter import CompositeFactory
-    from shardyfusion.storage import create_s3_client
-
-    credentials = (
-        config.credential_provider.resolve() if config.credential_provider else None
-    )
-    s3_client = create_s3_client(credentials, config.s3_connection_options)
 
     try:
         from shardyfusion.vector.adapters.lancedb_adapter import LanceDbWriterFactory
 
         vector_factory = LanceDbWriterFactory(
-            s3_client=s3_client,
             s3_connection_options=config.s3_connection_options,
             credential_provider=config.credential_provider,
         )
@@ -494,14 +493,25 @@ def publish_to_store(
         key_encoding=config.key_encoding,
     )
 
-    store = config.manifest.store or S3ManifestStore(
-        config.s3_prefix,
-        credential_provider=config.manifest.credential_provider
-        or config.credential_provider,
-        s3_connection_options=config.manifest.s3_connection_options
-        or config.s3_connection_options,
-        metrics_collector=config.metrics_collector,
-    )
+    if config.manifest.store is not None:
+        store = config.manifest.store
+    else:
+        credentials = config.manifest.credential_provider or config.credential_provider
+        conn_opts = (
+            config.manifest.s3_connection_options or config.s3_connection_options
+        )
+        bucket, _ = parse_s3_url(config.s3_prefix)
+        s3_store = create_s3_store(
+            bucket=bucket,
+            credentials=credentials.resolve() if credentials else None,
+            connection_options=conn_opts,
+        )
+        backend = ObstoreBackend(s3_store)
+        store = S3ManifestStore(
+            backend,
+            config.s3_prefix,
+            metrics_collector=config.metrics_collector,
+        )
 
     mc = config.metrics_collector
 
@@ -606,10 +616,10 @@ def assemble_build_result(
 
 
 def cleanup_losers(
-    all_attempt_urls: Sequence[str],
+    all_attempt_urls: list[str],
     winners: list[RequiredShardMeta],
     *,
-    s3_client: Any | None = None,
+    backend: StorageBackend | None = None,
     metrics_collector: MetricsCollector | None = None,
 ) -> int:
     """Delete temp databases for non-winning attempts.
@@ -623,25 +633,47 @@ def cleanup_losers(
     winner_urls = {w.db_url for w in winners if w.db_url is not None}
     total_deleted = 0
     num_losers = 0
-    client = s3_client or create_s3_client()
 
-    for url in all_attempt_urls:
-        if url not in winner_urls:
-            num_losers += 1
-            deleted = delete_prefix(
-                url,
-                s3_client=client,
-                metrics_collector=metrics_collector,
+    try:
+        if backend is None:
+            from .storage import parse_s3_url
+
+            bucket, _ = (
+                parse_s3_url(all_attempt_urls[0]) if all_attempt_urls else ("", "")
             )
-            total_deleted += deleted
-            if deleted > 0:
-                log_event(
-                    "loser_attempt_cleaned",
-                    level=logging.DEBUG,
-                    logger=_logger,
-                    db_url=url,
-                    objects_deleted=deleted,
-                )
+            store = create_s3_store(bucket=bucket)
+            backend = ObstoreBackend(store)
+
+        for url in all_attempt_urls:
+            if url not in winner_urls:
+                num_losers += 1
+                try:
+                    deleted = backend.delete_prefix(url)
+                except Exception as exc:
+                    log_failure(
+                        "loser_cleanup_failed",
+                        severity=FailureSeverity.TRANSIENT,
+                        logger=_logger,
+                        error=exc,
+                        db_url=url,
+                    )
+                    deleted = 0
+                total_deleted += deleted
+                if deleted > 0:
+                    log_event(
+                        "loser_attempt_cleaned",
+                        level=logging.DEBUG,
+                        logger=_logger,
+                        db_url=url,
+                        objects_deleted=deleted,
+                    )
+    except Exception as exc:
+        log_failure(
+            "losers_cleanup_failed",
+            severity=FailureSeverity.TRANSIENT,
+            logger=_logger,
+            error=exc,
+        )
 
     if total_deleted > 0:
         log_event(
@@ -671,9 +703,8 @@ class CleanupAction:
 def cleanup_stale_attempts(
     manifest: ParsedManifest,
     *,
-    s3_client: Any = None,
+    backend: StorageBackend | None = None,
     dry_run: bool = False,
-    retry_config: RetryConfig | None = None,
 ) -> list[CleanupAction]:
     """Find and delete non-winning attempt directories for the current manifest's run.
 
@@ -692,6 +723,13 @@ def cleanup_stale_attempts(
         if shard.db_url is not None
     }
 
+    if backend is None:
+        from .storage import parse_s3_url
+
+        bucket, _ = parse_s3_url(build.s3_prefix)
+        store = create_s3_store(bucket=bucket)
+        backend = ObstoreBackend(store)
+
     for shard in manifest.shards:
         if shard.db_url is None:
             continue
@@ -703,18 +741,12 @@ def cleanup_stale_attempts(
         if not scan_prefix.endswith("/"):
             scan_prefix += "/"
 
-        attempt_dirs = list_prefixes(
-            scan_prefix, s3_client=s3_client, retry_config=retry_config
-        )
+        attempt_dirs = backend.list_prefixes(scan_prefix)
         for attempt_url in attempt_dirs:
             if attempt_url.rstrip("/") not in winner_urls:
                 deleted = 0
                 if not dry_run:
-                    deleted = delete_prefix(
-                        attempt_url,
-                        s3_client=s3_client,
-                        retry_config=retry_config,
-                    )
+                    deleted = backend.delete_prefix(attempt_url)
                 actions.append(
                     CleanupAction(
                         kind="stale_attempt",
@@ -733,9 +765,8 @@ def cleanup_old_runs(
     shard_prefix: str,
     *,
     protected_run_ids: set[str],
-    s3_client: Any = None,
+    backend: StorageBackend | None = None,
     dry_run: bool = False,
-    retry_config: RetryConfig | None = None,
 ) -> list[CleanupAction]:
     """Delete shard data for runs not in *protected_run_ids*.
 
@@ -750,9 +781,14 @@ def cleanup_old_runs(
     if not runs_prefix.endswith("/"):
         runs_prefix += "/"
 
-    run_dirs = list_prefixes(
-        runs_prefix, s3_client=s3_client, retry_config=retry_config
-    )
+    if backend is None:
+        from .storage import parse_s3_url
+
+        bucket, _ = parse_s3_url(s3_prefix)
+        store = create_s3_store(bucket=bucket)
+        backend = ObstoreBackend(store)
+
+    run_dirs = backend.list_prefixes(runs_prefix)
 
     for run_dir in run_dirs:
         # Extract run_id from directory name like "s3://bucket/prefix/shards/run_id=abc123/"
@@ -764,11 +800,7 @@ def cleanup_old_runs(
         if run_id not in protected_run_ids:
             deleted = 0
             if not dry_run:
-                deleted = delete_prefix(
-                    run_dir,
-                    s3_client=s3_client,
-                    retry_config=retry_config,
-                )
+                deleted = backend.delete_prefix(run_dir)
             actions.append(
                 CleanupAction(
                     kind="old_run",

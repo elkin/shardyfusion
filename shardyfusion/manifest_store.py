@@ -13,14 +13,10 @@ import re
 import sqlite3
 from collections import OrderedDict
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Protocol
-
-if TYPE_CHECKING:
-    from .type_defs import RetryConfig
+from typing import Any, Protocol
 
 from pydantic import ValidationError
 
-from .credentials import CredentialProvider
 from .errors import ManifestParseError
 from .logging import FailureSeverity, get_logger, log_failure
 from .manifest import (
@@ -35,15 +31,7 @@ from .manifest import (
 )
 from .metrics import MetricsCollector
 from .sharding_types import ShardHashAlgorithm
-from .storage import (
-    create_s3_client,
-    get_bytes,
-    join_s3,
-    list_prefixes,
-    put_bytes,
-    try_get_bytes,
-)
-from .type_defs import S3ConnectionOptions
+from .storage import StorageBackend, join_s3
 
 _logger = get_logger(__name__)
 _SUPPORTED_MANIFEST_FORMAT_VERSIONS = frozenset({4})
@@ -53,9 +41,10 @@ MANIFEST_TIMESTAMP_FMT = "%Y-%m-%dT%H:%M:%S.%fZ"
 
 # Regex to parse timestamp-prefixed manifest directory names.
 # Example: "2026-03-14T10:30:00.000000Z_run_id=abc123/"
+# obstore list_with_delimiter omits the trailing slash, so make it optional.
 MANIFEST_PREFIX_RE = re.compile(
     r"^(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z)"
-    r"_run_id=(?P<run_id>[^/]+)/$"
+    r"_run_id=(?P<run_id>[^/]+)/?$"
 )
 
 
@@ -133,24 +122,18 @@ class S3ManifestStore:
 
     def __init__(
         self,
+        backend: StorageBackend,
         s3_prefix: str,
         *,
         manifest_name: str = "manifest",
         current_pointer_key: str = "_CURRENT",
-        credential_provider: CredentialProvider | None = None,
-        s3_connection_options: S3ConnectionOptions | None = None,
         metrics_collector: MetricsCollector | None = None,
-        retry_config: RetryConfig | None = None,
     ) -> None:
-        from .type_defs import RetryConfig as _RC
-
+        self._backend = backend
         self.s3_prefix = s3_prefix.rstrip("/")
         self.manifest_name = manifest_name
         self.current_pointer_key = current_pointer_key
-        credentials = credential_provider.resolve() if credential_provider else None
-        self._s3_client = create_s3_client(credentials, s3_connection_options)
         self._metrics = metrics_collector
-        self._retry_config: _RC | None = retry_config
 
     def publish(
         self,
@@ -174,14 +157,11 @@ class S3ManifestStore:
             f"{timestamp}_run_id={run_id}",
             self.manifest_name,
         )
-        put_bytes(
+        self._backend.put(
             manifest_url,
             artifact.payload,
             artifact.content_type,
             artifact.headers,
-            s3_client=self._s3_client,
-            metrics_collector=self._metrics,
-            retry_config=self._retry_config,
         )
 
         self._write_current(manifest_url, artifact.content_type, run_id)
@@ -190,24 +170,14 @@ class S3ManifestStore:
 
     def load_current(self) -> ManifestRef | None:
         current_url = f"{self.s3_prefix}/{self.current_pointer_key}"
-        payload = try_get_bytes(
-            current_url,
-            s3_client=self._s3_client,
-            metrics_collector=self._metrics,
-            retry_config=self._retry_config,
-        )
+        payload = self._backend.try_get(current_url)
         if payload is None:
             return None
         return parse_current_pointer_to_ref(payload)
 
     def load_manifest(self, ref: str) -> ParsedManifest:
         try:
-            payload = get_bytes(
-                ref,
-                s3_client=self._s3_client,
-                metrics_collector=self._metrics,
-                retry_config=self._retry_config,
-            )
+            payload = self._backend.get(ref)
         except Exception as exc:
             log_failure(
                 "manifest_s3_load_failed",
@@ -221,11 +191,7 @@ class S3ManifestStore:
 
     def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
         manifests_prefix = join_s3(self.s3_prefix, "manifests") + "/"
-        prefix_urls = list_prefixes(
-            manifests_prefix,
-            s3_client=self._s3_client,
-            retry_config=self._retry_config,
-        )
+        prefix_urls = self._backend.list_prefixes(manifests_prefix)
 
         refs: list[ManifestRef] = []
         for url in prefix_urls:
@@ -254,14 +220,11 @@ class S3ManifestStore:
             run_id=run_id,
         )
         current_url = join_s3(self.s3_prefix, self.current_pointer_key)
-        put_bytes(
+        self._backend.put(
             current_url,
             current_artifact.payload,
             current_artifact.content_type,
             current_artifact.headers,
-            s3_client=self._s3_client,
-            metrics_collector=self._metrics,
-            retry_config=self._retry_config,
         )
 
 
