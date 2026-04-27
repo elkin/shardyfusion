@@ -172,7 +172,7 @@ Entry point: `cli/app.py:main`. Subcommands: `get KEY`, `multiget KEY [KEY ...]`
 
 Global options `--ref REF` and `--offset N` (mutually exclusive) load a specific manifest by reference or position in history before executing any subcommand. These are non-mutating (read-only manifest selection; they do not update `_CURRENT`). REPL commands `use` and `refresh` are also session-local and non-mutating. `rollback` is the only CLI command that mutates `_CURRENT`.
 
-Additional global options: `--credentials PATH` (explicit credentials.toml), `--output-format json|jsonl|table|text`, `--s3-option KEY=VALUE` (repeatable, e.g. `addressing_style=path`), `--reader-backend slatedb|sqlite`.
+Additional global options: `--credentials PATH` (explicit credentials.toml), `--output-format json|jsonl|table|text`, `--s3-option KEY=VALUE` (repeatable, e.g. `addressing_style=path`), `--reader-backend slatedb|sqlite`, `--sqlite-mode {download,range,auto}` (default `auto`; only consulted for `sqlite` backend), `--sqlite-auto-per-shard-bytes BYTES` (default 16 MiB), `--sqlite-auto-total-bytes BYTES` (default 2 GiB). All four sqlite-mode flags override the corresponding `[reader]` keys (`sqlite_mode`, `sqlite_auto_per_shard_threshold_bytes`, `sqlite_auto_total_budget_bytes`) in `reader.toml`.
 
 Key coercion: CLI keys are strings; when manifest uses integer encoding (`u64be`/`u32be`), keys are auto-coerced to `int` via `cli/config.py:coerce_cli_key()`.
 
@@ -184,14 +184,14 @@ The `search` subcommand performs vector ANN search against a vector or unified s
 
 ### Manifest & CURRENT Data Formats
 
-**Manifest** (SQLite, published to `s3_prefix/manifests/{timestamp}_run_id={run_id}/manifest`):
+**Manifest** (SQLite, published to `s3_prefix/manifests/{timestamp}_run_id={run_id}/manifest`, `format_version=4`):
 
 A serialized SQLite database with two tables:
-- `build_meta` — single row with `RequiredBuildMeta` fields (`run_id`, `num_dbs`, `s3_prefix`, `sharding` as JSON, `key_encoding`, …)
-- `shards` — one row per non-empty shard (`db_id`, `db_url`, `checkpoint_id`, `row_count`, …)
+- `build_meta` — single row with `RequiredBuildMeta` fields (`run_id`, `num_dbs`, `s3_prefix`, `sharding` as JSON, `key_encoding`, `format_version=4`, …)
+- `shards` — one row per non-empty shard (`db_id`, `db_url`, `checkpoint_id`, `row_count`, `db_bytes` (mandatory; 0 for SlateDB shards), …)
 - `custom` — user-defined fields from `ManifestOptions.custom_manifest_fields` (JSON TEXT in `build_meta`)
 
-Manifest S3 keys are timestamp-prefixed (e.g., `2026-03-14T10:30:00.000000Z_run_id=abc123/manifest`) for chronological listing via S3 `CommonPrefixes`.
+Manifest S3 keys are timestamp-prefixed (e.g., `2026-03-14T10:30:00.000000Z_run_id=abc123/manifest`) for chronological listing via S3 `CommonPrefixes`. Readers strictly accept only `format_version=4`; older manifests fail with `ManifestParseError`.
 
 **CURRENT pointer** (JSON, published to `s3_prefix/_CURRENT`):
 ```json
@@ -240,7 +240,8 @@ SQLite backend alternatives (imported from `shardyfusion.sqlite_adapter`):
 - **Writer**: `SqliteFactory` → `SqliteAdapter` (builds local SQLite DB, uploads to S3 on close; `checkpoint()` computes SHA-256 hash)
 - **Reader (download-and-cache)**: `SqliteReaderFactory` → `SqliteShardReader` (one S3 GET, then local lookups)
 - **Reader (range-read VFS)**: `SqliteRangeReaderFactory` → `SqliteRangeShardReader` (S3 range requests via `obstore` with page-aligned LRU cache; requires `apsw` and `obstore`; uses per-instance UUID-based VFS names to avoid collisions)
-- **Async wrappers**: `AsyncSqliteReaderFactory`, `AsyncSqliteRangeReaderFactory` (delegate blocking I/O via `asyncio.to_thread`)
+- **Reader (adaptive)**: `AdaptiveSqliteReaderFactory` — composes the two above and resolves to one per snapshot via `decide_access_mode(db_bytes_per_shard, per_shard_threshold, total_budget)` (OR-semantics; defaults 16 MiB / 2 GiB). Caches the resolved sub-factory keyed on `manifest.required_build.run_id`; rebuilt on `refresh()` when the run_id rotates. Pluggable policy via `SqliteAccessPolicy` Protocol + `make_threshold_policy()`.
+- **Async wrappers**: `AsyncSqliteReaderFactory`, `AsyncSqliteRangeReaderFactory`, `AsyncAdaptiveSqliteReaderFactory` (delegate blocking I/O via `asyncio.to_thread`)
 
 Vector backend alternatives:
 - **LanceDB** (`vector/adapters/lancedb_adapter.py`): `LanceDbWriter` / `LanceDbWriterFactory` (build HNSW index locally, upload to S3), `LanceDbShardReader` / `LanceDbReaderFactory` (search via remote LanceDB dataset), `AsyncLanceDbShardReader` / `AsyncLanceDbReaderFactory` (async variants)
@@ -364,8 +365,8 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **Python:** `from shardyfusion.writer.python import write_sharded` (KV + unified KV+vector via `VectorSpec` on `WriteConfig`)
 
 SQLite backend adapters are imported from their module (not re-exported at top level):
-- `from shardyfusion.sqlite_adapter import SqliteFactory, SqliteReaderFactory, SqliteRangeReaderFactory`
-- `from shardyfusion.sqlite_adapter import AsyncSqliteReaderFactory, AsyncSqliteRangeReaderFactory`
+- `from shardyfusion.sqlite_adapter import SqliteFactory, SqliteReaderFactory, SqliteRangeReaderFactory, AdaptiveSqliteReaderFactory`
+- `from shardyfusion.sqlite_adapter import AsyncSqliteReaderFactory, AsyncSqliteRangeReaderFactory, AsyncAdaptiveSqliteReaderFactory`
 
 Vector types and functions are imported from subpackages (not re-exported at top level):
 - `from shardyfusion.vector.writer import write_vector_sharded`

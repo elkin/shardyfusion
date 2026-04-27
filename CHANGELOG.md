@@ -39,6 +39,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Key encodings**: `u64be` (default, 8-byte) and `u32be` (4-byte) big-endian unsigned integer encodings.
 - **JSON schema validation** for manifest and CURRENT pointer formats.
 - **Metrics/observability**: `MetricsCollector` protocol with `MetricEvent` catalog for writer and reader lifecycle events.
+- **SQLite shard access mode (`sqlite_mode`)** — new `ReaderConfig` field with three values: `"download"` (full-file fetch), `"range"` (S3 range-read VFS via `apsw` + `obstore`), and `"auto"` (default; per-snapshot decision based on shard size distribution).
+- **`AdaptiveSqliteReaderFactory`** / **`AsyncAdaptiveSqliteReaderFactory`** — composing factories that resolve to a download or range sub-factory once per snapshot using `decide_access_mode()`. Cached by `manifest.required_build.run_id`; rebuilt on `refresh()` when the run_id rotates.
+- **`AdaptiveSqliteVecReaderFactory`** / **`AsyncAdaptiveSqliteVecReaderFactory`** — same adaptive policy applied to unified KV+vector sqlite-vec snapshots.
+- **`decide_access_mode()`** policy function in `shardyfusion.sqlite_adapter` — OR-semantics over `per_shard_threshold` (default 16 MiB) and `total_budget` (default 2 GiB).
+- **`SqliteAccessPolicy`** Protocol + **`make_threshold_policy()`** helper for advanced users who want to override the built-in heuristic.
+- **CLI flags**: `--sqlite-mode {download,range,auto}`, `--sqlite-auto-per-shard-bytes BYTES`, `--sqlite-auto-total-bytes BYTES` on the root `shardy` group. CLI flags override TOML; TOML supports the same keys (`sqlite_mode`, `sqlite_auto_per_shard_threshold_bytes`, `sqlite_auto_total_budget_bytes`) under `[reader]`.
+
+### Changed
+- **Manifest `format_version` bumped to `4`** (was `2`/`3`). Readers strictly accept only `{4}`; older manifests are rejected with `ManifestParseError`. **No backward compatibility** — re-publish snapshots after upgrading.
+- **`RequiredShardMeta.db_bytes` is now mandatory** (`int`, non-optional). Synthetic empty shards (padded by `SnapshotRouter`) report `db_bytes=0`. Postgres-backed manifest stores must run `ALTER TABLE shardyfusion_manifests_shards ADD COLUMN db_bytes BIGINT NOT NULL DEFAULT 0` before upgrade.
+- **Reader-factory protocols (`ShardReaderFactory`, `AsyncShardReaderFactory`, vector counterparts) now require a `manifest` keyword argument** on `__call__`. Custom factory implementations must accept `manifest: ParsedManifest`. Built-in factories (`SqliteReaderFactory`, `SqliteRangeReaderFactory`, `SlateDbReaderFactory`, `LanceDbReaderFactory`, `SqliteVecReaderFactory`, and async variants) all accept and forward this parameter.
+- **`cli` extra now aggregates all read backends** (`read`, `read-async`, `read-sqlite`, `read-sqlite-range`, `sqlite-async`, `unified-vector`, `unified-vector-sqlite`) so any published snapshot can be opened without additional installs. Users who previously relied on a slim `cli` install must now opt in via narrower extras (`shardyfusion[read]` etc.) directly.
 
 ### Removed
 - **`ManifestBuilder`** protocol and **`YamlManifestBuilder`** class — `SqliteManifestBuilder` is now the sole manifest format, used internally by `S3ManifestStore`.
