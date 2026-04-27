@@ -683,9 +683,7 @@ def _finalize_single_process_adapters(state: _SingleProcessState) -> None:
     for db_id, adapter in state.adapters.items():
         adapter.flush()
         state.checkpoint_ids[db_id] = adapter.checkpoint()
-        state.db_bytes_per_shard[db_id] = (
-            adapter.db_bytes() if hasattr(adapter, "db_bytes") else 0
-        )
+        state.db_bytes_per_shard[db_id] = adapter.db_bytes()
 
 
 def _build_single_process_results(

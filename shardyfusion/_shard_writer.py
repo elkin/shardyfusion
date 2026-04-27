@@ -33,32 +33,6 @@ _logger = get_logger(__name__)
 VectorWriteTuple = tuple[int | str, Any, dict[str, Any] | None]
 
 
-def _require_db_bytes(adapter: Any, db_id: int) -> int:
-    """Return ``adapter.db_bytes()``, raising on missing/invalid implementations.
-
-    Manifest v4 makes ``db_bytes`` mandatory in :class:`RequiredShardMeta` and
-    the adaptive SQLite reader uses these values to decide between download
-    and range-read modes.  Silently substituting ``0`` for adapters that omit
-    the method would underestimate snapshot size and may push the policy to
-    pick ``download`` for very large shards (causing OOM at read time), so
-    we surface the misconfiguration immediately instead.
-    """
-    db_bytes_attr = getattr(adapter, "db_bytes", None)
-    if db_bytes_attr is None or not callable(db_bytes_attr):
-        raise ShardWriteError(
-            f"Adapter for db_id={db_id} does not implement db_bytes(); "
-            f"all DbAdapter implementations must report shard size for "
-            f"manifest v4. Adapter type: {type(adapter).__name__}"
-        )
-    value = db_bytes_attr()
-    if not isinstance(value, int) or value < 0:
-        raise ShardWriteError(
-            f"Adapter for db_id={db_id} returned invalid db_bytes={value!r}; "
-            f"expected a non-negative int."
-        )
-    return value
-
-
 class _PandasRowLike(Protocol):
     def __getitem__(self, key: str) -> object: ...
 
@@ -244,7 +218,7 @@ def write_shard_core(
 
             adapter.flush()
             checkpoint_id = adapter.checkpoint()
-            db_bytes = _require_db_bytes(adapter, params.db_id)
+            db_bytes = adapter.db_bytes()
     except ShardyfusionError:
         raise
     except Exception as exc:
@@ -395,7 +369,7 @@ def write_shard_core_distributed(
             _flush_vector_batch(vector_ids, vector_data, vector_payloads, adapter)
             adapter.flush()
             checkpoint_id = adapter.checkpoint()
-            db_bytes = _require_db_bytes(adapter, params.db_id)
+            db_bytes = adapter.db_bytes()
     except ShardyfusionError:
         raise
     except Exception as exc:

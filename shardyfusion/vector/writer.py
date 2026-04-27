@@ -103,11 +103,7 @@ def _write_single_process(
                 flush_vector_shard_batch(state)
             if state.adapter is not None:
                 state.checkpoint_id = state.adapter.checkpoint()
-                state.db_bytes = (
-                    state.adapter.db_bytes()
-                    if hasattr(state.adapter, "db_bytes")
-                    else 0
-                )
+                state.db_bytes = state.adapter.db_bytes()
 
     return shard_states
 

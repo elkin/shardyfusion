@@ -547,7 +547,7 @@ def _shard_worker(
 
             adapter.flush()
             checkpoint_id = adapter.checkpoint()
-            db_bytes = adapter.db_bytes() if hasattr(adapter, "db_bytes") else 0
+            db_bytes = adapter.db_bytes()
     except Exception as exc:
         log_failure(
             "python_shard_worker_failed",
@@ -657,7 +657,7 @@ def _file_shard_worker(
 
             adapter.flush()
             checkpoint_id = adapter.checkpoint()
-            db_bytes = adapter.db_bytes() if hasattr(adapter, "db_bytes") else 0
+            db_bytes = adapter.db_bytes()
     except ShardyfusionError as exc:
         log_failure(
             "python_file_spool_worker_failed",

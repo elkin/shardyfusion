@@ -392,7 +392,7 @@ def write_vector_shard(
             flush_vector_shard_batch(state)
 
         state.checkpoint_id = adapter.checkpoint()
-        state.db_bytes = adapter.db_bytes() if hasattr(adapter, "db_bytes") else 0
+        state.db_bytes = adapter.db_bytes()
 
     if metrics_collector is not None:
         metrics_collector.emit(

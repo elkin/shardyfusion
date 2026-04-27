@@ -270,7 +270,7 @@ def _stream_to_single_db(
 
             adapter.flush()
             checkpoint_id = adapter.checkpoint()
-            db_bytes = adapter.db_bytes() if hasattr(adapter, "db_bytes") else 0
+            db_bytes = adapter.db_bytes()
     except ShardyfusionError:
         raise
     except Exception as exc:

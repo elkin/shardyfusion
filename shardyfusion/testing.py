@@ -369,7 +369,7 @@ class _FailOnceAdapter:
         return self._inner.checkpoint()
 
     def db_bytes(self) -> int:
-        return self._inner.db_bytes() if hasattr(self._inner, "db_bytes") else 0
+        return self._inner.db_bytes()
 
     def close(self) -> None:
         self._inner.close()

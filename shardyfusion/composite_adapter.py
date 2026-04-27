@@ -172,9 +172,7 @@ class CompositeAdapter:
         return kv_ckpt
 
     def db_bytes(self) -> int:
-        kv_bytes = self._kv.db_bytes() if hasattr(self._kv, "db_bytes") else 0
-        vec_bytes = self._vec.db_bytes() if hasattr(self._vec, "db_bytes") else 0
-        return int(kv_bytes) + int(vec_bytes)
+        return int(self._kv.db_bytes()) + int(self._vec.db_bytes())
 
     def close(self) -> None:
         if self._closed:
