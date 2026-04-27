@@ -589,8 +589,11 @@ def decide_access_mode(
 ) -> Literal["download", "range"]:
     """Decide between ``download`` and ``range`` for a snapshot.
 
-    Returns ``"range"`` when *any* shard exceeds ``per_shard_threshold`` or
-    the *cumulative* size exceeds ``total_budget``; otherwise ``"download"``.
+    Returns ``"range"`` when *any* shard's size is at or above
+    ``per_shard_threshold``, or when the *cumulative* size is at or above
+    ``total_budget``; otherwise ``"download"``. Both comparisons use ``>=``
+    (a shard exactly equal to the threshold tips the decision toward
+    ``range``).
 
     The two thresholds protect distinct cost dimensions:
 
@@ -603,10 +606,10 @@ def decide_access_mode(
         db_bytes_per_shard: Sequence of shard sizes in bytes (typically from
             ``RequiredShardMeta.db_bytes`` for every shard in the manifest).
             Empty input → ``"download"`` (no data to motivate ranged reads).
-        per_shard_threshold: Maximum allowed individual shard size before
-            switching to range-read.  Defaults to 16 MiB.
-        total_budget: Maximum allowed cumulative shard footprint before
-            switching to range-read.  Defaults to 2 GiB.
+        per_shard_threshold: Per-shard size at or above which we switch to
+            range-read. Defaults to 16 MiB.
+        total_budget: Cumulative size at or above which we switch to
+            range-read. Defaults to 2 GiB.
     """
 
     if not db_bytes_per_shard:
@@ -795,7 +798,7 @@ class AdaptiveSqliteReaderFactory:
         )
 
     def _resolve_factory(
-        self, manifest: Any
+        self, manifest: Manifest
     ) -> SqliteReaderFactory | SqliteRangeReaderFactory:
         run_id = manifest.required_build.run_id
         if run_id == self._cached_run_id and self._cached_factory is not None:
@@ -873,7 +876,7 @@ class AsyncAdaptiveSqliteReaderFactory:
         ) = None
 
     def _resolve_factory(
-        self, manifest: Any
+        self, manifest: Manifest
     ) -> AsyncSqliteReaderFactory | AsyncSqliteRangeReaderFactory:
         run_id = manifest.required_build.run_id
         if run_id == self._cached_run_id and self._cached_factory is not None:

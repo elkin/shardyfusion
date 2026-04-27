@@ -350,8 +350,11 @@ def _build_unified_kv_factory(
     """Build a reader factory honoring --sqlite-mode for unified search.
 
     Returns ``None`` to fall back to the unified reader's auto-dispatch when
-    the snapshot doesn't use SQLite, when ``reader_backend`` is not ``sqlite``,
-    or when the user did not request a non-default mode/threshold.
+    the snapshot's vector backend metadata does not involve SQLite — i.e.
+    when ``backend != "sqlite-vec"`` and not (``backend == "lancedb"`` with
+    ``kv_backend == "sqlite"``). The CLI's ``--sqlite-mode`` flag has no
+    effect for non-SQLite snapshots, so we let the unified reader pick its
+    default factory (e.g. SlateDB or LanceDB) directly.
 
     For ``sqlite-vec`` snapshots, we build an explicit ``SqliteVec*`` factory.
     For composite (LanceDB sidecar with SQLite KV) snapshots, we build a
