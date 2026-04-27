@@ -691,6 +691,67 @@ reader_backend = "sqlite"
         assert policy.total_budget == 8192
 
 
+class TestSqliteOverrideValidation:
+    """--sqlite-auto-* overrides go through ReaderConfig.model_validate.
+
+    Negative values must produce a clean UsageError (exit 2) — not a stack
+    trace from pydantic's ValidationError.
+    """
+
+    def _cfg(self, tmp_path: Any) -> Any:
+        cfg_path = tmp_path / "reader.toml"
+        cfg_path.write_text(
+            """\
+[reader]
+current_url = "s3://bucket/prefix/_CURRENT"
+reader_backend = "sqlite"
+"""
+        )
+        return cfg_path
+
+    def test_negative_per_shard_threshold_emits_usage_error(
+        self, tmp_path: Any
+    ) -> None:
+        cfg_path = self._cfg(tmp_path)
+        runner = click.testing.CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "--config",
+                str(cfg_path),
+                "--sqlite-auto-per-shard-bytes",
+                "-1",
+                "info",
+            ],
+        )
+
+        assert result.exit_code != 0
+        # Click formats UsageError with "Error:" prefix; ValidationError would
+        # surface as an unhandled exception (different output / non-zero exit
+        # without "Error:" prefix).
+        assert "Invalid SQLite override" in result.output
+        # Make sure we didn't leak a raw traceback
+        assert "Traceback" not in result.output
+
+    def test_negative_total_budget_emits_usage_error(self, tmp_path: Any) -> None:
+        cfg_path = self._cfg(tmp_path)
+        runner = click.testing.CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "--config",
+                str(cfg_path),
+                "--sqlite-auto-total-bytes",
+                "-100",
+                "info",
+            ],
+        )
+
+        assert result.exit_code != 0
+        assert "Invalid SQLite override" in result.output
+        assert "Traceback" not in result.output
+
+
 # ---------------------------------------------------------------------------
 # --ref / --offset must never call set_current()
 # ---------------------------------------------------------------------------
@@ -982,3 +1043,189 @@ class TestSearch:
 
         assert result.exit_code != 0
         assert "does not contain vector metadata" in result.output
+
+
+class TestSearchUnifiedKvFactoryWiring:
+    """``shardy search`` must honor --sqlite-mode/--sqlite-auto-* for the
+    unified reader's KV factory; the unified reader's auto-dispatch otherwise
+    ignores the CLI ``reader_cfg``.
+
+    These tests verify ``_build_unified_kv_factory`` is invoked and the
+    correct concrete factory is passed via ``reader_factory=`` to
+    :class:`UnifiedShardedReader`.
+    """
+
+    def _make_store(self, vector_meta: dict[str, Any]) -> Any:
+        fake_manifest = MagicMock()
+        fake_manifest.custom = {"vector": vector_meta}
+        fake_ref = MagicMock()
+        fake_ref.ref = "manifest.json"
+        fake_store = MagicMock()
+        fake_store.load_current.return_value = fake_ref
+        fake_store.load_manifest.return_value = fake_manifest
+        return fake_store
+
+    def _cfg(self, tmp_path: Any, sqlite_mode: str = "auto") -> Any:
+        cfg_path = tmp_path / "reader.toml"
+        cfg_path.write_text(
+            f"""\
+[reader]
+current_url = "s3://bucket/prefix/_CURRENT"
+reader_backend = "sqlite"
+sqlite_mode = "{sqlite_mode}"
+"""
+        )
+        return cfg_path
+
+    def _invoke(
+        self,
+        args: list[str],
+        *,
+        store: Any,
+        captured: dict[str, Any],
+    ) -> Any:
+        fake_response = MagicMock()
+        fake_response.num_shards_queried = 1
+        fake_response.latency_ms = 1.0
+        fake_response.results = []
+
+        def _capture_unified(**kwargs: Any) -> Any:
+            captured.update(kwargs)
+            mock_reader = MagicMock()
+            mock_reader.search.return_value = fake_response
+            mock_reader.close.return_value = None
+            return mock_reader
+
+        with (
+            patch(
+                "shardyfusion.cli.app._build_manifest_store", return_value=store
+            ),
+            patch(
+                "shardyfusion.reader.unified_reader.UnifiedShardedReader",
+                side_effect=_capture_unified,
+            ),
+            patch(
+                "shardyfusion.cli.app._build_reader",
+                return_value=_FakeReader(),
+            ),
+        ):
+            runner = click.testing.CliRunner()
+            return runner.invoke(cli, args, obj={})
+
+    def test_sqlite_vec_auto_uses_adaptive_factory(self, tmp_path: Any) -> None:
+        from shardyfusion.sqlite_vec_adapter import (
+            AdaptiveSqliteVecReaderFactory,
+            _ThresholdPolicy,
+        )
+
+        store = self._make_store(
+            {"dim": 2, "metric": "l2", "unified": True, "backend": "sqlite-vec"}
+        )
+        captured: dict[str, Any] = {}
+        cfg_path = self._cfg(tmp_path, sqlite_mode="auto")
+
+        result = self._invoke(
+            [
+                "--config",
+                str(cfg_path),
+                "--sqlite-auto-per-shard-bytes",
+                "1024",
+                "--sqlite-auto-total-bytes",
+                "8192",
+                "search",
+                "1.0,2.0",
+            ],
+            store=store,
+            captured=captured,
+        )
+
+        assert result.exit_code == 0, result.output
+        factory = captured.get("reader_factory")
+        assert isinstance(factory, AdaptiveSqliteVecReaderFactory)
+        # Thresholds from CLI propagate into the policy
+        policy = factory._policy
+        assert isinstance(policy, _ThresholdPolicy)
+        assert policy.per_shard_threshold == 1024
+        assert policy.total_budget == 8192
+
+    def test_sqlite_vec_download_uses_concrete_download_factory(
+        self, tmp_path: Any
+    ) -> None:
+        from shardyfusion.sqlite_vec_adapter import (
+            AdaptiveSqliteVecReaderFactory,
+            SqliteVecReaderFactory,
+        )
+
+        store = self._make_store(
+            {"dim": 2, "metric": "l2", "unified": True, "backend": "sqlite-vec"}
+        )
+        captured: dict[str, Any] = {}
+        cfg_path = self._cfg(tmp_path, sqlite_mode="download")
+
+        result = self._invoke(
+            ["--config", str(cfg_path), "search", "1.0,2.0"],
+            store=store,
+            captured=captured,
+        )
+
+        assert result.exit_code == 0, result.output
+        factory = captured.get("reader_factory")
+        assert isinstance(factory, SqliteVecReaderFactory)
+        assert not isinstance(factory, AdaptiveSqliteVecReaderFactory)
+
+    def test_lancedb_with_sqlite_kv_uses_composite_factory(
+        self, tmp_path: Any
+    ) -> None:
+        from shardyfusion.composite_adapter import CompositeReaderFactory
+        from shardyfusion.sqlite_adapter import AdaptiveSqliteReaderFactory
+
+        store = self._make_store(
+            {
+                "dim": 2,
+                "metric": "l2",
+                "unified": True,
+                "backend": "lancedb",
+                "kv_backend": "sqlite",
+            }
+        )
+        captured: dict[str, Any] = {}
+        cfg_path = self._cfg(tmp_path, sqlite_mode="auto")
+
+        result = self._invoke(
+            ["--config", str(cfg_path), "search", "1.0,2.0"],
+            store=store,
+            captured=captured,
+        )
+
+        assert result.exit_code == 0, result.output
+        factory = captured.get("reader_factory")
+        assert isinstance(factory, CompositeReaderFactory)
+        # The KV side must respect sqlite_mode = "auto"
+        assert isinstance(factory.kv_factory, AdaptiveSqliteReaderFactory)
+
+    def test_lancedb_with_slatedb_kv_falls_back_to_auto_dispatch(
+        self, tmp_path: Any
+    ) -> None:
+        """When KV backend is SlateDB, sqlite_mode is irrelevant; pass None
+        so UnifiedShardedReader's auto-dispatch picks the right factory."""
+        store = self._make_store(
+            {
+                "dim": 2,
+                "metric": "l2",
+                "unified": True,
+                "backend": "lancedb",
+                "kv_backend": "slatedb",
+            }
+        )
+        captured: dict[str, Any] = {}
+        cfg_path = self._cfg(tmp_path, sqlite_mode="auto")
+
+        result = self._invoke(
+            ["--config", str(cfg_path), "search", "1.0,2.0"],
+            store=store,
+            captured=captured,
+        )
+
+        assert result.exit_code == 0, result.output
+        # No SQLite involved → helper returns None → auto-dispatch path
+        assert captured.get("reader_factory") is None

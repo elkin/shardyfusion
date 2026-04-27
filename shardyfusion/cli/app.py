@@ -92,7 +92,19 @@ def _ensure_init_params(ctx: click.Context) -> dict[str, Any]:
     if total_override is not None:
         sqlite_overrides["sqlite_auto_total_budget_bytes"] = total_override
     if sqlite_overrides:
-        reader_cfg = reader_cfg.model_copy(update=sqlite_overrides)
+        # model_copy(update=...) skips validators, so use model_validate to
+        # enforce ge=0 on the threshold fields. Surface validation errors as
+        # UsageError so they show up cleanly on the CLI.
+        from pydantic import ValidationError
+
+        try:
+            reader_cfg = ReaderConfig.model_validate(
+                {**reader_cfg.model_dump(), **sqlite_overrides}
+            )
+        except ValidationError as exc:
+            raise click.UsageError(
+                f"Invalid SQLite override(s): {exc.errors()}"
+            ) from exc
 
     # Apply --output-format override
     if output_format:
@@ -326,6 +338,102 @@ def _build_reader(ctx: click.Context) -> ConcurrentShardedReader:
 
 def _get_output_cfg(ctx: click.Context) -> OutputConfig:
     return _ensure_init_params(ctx)["output_cfg"]
+
+
+def _build_unified_kv_factory(
+    vector_meta: dict[str, Any],
+    *,
+    reader_cfg: ReaderConfig,
+    credential_provider: Any,
+    s3_connection_options: Any,
+) -> Any:
+    """Build a reader factory honoring --sqlite-mode for unified search.
+
+    Returns ``None`` to fall back to the unified reader's auto-dispatch when
+    the snapshot doesn't use SQLite, when ``reader_backend`` is not ``sqlite``,
+    or when the user did not request a non-default mode/threshold.
+
+    For ``sqlite-vec`` snapshots, we build an explicit ``SqliteVec*`` factory.
+    For composite (LanceDB sidecar with SQLite KV) snapshots, we build a
+    composite factory that wires the chosen SQLite KV factory together with
+    the LanceDB vector factory.
+    """
+    backend = vector_meta.get("backend")
+    kv_backend = vector_meta.get("kv_backend") or "slatedb"
+
+    # Only act when a SQLite tier is actually involved.
+    sqlite_in_play = backend == "sqlite-vec" or (
+        backend == "lancedb" and kv_backend == "sqlite"
+    )
+    if not sqlite_in_play:
+        return None
+
+    # Don't override unless user explicitly asked for sqlite reader behavior.
+    # The CLI's --sqlite-mode flag is global (and 'auto' is the default), so
+    # we always honor reader_cfg here when SQLite is involved.
+    mode = reader_cfg.sqlite_mode
+
+    if backend == "sqlite-vec":
+        if mode == "auto":
+            from ..sqlite_vec_adapter import AdaptiveSqliteVecReaderFactory
+
+            return AdaptiveSqliteVecReaderFactory(
+                per_shard_threshold=reader_cfg.sqlite_auto_per_shard_threshold_bytes,
+                total_budget=reader_cfg.sqlite_auto_total_budget_bytes,
+                credential_provider=credential_provider,
+                s3_connection_options=s3_connection_options,
+            )
+        from ..sqlite_vec_adapter import make_sqlite_vec_reader_factory
+
+        return make_sqlite_vec_reader_factory(
+            mode=mode,
+            credential_provider=credential_provider,
+            s3_connection_options=s3_connection_options,
+        )
+
+    # backend == "lancedb" with kv_backend == "sqlite": build composite factory
+    from ..composite_adapter import CompositeReaderFactory
+    from ..config import VectorSpec, vector_metric_to_str
+    from ..storage import create_s3_client
+    from ..vector.adapters.lancedb_adapter import LanceDbReaderFactory
+
+    if mode == "auto":
+        from ..sqlite_adapter import AdaptiveSqliteReaderFactory
+
+        kv_factory: Any = AdaptiveSqliteReaderFactory(
+            per_shard_threshold=reader_cfg.sqlite_auto_per_shard_threshold_bytes,
+            total_budget=reader_cfg.sqlite_auto_total_budget_bytes,
+            credential_provider=credential_provider,
+            s3_connection_options=s3_connection_options,
+        )
+    else:
+        from ..sqlite_adapter import make_sqlite_reader_factory
+
+        kv_factory = make_sqlite_reader_factory(
+            mode=mode,
+            credential_provider=credential_provider,
+            s3_connection_options=s3_connection_options,
+        )
+
+    vs = VectorSpec(
+        dim=vector_meta["dim"],
+        metric=vector_metric_to_str(vector_meta["metric"]),
+        index_type=vector_meta.get("index_type"),
+        index_params=vector_meta.get("index_params"),
+        quantization=vector_meta.get("quantization"),
+    )
+    credentials = credential_provider.resolve() if credential_provider else None
+    s3_client = create_s3_client(credentials, s3_connection_options)
+    vector_factory = LanceDbReaderFactory(
+        s3_client=s3_client,
+        s3_connection_options=s3_connection_options,
+        credential_provider=credential_provider,
+    )
+    return CompositeReaderFactory(
+        kv_factory=kv_factory,
+        vector_factory=vector_factory,
+        vector_spec=vs,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1051,6 +1159,17 @@ def search_cmd(
     local_root = params["reader_cfg"].local_root
     cred_provider = params["credential_provider"]
     s3_conn_opts = params["s3_connection_options"]
+    reader_cfg: ReaderConfig = params["reader_cfg"]
+
+    # Honor --sqlite-mode / --sqlite-auto-* overrides for the unified reader's
+    # KV factory.  The unified reader's auto-dispatch otherwise constructs the
+    # adaptive factory with default thresholds and ignores reader_cfg.
+    unified_kv_factory = _build_unified_kv_factory(
+        vector_meta,
+        reader_cfg=reader_cfg,
+        credential_provider=cred_provider,
+        s3_connection_options=s3_conn_opts,
+    )
 
     try:
         if vector_meta.get("unified"):
@@ -1062,6 +1181,7 @@ def search_cmd(
                 manifest_store=manifest_store,
                 credential_provider=cred_provider,
                 s3_connection_options=s3_conn_opts,
+                reader_factory=unified_kv_factory,
             )
             try:
                 response = reader.search(query_vector, top_k=top_k, shard_ids=shard_ids)
