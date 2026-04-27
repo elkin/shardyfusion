@@ -7,40 +7,12 @@ from shardyfusion.manifest import (
 )
 from shardyfusion.manifest_store import S3ManifestStore
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
+from shardyfusion.storage import MemoryBackend
 
 
-def test_s3_manifest_store_builds_expected_urls(monkeypatch) -> None:
-    calls: list[dict[str, object]] = []
-
-    def fake_create_s3_client(_creds=None, _opts=None):
-        return object()
-
-    def fake_put_bytes(
-        url,
-        payload,
-        content_type,
-        headers=None,
-        *,
-        s3_client=None,
-        metrics_collector=None,
-        **kwargs,
-    ):
-        calls.append(
-            {
-                "url": url,
-                "payload": payload,
-                "content_type": content_type,
-                "headers": headers,
-                "s3_client": s3_client,
-            }
-        )
-
-    monkeypatch.setattr(
-        "shardyfusion.manifest_store.create_s3_client", fake_create_s3_client
-    )
-    monkeypatch.setattr("shardyfusion.manifest_store.put_bytes", fake_put_bytes)
-
-    store = S3ManifestStore("s3://bucket/prefix")
+def test_s3_manifest_store_builds_expected_urls() -> None:
+    backend = MemoryBackend()
+    store = S3ManifestStore(backend, "s3://bucket/prefix")
 
     required_build = RequiredBuildMeta(
         run_id="run123",
@@ -78,7 +50,6 @@ def test_s3_manifest_store_builds_expected_urls(monkeypatch) -> None:
     # Timestamp-prefixed path: manifests/{timestamp}_run_id=run123/manifest
     assert "run_id=run123/manifest" in manifest_ref
     assert manifest_ref.startswith("s3://bucket/prefix/manifests/")
-    # Two put_bytes calls: manifest + CURRENT
-    assert len(calls) == 2
-    assert calls[0]["url"] == manifest_ref
-    assert calls[1]["url"] == "s3://bucket/prefix/_CURRENT"
+    # Two puts: manifest + CURRENT
+    assert backend.try_get(manifest_ref) is not None
+    assert backend.try_get("s3://bucket/prefix/_CURRENT") is not None

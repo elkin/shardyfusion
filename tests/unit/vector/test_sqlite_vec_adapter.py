@@ -111,7 +111,7 @@ class TestSqliteVecAdapterLifecycle:
             adapter.checkpoint()
 
     def test_write_after_close_raises(self, tmp_path: Path) -> None:
-        with patch("shardyfusion.sqlite_vec_adapter.put_bytes"):
+        with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend"):
             adapter = SqliteVecAdapter(
                 db_url="s3://bucket/shard",
                 local_dir=tmp_path / "shard",
@@ -123,7 +123,9 @@ class TestSqliteVecAdapterLifecycle:
             adapter.write_batch([(b"k", b"v")])
 
     def test_close_uploads_to_s3(self, tmp_path: Path) -> None:
-        with patch("shardyfusion.sqlite_vec_adapter.put_bytes") as mock_put:
+        with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as MockBackend:
+            instance = MockBackend.return_value
+            instance.put = MagicMock()
             adapter = SqliteVecAdapter(
                 db_url="s3://bucket/shard",
                 local_dir=tmp_path / "shard",
@@ -132,12 +134,14 @@ class TestSqliteVecAdapterLifecycle:
             adapter.write_batch([(b"k1", b"v1")])
             adapter.close()
 
-        mock_put.assert_called_once()
-        call_args = mock_put.call_args
+        instance.put.assert_called_once()
+        call_args = instance.put.call_args
         assert call_args[0][0] == "s3://bucket/shard/shard.db"
 
     def test_close_idempotent(self, tmp_path: Path) -> None:
-        with patch("shardyfusion.sqlite_vec_adapter.put_bytes") as mock_put:
+        with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as MockBackend:
+            instance = MockBackend.return_value
+            instance.put = MagicMock()
             adapter = SqliteVecAdapter(
                 db_url="s3://bucket/shard",
                 local_dir=tmp_path / "shard",
@@ -147,10 +151,10 @@ class TestSqliteVecAdapterLifecycle:
             adapter.close()
 
         # Only uploaded once
-        assert mock_put.call_count == 1
+        assert instance.put.call_count == 1
 
     def test_context_manager_closes(self, tmp_path: Path) -> None:
-        with patch("shardyfusion.sqlite_vec_adapter.put_bytes"):
+        with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend"):
             with SqliteVecAdapter(
                 db_url="s3://bucket/shard",
                 local_dir=tmp_path / "shard",
@@ -475,7 +479,9 @@ class TestSqliteVecShardReader:
 
     def test_kv_get(self, tmp_path: Path) -> None:
         db_bytes = self._build_shard(tmp_path)
-        with patch("shardyfusion.sqlite_vec_adapter.get_bytes", return_value=db_bytes):
+        with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as MockBackend:
+            instance = MockBackend.return_value
+            instance.get = MagicMock(return_value=db_bytes)
             reader = SqliteVecShardReader(
                 db_url="s3://bucket/shard",
                 local_dir=tmp_path / "read",
@@ -486,7 +492,9 @@ class TestSqliteVecShardReader:
 
     def test_vector_search(self, tmp_path: Path) -> None:
         db_bytes = self._build_shard(tmp_path)
-        with patch("shardyfusion.sqlite_vec_adapter.get_bytes", return_value=db_bytes):
+        with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as MockBackend:
+            instance = MockBackend.return_value
+            instance.get = MagicMock(return_value=db_bytes)
             reader = SqliteVecShardReader(
                 db_url="s3://bucket/shard",
                 local_dir=tmp_path / "read",
@@ -515,7 +523,9 @@ class TestSqliteVecShardReader:
         adapter.checkpoint()
         db_bytes = (shard_dir / "shard.db").read_bytes()
 
-        with patch("shardyfusion.sqlite_vec_adapter.get_bytes", return_value=db_bytes):
+        with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as MockBackend:
+            instance = MockBackend.return_value
+            instance.get = MagicMock(return_value=db_bytes)
             reader = SqliteVecShardReader(
                 db_url="s3://bucket/shard",
                 local_dir=tmp_path / "read",
@@ -548,7 +558,9 @@ class TestSqliteVecShardReader:
         adapter.checkpoint()
         db_bytes = (shard_dir / "shard.db").read_bytes()
 
-        with patch("shardyfusion.sqlite_vec_adapter.get_bytes", return_value=db_bytes):
+        with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as MockBackend:
+            instance = MockBackend.return_value
+            instance.get = MagicMock(return_value=db_bytes)
             reader = SqliteVecShardReader(
                 db_url="s3://bucket/shard",
                 local_dir=tmp_path / "read",
@@ -563,7 +575,9 @@ class TestSqliteVecShardReader:
 
     def test_search_after_close_raises(self, tmp_path: Path) -> None:
         db_bytes = self._build_shard(tmp_path)
-        with patch("shardyfusion.sqlite_vec_adapter.get_bytes", return_value=db_bytes):
+        with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as MockBackend:
+            instance = MockBackend.return_value
+            instance.get = MagicMock(return_value=db_bytes)
             reader = SqliteVecShardReader(
                 db_url="s3://bucket/shard",
                 local_dir=tmp_path / "read",
@@ -574,7 +588,9 @@ class TestSqliteVecShardReader:
 
     def test_get_after_close_raises(self, tmp_path: Path) -> None:
         db_bytes = self._build_shard(tmp_path)
-        with patch("shardyfusion.sqlite_vec_adapter.get_bytes", return_value=db_bytes):
+        with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as MockBackend:
+            instance = MockBackend.return_value
+            instance.get = MagicMock(return_value=db_bytes)
             reader = SqliteVecShardReader(
                 db_url="s3://bucket/shard",
                 local_dir=tmp_path / "read",
@@ -585,7 +601,9 @@ class TestSqliteVecShardReader:
 
     def test_context_manager(self, tmp_path: Path) -> None:
         db_bytes = self._build_shard(tmp_path)
-        with patch("shardyfusion.sqlite_vec_adapter.get_bytes", return_value=db_bytes):
+        with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as MockBackend:
+            instance = MockBackend.return_value
+            instance.get = MagicMock(return_value=db_bytes)
             with SqliteVecShardReader(
                 db_url="s3://bucket/shard",
                 local_dir=tmp_path / "read",
@@ -658,13 +676,15 @@ class TestCacheValidation:
         )
         conn.close()
 
-        with patch("shardyfusion.sqlite_vec_adapter.get_bytes") as mock_get:
+        with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as MockBackend:
+            instance = MockBackend.return_value
+            instance.get = MagicMock()
             reader = SqliteVecShardReader(
                 db_url="s3://bucket/shard",
                 local_dir=read_dir,
                 checkpoint_id="abc",
             )
-            mock_get.assert_not_called()
+            instance.get.assert_not_called()
         reader.close()
 
 
@@ -678,7 +698,7 @@ class TestSqliteVecFactory:
         factory = SqliteVecFactory(vector_spec=MagicMock(dim=8))
         adapter = factory(db_url="s3://bucket/shard", local_dir=tmp_path / "shard")
         assert isinstance(adapter, SqliteVecAdapter)
-        with patch("shardyfusion.sqlite_vec_adapter.put_bytes"):
+        with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend"):
             adapter.close()
 
     def test_reader_factory_creates_reader(self, tmp_path: Path) -> None:
@@ -693,7 +713,9 @@ class TestSqliteVecFactory:
         db_bytes = (shard_dir / "shard.db").read_bytes()
 
         factory = SqliteVecReaderFactory()
-        with patch("shardyfusion.sqlite_vec_adapter.get_bytes", return_value=db_bytes):
+        with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as MockBackend:
+            instance = MockBackend.return_value
+            instance.get = MagicMock(return_value=db_bytes)
             reader = factory(
                 db_url="s3://bucket/shard",
                 local_dir=tmp_path / "read",

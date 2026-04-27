@@ -20,7 +20,7 @@ pytest.importorskip("cel_expr_python", reason="requires cel extra")
 from shardyfusion.config import ManifestOptions, OutputOptions, VectorSpec, WriteConfig
 from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.manifest_store import S3ManifestStore
-from shardyfusion.storage import get_bytes, put_bytes
+from shardyfusion.storage import ObstoreBackend, create_s3_store, parse_s3_url
 from shardyfusion.type_defs import S3ConnectionOptions
 from shardyfusion.vector.types import SearchResult
 
@@ -88,7 +88,10 @@ class FakeUnifiedAdapter:
                 "vec_payloads": list(self._vec_payloads),
             }
         )
-        put_bytes(s3_key, payload.encode(), content_type="application/json")
+        bucket, _ = parse_s3_url(s3_key)
+        store = create_s3_store(bucket=bucket)
+        backend = ObstoreBackend(store)
+        backend.put(s3_key, payload.encode(), content_type="application/json")
         self._closed = True
 
 
@@ -112,7 +115,10 @@ class FakeUnifiedReader:
 
     def __post_init__(self) -> None:
         s3_key = f"{self.db_url.rstrip('/')}/data.json"
-        raw = get_bytes(s3_key)
+        bucket, _ = parse_s3_url(s3_key)
+        store = create_s3_store(bucket=bucket)
+        backend = ObstoreBackend(store)
+        raw = backend.get(s3_key)
         self._data = json.loads(raw)
 
     def get(self, key: bytes) -> bytes | None:
@@ -249,14 +255,16 @@ class TestUnifiedWriteReadRoundTrip:
         assert result.stats.rows_written == 30
 
         # Verify manifest has vector metadata
-        store = S3ManifestStore(
-            s3_prefix,
-            credential_provider=cred_provider,
-            s3_connection_options=s3_conn_opts,
+        credentials = cred_provider.resolve() if cred_provider else None
+        bucket, _ = parse_s3_url(s3_prefix)
+        store = create_s3_store(
+            bucket=bucket, credentials=credentials, connection_options=s3_conn_opts
         )
-        current = store.load_current()
+        backend = ObstoreBackend(store)
+        manifest_store = S3ManifestStore(backend, s3_prefix)
+        current = manifest_store.load_current()
         assert current is not None
-        manifest = store.load_manifest(current.ref)
+        manifest = manifest_store.load_manifest(current.ref)
         vec_meta = manifest.custom.get("vector")
         assert vec_meta is not None
         assert vec_meta["dim"] == 8

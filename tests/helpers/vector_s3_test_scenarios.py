@@ -18,9 +18,9 @@ from shardyfusion.config import (
     WriteConfig,
 )
 from shardyfusion.credentials import CredentialProvider, StaticCredentialProvider
-from shardyfusion.manifest_store import S3ManifestStore
 from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
 from shardyfusion.type_defs import S3ConnectionOptions
+from tests.helpers.s3_test_scenarios import _make_s3_manifest_store
 
 if TYPE_CHECKING:
     from ..conftest import LocalS3Service
@@ -96,7 +96,7 @@ def run_vector_cluster_write_scenario(
         credential_provider=creds,
         s3_connection_options=conn_opts,
         manifest=ManifestOptions(
-            store=S3ManifestStore(
+            store=_make_s3_manifest_store(
                 f"s3://{prefix}",
                 credential_provider=creds,
                 s3_connection_options=conn_opts,
@@ -158,7 +158,7 @@ def run_vector_lsh_write_scenario(
         credential_provider=creds,
         s3_connection_options=conn_opts,
         manifest=ManifestOptions(
-            store=S3ManifestStore(
+            store=_make_s3_manifest_store(
                 f"s3://{prefix}",
                 credential_provider=creds,
                 s3_connection_options=conn_opts,

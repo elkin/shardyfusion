@@ -15,6 +15,7 @@ import pytest
 from shardyfusion.async_manifest_store import AsyncS3ManifestStore
 from shardyfusion.config import OutputOptions
 from shardyfusion.credentials import StaticCredentialProvider
+from shardyfusion.storage import AsyncObstoreBackend, create_s3_store, parse_s3_url
 from shardyfusion.type_defs import S3ConnectionOptions
 from shardyfusion.vector.adapters.lancedb_adapter import (
     AsyncLanceDbReaderFactory,
@@ -33,7 +34,6 @@ from shardyfusion.vector.types import (
 )
 from shardyfusion.vector.writer import write_vector_sharded
 
-pytest.importorskip("aiobotocore")
 pytest.importorskip("lancedb")
 
 # ---------------------------------------------------------------------------
@@ -44,6 +44,27 @@ pytest.importorskip("lancedb")
 @pytest.fixture
 def s3_prefix(s3_info: dict[str, Any]) -> str:
     return f"s3://{s3_info['bucket']}/vector-test"
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_async_manifest_store(
+    s3_prefix: str,
+    cred_provider: StaticCredentialProvider,
+    s3_conn_opts: S3ConnectionOptions,
+) -> AsyncS3ManifestStore:
+    credentials = cred_provider.resolve() if cred_provider else None
+    bucket, _ = parse_s3_url(s3_prefix)
+    store = create_s3_store(
+        bucket=bucket,
+        credentials=credentials,
+        connection_options=s3_conn_opts,
+    )
+    backend = AsyncObstoreBackend(store)
+    return AsyncS3ManifestStore(backend, s3_prefix)
 
 
 # ---------------------------------------------------------------------------
@@ -76,11 +97,6 @@ class TestVectorWriterReaderRoundTrip:
         s3_conn_opts: S3ConnectionOptions,
         tmp_path: Path,
     ) -> None:
-        from shardyfusion.storage import create_s3_client
-
-        s3_client = create_s3_client(
-            cred_provider.resolve() if cred_provider else None, s3_conn_opts
-        )
         rng = np.random.default_rng(42)
         records = _make_records(rng, n=100, dim=32)
 
@@ -98,7 +114,10 @@ class TestVectorWriterReaderRoundTrip:
                 centroids=centroids,
                 num_probes=2,
             ),
-            adapter_factory=LanceDbWriterFactory(s3_client=s3_client),
+            adapter_factory=LanceDbWriterFactory(
+                s3_connection_options=s3_conn_opts,
+                credential_provider=cred_provider,
+            ),
             batch_size=50,
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
@@ -114,11 +133,12 @@ class TestVectorWriterReaderRoundTrip:
         reader = await AsyncShardedVectorReader.open(
             s3_prefix=s3_prefix,
             local_root=str(tmp_path / "reader"),
-            reader_factory=AsyncLanceDbReaderFactory(s3_client=s3_client),
-            manifest_store=AsyncS3ManifestStore(
-                s3_prefix,
-                credential_provider=cred_provider,
+            reader_factory=AsyncLanceDbReaderFactory(
                 s3_connection_options=s3_conn_opts,
+                credential_provider=cred_provider,
+            ),
+            manifest_store=_make_async_manifest_store(
+                s3_prefix, cred_provider, s3_conn_opts
             ),
         )
 
@@ -148,11 +168,6 @@ class TestVectorWriterReaderRoundTrip:
         s3_conn_opts: S3ConnectionOptions,
         tmp_path: Path,
     ) -> None:
-        from shardyfusion.storage import create_s3_client
-
-        s3_client = create_s3_client(
-            cred_provider.resolve() if cred_provider else None, s3_conn_opts
-        )
         rng = np.random.default_rng(42)
         prefix = f"{s3_prefix}/explicit"
 
@@ -175,7 +190,10 @@ class TestVectorWriterReaderRoundTrip:
             sharding=VectorShardingSpec(
                 strategy=VectorShardingStrategy.EXPLICIT,
             ),
-            adapter_factory=LanceDbWriterFactory(s3_client=s3_client),
+            adapter_factory=LanceDbWriterFactory(
+                s3_connection_options=s3_conn_opts,
+                credential_provider=cred_provider,
+            ),
             batch_size=25,
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
@@ -189,11 +207,12 @@ class TestVectorWriterReaderRoundTrip:
         reader = await AsyncShardedVectorReader.open(
             s3_prefix=prefix,
             local_root=str(tmp_path / "reader_explicit"),
-            reader_factory=AsyncLanceDbReaderFactory(s3_client=s3_client),
-            manifest_store=AsyncS3ManifestStore(
-                prefix,
-                credential_provider=cred_provider,
+            reader_factory=AsyncLanceDbReaderFactory(
                 s3_connection_options=s3_conn_opts,
+                credential_provider=cred_provider,
+            ),
+            manifest_store=_make_async_manifest_store(
+                prefix, cred_provider, s3_conn_opts
             ),
         )
 
@@ -217,11 +236,6 @@ class TestVectorWriterReaderRoundTrip:
         s3_conn_opts: S3ConnectionOptions,
         tmp_path: Path,
     ) -> None:
-        from shardyfusion.storage import create_s3_client
-
-        s3_client = create_s3_client(
-            cred_provider.resolve() if cred_provider else None, s3_conn_opts
-        )
         rng = np.random.default_rng(42)
         prefix = f"{s3_prefix}/lsh"
         records = _make_records(rng, n=50, dim=16)
@@ -235,7 +249,10 @@ class TestVectorWriterReaderRoundTrip:
                 num_hash_bits=6,
                 num_probes=2,
             ),
-            adapter_factory=LanceDbWriterFactory(s3_client=s3_client),
+            adapter_factory=LanceDbWriterFactory(
+                s3_connection_options=s3_conn_opts,
+                credential_provider=cred_provider,
+            ),
             batch_size=20,
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
@@ -250,11 +267,12 @@ class TestVectorWriterReaderRoundTrip:
         reader = await AsyncShardedVectorReader.open(
             s3_prefix=prefix,
             local_root=str(tmp_path / "reader_lsh"),
-            reader_factory=AsyncLanceDbReaderFactory(s3_client=s3_client),
-            manifest_store=AsyncS3ManifestStore(
-                prefix,
-                credential_provider=cred_provider,
+            reader_factory=AsyncLanceDbReaderFactory(
                 s3_connection_options=s3_conn_opts,
+                credential_provider=cred_provider,
+            ),
+            manifest_store=_make_async_manifest_store(
+                prefix, cred_provider, s3_conn_opts
             ),
         )
 
@@ -278,11 +296,6 @@ class TestVectorWriterReaderRoundTrip:
         s3_conn_opts: S3ConnectionOptions,
         tmp_path: Path,
     ) -> None:
-        from shardyfusion.storage import create_s3_client
-
-        s3_client = create_s3_client(
-            cred_provider.resolve() if cred_provider else None, s3_conn_opts
-        )
         rng = np.random.default_rng(42)
         prefix = f"{s3_prefix}/health"
         records = _make_records(rng, n=20, dim=8)
@@ -294,7 +307,10 @@ class TestVectorWriterReaderRoundTrip:
             sharding=VectorShardingSpec(
                 strategy=VectorShardingStrategy.EXPLICIT,
             ),
-            adapter_factory=LanceDbWriterFactory(s3_client=s3_client),
+            adapter_factory=LanceDbWriterFactory(
+                s3_connection_options=s3_conn_opts,
+                credential_provider=cred_provider,
+            ),
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
             output=OutputOptions(local_root=str(tmp_path / "writer_health")),
@@ -309,11 +325,12 @@ class TestVectorWriterReaderRoundTrip:
         reader = await AsyncShardedVectorReader.open(
             s3_prefix=prefix,
             local_root=str(tmp_path / "reader_health"),
-            reader_factory=AsyncLanceDbReaderFactory(s3_client=s3_client),
-            manifest_store=AsyncS3ManifestStore(
-                prefix,
-                credential_provider=cred_provider,
+            reader_factory=AsyncLanceDbReaderFactory(
                 s3_connection_options=s3_conn_opts,
+                credential_provider=cred_provider,
+            ),
+            manifest_store=_make_async_manifest_store(
+                prefix, cred_provider, s3_conn_opts
             ),
         )
 

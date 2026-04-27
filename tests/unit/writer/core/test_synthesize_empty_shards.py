@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from shardyfusion._writer_core import (
     ShardAttemptResult,
@@ -11,6 +11,7 @@ from shardyfusion._writer_core import (
     select_winners,
 )
 from shardyfusion.manifest import RequiredShardMeta, WriterInfo
+from shardyfusion.storage import MemoryBackend
 
 
 def _attempt(
@@ -81,14 +82,11 @@ class TestSelectWinnersWithEmptyShards:
 
 
 class TestCleanupLosersWithNoneDbUrl:
-    @patch("shardyfusion._writer_core.delete_prefix")
-    @patch("shardyfusion._writer_core.create_s3_client")
-    def test_none_winner_urls_excluded(
-        self, mock_create: MagicMock, mock_delete: MagicMock
-    ) -> None:
+    def test_none_winner_urls_excluded(self) -> None:
         """cleanup_losers skips None db_urls in winner set."""
-        mock_delete.return_value = 3
-        mock_create.return_value = MagicMock()
+        backend = MemoryBackend()
+        backend.put("s3://b/p/db=0/attempt=00/obj", b"x", "application/octet-stream")
+        backend.put("s3://b/p/db=0/attempt=01/obj", b"x", "application/octet-stream")
 
         winners = [
             RequiredShardMeta(
@@ -102,9 +100,10 @@ class TestCleanupLosersWithNoneDbUrl:
         ]
         all_urls = ["s3://b/p/db=0/attempt=00", "s3://b/p/db=0/attempt=01"]
 
-        deleted = cleanup_losers(all_urls, winners)
-        assert deleted == 3
-        mock_delete.assert_called_once()
+        deleted = cleanup_losers(all_urls, winners, backend=backend)
+        assert deleted == 1
+        assert backend.try_get("s3://b/p/db=0/attempt=01/obj") is None
+        assert backend.get("s3://b/p/db=0/attempt=00/obj") == b"x"
 
 
 class TestCleanupStaleAttemptsWithNoneDbUrl:
@@ -128,8 +127,8 @@ class TestCleanupStaleAttemptsWithNoneDbUrl:
 
         manifest.shards = [real_shard, empty_shard]
 
-        with patch("shardyfusion._writer_core.list_prefixes", return_value=[]):
-            actions = cleanup_stale_attempts(manifest, s3_client=MagicMock())
+        backend = MemoryBackend()
+        actions = cleanup_stale_attempts(manifest, backend=backend)
 
         # Should only scan shard 0, not shard 1 (which has db_url=None)
         assert actions == []

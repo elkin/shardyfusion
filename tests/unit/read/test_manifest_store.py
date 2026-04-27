@@ -17,6 +17,7 @@ from shardyfusion.manifest_store import (
     parse_sqlite_manifest,
 )
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
+from shardyfusion.storage import MemoryBackend
 
 
 def _make_build(num_dbs: int = 2) -> RequiredBuildMeta:
@@ -140,27 +141,31 @@ def test_parse_manifest_rejects_missing_build_meta() -> None:
         parse_sqlite_manifest(payload)
 
 
-def test_load_current_rejects_corrupt_json(monkeypatch) -> None:
-    def fake_try_get_bytes(url, *, s3_client=None, metrics_collector=None, **kwargs):
-        return b"not-json{{{"
-
-    monkeypatch.setattr("shardyfusion.manifest_store.try_get_bytes", fake_try_get_bytes)
-    store = S3ManifestStore("s3://bucket/prefix")
+def test_load_current_rejects_corrupt_json() -> None:
+    backend = MemoryBackend()
+    backend.put(
+        "s3://bucket/prefix/_CURRENT",
+        b"not-json{{{",
+        "application/json",
+    )
+    store = S3ManifestStore(backend, "s3://bucket/prefix")
     with pytest.raises(ManifestParseError, match="validation failed"):
         store.load_current()
 
 
-def test_load_current_rejects_missing_manifest_ref(monkeypatch) -> None:
-    def fake_try_get_bytes(url, *, s3_client=None, metrics_collector=None, **kwargs):
-        return json.dumps(
+def test_load_current_rejects_missing_manifest_ref() -> None:
+    backend = MemoryBackend()
+    backend.put(
+        "s3://bucket/prefix/_CURRENT",
+        json.dumps(
             {
                 "manifest_content_type": "application/x-sqlite3",
                 "run_id": "run-1",
                 "updated_at": "2026-01-01T00:00:00+00:00",
             }
-        ).encode("utf-8")
-
-    monkeypatch.setattr("shardyfusion.manifest_store.try_get_bytes", fake_try_get_bytes)
-    store = S3ManifestStore("s3://bucket/prefix")
+        ).encode("utf-8"),
+        "application/json",
+    )
+    store = S3ManifestStore(backend, "s3://bucket/prefix")
     with pytest.raises(ManifestParseError, match="manifest_ref"):
         store.load_current()

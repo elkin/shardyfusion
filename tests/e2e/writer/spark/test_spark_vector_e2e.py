@@ -25,11 +25,11 @@ def test_spark_vector_cluster_write_to_sqlite(
         VectorSpec,
         WriteConfig,
     )
-    from shardyfusion.manifest_store import S3ManifestStore
     from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
     from shardyfusion.vector.config import VectorSpecSharding
     from shardyfusion.writer.spark.writer import write_vector_sharded
+    from tests.helpers.s3_test_scenarios import _make_s3_manifest_store
 
     bucket = garage_s3_service["bucket"]
     prefix = f"{bucket}/spark-vector-cluster-e2e"
@@ -70,7 +70,7 @@ def test_spark_vector_cluster_write_to_sqlite(
         credential_provider=creds,
         s3_connection_options=opts,
         manifest=ManifestOptions(
-            store=S3ManifestStore(
+            store=_make_s3_manifest_store(
                 f"s3://{prefix}",
                 credential_provider=creds,
                 s3_connection_options=opts,
@@ -103,7 +103,7 @@ def test_spark_vector_cluster_write_to_sqlite(
             credential_provider=creds,
             s3_connection_options=opts,
         ),
-        manifest_store=S3ManifestStore(
+        manifest_store=_make_s3_manifest_store(
             f"s3://{prefix}",
             credential_provider=creds,
             s3_connection_options=opts,
@@ -133,11 +133,11 @@ def test_spark_vector_lsh_write_to_sqlite(spark, garage_s3_service, tmp_path) ->
         VectorSpec,
         WriteConfig,
     )
-    from shardyfusion.manifest_store import S3ManifestStore
     from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
     from shardyfusion.vector.config import VectorSpecSharding
     from shardyfusion.writer.spark.writer import write_vector_sharded
+    from tests.helpers.s3_test_scenarios import _make_s3_manifest_store
 
     bucket = garage_s3_service["bucket"]
     prefix = f"{bucket}/spark-vector-lsh-e2e"
@@ -178,7 +178,7 @@ def test_spark_vector_lsh_write_to_sqlite(spark, garage_s3_service, tmp_path) ->
         credential_provider=creds,
         s3_connection_options=opts,
         manifest=ManifestOptions(
-            store=S3ManifestStore(
+            store=_make_s3_manifest_store(
                 f"s3://{prefix}",
                 credential_provider=creds,
                 s3_connection_options=opts,
@@ -211,7 +211,7 @@ def test_spark_vector_lsh_write_to_sqlite(spark, garage_s3_service, tmp_path) ->
             credential_provider=creds,
             s3_connection_options=opts,
         ),
-        manifest_store=S3ManifestStore(
+        manifest_store=_make_s3_manifest_store(
             f"s3://{prefix}",
             credential_provider=creds,
             s3_connection_options=opts,
@@ -243,9 +243,7 @@ def test_spark_vector_lancedb_write_and_read(
         VectorSpec,
         WriteConfig,
     )
-    from shardyfusion.manifest_store import S3ManifestStore
     from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
-    from shardyfusion.storage import create_s3_client
     from shardyfusion.vector.adapters.lancedb_adapter import (
         LanceDbReaderFactory,
         LanceDbWriterFactory,
@@ -253,6 +251,7 @@ def test_spark_vector_lancedb_write_and_read(
     from shardyfusion.vector.config import VectorSpecSharding
     from shardyfusion.vector.reader import ShardedVectorReader
     from shardyfusion.writer.spark.writer import write_vector_sharded
+    from tests.helpers.s3_test_scenarios import _make_s3_manifest_store
 
     bucket = garage_s3_service["bucket"]
     prefix = f"s3://{bucket}/spark-vector-lancedb-e2e"
@@ -260,7 +259,6 @@ def test_spark_vector_lancedb_write_and_read(
 
     creds = credential_provider_from_service(garage_s3_service)
     opts = s3_connection_options_from_service(garage_s3_service)
-    s3_client = create_s3_client(creds.resolve(), opts)
 
     num_records = 1000
     dim = 128
@@ -288,11 +286,14 @@ def test_spark_vector_lancedb_write_and_read(
             strategy=ShardingStrategy.HASH,
         ),
         output=OutputOptions(run_id=run_id, local_root=str(tmp_path)),
-        adapter_factory=LanceDbWriterFactory(s3_client=s3_client),
+        adapter_factory=LanceDbWriterFactory(
+            credential_provider=creds,
+            s3_connection_options=opts,
+        ),
         credential_provider=creds,
         s3_connection_options=opts,
         manifest=ManifestOptions(
-            store=S3ManifestStore(
+            store=_make_s3_manifest_store(
                 prefix,
                 credential_provider=creds,
                 s3_connection_options=opts,
@@ -315,8 +316,11 @@ def test_spark_vector_lancedb_write_and_read(
     reader = ShardedVectorReader(
         s3_prefix=prefix,
         local_root=str(tmp_path / "reader_lancedb"),
-        reader_factory=LanceDbReaderFactory(s3_client=s3_client),
-        manifest_store=S3ManifestStore(
+        reader_factory=LanceDbReaderFactory(
+            credential_provider=creds,
+            s3_connection_options=opts,
+        ),
+        manifest_store=_make_s3_manifest_store(
             prefix,
             credential_provider=creds,
             s3_connection_options=opts,

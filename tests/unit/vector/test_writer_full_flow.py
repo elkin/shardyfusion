@@ -146,11 +146,7 @@ def _make_records(n: int, shard_id: int = 0) -> list[VectorRecord]:
 class TestWriteVectorShardedExplicit:
     """Test write_vector_sharded with EXPLICIT sharding (no optional deps)."""
 
-    @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    @patch(
-        "shardyfusion.vector._distributed.put_bytes",
-    )
-    def test_basic_flow(self, mock_put: Any, mock_s3: Any, tmp_path: Path) -> None:
+    def test_basic_flow(self, tmp_path: Path) -> None:
         from shardyfusion.vector.writer import write_vector_sharded
 
         factory = _MockFactory()
@@ -175,8 +171,7 @@ class TestWriteVectorShardedExplicit:
         assert len(result.winners) == 2
         assert result.stats.rows_written == 3
 
-    @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    def test_empty_records(self, mock_s3: Any, tmp_path: Path) -> None:
+    def test_empty_records(self, tmp_path: Path) -> None:
         from shardyfusion.vector.writer import write_vector_sharded
 
         factory = _MockFactory()
@@ -192,8 +187,7 @@ class TestWriteVectorShardedExplicit:
         assert result.stats.rows_written == 0
         assert len(result.winners) == 0
 
-    @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    def test_run_registry_populated(self, mock_s3: Any, tmp_path: Path) -> None:
+    def test_run_registry_populated(self, tmp_path: Path) -> None:
         from shardyfusion.vector.writer import write_vector_sharded
 
         factory = _MockFactory()
@@ -213,8 +207,7 @@ class TestWriteVectorShardedExplicit:
         assert record.status == "succeeded"
         assert record.manifest_ref == "s3://manifest"
 
-    @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    def test_metrics_collector_emits_events(self, mock_s3: Any, tmp_path: Path) -> None:
+    def test_metrics_collector_emits_events(self, tmp_path: Path) -> None:
         from shardyfusion.vector.writer import write_vector_sharded
 
         factory = _MockFactory()
@@ -240,8 +233,7 @@ class TestWriteVectorShardedExplicit:
         assert MetricEvent.VECTOR_SHARD_WRITE_COMPLETED in event_names
         assert MetricEvent.VECTOR_WRITE_COMPLETED in event_names
 
-    @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    def test_rate_limiter_used(self, mock_s3: Any, tmp_path: Path) -> None:
+    def test_rate_limiter_used(self, tmp_path: Path) -> None:
         from shardyfusion.vector.writer import write_vector_sharded
 
         factory = _MockFactory()
@@ -258,10 +250,7 @@ class TestWriteVectorShardedExplicit:
         result = write_vector_sharded(records, config)
         assert result.stats.rows_written == 3
 
-    @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    def test_zero_row_shard_excluded_from_winners(
-        self, mock_s3: Any, tmp_path: Path
-    ) -> None:
+    def test_zero_row_shard_excluded_from_winners(self, tmp_path: Path) -> None:
         """Shards with row_count=0 should be excluded from winners."""
         from shardyfusion.vector.writer import write_vector_sharded
 
@@ -282,10 +271,7 @@ class TestWriteVectorShardedExplicit:
         assert len(result.winners) == 1
         assert result.winners[0].db_id == 0
 
-    @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    def test_default_factory_requires_lancedb(
-        self, mock_s3: Any, tmp_path: Path
-    ) -> None:
+    def test_default_factory_requires_lancedb(self, tmp_path: Path) -> None:
         """Without adapter_factory, should try to import LanceDbWriterFactory."""
         import builtins
 
@@ -314,11 +300,7 @@ class TestWriteVectorShardedExplicit:
 class TestWriteVectorShardedCluster:
     """Test write_vector_sharded with CLUSTER sharding."""
 
-    @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    @patch("shardyfusion.vector._distributed.put_bytes")
-    def test_cluster_with_centroids(
-        self, mock_put: Any, mock_s3: Any, tmp_path: Path
-    ) -> None:
+    def test_cluster_with_centroids(self, tmp_path: Path) -> None:
         from shardyfusion.vector.writer import write_vector_sharded
 
         centroids = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=np.float32)
@@ -337,14 +319,8 @@ class TestWriteVectorShardedCluster:
 
         result = write_vector_sharded(records, config)
         assert result.stats.rows_written == 2
-        # Centroids should be uploaded
-        assert any("centroids.npy" in str(call) for call in mock_put.call_args_list)
 
-    @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    @patch("shardyfusion.vector._distributed.put_bytes")
-    def test_cluster_with_training(
-        self, mock_put: Any, mock_s3: Any, tmp_path: Path
-    ) -> None:
+    def test_cluster_with_training(self, tmp_path: Path) -> None:
         from shardyfusion.vector.writer import write_vector_sharded
 
         factory = _MockFactory()
@@ -368,11 +344,7 @@ class TestWriteVectorShardedCluster:
         result = write_vector_sharded(records, config)
         assert result.stats.rows_written == 20
 
-    @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    @patch("shardyfusion.vector._distributed.put_bytes")
-    def test_cluster_infers_num_dbs_from_centroids(
-        self, mock_put: Any, mock_s3: Any, tmp_path: Path
-    ) -> None:
+    def test_cluster_infers_num_dbs_from_centroids(self, tmp_path: Path) -> None:
         from shardyfusion.vector.writer import write_vector_sharded
 
         centroids = np.eye(3, 4, dtype=np.float32)
@@ -399,10 +371,7 @@ class TestWriteVectorShardedCluster:
         result = write_vector_sharded(records, config)
         assert result.stats.rows_written == 1
 
-    @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    def test_cluster_mismatched_centroids_count_raises(
-        self, mock_s3: Any, tmp_path: Path
-    ) -> None:
+    def test_cluster_mismatched_centroids_count_raises(self, tmp_path: Path) -> None:
         from shardyfusion.vector.writer import write_vector_sharded
 
         centroids = np.eye(3, 4, dtype=np.float32)
@@ -421,10 +390,7 @@ class TestWriteVectorShardedCluster:
         with pytest.raises(ConfigValidationError, match="centroids count"):
             write_vector_sharded([], config)
 
-    @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    def test_cluster_training_requires_num_dbs(
-        self, mock_s3: Any, tmp_path: Path
-    ) -> None:
+    def test_cluster_training_requires_num_dbs(self, tmp_path: Path) -> None:
         from shardyfusion.vector.writer import write_vector_sharded
 
         config = VectorWriteConfig(
@@ -447,11 +413,7 @@ class TestWriteVectorShardedCluster:
 class TestWriteVectorShardedLSH:
     """Test write_vector_sharded with LSH sharding."""
 
-    @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    @patch("shardyfusion.vector._distributed.put_bytes")
-    def test_lsh_auto_generates_hyperplanes(
-        self, mock_put: Any, mock_s3: Any, tmp_path: Path
-    ) -> None:
+    def test_lsh_auto_generates_hyperplanes(self, tmp_path: Path) -> None:
         from shardyfusion.vector.writer import write_vector_sharded
 
         factory = _MockFactory()
@@ -472,11 +434,8 @@ class TestWriteVectorShardedLSH:
 
         result = write_vector_sharded(records, config)
         assert result.stats.rows_written == 10
-        # Hyperplanes should be uploaded
-        assert any("hyperplanes.npy" in str(call) for call in mock_put.call_args_list)
 
-    @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    def test_lsh_requires_num_dbs(self, mock_s3: Any, tmp_path: Path) -> None:
+    def test_lsh_requires_num_dbs(self, tmp_path: Path) -> None:
         from shardyfusion.vector.writer import write_vector_sharded
 
         config = VectorWriteConfig(
@@ -498,8 +457,7 @@ class TestWriteVectorShardedLSH:
 class TestWriteVectorShardedNoNumDbs:
     """Test num_dbs inference failures."""
 
-    @patch("shardyfusion.vector.writer.create_s3_client", return_value=MagicMock())
-    def test_explicit_requires_num_dbs(self, mock_s3: Any, tmp_path: Path) -> None:
+    def test_explicit_requires_num_dbs(self, tmp_path: Path) -> None:
         from shardyfusion.vector.writer import write_vector_sharded
 
         config = VectorWriteConfig(

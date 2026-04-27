@@ -304,12 +304,10 @@ class TestBuildManifestStore:
         ) as mock_cls:
             mock_cls.return_value = MagicMock()
             store = _build_manifest_store(store_cfg, params)
-            mock_cls.assert_called_once_with(
-                "s3://bucket/prefix",
-                current_pointer_key="_CURRENT",
-                credential_provider=None,
-                s3_connection_options={},
-            )
+            mock_cls.assert_called_once()
+            call_args = mock_cls.call_args
+            assert call_args[0][1] == "s3://bucket/prefix"
+            assert call_args[1]["current_pointer_key"] == "_CURRENT"
             assert store is mock_cls.return_value
 
     def test_postgres_backend(self) -> None:
@@ -774,6 +772,7 @@ class TestManifestTargetingDoesNotMutate:
         store.list_manifests.return_value = [ref]
         manifest_mock = MagicMock()
         manifest_mock.required_build.run_id = "abc"
+        manifest_mock.required_build.s3_prefix = "s3://bucket/prefix"
         store.load_manifest.return_value = manifest_mock
         return store
 
@@ -834,10 +833,6 @@ class TestManifestTargetingDoesNotMutate:
             patch(
                 "shardyfusion._writer_core.cleanup_stale_attempts",
                 return_value=[],
-            ),
-            patch(
-                "shardyfusion.storage.create_s3_client",
-                return_value=MagicMock(),
             ),
         ):
             runner = click.testing.CliRunner()

@@ -69,10 +69,9 @@ class TestAutoAsyncReaderFactory:
             with patch(
                 "shardyfusion.vector.adapters.lancedb_adapter.AsyncLanceDbReaderFactory"
             ):
-                with patch("shardyfusion.storage.create_s3_client"):
-                    factory = _auto_async_reader_factory(meta)
-                    MockComposite.assert_called_once()
-                    assert factory is MockComposite.return_value
+                factory = _auto_async_reader_factory(meta)
+                MockComposite.assert_called_once()
+                assert factory is MockComposite.return_value
 
     def test_lancedb_backend_with_sqlite_kv(self) -> None:
         meta = UnifiedVectorMeta(
@@ -93,11 +92,10 @@ class TestAutoAsyncReaderFactory:
                 with patch(
                     "shardyfusion.vector.adapters.lancedb_adapter.AsyncLanceDbReaderFactory"
                 ):
-                    with patch("shardyfusion.storage.create_s3_client"):
-                        factory = _auto_async_reader_factory(meta)
-                        MockSqlite.assert_called_once()
-                        MockComposite.assert_called_once()
-                        assert factory is MockComposite.return_value
+                    factory = _auto_async_reader_factory(meta)
+                    MockSqlite.assert_called_once()
+                    MockComposite.assert_called_once()
+                    assert factory is MockComposite.return_value
 
     def test_unknown_backend_raises(self) -> None:
         meta = UnifiedVectorMeta(

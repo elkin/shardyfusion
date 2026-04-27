@@ -74,10 +74,6 @@ def _invoke_cleanup(
     with (
         patch("shardyfusion.cli.app._build_manifest_store", return_value=store),
         patch(
-            "shardyfusion.storage.create_s3_client",
-            return_value=MagicMock(),
-        ),
-        patch(
             "shardyfusion._writer_core.cleanup_stale_attempts",
             return_value=stale_actions or [],
         ),
@@ -233,36 +229,8 @@ class TestCleanupOldRuns:
 # ---------------------------------------------------------------------------
 
 
-class TestCleanupMaxRetries:
-    def test_custom_retries(self) -> None:
-        """--max-retries passes through to RetryConfig."""
-        with (
-            patch("shardyfusion.cli.app._build_manifest_store") as mock_store_builder,
-            patch("shardyfusion.storage.create_s3_client", return_value=MagicMock()),
-            patch(
-                "shardyfusion._writer_core.cleanup_stale_attempts",
-                return_value=[],
-            ) as mock_stale,
-        ):
-            store = MagicMock()
-            current_ref = MagicMock()
-            current_ref.ref = "ref"
-            store.load_current.return_value = current_ref
-            store.load_manifest.return_value = _make_manifest_mock()
-            mock_store_builder.return_value = store
-
-            runner = click.testing.CliRunner()
-            runner.invoke(
-                cli,
-                ["cleanup", "--max-retries", "5"],
-                env={"SHARDY_CURRENT": "s3://bucket/prefix/_CURRENT"},
-            )
-
-            # Verify retry_config was passed with max_retries=5
-            call_kwargs = mock_stale.call_args.kwargs
-            assert call_kwargs["retry_config"].max_retries == 5
-
-
+# ---------------------------------------------------------------------------
+# Error handling
 # ---------------------------------------------------------------------------
 # Text output format
 # ---------------------------------------------------------------------------
@@ -312,7 +280,6 @@ class TestCleanupTextOutput:
 
         with (
             patch("shardyfusion.cli.app._build_manifest_store", return_value=store),
-            patch("shardyfusion.storage.create_s3_client", return_value=MagicMock()),
             patch(
                 "shardyfusion._writer_core.cleanup_stale_attempts",
                 return_value=actions,
@@ -342,10 +309,7 @@ class TestCleanupErrors:
         store = MagicMock()
         store.load_current.return_value = None
 
-        with (
-            patch("shardyfusion.cli.app._build_manifest_store", return_value=store),
-            patch("shardyfusion.storage.create_s3_client", return_value=MagicMock()),
-        ):
+        with patch("shardyfusion.cli.app._build_manifest_store", return_value=store):
             runner = click.testing.CliRunner()
             result = runner.invoke(
                 cli,

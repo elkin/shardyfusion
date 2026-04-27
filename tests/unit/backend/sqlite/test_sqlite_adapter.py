@@ -16,10 +16,13 @@ from shardyfusion.sqlite_adapter import (
 
 
 @pytest.fixture()
-def mock_put() -> MagicMock:
-    """Mock put_bytes for adapter tests that don't have S3."""
-    with patch("shardyfusion.sqlite_adapter.put_bytes") as m:
-        yield m
+def mock_backend() -> MagicMock:
+    """Mock ObstoreBackend for adapter tests that don't have S3."""
+    with patch("shardyfusion.sqlite_adapter.ObstoreBackend") as m:
+        instance = m.return_value
+        instance.put = MagicMock()
+        instance.get = MagicMock()
+        yield instance
 
 
 def _sqlite_bytes(tmp_path: Path, rows: list[tuple[bytes, bytes]]) -> bytes:
@@ -39,7 +42,7 @@ def _sqlite_bytes(tmp_path: Path, rows: list[tuple[bytes, bytes]]) -> bytes:
 
 class TestSqliteAdapter:
     def test_write_batch_and_read_back(
-        self, tmp_path: Path, mock_put: MagicMock
+        self, tmp_path: Path, mock_backend: MagicMock
     ) -> None:
         local_dir = tmp_path / "shard"
         with SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir) as adapter:
@@ -59,7 +62,7 @@ class TestSqliteAdapter:
         assert len(rows) == 3
         assert rows[0] == (b"key1", b"val1")
 
-    def test_multiple_batches(self, tmp_path: Path, mock_put: MagicMock) -> None:
+    def test_multiple_batches(self, tmp_path: Path, mock_backend: MagicMock) -> None:
         local_dir = tmp_path / "shard"
         with SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir) as adapter:
             adapter.write_batch([(b"a", b"1"), (b"b", b"2")])
@@ -71,7 +74,7 @@ class TestSqliteAdapter:
         conn.close()
         assert count == 4
 
-    def test_empty_batch_is_noop(self, tmp_path: Path, mock_put: MagicMock) -> None:
+    def test_empty_batch_is_noop(self, tmp_path: Path, mock_backend: MagicMock) -> None:
         local_dir = tmp_path / "shard"
         with SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir) as adapter:
             adapter.write_batch([])
@@ -79,7 +82,7 @@ class TestSqliteAdapter:
             assert cp is not None  # still produces a valid hash
 
     def test_write_after_close_raises(
-        self, tmp_path: Path, mock_put: MagicMock
+        self, tmp_path: Path, mock_backend: MagicMock
     ) -> None:
         local_dir = tmp_path / "shard"
         adapter = SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir)
@@ -90,7 +93,9 @@ class TestSqliteAdapter:
         with pytest.raises(SqliteAdapterError, match="already closed"):
             adapter.write_batch([(b"x", b"y")])
 
-    def test_upsert_on_duplicate_key(self, tmp_path: Path, mock_put: MagicMock) -> None:
+    def test_upsert_on_duplicate_key(
+        self, tmp_path: Path, mock_backend: MagicMock
+    ) -> None:
         local_dir = tmp_path / "shard"
         with SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir) as adapter:
             adapter.write_batch([(b"key1", b"old")])
@@ -102,20 +107,20 @@ class TestSqliteAdapter:
         conn.close()
         assert val == b"new"
 
-    def test_flush_is_noop(self, tmp_path: Path, mock_put: MagicMock) -> None:
+    def test_flush_is_noop(self, tmp_path: Path, mock_backend: MagicMock) -> None:
         local_dir = tmp_path / "shard"
         with SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir) as adapter:
             adapter.flush()  # should not raise
 
     def test_close_without_checkpoint_uploads(
-        self, tmp_path: Path, mock_put: MagicMock
+        self, tmp_path: Path, mock_backend: MagicMock
     ) -> None:
         """Calling close() directly (no checkpoint) should still upload."""
         local_dir = tmp_path / "shard"
         with SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir) as adapter:
             adapter.write_batch([(b"key1", b"val1")])
 
-        mock_put.assert_called_once()
+        mock_backend.put.assert_called_once()
         # Verify the uploaded DB is readable
         conn = sqlite3.connect(str(local_dir / "shard.db"))
         val = conn.execute("SELECT v FROM kv WHERE k = ?", (b"key1",)).fetchone()[0]
@@ -130,17 +135,25 @@ class TestSqliteAdapter:
         adapter.checkpoint()
 
         with patch(
-            "shardyfusion.sqlite_adapter.put_bytes", side_effect=OSError("S3 down")
-        ):
+            "shardyfusion.sqlite_adapter.ObstoreBackend",
+        ) as MockBackend:
+            instance = MockBackend.return_value
+            instance.put = MagicMock(side_effect=OSError("S3 down"))
             with pytest.raises(OSError, match="S3 down"):
                 adapter.close()
 
         # Adapter is NOT marked closed — retry should work
-        with patch("shardyfusion.sqlite_adapter.put_bytes") as mock_retry:
+        with patch(
+            "shardyfusion.sqlite_adapter.ObstoreBackend",
+        ) as MockBackend:
+            instance = MockBackend.return_value
+            instance.put = MagicMock()
             adapter.close()
-        mock_retry.assert_called_once()
+        instance.put.assert_called_once()
 
-    def test_factory_creates_adapter(self, tmp_path: Path, mock_put: MagicMock) -> None:
+    def test_factory_creates_adapter(
+        self, tmp_path: Path, mock_backend: MagicMock
+    ) -> None:
         factory = SqliteFactory()
         adapter = factory(db_url="s3://test/shard", local_dir=tmp_path / "shard")
         assert isinstance(adapter, SqliteAdapter)
@@ -184,7 +197,9 @@ class TestSqliteShardReaderLocal:
 
     def _make_reader(self, shard_dir: Path) -> SqliteShardReader:
         db_bytes = (shard_dir / "shard.db").read_bytes()
-        with patch("shardyfusion.sqlite_adapter.get_bytes", return_value=db_bytes):
+        with patch("shardyfusion.sqlite_adapter.ObstoreBackend") as MockBackend:
+            instance = MockBackend.return_value
+            instance.get = MagicMock(return_value=db_bytes)
             return SqliteShardReader(
                 db_url="s3://test/shard",
                 local_dir=shard_dir,
@@ -216,9 +231,11 @@ class TestSqliteShardReaderDownloadCache:
         db_v2 = _sqlite_bytes(tmp_path, [(b"key", b"new")])
 
         with patch(
-            "shardyfusion.sqlite_adapter.get_bytes",
-            side_effect=[db_v1, db_v2],
-        ) as mock_get_bytes:
+            "shardyfusion.sqlite_adapter.ObstoreBackend",
+        ) as MockBackend:
+            instance = MockBackend.return_value
+            instance.get = MagicMock(side_effect=[db_v1, db_v2])
+
             reader_v1 = SqliteShardReader(
                 db_url="s3://bucket/run-1/shard=00000/attempt=00",
                 local_dir=local_dir,
@@ -235,7 +252,7 @@ class TestSqliteShardReaderDownloadCache:
             assert reader_v2.get(b"key") == b"new"
             reader_v2.close()
 
-        assert mock_get_bytes.call_count == 2
+        assert instance.get.call_count == 2
 
     def test_reuses_download_when_snapshot_identity_matches(
         self, tmp_path: Path
@@ -244,9 +261,11 @@ class TestSqliteShardReaderDownloadCache:
         db_v1 = _sqlite_bytes(tmp_path, [(b"key", b"stable")])
 
         with patch(
-            "shardyfusion.sqlite_adapter.get_bytes",
-            return_value=db_v1,
-        ) as mock_get_bytes:
+            "shardyfusion.sqlite_adapter.ObstoreBackend",
+        ) as MockBackend:
+            instance = MockBackend.return_value
+            instance.get = MagicMock(return_value=db_v1)
+
             reader_v1 = SqliteShardReader(
                 db_url="s3://bucket/run-1/shard=00000/attempt=00",
                 local_dir=local_dir,
@@ -263,4 +282,4 @@ class TestSqliteShardReaderDownloadCache:
             assert reader_v2.get(b"key") == b"stable"
             reader_v2.close()
 
-        assert mock_get_bytes.call_count == 1
+        assert instance.get.call_count == 1

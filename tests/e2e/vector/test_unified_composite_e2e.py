@@ -11,7 +11,6 @@ from shardyfusion import VectorSpec, WriteConfig
 from shardyfusion.composite_adapter import CompositeFactory
 from shardyfusion.reader.unified_reader import UnifiedShardedReader
 from shardyfusion.slatedb_adapter import SlateDbFactory
-from shardyfusion.storage import create_s3_client
 from shardyfusion.vector.adapters.lancedb_adapter import LanceDbWriterFactory
 from shardyfusion.writer.python.writer import write_sharded
 from tests.e2e.conftest import (
@@ -31,7 +30,6 @@ def test_unified_composite_e2e(
     s3_prefix = f"s3://{garage_s3_service['bucket']}/e2e-unified-composite"
     cred_provider = credential_provider_from_service(garage_s3_service)
     s3_conn_opts = s3_connection_options_from_service(garage_s3_service)
-    s3_client = create_s3_client(cred_provider.resolve(), s3_conn_opts)
 
     num_records = 20
     dim = 8
@@ -54,7 +52,10 @@ def test_unified_composite_e2e(
         s3_prefix=s3_prefix,
         adapter_factory=CompositeFactory(
             kv_factory=SlateDbFactory(),
-            vector_factory=LanceDbWriterFactory(s3_client=s3_client),
+            vector_factory=LanceDbWriterFactory(
+                credential_provider=cred_provider,
+                s3_connection_options=s3_conn_opts,
+            ),
             vector_spec=vector_spec,
         ),
         vector_spec=vector_spec,

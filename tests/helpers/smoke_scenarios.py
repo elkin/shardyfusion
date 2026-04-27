@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from shardyfusion.credentials import CredentialProvider
-from shardyfusion.manifest_store import S3ManifestStore
 from shardyfusion.serde import make_key_encoder
 from shardyfusion.sharding_types import KeyEncoding
 from shardyfusion.slatedb_adapter import DbAdapterFactory
@@ -27,6 +26,7 @@ from tests.helpers.run_record_assertions import (
 from tests.helpers.s3_test_scenarios import (
     _default_connection_options,
     _default_credential_provider,
+    _make_s3_manifest_store,
 )
 
 if TYPE_CHECKING:
@@ -85,7 +85,7 @@ def _build_reader_kwargs(
         "reader_factory": reader_factory,
     }
     if credential_provider is not None or s3_connection_options is not None:
-        kwargs["manifest_store"] = S3ManifestStore(
+        kwargs["manifest_store"] = _make_s3_manifest_store(
             s3_prefix,
             credential_provider=credential_provider,
             s3_connection_options=s3_connection_options,
@@ -157,7 +157,7 @@ def _verify_shard_placement(
     # Concrete reader factories require a Manifest argument; load the
     # published manifest from S3 via S3ManifestStore so direct shard reads
     # match the contract used by ShardedReader.
-    manifest_store = S3ManifestStore(
+    manifest_store = _make_s3_manifest_store(
         s3_prefix,
         credential_provider=credential_provider,
         s3_connection_options=s3_connection_options,

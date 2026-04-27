@@ -12,11 +12,11 @@ import numpy as np
 import pytest
 
 pytest.importorskip("cel_expr_python", reason="requires cel extra")
-pytest.importorskip("aiobotocore", reason="requires aiobotocore for async S3")
 
 from shardyfusion.async_manifest_store import AsyncS3ManifestStore
 from shardyfusion.config import ManifestOptions, OutputOptions, VectorSpec, WriteConfig
 from shardyfusion.credentials import StaticCredentialProvider
+from shardyfusion.storage import AsyncObstoreBackend, create_s3_store, parse_s3_url
 from shardyfusion.type_defs import S3ConnectionOptions
 
 # ---------------------------------------------------------------------------
@@ -126,9 +126,14 @@ class TestAsyncUnifiedWriteReadRoundTrip:
                 credential_provider=cred_provider,
             ),
             manifest_store=AsyncS3ManifestStore(
+                AsyncObstoreBackend(
+                    create_s3_store(
+                        bucket=parse_s3_url(s3_prefix)[0],
+                        credentials=cred_provider.resolve() if cred_provider else None,
+                        connection_options=s3_conn_opts,
+                    )
+                ),
                 s3_prefix,
-                credential_provider=cred_provider,
-                s3_connection_options=s3_conn_opts,
             ),
         )
 

@@ -164,7 +164,6 @@ class TestAutoReaderFactory:
             ) as mock_composite,
             patch("shardyfusion.reader._types.SlateDbReaderFactory"),
             patch("shardyfusion.vector.adapters.lancedb_adapter.LanceDbReaderFactory"),
-            patch("shardyfusion.storage.create_s3_client"),
         ):
             _auto_reader_factory(meta)
             mock_composite.assert_called_once()
@@ -189,7 +188,6 @@ class TestAutoReaderFactory:
                 "shardyfusion.sqlite_adapter.AdaptiveSqliteReaderFactory"
             ) as mock_sqlite_kv,
             patch("shardyfusion.vector.adapters.lancedb_adapter.LanceDbReaderFactory"),
-            patch("shardyfusion.storage.create_s3_client"),
         ):
             _auto_reader_factory(meta)
             mock_sqlite_kv.assert_called_once()

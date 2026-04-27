@@ -24,11 +24,11 @@ def test_ray_vector_cluster_write_to_sqlite(garage_s3_service, tmp_path) -> None
         VectorSpec,
         WriteConfig,
     )
-    from shardyfusion.manifest_store import S3ManifestStore
     from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
     from shardyfusion.vector.config import VectorSpecSharding
     from shardyfusion.writer.ray.writer import write_vector_sharded
+    from tests.helpers.s3_test_scenarios import _make_s3_manifest_store
 
     bucket = garage_s3_service["bucket"]
     prefix = f"{bucket}/ray-vector-cluster-e2e"
@@ -69,7 +69,7 @@ def test_ray_vector_cluster_write_to_sqlite(garage_s3_service, tmp_path) -> None
         credential_provider=creds,
         s3_connection_options=opts,
         manifest=ManifestOptions(
-            store=S3ManifestStore(
+            store=_make_s3_manifest_store(
                 f"s3://{prefix}",
                 credential_provider=creds,
                 s3_connection_options=opts,
@@ -102,11 +102,11 @@ def test_ray_vector_lsh_write_to_sqlite(garage_s3_service, tmp_path) -> None:
         VectorSpec,
         WriteConfig,
     )
-    from shardyfusion.manifest_store import S3ManifestStore
     from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
     from shardyfusion.vector.config import VectorSpecSharding
     from shardyfusion.writer.ray.writer import write_vector_sharded
+    from tests.helpers.s3_test_scenarios import _make_s3_manifest_store
 
     bucket = garage_s3_service["bucket"]
     prefix = f"{bucket}/ray-vector-lsh-e2e"
@@ -147,7 +147,7 @@ def test_ray_vector_lsh_write_to_sqlite(garage_s3_service, tmp_path) -> None:
         credential_provider=creds,
         s3_connection_options=opts,
         manifest=ManifestOptions(
-            store=S3ManifestStore(
+            store=_make_s3_manifest_store(
                 f"s3://{prefix}",
                 credential_provider=creds,
                 s3_connection_options=opts,

@@ -14,6 +14,7 @@ from shardyfusion.run_registry import (
     S3RunRegistry,
     managed_run_record,
 )
+from shardyfusion.storage import MemoryBackend
 
 
 def _config(*, registry: InMemoryRunRegistry | None = None) -> WriteConfig:
@@ -24,38 +25,9 @@ def _config(*, registry: InMemoryRunRegistry | None = None) -> WriteConfig:
     )
 
 
-def test_s3_run_registry_builds_expected_urls(monkeypatch) -> None:
-    calls: list[dict[str, object]] = []
-
-    def fake_create_s3_client(_creds=None, _opts=None):
-        return object()
-
-    def fake_put_bytes(
-        url,
-        payload,
-        content_type,
-        headers=None,
-        *,
-        s3_client=None,
-        metrics_collector=None,
-        **kwargs,
-    ):
-        calls.append(
-            {
-                "url": url,
-                "payload": payload,
-                "content_type": content_type,
-                "headers": headers,
-                "s3_client": s3_client,
-            }
-        )
-
-    monkeypatch.setattr(
-        "shardyfusion.run_registry.create_s3_client", fake_create_s3_client
-    )
-    monkeypatch.setattr("shardyfusion.run_registry.put_bytes", fake_put_bytes)
-
-    store = S3RunRegistry("s3://bucket/prefix", run_registry_prefix="runs")
+def test_s3_run_registry_builds_expected_urls() -> None:
+    backend = MemoryBackend()
+    store = S3RunRegistry(backend, "s3://bucket/prefix", run_registry_prefix="runs")
     ref = store.create(
         RunRecord(
             run_id="run-123",
@@ -72,9 +44,7 @@ def test_s3_run_registry_builds_expected_urls(monkeypatch) -> None:
 
     assert ref.startswith("s3://bucket/prefix/runs/")
     assert ref.endswith("/run.yaml")
-    assert len(calls) == 1
-    assert calls[0]["url"] == ref
-    assert calls[0]["content_type"] == "application/x-yaml"
+    assert backend.try_get(ref) is not None
 
 
 def test_managed_run_record_marks_succeeded() -> None:

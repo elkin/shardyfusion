@@ -29,6 +29,7 @@ from shardyfusion.manifest_store import S3ManifestStore, parse_manifest_payload
 from shardyfusion.reader import ConcurrentShardedReader
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 from shardyfusion.slatedb_adapter import DbAdapterFactory
+from shardyfusion.storage import ObstoreBackend, create_s3_store, parse_s3_url
 from shardyfusion.type_defs import S3ConnectionOptions, ShardReaderFactory
 from tests.helpers.run_record_assertions import (
     assert_success_run_record,
@@ -63,6 +64,23 @@ def _default_connection_options(
         endpoint_url=s3_service["endpoint_url"],
         region_name=s3_service["region_name"],
     )
+
+
+def _make_s3_manifest_store(
+    s3_prefix: str,
+    credential_provider: CredentialProvider | None,
+    s3_connection_options: S3ConnectionOptions | None,
+) -> S3ManifestStore:
+    """Build an S3ManifestStore with an ObstoreBackend from config."""
+    credentials = credential_provider.resolve() if credential_provider else None
+    bucket, _ = parse_s3_url(s3_prefix)
+    store = create_s3_store(
+        bucket=bucket,
+        credentials=credentials,
+        connection_options=s3_connection_options,
+    )
+    backend = ObstoreBackend(store)
+    return S3ManifestStore(backend, s3_prefix)
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +191,7 @@ def run_reader_loads_manifest_scenario(
         "reader_factory": reader_factory,
     }
     if credential_provider is not None or s3_connection_options is not None:
-        reader_kwargs["manifest_store"] = S3ManifestStore(
+        reader_kwargs["manifest_store"] = _make_s3_manifest_store(
             s3_prefix,
             credential_provider=credential_provider,
             s3_connection_options=s3_connection_options,
@@ -346,7 +364,7 @@ def run_writer_reader_refresh_scenario(
         "reader_factory": reader_factory,
     }
     if credential_provider is not None or s3_connection_options is not None:
-        reader_kwargs["manifest_store"] = S3ManifestStore(
+        reader_kwargs["manifest_store"] = _make_s3_manifest_store(
             s3_prefix,
             credential_provider=credential_provider,
             s3_connection_options=s3_connection_options,
@@ -596,7 +614,7 @@ def run_python_writer_reader_refresh_scenario(
         "reader_factory": reader_factory,
     }
     if credential_provider is not None or s3_connection_options is not None:
-        reader_kwargs["manifest_store"] = S3ManifestStore(
+        reader_kwargs["manifest_store"] = _make_s3_manifest_store(
             s3_prefix,
             credential_provider=credential_provider,
             s3_connection_options=s3_connection_options,
@@ -690,7 +708,7 @@ def run_dask_writer_reader_refresh_scenario(
         "reader_factory": reader_factory,
     }
     if credential_provider is not None or s3_connection_options is not None:
-        reader_kwargs["manifest_store"] = S3ManifestStore(
+        reader_kwargs["manifest_store"] = _make_s3_manifest_store(
             s3_prefix,
             credential_provider=credential_provider,
             s3_connection_options=s3_connection_options,
@@ -865,7 +883,7 @@ def run_ray_writer_reader_refresh_scenario(
         "reader_factory": reader_factory,
     }
     if credential_provider is not None or s3_connection_options is not None:
-        reader_kwargs["manifest_store"] = S3ManifestStore(
+        reader_kwargs["manifest_store"] = _make_s3_manifest_store(
             s3_prefix,
             credential_provider=credential_provider,
             s3_connection_options=s3_connection_options,

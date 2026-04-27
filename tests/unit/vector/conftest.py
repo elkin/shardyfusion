@@ -2,8 +2,22 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import numpy as np
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _patch_obstore_backend():
+    """Patch ObstoreBackend in vector._distributed to use MemoryBackend."""
+    from shardyfusion.storage import MemoryBackend
+
+    with patch(
+        "shardyfusion.vector._distributed.ObstoreBackend",
+        side_effect=lambda store: MemoryBackend(),
+    ):
+        yield
 
 
 @pytest.fixture
