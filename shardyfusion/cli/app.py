@@ -418,8 +418,8 @@ def _build_unified_kv_factory(
     vs = VectorSpec(
         dim=vector_meta["dim"],
         metric=vector_metric_to_str(vector_meta["metric"]),
-        index_type=vector_meta.get("index_type"),
-        index_params=vector_meta.get("index_params"),
+        index_type=vector_meta.get("index_type") or "hnsw",
+        index_params=vector_meta.get("index_params") or {},
         quantization=vector_meta.get("quantization"),
     )
     credentials = credential_provider.resolve() if credential_provider else None
