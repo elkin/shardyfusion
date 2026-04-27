@@ -769,13 +769,6 @@ def write_vector_sharded(
                 dtype=np.float32,
             )
 
-        credentials = (
-            config.credential_provider.resolve() if config.credential_provider else None
-        )
-        from shardyfusion.storage import create_s3_client
-
-        s3_client = create_s3_client(credentials, config.s3_connection_options)
-
         resolved_vector_factory: VectorIndexWriterFactory | None = None
         if config.adapter_factory is not None:
             candidate_factory: Any = config.adapter_factory
@@ -799,7 +792,7 @@ def write_vector_sharded(
 
         routing = resolve_vector_routing(vec_config, sample_vectors=sample_vectors)
 
-        adapter_factory = resolve_adapter_factory(vec_config, s3_client)
+        adapter_factory = resolve_adapter_factory(vec_config)
 
         df_with_id, num_dbs = add_vector_db_id_column(
             df,
@@ -866,7 +859,6 @@ def write_vector_sharded(
             run_id=run_id,
             centroids=routing.centroids,
             hyperplanes=routing.hyperplanes,
-            s3_client=s3_client,
         )
 
         manifest_start = time.perf_counter()

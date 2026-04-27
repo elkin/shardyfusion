@@ -41,7 +41,7 @@ from .sqlite_adapter import (
     SqliteAccessPolicy,
     _ThresholdPolicy,
 )
-from .storage import create_s3_client, get_bytes, put_bytes
+from .storage import ObstoreBackend, create_s3_store, parse_s3_url
 from .type_defs import Manifest, S3ConnectionOptions
 from .vector.types import SearchResult
 
@@ -352,16 +352,17 @@ class SqliteVecAdapter:
 
             if self._db_path.exists() and not self._uploaded:
                 s3_key = f"{self._db_url.rstrip('/')}/{_DB_FILENAME}"
-                client = (
-                    create_s3_client(self._s3_creds, self._s3_conn_opts)
-                    if self._s3_creds or self._s3_conn_opts
-                    else None
+                bucket, _ = parse_s3_url(s3_key)
+                store = create_s3_store(
+                    bucket=bucket,
+                    credentials=self._s3_creds,
+                    connection_options=self._s3_conn_opts,
                 )
-                put_bytes(
+                backend = ObstoreBackend(store)
+                backend.put(
                     s3_key,
                     self._db_path.read_bytes(),
                     content_type="application/x-sqlite3",
-                    s3_client=client,
                 )
                 self._uploaded = True
                 log_event(
@@ -441,13 +442,15 @@ class SqliteVecShardReader:
         # Check cache validity
         if not _is_cached_snapshot_current(identity_path, db_url, checkpoint_id):
             s3_key = f"{db_url.rstrip('/')}/{_DB_FILENAME}"
+            bucket, _ = parse_s3_url(s3_key)
             creds = credential_provider.resolve() if credential_provider else None
-            client = (
-                create_s3_client(creds, s3_connection_options)
-                if creds or s3_connection_options
-                else None
+            store = create_s3_store(
+                bucket=bucket,
+                credentials=creds,
+                connection_options=s3_connection_options,
             )
-            data = get_bytes(s3_key, s3_client=client)
+            backend = ObstoreBackend(store)
+            data = backend.get(s3_key)
             db_path.write_bytes(data)
             identity_path.write_text(
                 json.dumps({"db_url": db_url, "checkpoint_id": checkpoint_id})

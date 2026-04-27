@@ -24,7 +24,7 @@ from ..manifest_store import S3ManifestStore
 from ..metrics._events import MetricEvent
 from ..metrics._protocol import MetricsCollector
 from ..sharding_types import KeyEncoding, ShardHashAlgorithm, ShardingStrategy
-from ..storage import put_bytes
+from ..storage import ObstoreBackend, StorageBackend, create_s3_store, parse_s3_url
 from .config import VectorIndexConfig, VectorWriteConfig
 from .sharding import (
     cluster_assign,
@@ -422,32 +422,35 @@ def upload_routing_metadata(
     run_id: str,
     centroids: np.ndarray | None,
     hyperplanes: np.ndarray | None,
-    s3_client: Any | None,
+    backend: StorageBackend | None = None,
 ) -> tuple[str | None, str | None]:
     """Upload centroids/hyperplanes to S3. Returns (centroids_ref, hyperplanes_ref)."""
     centroids_ref: str | None = None
     hyperplanes_ref: str | None = None
 
+    if backend is None:
+        bucket, _ = parse_s3_url(s3_prefix)
+        store = create_s3_store(bucket=bucket)
+        backend = ObstoreBackend(store)
+
     if centroids is not None:
         centroids_ref = f"{s3_prefix}/vector_meta/run_id={run_id}/centroids.npy"
         buf = io.BytesIO()
         np.save(buf, centroids)
-        put_bytes(
+        backend.put(
             centroids_ref,
             buf.getvalue(),
             "application/octet-stream",
-            s3_client=s3_client,
         )
 
     if hyperplanes is not None:
         hyperplanes_ref = f"{s3_prefix}/vector_meta/run_id={run_id}/hyperplanes.npy"
         buf = io.BytesIO()
         np.save(buf, hyperplanes)
-        put_bytes(
+        backend.put(
             hyperplanes_ref,
             buf.getvalue(),
             "application/octet-stream",
-            s3_client=s3_client,
         )
 
     return centroids_ref, hyperplanes_ref
@@ -513,14 +516,25 @@ def publish_vector_manifest(
     custom_fields = dict(config.manifest.custom_manifest_fields)
     custom_fields["vector"] = vector_custom
 
-    store = config.manifest.store or S3ManifestStore(
-        config.s3_prefix,
-        credential_provider=config.manifest.credential_provider
-        or config.credential_provider,
-        s3_connection_options=config.manifest.s3_connection_options
-        or config.s3_connection_options,
-        metrics_collector=config.metrics_collector,
-    )
+    if config.manifest.store is not None:
+        store = config.manifest.store
+    else:
+        credentials = config.manifest.credential_provider or config.credential_provider
+        conn_opts = (
+            config.manifest.s3_connection_options or config.s3_connection_options
+        )
+        bucket, _ = parse_s3_url(config.s3_prefix)
+        s3_store = create_s3_store(
+            bucket=bucket,
+            credentials=credentials.resolve() if credentials else None,
+            connection_options=conn_opts,
+        )
+        backend = ObstoreBackend(s3_store)
+        store = S3ManifestStore(
+            backend,
+            config.s3_prefix,
+            metrics_collector=config.metrics_collector,
+        )
 
     manifest_ref = store.publish(
         run_id=run_id,
@@ -546,7 +560,6 @@ def publish_vector_manifest(
 
 def resolve_adapter_factory(
     config: VectorWriteConfig,
-    s3_client: Any | None,
 ) -> VectorIndexWriterFactory:
     """Return the user-provided factory or the default LanceDB factory."""
     if config.adapter_factory is not None:
@@ -554,7 +567,6 @@ def resolve_adapter_factory(
     from .adapters.lancedb_adapter import LanceDbWriterFactory
 
     return LanceDbWriterFactory(
-        s3_client=s3_client,
         s3_connection_options=config.s3_connection_options,
         credential_provider=config.credential_provider,
     )

@@ -283,11 +283,20 @@ class AsyncShardedReader:
         if manifest_store is not None:
             self._manifest_store = manifest_store
         else:
+            credentials = credential_provider.resolve() if credential_provider else None
+            from ..storage import AsyncObstoreBackend, create_s3_store, parse_s3_url
+
+            bucket, _ = parse_s3_url(s3_prefix)
+            store = create_s3_store(
+                bucket=bucket,
+                credentials=credentials,
+                connection_options=s3_connection_options,
+            )
+            backend = AsyncObstoreBackend(store)
             self._manifest_store = AsyncS3ManifestStore(
+                backend,
                 s3_prefix,
                 current_pointer_key=current_pointer_key,
-                credential_provider=credential_provider,
-                s3_connection_options=s3_connection_options,
                 metrics_collector=metrics_collector,
             )
 

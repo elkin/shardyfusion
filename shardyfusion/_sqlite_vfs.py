@@ -20,6 +20,7 @@ from typing import Any
 
 from .credentials import S3Credentials
 from .errors import ShardyfusionError
+from .storage import create_s3_store
 from .type_defs import S3ConnectionOptions
 
 # Page size used for LRU cache keying.  Matches the value advertised
@@ -51,84 +52,14 @@ def _build_obstore_client(
 ) -> Any:
     """Construct an :class:`obstore.store.S3Store` from shardyfusion config.
 
-    Mapping rules:
-
-    * ``S3Credentials`` fields → ``access_key_id`` / ``secret_access_key`` /
-      ``session_token`` (omitted when ``None`` so obstore can fall back to
-      its default credential chain).
-    * ``endpoint_url`` / ``region_name`` → obstore ``endpoint`` / ``region``.
-    * ``addressing_style="path"`` → ``virtual_hosted_style_request=False``.
-    * ``connect_timeout`` / ``read_timeout`` / ``verify_ssl`` →
-      ``client_options``.
-    * ``max_attempts`` → ``retry_config.max_retries`` (subtract 1 because
-      obstore expresses retries, not total attempts).
-    * ``signature_version`` is ignored (obstore always uses S3v4).
+    Thin wrapper around :func:`shardyfusion.storage.create_s3_store` that
+    passes the explicit bucket required by the VFS layer.
     """
-    try:
-        from obstore.store import S3Store  # pyright: ignore[reportMissingImports]
-    except ImportError as exc:  # pragma: no cover - depends on env
-        raise S3VfsError(
-            "obstore is required for the SQLite range-read VFS. "
-            "Install via: pip install 'shardyfusion[sqlite-range]' "
-            "or 'shardyfusion[sqlite-adaptive]' for the adaptive reader."
-        ) from exc
-
-    opts: S3ConnectionOptions = s3_connection_options or {}
-    kwargs: dict[str, Any] = {}
-    client_options: dict[str, Any] = {}
-
-    endpoint = opts.get("endpoint_url")
-    if endpoint:
-        kwargs["endpoint"] = endpoint
-        # obstore refuses non-HTTPS endpoints unless explicitly opted in;
-        # required for local S3 emulators (Garage / MinIO / moto).
-        if endpoint.startswith("http://"):
-            client_options["allow_http"] = True
-    region = opts.get("region_name")
-    if region:
-        kwargs["region"] = region
-
-    addressing = opts.get("addressing_style")
-    if addressing == "path":
-        kwargs["virtual_hosted_style_request"] = False
-    elif addressing == "virtual":
-        kwargs["virtual_hosted_style_request"] = True
-    # "auto" or unset → leave to obstore default.
-
-    if s3_credentials is not None:
-        if s3_credentials.access_key_id is not None:
-            kwargs["access_key_id"] = s3_credentials.access_key_id
-        if s3_credentials.secret_access_key is not None:
-            kwargs["secret_access_key"] = s3_credentials.secret_access_key
-        if s3_credentials.session_token is not None:
-            kwargs["session_token"] = s3_credentials.session_token
-
-    # Skip credential discovery when no explicit creds are provided AND no
-    # endpoint is configured; obstore's default chain (EC2 IMDS / env) is
-    # appropriate.  When a custom endpoint is set (MinIO/Garage/moto) we
-    # also rely on env-provided credentials picked up by obstore.
-
-    verify = opts.get("verify_ssl")
-    if verify is False:
-        client_options["allow_invalid_certificates"] = True
-    elif isinstance(verify, str):
-        # CA bundle path is not directly supported by obstore client_options;
-        # leave it to environment (SSL_CERT_FILE) and skip rather than fail.
-        pass
-    connect_timeout = opts.get("connect_timeout")
-    if connect_timeout is not None:
-        client_options["connect_timeout"] = f"{int(connect_timeout)}s"
-    read_timeout = opts.get("read_timeout")
-    if read_timeout is not None:
-        client_options["timeout"] = f"{int(read_timeout)}s"
-    if client_options:
-        kwargs["client_options"] = client_options
-
-    max_attempts = opts.get("max_attempts")
-    if max_attempts is not None:
-        kwargs["retry_config"] = {"max_retries": max(0, int(max_attempts) - 1)}
-
-    return S3Store(bucket, **kwargs)
+    return create_s3_store(
+        bucket=bucket,
+        credentials=s3_credentials,
+        connection_options=s3_connection_options,
+    )
 
 
 class S3ReadOnlyFile:

@@ -22,7 +22,7 @@ from ..manifest import ManifestRef, ParsedManifest, RequiredShardMeta
 from ..manifest_store import ManifestStore, S3ManifestStore
 from ..metrics._events import MetricEvent
 from ..metrics._protocol import MetricsCollector
-from ..storage import get_bytes
+from ..storage import ObstoreBackend, create_s3_store, parse_s3_url
 from ..type_defs import S3ConnectionOptions
 from ._merge import merge_results
 from .config import VectorIndexConfig
@@ -98,33 +98,42 @@ class ShardedVectorReader:
             else None
         )
 
-        self._store = manifest_store or S3ManifestStore(
-            s3_prefix,
-            credential_provider=credential_provider,
-            s3_connection_options=s3_connection_options,
-            metrics_collector=metrics_collector,
-        )
+        if manifest_store is not None:
+            self._store = manifest_store
+        else:
+            credentials = credential_provider.resolve() if credential_provider else None
+            bucket, _ = parse_s3_url(s3_prefix)
+            store = create_s3_store(
+                bucket=bucket,
+                credentials=credentials,
+                connection_options=s3_connection_options,
+            )
+            backend = ObstoreBackend(store)
+            self._store = S3ManifestStore(
+                backend,
+                s3_prefix,
+                metrics_collector=metrics_collector,
+            )
 
         if reader_factory is not None:
             self._reader_factory = reader_factory
         else:
             from .adapters.lancedb_adapter import LanceDbReaderFactory
 
-            credentials = credential_provider.resolve() if credential_provider else None
-            from ..storage import create_s3_client
-
-            s3_client = create_s3_client(credentials, s3_connection_options)
             self._reader_factory = LanceDbReaderFactory(
-                s3_client=s3_client,
                 s3_connection_options=s3_connection_options,
                 credential_provider=credential_provider,
             )
 
-        # S3 client for loading centroids/hyperplanes
+        # Backend for loading centroids/hyperplanes
         credentials = credential_provider.resolve() if credential_provider else None
-        from ..storage import create_s3_client
-
-        self._s3_client = create_s3_client(credentials, s3_connection_options)
+        bucket, _ = parse_s3_url(s3_prefix)
+        store = create_s3_store(
+            bucket=bucket,
+            credentials=credentials,
+            connection_options=s3_connection_options,
+        )
+        self._backend = ObstoreBackend(store)
 
         # Shard reader cache (lazy loading)
         self._shard_readers: OrderedDict[int, _CachedShardReader] = OrderedDict()
@@ -508,20 +517,18 @@ class ShardedVectorReader:
         centroids_ref = vector_meta.get("centroids_ref")
         if centroids_ref:
             try:
-                data = get_bytes(centroids_ref, s3_client=self._s3_client)
+                data = self._backend.get(centroids_ref)
                 centroids = np.load(io.BytesIO(data))
             except Exception:
                 log_event(
-                    "centroids_load_failed",
-                    logger=_logger,
-                    centroids_ref=centroids_ref,
+                    "centroids_load_failed", logger=_logger, centroids_ref=centroids_ref
                 )
 
         hyperplanes: np.ndarray | None = None
         hyperplanes_ref = vector_meta.get("hyperplanes_ref")
         if hyperplanes_ref:
             try:
-                data = get_bytes(hyperplanes_ref, s3_client=self._s3_client)
+                data = self._backend.get(hyperplanes_ref)
                 hyperplanes = np.load(io.BytesIO(data))
             except Exception:
                 log_event(

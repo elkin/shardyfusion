@@ -21,7 +21,7 @@ from ..logging import get_logger, log_event
 from ..manifest import ManifestRef, ParsedManifest, RequiredShardMeta
 from ..metrics._events import MetricEvent
 from ..metrics._protocol import MetricsCollector
-from ..storage import get_bytes
+from ..storage import ObstoreBackend, create_s3_store, parse_s3_url
 from ..type_defs import S3ConnectionOptions
 from ._merge import merge_results
 from .config import VectorIndexConfig
@@ -85,10 +85,19 @@ class AsyncShardedVectorReader:
         if manifest_store is not None:
             self._store = manifest_store
         else:
+            from ..storage import AsyncObstoreBackend
+
+            credentials = credential_provider.resolve() if credential_provider else None
+            bucket, _ = parse_s3_url(s3_prefix)
+            store = create_s3_store(
+                bucket=bucket,
+                credentials=credentials,
+                connection_options=s3_connection_options,
+            )
+            backend = AsyncObstoreBackend(store)
             self._store = AsyncS3ManifestStore(
+                backend,
                 s3_prefix,
-                credential_provider=credential_provider,
-                s3_connection_options=s3_connection_options,
                 metrics_collector=metrics_collector,
             )
 
@@ -102,12 +111,16 @@ class AsyncShardedVectorReader:
                 credential_provider=credential_provider,
             )
 
-        # Sync S3 client used within threadpool to load centroids/hyperplanes
+        # Sync backend used within threadpool to load centroids/hyperplanes.
         # This occurs only during initialization/refresh.
         credentials = credential_provider.resolve() if credential_provider else None
-        from ..storage import create_s3_client
-
-        self._s3_client = create_s3_client(credentials, s3_connection_options)
+        bucket, _ = parse_s3_url(s3_prefix)
+        store = create_s3_store(
+            bucket=bucket,
+            credentials=credentials,
+            connection_options=s3_connection_options,
+        )
+        self._backend = ObstoreBackend(store)
 
         # Shard reader cache (lazy loading)
         self._shard_readers: OrderedDict[int, _CachedAsyncShardReader] = OrderedDict()
@@ -501,9 +514,7 @@ class AsyncShardedVectorReader:
         centroids_ref = vector_meta.get("centroids_ref")
         if centroids_ref:
             try:
-                data = await asyncio.to_thread(
-                    get_bytes, centroids_ref, s3_client=self._s3_client
-                )
+                data = await asyncio.to_thread(self._backend.get, centroids_ref)
                 centroids = np.load(io.BytesIO(data))
             except Exception:
                 log_event(
@@ -514,9 +525,7 @@ class AsyncShardedVectorReader:
         hyperplanes_ref = vector_meta.get("hyperplanes_ref")
         if hyperplanes_ref:
             try:
-                data = await asyncio.to_thread(
-                    get_bytes, hyperplanes_ref, s3_client=self._s3_client
-                )
+                data = await asyncio.to_thread(self._backend.get, hyperplanes_ref)
                 hyperplanes = np.load(io.BytesIO(data))
             except Exception:
                 log_event(

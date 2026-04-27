@@ -164,12 +164,24 @@ def _build_manifest_store(
     """Create the manifest store for the configured backend."""
     if store_cfg.backend == "s3":
         from ..manifest_store import S3ManifestStore
+        from ..storage import ObstoreBackend, create_s3_store, parse_s3_url
 
+        credentials = (
+            params["credential_provider"].resolve()
+            if params["credential_provider"]
+            else None
+        )
+        bucket, _ = parse_s3_url(params["s3_prefix"])
+        store = create_s3_store(
+            bucket=bucket,
+            credentials=credentials,
+            connection_options=params["s3_connection_options"],
+        )
+        backend = ObstoreBackend(store)
         return S3ManifestStore(
+            backend,
             params["s3_prefix"],
             current_pointer_key=params["current_pointer_key"],
-            credential_provider=params["credential_provider"],
-            s3_connection_options=params["s3_connection_options"],
         )
 
     # Postgres backend
@@ -397,7 +409,6 @@ def _build_unified_kv_factory(
     # backend == "lancedb" with kv_backend == "sqlite": build composite factory
     from ..composite_adapter import CompositeReaderFactory
     from ..config import VectorSpec, vector_metric_to_str
-    from ..storage import create_s3_client
     from ..vector.adapters.lancedb_adapter import LanceDbReaderFactory
 
     if mode == "auto":
@@ -425,10 +436,7 @@ def _build_unified_kv_factory(
         index_params=vector_meta.get("index_params") or {},
         quantization=vector_meta.get("quantization"),
     )
-    credentials = credential_provider.resolve() if credential_provider else None
-    s3_client = create_s3_client(credentials, s3_connection_options)
     vector_factory = LanceDbReaderFactory(
-        s3_client=s3_client,
         s3_connection_options=s3_connection_options,
         credential_provider=credential_provider,
     )
@@ -954,12 +962,6 @@ def _parse_duration(value: str) -> timedelta:
     metavar="N",
     help="Keep shard data for only the N most recent runs.",
 )
-@click.option(
-    "--max-retries",
-    default=3,
-    type=int,
-    help="Retry count for transient S3 errors (default 3).",
-)
 @click.pass_context
 def cleanup_cmd(
     ctx: click.Context,
@@ -967,12 +969,10 @@ def cleanup_cmd(
     include_old_runs: bool,
     older_than: str | None,
     keep_last: int | None,
-    max_retries: int,
 ) -> None:
     """Delete stale attempt directories and optionally old run data from S3."""
     from .._writer_core import cleanup_old_runs, cleanup_stale_attempts
-    from ..storage import create_s3_client
-    from ..type_defs import RetryConfig
+    from ..storage import ObstoreBackend, create_s3_store, parse_s3_url
     from .output import build_cleanup_result
 
     output_cfg = _get_output_cfg(ctx)
@@ -997,16 +997,16 @@ def cleanup_cmd(
 
         cred_provider = params.get("credential_provider")
         credentials = cred_provider.resolve() if cred_provider else None
-        client = create_s3_client(
+        bucket, _ = parse_s3_url(manifest.required_build.s3_prefix)
+        store = create_s3_store(
+            bucket=bucket,
             credentials=credentials,
             connection_options=params.get("s3_connection_options"),
         )
-        retry_config = RetryConfig(max_retries=max_retries)
+        backend = ObstoreBackend(store)
 
         # 1. Always clean stale attempts for the current manifest's run
-        all_actions = cleanup_stale_attempts(
-            manifest, s3_client=client, dry_run=dry_run, retry_config=retry_config
-        )
+        all_actions = cleanup_stale_attempts(manifest, backend=backend, dry_run=dry_run)
 
         # 2. Optionally clean old runs
         wants_old_runs = (
@@ -1045,9 +1045,8 @@ def cleanup_cmd(
                 manifest.required_build.s3_prefix,
                 manifest.required_build.shard_prefix,
                 protected_run_ids=protected,
-                s3_client=client,
+                backend=backend,
                 dry_run=dry_run,
-                retry_config=retry_config,
             )
             all_actions.extend(old_run_actions)
 

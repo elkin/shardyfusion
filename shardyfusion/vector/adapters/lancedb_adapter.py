@@ -14,7 +14,7 @@ import numpy as np
 
 from ...errors import VectorIndexError, VectorSearchError
 from ...logging import get_logger, log_event
-from ...storage import put_bytes
+from ...storage import ObstoreBackend, create_s3_store, parse_s3_url
 from ...type_defs import Manifest
 from ..types import (
     DistanceMetric,
@@ -53,12 +53,16 @@ class LanceDbWriter:
         metric: DistanceMetric,
         quantization: str | None = None,
         index_params: dict[str, Any] | None = None,
-        s3_client: Any | None = None,
+        storage_options: dict[str, str] | None = None,
+        credential_provider: Any | None = None,
+        s3_connection_options: Any | None = None,
     ) -> None:
         lancedb, pa = _import_lancedb()
         self._db_url = db_url
         self._local_dir = local_dir
-        self._s3_client = s3_client
+        self._storage_options = storage_options
+        self._credential_provider = credential_provider
+        self._s3_connection_options = s3_connection_options
         self._local_dir.mkdir(parents=True, exist_ok=True)
 
         self._metric = metric
@@ -234,6 +238,17 @@ class LanceDbWriter:
     def _upload_dir(self, local_path: Path, remote_url: str) -> None:
         import os
 
+        credentials = (
+            self._credential_provider.resolve() if self._credential_provider else None
+        )
+        bucket, _ = parse_s3_url(remote_url)
+        store = create_s3_store(
+            bucket=bucket,
+            credentials=credentials,
+            connection_options=self._s3_connection_options,
+        )
+        backend = ObstoreBackend(store)
+
         for root, _dirs, files in os.walk(local_path):
             for file in files:
                 file_path = Path(root) / file
@@ -242,11 +257,10 @@ class LanceDbWriter:
 
                 with open(file_path, "rb") as f:
                     content = f.read()
-                    put_bytes(
+                    backend.put(
                         file_url,
                         content,
                         "application/octet-stream",
-                        s3_client=self._s3_client,
                     )
 
     def __enter__(self) -> LanceDbWriter:
@@ -261,34 +275,11 @@ class LanceDbWriterFactory:
 
     def __init__(
         self,
-        s3_client: Any | None = None,
         s3_connection_options: Any | None = None,
         credential_provider: Any | None = None,
     ) -> None:
-        self._s3_client = s3_client
         self._s3_connection_options = s3_connection_options
         self._credential_provider = credential_provider
-        self._s3_config: dict[str, Any] | None = None
-
-    def __getstate__(self) -> dict[str, Any]:
-        state = self.__dict__.copy()
-        state.pop("_s3_client", None)
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        self.__dict__.update(state)
-        # Recreate the s3_client if we have credentials and connection options
-        if self._s3_connection_options or self._credential_provider:
-            from ...storage import create_s3_client
-
-            creds = (
-                self._credential_provider.resolve()
-                if self._credential_provider
-                else None
-            )
-            self._s3_client = create_s3_client(creds, self._s3_connection_options)
-        else:
-            self._s3_client = None
 
     def __call__(
         self,
@@ -297,6 +288,12 @@ class LanceDbWriterFactory:
         local_dir: Path,
         index_config: Any,
     ) -> LanceDbWriter:
+        credentials = (
+            self._credential_provider.resolve() if self._credential_provider else None
+        )
+        storage_options = _make_lancedb_storage_options(
+            credentials, self._s3_connection_options
+        )
         return LanceDbWriter(
             db_url=db_url,
             local_dir=local_dir,
@@ -304,7 +301,9 @@ class LanceDbWriterFactory:
             metric=index_config.metric,
             quantization=index_config.quantization,
             index_params=index_config.index_params,
-            s3_client=self._s3_client,
+            storage_options=storage_options,
+            credential_provider=self._credential_provider,
+            s3_connection_options=self._s3_connection_options,
         )
 
 
@@ -313,32 +312,33 @@ class LanceDbWriterFactory:
 # ---------------------------------------------------------------------------
 
 
-def _extract_storage_options(s3_client: Any | None) -> dict[str, str] | None:
-    if s3_client is None or not hasattr(s3_client, "meta"):
-        return None
+def _make_lancedb_storage_options(
+    credentials: Any | None = None,
+    connection_options: Any | None = None,
+) -> dict[str, str] | None:
+    """Build LanceDB storage_options dict from shardyfusion config."""
+    opts: dict[str, str] = {}
+    conn = connection_options or {}
 
-    options: dict[str, str] = {}
-    if s3_client.meta.endpoint_url:
-        options["aws_endpoint"] = s3_client.meta.endpoint_url
-        if s3_client.meta.endpoint_url.startswith("http://"):
-            options["aws_allow_http"] = "true"
-    if s3_client.meta.region_name:
-        options["aws_region"] = s3_client.meta.region_name
+    endpoint = conn.get("endpoint_url")
+    if endpoint:
+        opts["aws_endpoint"] = endpoint
+        if endpoint.startswith("http://"):
+            opts["aws_allow_http"] = "true"
 
-    # Try to extract credentials
-    if hasattr(s3_client, "_request_signer") and hasattr(
-        s3_client._request_signer, "_credentials"
-    ):
-        creds = s3_client._request_signer._credentials
-        if creds:
-            if getattr(creds, "access_key", None):
-                options["aws_access_key_id"] = creds.access_key
-            if getattr(creds, "secret_key", None):
-                options["aws_secret_access_key"] = creds.secret_key
-            if getattr(creds, "token", None):
-                options["aws_session_token"] = creds.token
+    region = conn.get("region_name")
+    if region:
+        opts["aws_region"] = region
 
-    return options if options else None
+    if credentials is not None:
+        if getattr(credentials, "access_key_id", None):
+            opts["aws_access_key_id"] = credentials.access_key_id
+        if getattr(credentials, "secret_access_key", None):
+            opts["aws_secret_access_key"] = credentials.secret_access_key
+        if getattr(credentials, "session_token", None):
+            opts["aws_session_token"] = credentials.session_token
+
+    return opts if opts else None
 
 
 class LanceDbShardReader:
@@ -350,19 +350,13 @@ class LanceDbShardReader:
         db_url: str,
         local_dir: Path,
         index_config: Any,
-        s3_client: Any | None = None,
+        storage_options: dict[str, str] | None = None,
     ) -> None:
         lancedb, _ = _import_lancedb()
         self._db_url = db_url
         self._table_name = "vector_index"
 
-        # Determine S3 endpoint options if we're using a custom s3_client
-        # In actual prod we should configure LanceDB storage options
-        # based on shardyfusion config, but for simplicity here we pass
-        # the url. LanceDB uses `object_store` which picks up AWS_ params.
-
         # We connect directly to the db_url (assuming it's s3://...)
-        storage_options = _extract_storage_options(s3_client)
         self._db = lancedb.connect(db_url, storage_options=storage_options)
         self._closed = False
 
@@ -433,32 +427,11 @@ class LanceDbReaderFactory:
 
     def __init__(
         self,
-        s3_client: Any | None = None,
         s3_connection_options: Any | None = None,
         credential_provider: Any | None = None,
     ) -> None:
-        self._s3_client = s3_client
         self._s3_connection_options = s3_connection_options
         self._credential_provider = credential_provider
-
-    def __getstate__(self) -> dict[str, Any]:
-        state = self.__dict__.copy()
-        state.pop("_s3_client", None)
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        self.__dict__.update(state)
-        if self._s3_connection_options or self._credential_provider:
-            from ...storage import create_s3_client
-
-            creds = (
-                self._credential_provider.resolve()
-                if self._credential_provider
-                else None
-            )
-            self._s3_client = create_s3_client(creds, self._s3_connection_options)
-        else:
-            self._s3_client = None
 
     def __call__(
         self,
@@ -469,11 +442,17 @@ class LanceDbReaderFactory:
         manifest: Manifest,
     ) -> LanceDbShardReader:
         del manifest  # unused in concrete factory
+        credentials = (
+            self._credential_provider.resolve() if self._credential_provider else None
+        )
+        storage_options = _make_lancedb_storage_options(
+            credentials, self._s3_connection_options
+        )
         return LanceDbShardReader(
             db_url=db_url,
             local_dir=local_dir,
             index_config=index_config,
-            s3_client=self._s3_client,
+            storage_options=storage_options,
         )
 
 
@@ -494,11 +473,10 @@ class AsyncLanceDbShardReader:
         db_url: str,
         local_dir: Path,
         index_config: Any,
-        s3_client: Any | None = None,
+        storage_options: dict[str, str] | None = None,
     ) -> AsyncLanceDbShardReader:
         lancedb, _ = _import_lancedb()
         instance = cls()
-        storage_options = _extract_storage_options(s3_client)
         try:
             # We connect to LanceDB natively using async API
             instance._db = await lancedb.connect_async(
@@ -568,32 +546,11 @@ class AsyncLanceDbReaderFactory:
 
     def __init__(
         self,
-        s3_client: Any | None = None,
         s3_connection_options: Any | None = None,
         credential_provider: Any | None = None,
     ) -> None:
-        self._s3_client = s3_client
         self._s3_connection_options = s3_connection_options
         self._credential_provider = credential_provider
-
-    def __getstate__(self) -> dict[str, Any]:
-        state = self.__dict__.copy()
-        state.pop("_s3_client", None)
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        self.__dict__.update(state)
-        if self._s3_connection_options or self._credential_provider:
-            from ...storage import create_s3_client
-
-            creds = (
-                self._credential_provider.resolve()
-                if self._credential_provider
-                else None
-            )
-            self._s3_client = create_s3_client(creds, self._s3_connection_options)
-        else:
-            self._s3_client = None
 
     async def __call__(
         self,
@@ -604,9 +561,15 @@ class AsyncLanceDbReaderFactory:
         manifest: Manifest,
     ) -> AsyncLanceDbShardReader:
         del manifest  # unused in concrete factory
+        credentials = (
+            self._credential_provider.resolve() if self._credential_provider else None
+        )
+        storage_options = _make_lancedb_storage_options(
+            credentials, self._s3_connection_options
+        )
         return await AsyncLanceDbShardReader.open(
             db_url=db_url,
             local_dir=local_dir,
             index_config=index_config,
-            s3_client=self._s3_client,
+            storage_options=storage_options,
         )

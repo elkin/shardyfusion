@@ -123,15 +123,11 @@ def _auto_reader_factory(
             )
 
         try:
-            from shardyfusion.storage import create_s3_client
             from shardyfusion.vector.adapters.lancedb_adapter import (
                 LanceDbReaderFactory,
             )
 
-            credentials = credential_provider.resolve() if credential_provider else None
-            s3_client = create_s3_client(credentials, s3_connection_options)
             vector_factory = LanceDbReaderFactory(
-                s3_client=s3_client,
                 s3_connection_options=s3_connection_options,
                 credential_provider=credential_provider,
             )

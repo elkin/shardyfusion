@@ -23,7 +23,6 @@ from ..manifest import (
 )
 from ..metrics._events import MetricEvent
 from ..run_registry import managed_run_record
-from ..storage import create_s3_client
 from ._distributed import (
     ResolvedVectorRouting,
     VectorShardState,
@@ -135,11 +134,6 @@ def write_vector_sharded(
         run_id=run_id,
         writer_type="vector-python",
     ) as run_record:
-        credentials = (
-            config.credential_provider.resolve() if config.credential_provider else None
-        )
-        s3_client = create_s3_client(credentials, config.s3_connection_options)
-
         records_list: list[VectorRecord] | None = None
         sample_vectors: np.ndarray | None = None
         if (
@@ -163,7 +157,7 @@ def write_vector_sharded(
 
         routing = resolve_vector_routing(config, sample_vectors=sample_vectors)
 
-        adapter_factory = resolve_adapter_factory(config, s3_client)
+        adapter_factory = resolve_adapter_factory(config)
 
         ops_limiter: TokenBucket | None = None
         if config.max_writes_per_second is not None:
@@ -214,7 +208,6 @@ def write_vector_sharded(
             run_id=run_id,
             centroids=routing.centroids,
             hyperplanes=routing.hyperplanes,
-            s3_client=s3_client,
         )
 
         manifest_start = time.perf_counter()
