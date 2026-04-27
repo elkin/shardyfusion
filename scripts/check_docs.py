@@ -28,9 +28,9 @@ import importlib.util
 import re
 import sys
 import tomllib
+from collections.abc import Iterable
 from dataclasses import is_dataclass
 from pathlib import Path
-from typing import Iterable
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCS_ROOT = REPO_ROOT / "docs"
@@ -72,9 +72,7 @@ def emit_report(findings: list[Finding]) -> int:
         items = by_check.get(check, [])
         non_ok = [f for f in items if f.severity != "ok"]
         ok_count = sum(1 for f in items if f.severity == "ok")
-        print(
-            f"## {check} ({len(non_ok)} findings, {ok_count} ok)"
-        )
+        print(f"## {check} ({len(non_ok)} findings, {ok_count} ok)")
         if not items:
             print("- no references found\n")
             continue
@@ -266,7 +264,9 @@ def load_dataclass_fields() -> dict[str, dict[str, str]]:
 CONFIG_TABLE_HEADER_RE = re.compile(
     r"^\|\s*(?:Field|Name|Option|Knob|Parameter)\b", re.IGNORECASE
 )
-CONFIG_CONTEXT_RE = re.compile(r"\b(WriteConfig|ShardingSpec|OutputOptions|ManifestOptions|VectorSpec|RetryConfig|S3ConnectionOptions)\b")
+CONFIG_CONTEXT_RE = re.compile(
+    r"\b(WriteConfig|ShardingSpec|OutputOptions|ManifestOptions|VectorSpec|RetryConfig|S3ConnectionOptions)\b"
+)
 TABLE_ROW_RE = re.compile(r"^\|\s*`?([A-Za-z_][A-Za-z0-9_]*)`?\s*\|")
 
 
@@ -333,14 +333,14 @@ def check_config(findings: list[Finding]) -> None:
 # Check 3: extras
 
 
-EXTRA_RE = re.compile(r"(?:--extra\s+([A-Za-z0-9_\-]+))|shardyfusion\[([A-Za-z0-9_\-,\s]+)\]")
+EXTRA_RE = re.compile(
+    r"(?:--extra\s+([A-Za-z0-9_\-]+))|shardyfusion\[([A-Za-z0-9_\-,\s]+)\]"
+)
 
 
 def load_extras() -> set[str]:
     data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
-    return set(
-        data.get("project", {}).get("optional-dependencies", {}).keys()
-    )
+    return set(data.get("project", {}).get("optional-dependencies", {}).keys())
 
 
 def check_extras(findings: list[Finding]) -> None:

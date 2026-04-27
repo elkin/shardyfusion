@@ -4,6 +4,7 @@
 Run manually whenever extras change:
     uv run python scripts/generate_extras_matrix.py
 """
+
 from __future__ import annotations
 
 import re
@@ -11,7 +12,6 @@ import sys
 import tomllib
 from pathlib import Path
 from typing import TypedDict
-
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = REPO_ROOT / "pyproject.toml"
@@ -250,7 +250,13 @@ def _node_id(name: str) -> str:
 
 
 def _safe_subgraph_id(section: str) -> str:
-    return section.lower().replace(" — ", "_").replace(" ", "_").replace("&", "and").replace("+", "plus")
+    return (
+        section.lower()
+        .replace(" — ", "_")
+        .replace(" ", "_")
+        .replace("&", "and")
+        .replace("+", "plus")
+    )
 
 
 def generate() -> str:
@@ -269,7 +275,9 @@ def generate() -> str:
 
     # Group by section
     by_section: dict[str, list[tuple[str, _Meta]]] = {s: [] for s in SECTION_ORDER}
-    for name in sorted(extras, key=lambda n: (EXTRA_META[n]["section"], EXTRA_META[n]["task"])):
+    for name in sorted(
+        extras, key=lambda n: (EXTRA_META[n]["section"], EXTRA_META[n]["task"])
+    ):
         meta = EXTRA_META[name]
         by_section.setdefault(meta["section"], []).append((name, meta))
 
@@ -308,7 +316,9 @@ def generate() -> str:
     # ---- Mermaid diagram (runtime extras only) ----
     lines.append("## Visual map")
     lines.append("")
-    lines.append("Arrows point from a base extra to the extras that build on top of it.")
+    lines.append(
+        "Arrows point from a base extra to the extras that build on top of it."
+    )
     lines.append("")
     lines.append("```mermaid")
     lines.append("%%{init: {'flowchart': {'ranksep': 30, 'nodesep': 4}}}%%")
