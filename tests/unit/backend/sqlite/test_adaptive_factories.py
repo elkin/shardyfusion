@@ -428,3 +428,65 @@ class TestAsyncAdaptiveSqliteVecReaderFactory:
         assert isinstance(policy, _ThresholdPolicy)
         assert policy.per_shard_threshold == 4096
         assert policy.total_budget == 65536
+
+
+# ---------------------------------------------------------------------------
+# Missing-deps error messages (sqlite-range / sqlite-adaptive)
+# ---------------------------------------------------------------------------
+
+
+class TestMissingDepsErrorMessages:
+    """Verify that ImportError of apsw/obstore is wrapped with a clear
+    message pointing the user at both the ``sqlite-range`` and
+    ``sqlite-adaptive`` extras (the latter being the recommended entry
+    point now that adaptive is the default reader mode).
+    """
+
+    def test_apsw_missing_message_lists_both_extras(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys
+
+        from shardyfusion.sqlite_adapter import (
+            SqliteAdapterError,
+            SqliteRangeShardReader,
+        )
+
+        # Force ``import apsw`` inside SqliteRangeShardReader.__init__ to fail
+        # by stashing a None in sys.modules (Python treats this as a missing
+        # module and re-raises ImportError on import).
+        monkeypatch.setitem(sys.modules, "apsw", None)
+        with pytest.raises(SqliteAdapterError) as excinfo:
+            SqliteRangeShardReader(
+                db_url="s3://bucket/db",
+                local_dir=tmp_path,
+                checkpoint_id=None,
+            )
+        msg = str(excinfo.value)
+        assert "sqlite-range" in msg
+        assert "sqlite-adaptive" in msg
+
+    def test_obstore_missing_message_lists_both_extras(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # apsw is required to even reach the obstore import path; skip when
+        # apsw isn't installed in this env.
+        pytest.importorskip("apsw")
+        import sys
+
+        from shardyfusion.sqlite_adapter import (
+            SqliteAdapterError,
+            SqliteRangeShardReader,
+        )
+
+        monkeypatch.setitem(sys.modules, "obstore", None)
+        monkeypatch.setitem(sys.modules, "obstore.store", None)
+        with pytest.raises(SqliteAdapterError) as excinfo:
+            SqliteRangeShardReader(
+                db_url="s3://bucket/db",
+                local_dir=tmp_path,
+                checkpoint_id=None,
+            )
+        msg = str(excinfo.value)
+        assert "sqlite-range" in msg
+        assert "sqlite-adaptive" in msg

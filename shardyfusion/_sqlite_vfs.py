@@ -69,7 +69,8 @@ def _build_obstore_client(
     except ImportError as exc:  # pragma: no cover - depends on env
         raise S3VfsError(
             "obstore is required for the SQLite range-read VFS. "
-            "Install via: pip install 'shardyfusion[sqlite-range]'"
+            "Install via: pip install 'shardyfusion[sqlite-range]' "
+            "or 'shardyfusion[sqlite-adaptive]' for the adaptive reader."
         ) from exc
 
     opts: S3ConnectionOptions = s3_connection_options or {}
@@ -154,7 +155,8 @@ class S3ReadOnlyFile:
         except ImportError as exc:  # pragma: no cover - depends on env
             raise S3VfsError(
                 "obstore is required for the SQLite range-read VFS. "
-                "Install via: pip install 'shardyfusion[sqlite-range]'"
+                "Install via: pip install 'shardyfusion[sqlite-range]' "
+            "or 'shardyfusion[sqlite-adaptive]' for the adaptive reader."
             ) from exc
 
         page_cache_pages = _normalize_page_cache_pages(page_cache_pages)

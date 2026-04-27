@@ -37,7 +37,12 @@ read = ["shardyfusion[slatedb]"]
 read-async = ["shardyfusion[read]", "aiobotocore>=2.12"]
 read-sqlite = ["shardyfusion[sqlite]"]
 read-sqlite-range = ["shardyfusion[sqlite-range]"]
+# Adaptive composes both the download (sqlite) and range-read (sqlite-range) tiers
+# so AdaptiveSqliteReaderFactory can resolve to either at runtime.
+sqlite-adaptive = ["shardyfusion[sqlite]", "shardyfusion[sqlite-range]"]
+read-sqlite-adaptive = ["shardyfusion[sqlite-adaptive]"]
 sqlite-async = ["shardyfusion[read-sqlite]", "aiobotocore>=2.12"]
+sqlite-adaptive-async = ["shardyfusion[sqlite-adaptive]", "aiobotocore>=2.12"]
 writer-spark = [
   "shardyfusion[slatedb]",
   "pyspark>=3.3",
@@ -68,15 +73,20 @@ writer-ray-sqlite = [
   "shardyfusion[sqlite]",
   "ray[data]>=2.20",
 ]
+cli-minimal = [
+  "click>=8.0",
+]
 cli = [
+  "shardyfusion[cli-minimal]",
   "shardyfusion[read]",
   "shardyfusion[read-async]",
   "shardyfusion[read-sqlite]",
   "shardyfusion[read-sqlite-range]",
+  "shardyfusion[read-sqlite-adaptive]",
   "shardyfusion[sqlite-async]",
+  "shardyfusion[sqlite-adaptive-async]",
   "shardyfusion[unified-vector]",
   "shardyfusion[unified-vector-sqlite]",
-  "click>=8.0",
 ]
 cel = ["cel-expr-python>=0.1"]
 metrics-prometheus = ["prometheus-client>=0.20"]
@@ -90,7 +100,9 @@ all = [
   "shardyfusion[read-async]",
   "shardyfusion[read-sqlite]",
   "shardyfusion[sqlite-range]",
+  "shardyfusion[sqlite-adaptive]",
   "shardyfusion[sqlite-async]",
+  "shardyfusion[sqlite-adaptive-async]",
   "shardyfusion[writer-spark]",
   "shardyfusion[writer-spark-sqlite]",
   "shardyfusion[writer-python]",
@@ -99,6 +111,7 @@ all = [
   "shardyfusion[writer-dask-sqlite]",
   "shardyfusion[writer-ray]",
   "shardyfusion[writer-ray-sqlite]",
+  "shardyfusion[cli-minimal]",
   "shardyfusion[cli]",
   "shardyfusion[cel]",
   "shardyfusion[metrics-prometheus]",
