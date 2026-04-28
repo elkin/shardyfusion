@@ -32,6 +32,15 @@ class CredentialProvider(Protocol):
     Implementations return an ``S3Credentials`` snapshot.  The caller
     decides *when* to resolve (e.g. once at construction, or before
     each request for future rotation support).
+
+    .. note::
+
+       Custom implementations must be **picklable** so they can be
+       serialized by Spark/Dask/Ray workers and by the Python writer's
+       multiprocessing ``spawn`` mode. Use ``@dataclass(slots=True, frozen=True)``
+       or implement ``__getstate__`` / ``__setstate__`` explicitly.
+       The built-in :class:`StaticCredentialProvider` and
+       :class:`EnvCredentialProvider` are already picklable.
     """
 
     def resolve(self) -> S3Credentials: ...
