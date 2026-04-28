@@ -142,7 +142,7 @@ so scenario helpers are backend-agnostic.  Both backends satisfy the
 | Range-read | 1 | — | — | — | 2 (smoke + manifest) |
 | **Total** | 56 | 32 | 10 | 8 | **110** |
 
-CEL smoke tests require `cel-expr-python` (installed via `mod-cel` dependency
+CEL smoke/property tests require `cel-expr-python` (installed via `mod-cel` dependency
 group).  On Python 3.14, where `cel-expr-python` has no wheels, these tests
 skip via `pytest.importorskip`.  SQLite range-read tests require `apsw`
 (installed via `backend-sqlite-range` dependency group).
