@@ -26,7 +26,7 @@ def test_spark_write_cluster_sharded(
     tmp_path: Path,
 ) -> None:
     """Spark writer with CLUSTER strategy - setup verification."""
-    pytest.importorskip("pyspark", reason="requires writer-spark extra")
+    pytest.importorskip("pyspark", reason="requires writer-spark-slatedb extra")
     from shardyfusion.vector.types import VectorShardingStrategy
     from shardyfusion.writer.spark.sharding import add_vector_db_id_column
 
@@ -67,7 +67,7 @@ def test_dask_write_cluster_sharded(
     tmp_path: Path,
 ) -> None:
     """Dask writer with CLUSTER strategy - setup verification."""
-    dask = pytest.importorskip("dask", reason="requires writer-dask extra")
+    dask = pytest.importorskip("dask", reason="requires writer-dask-slatedb extra")
     dd = pytest.importorskip("dask.dataframe")
     from shardyfusion.vector.types import VectorShardingStrategy
     from shardyfusion.writer.dask.sharding import add_vector_db_id_column
@@ -117,7 +117,7 @@ def test_spark_write_lsh_sharded(
     tmp_path: Path,
 ) -> None:
     """Spark writer with LSH strategy."""
-    pytest.importorskip("pyspark", reason="requires writer-spark extra")
+    pytest.importorskip("pyspark", reason="requires writer-spark-slatedb extra")
     from shardyfusion.vector.types import VectorShardingStrategy
     from shardyfusion.writer.spark.sharding import add_vector_db_id_column
 

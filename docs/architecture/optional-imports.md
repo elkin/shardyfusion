@@ -35,7 +35,7 @@ The CEL package is [`cel-expr-python`](https://pypi.org/project/cel-expr-python/
 
 ### Example: vector adapters
 
-`shardyfusion/vector/adapters/lancedb_adapter.py` imports `lancedb` only inside the constructor of the LanceDB factory. If `lancedb` is missing, the user gets `ImportError: ... pip install shardyfusion[vector]` — but the rest of shardyfusion (KV writers, readers) is untouched.
+`shardyfusion/vector/adapters/lancedb_adapter.py` imports `lancedb` only inside the constructor of the LanceDB factory. If `lancedb` is missing, the user gets `ImportError: ... pip install shardyfusion[vector-lancedb]` — but the rest of shardyfusion (KV writers, readers) is untouched.
 
 ### Example: `UnifiedShardedReader`
 
@@ -58,32 +58,31 @@ Importing `shardyfusion` does not pull `unified_reader`, which would in turn pul
 | `slatedb` | SlateDB driver | Base building block; pulled in by reader/writer extras. |
 | `sqlite` | SQLite driver | Base building block. |
 | `sqlite-range` | APSW + range-read VFS | Base building block for range-read SQLite. |
-| `read` | SlateDB sync reader | Default sync reader. |
-| `read-async` | SlateDB async reader (aiobotocore) | Async reader. |
+| `read-slatedb` | SlateDB sync reader | Sync reader. |
+| `read-slatedb-async` | SlateDB async reader (aiobotocore) | Async reader. |
 | `read-sqlite` | SQLite download-and-cache reader | Sync. |
 | `read-sqlite-range` | SQLite range-read reader (APSW) | Sync. |
 | `sqlite-adaptive` | Composes `sqlite` + `sqlite-range` | Required by `AdaptiveSqliteReaderFactory` (default reader mode). |
 | `read-sqlite-adaptive` | Alias for `sqlite-adaptive` | Sync adaptive reader. |
 | `sqlite-async` | Async SQLite readers (download + range) | Async. |
 | `sqlite-adaptive-async` | Async adaptive SQLite reader (`aiobotocore`) | Required by `AsyncAdaptiveSqliteReaderFactory`. |
-| `writer-spark` | Spark writer (SlateDB) | Requires Java. |
+| `writer-spark-slatedb` | Spark writer (SlateDB) | Requires Java. |
 | `writer-spark-sqlite` | Spark writer (SQLite) | Requires Java. |
-| `writer-python` | Python writer (SlateDB) | Pure Python. |
+| `writer-python-slatedb` | Python writer (SlateDB) | Pure Python. |
 | `writer-python-sqlite` | Python writer (SQLite) | Pure Python. |
-| `writer-dask` | Dask writer (SlateDB) | |
+| `writer-dask-slatedb` | Dask writer (SlateDB) | |
 | `writer-dask-sqlite` | Dask writer (SQLite) | |
-| `writer-ray` | Ray writer (SlateDB) | |
+| `writer-ray-slatedb` | Ray writer (SlateDB) | |
 | `writer-ray-sqlite` | Ray writer (SQLite) | |
 | `cli-minimal` | `click>=8.0` only | CLI binary without any backend. Combine with a reader extra (e.g. `[cli-minimal,read-sqlite]`). PyYAML is a base dep, not part of this extra. |
-| `cli` | Kitchen-sink CLI | Includes `cli-minimal` plus all read backends (slatedb sync/async, sqlite download/range/adaptive sync/async, unified-vector + unified-vector-sqlite). |
+| `cli` | Kitchen-sink CLI | Includes `cli-minimal` plus all read backends (slatedb sync/async, sqlite download/range/adaptive sync/async, unified-slatedb-lancedb + unified-sqlite-vec). |
 | `cel` | `cel-expr-python` | CEL routing. |
 | `metrics-prometheus` | `prometheus_client` | Prometheus metrics backend. |
 | `metrics-otel` | `opentelemetry` SDK | OTel metrics backend. |
 | `vector-lancedb` | LanceDB vector backend | |
-| `vector` | Alias for `vector-lancedb` | |
 | `vector-sqlite` | sqlite-vec unified KV+vector | |
-| `unified-vector` | Composite KV+vector wiring (LanceDB) | For `UnifiedShardedReader`. |
-| `unified-vector-sqlite` | Composite KV+vector wiring (sqlite-vec) | |
+| `unified-slatedb-lancedb` | Composite KV+vector wiring (SlateDB + LanceDB) | For `UnifiedShardedReader`. |
+| `unified-sqlite-vec` | Composite KV+vector wiring (sqlite-vec) | |
 | `all` | Convenience runtime bundle | Includes readers, writers, CLI, metrics, CEL, and vector extras; excludes dev/test/quality/docs extras. |
 | `test` | Test runner deps | Dev. |
 | `quality` | Lint / typecheck deps | Dev. |

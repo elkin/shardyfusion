@@ -125,7 +125,7 @@ def test_ray_unified_vector_write(local_s3_service):
 
 
 def test_spark_unified_vector_write(spark, local_s3_service):
-    pytest.importorskip("pyspark", reason="requires writer-spark extra")
+    pytest.importorskip("pyspark", reason="requires writer-spark-slatedb extra")
     from shardyfusion.writer.spark import write_sharded as write_spark_sharded
 
     config = _base_config(local_s3_service, prefix="spark-unified-vectors")

@@ -1112,8 +1112,7 @@ def search_cmd(
         raise click.ClickException(
             "Vector search requires numpy. "
             "Install a supported vector extra, for example: "
-            "pip install 'shardyfusion[vector]' or "
-            "'shardyfusion[vector-lancedb]' or "
+            "pip install 'shardyfusion[vector-lancedb]' or "
             "'shardyfusion[vector-sqlite]'"
         ) from exc
 
@@ -1223,8 +1222,7 @@ def search_cmd(
         raise click.ClickException(
             "Vector search requires vector extras. "
             "Install a supported vector extra, for example: "
-            "pip install 'shardyfusion[vector]' or "
-            "'shardyfusion[vector-lancedb]' or "
+            "pip install 'shardyfusion[vector-lancedb]' or "
             "'shardyfusion[vector-sqlite]'"
         ) from exc
     except Exception as exc:

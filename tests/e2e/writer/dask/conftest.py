@@ -5,7 +5,7 @@ from __future__ import annotations
 import dask
 import pytest
 
-pytest.importorskip("dask", reason="requires writer-dask extra")
+pytest.importorskip("dask", reason="requires writer-dask-slatedb extra")
 
 
 @pytest.fixture(autouse=True)

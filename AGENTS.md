@@ -42,7 +42,7 @@ Key workflows:
 
 **Package manager**: uv (invoked internally by `just` recipes). Core dependency: `pyyaml>=6.0`, `obstore>=0.4`.
 
-Many optional extras are defined in `pyproject.toml` (e.g. `read`, `read-async`, `read-sqlite`, `read-sqlite-range`, `read-sqlite-adaptive` / `sqlite-adaptive`, `sqlite-async`, `sqlite-adaptive-async`, `writer-spark`, `writer-dask`, `writer-ray`, `cli-minimal`, `cli` (kitchen-sink), `cel`, `metrics-prometheus`, `metrics-otel`, `vector`, `vector-sqlite`, `all`). Container commands mirror local ones with a `d-` prefix (e.g. `just d-e2e`). Container runs use an isolated uv project env at `/opt/shardyfusion-venv`.
+Many optional extras are defined in `pyproject.toml` (e.g. `read-slatedb`, `read-slatedb-async`, `read-sqlite`, `read-sqlite-range`, `read-sqlite-adaptive` / `sqlite-adaptive`, `sqlite-async`, `sqlite-adaptive-async`, `writer-spark-slatedb`, `writer-spark-sqlite`, `writer-python-slatedb`, `writer-python-sqlite`, `writer-dask-slatedb`, `writer-dask-sqlite`, `writer-ray-slatedb`, `writer-ray-sqlite`, `cli-minimal`, `cli` (kitchen-sink), `cel`, `metrics-prometheus`, `metrics-otel`, `vector-lancedb`, `vector-sqlite`, `unified-slatedb-lancedb`, `unified-sqlite-vec`, `all`). Every backend is named explicitly in the extra (no implicit default backend). Container commands mirror local ones with a `d-` prefix (e.g. `just d-e2e`). Container runs use an isolated uv project env at `/opt/shardyfusion-venv`.
 
 ## CI Pipeline (GitHub Actions)
 
@@ -77,7 +77,7 @@ The library is split into six independent paths that share config, manifest mode
 **CLI path** (requires click + pyyaml):
 `cli/app.py` → `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
 
-**Vector writer path** (no Spark/Java needed; requires `vector` or `vector-sqlite` extra):
+**Vector writer path** (no Spark/Java needed; requires `vector-lancedb` or `vector-sqlite` extra):
 `vector/writer.py` (`write_vector_sharded`) → `vector/sharding.py` (CLUSTER/LSH/EXPLICIT/CEL assignment) → `vector/_distributed.py` (shared vector write core) → `vector/adapters/lancedb_adapter.py` (LanceDB HNSW)
 
 **Vector reader path** (no Spark/Java needed):
@@ -434,14 +434,14 @@ Vector types and functions are imported from subpackages (not re-exported at top
 - **Rate limiter thread safety**: `TokenBucket` has no internal lock. Use `ThreadSafeTokenBucket` when sharing a limiter across threads (e.g. `ConcurrentShardedReader`). `ThreadSafeTokenBucket` locks around `try_acquire()` and loops with sleep outside the lock. Writers and readers depend on the `RateLimiter` Protocol, not the concrete class. Writers support both `max_writes_per_second` (ops) and `max_write_bytes_per_second` (bytes) via independent `TokenBucket` instances. Readers accept a `rate_limiter` parameter for reads/sec limiting.
 - **Reader reference counting**: `refresh()` serialises I/O via `_refresh_lock`, atomically swaps `_ReaderState` with a compare-and-swap guard, and defers closing old handles until `refcount` drops to zero. Pool-mode checkout has a configurable timeout (default 30s) — raises `PoolExhaustedError` (retryable) when exhausted. Metadata methods (`key_encoding`, `snapshot_info`, `shard_details`, `route_key`) use `_use_state()` and raise `ReaderStateError` on a closed reader.
 - **Borrow handle safety nets**: `ShardReaderHandle` and `AsyncShardReaderHandle` implement `__del__()` that logs a warning and releases the borrow if the handle was not explicitly closed. Prefer explicit `close()` or `with`/`async with` context managers.
-- **Async reader uses `open()` classmethod**: `AsyncShardedReader.__init__` does no I/O. Use `await AsyncShardedReader.open(...)` and then `await reader.close()`, or `async with await AsyncShardedReader.open(...) as reader`. The default `AsyncS3ManifestStore` requires `aiobotocore` (`read-async`, or another install path that brings it in).
+- **Async reader uses `open()` classmethod**: `AsyncShardedReader.__init__` does no I/O. Use `await AsyncShardedReader.open(...)` and then `await reader.close()`, or `async with await AsyncShardedReader.open(...) as reader`. The default `AsyncS3ManifestStore` requires `aiobotocore` (`read-slatedb-async`, or another install path that brings it in).
 - **Async manifest store**: `AsyncShardedReader` accepts `AsyncManifestStore` only (not sync `ManifestStore`). When `manifest_store=None`, uses `AsyncS3ManifestStore` (native `AsyncObstoreBackend`).
 - **Reader cold-start fallback**: When `load_manifest()` raises `ManifestParseError` during initialization, readers walk backward through `list_manifests()` to find a valid manifest (up to `max_fallback_attempts`, default 3). Set to 0 to disable fallback. During `refresh()`, a malformed manifest is silently skipped and the reader keeps its current good state (returns `False`).
 - **Garage requires path-style addressing**: E2E tests set `addressing_style: "path"` in `S3ClientConfig` because Garage doesn't support virtual-hosted-style.
 - **Session-scoped test fixtures**: PySpark and S3 (moto/Garage) fixtures are session-scoped for performance. Tests share the same Spark session and S3 service.
 - **Writer scenario imports are deferred**: `tests/helpers/s3_test_scenarios.py` imports writer modules inside function bodies so reader-only test collection doesn't fail.
 - **Ray writer temporarily sets `DataContext.shuffle_strategy`**: During repartition, the Ray writer sets `DataContext.shuffle_strategy = "HASH_SHUFFLE"` and restores the previous value in a `try/finally` block, protected by `_SHUFFLE_STRATEGY_LOCK` (`threading.Lock`) to guard against concurrent `write_sharded()` calls in the same driver.
-- **Ray tests need `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0`**: Ray ≥ 2.47 auto-detects `uv run` in the process tree and overrides worker Python to create fresh venvs. The env var is set in `tox.ini` for raywriter envs. For direct pytest, either set the var or use `uv run --extra writer-ray pytest ...`.
+- **Ray tests need `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0`**: Ray ≥ 2.47 auto-detects `uv run` in the process tree and overrides worker Python to create fresh venvs. The env var is set in `tox.ini` for raywriter envs. For direct pytest, either set the var or use `uv run --extra writer-ray-slatedb pytest ...`.
 - **`acquire_async()` is part of the `RateLimiter` Protocol**: Uses `asyncio.sleep` — safe for event loops. The sync `acquire()` uses `time.sleep` and must not be called from async code.
 - **`try_acquire()` is pure arithmetic**: Guaranteed non-blocking (replenish + compare + deduct). Safe to call from async code directly without `to_thread()`.
 - **`RetryConfig` usage**: Used in `WriteConfig.shard_retry` for retryable writer paths. `shard_retry` currently covers Dask/Ray sharded writes, Spark/Dask/Ray `write_single_db()`, and Python parallel writes. Spark sharded writes still rely on Spark task retry/speculation. When `shard_retry` is set, the retry path writes each attempt to a fresh S3 prefix (`attempt=00`, `attempt=01`, ...). S3 I/O retries are delegated to obstore's Rust layer with shardyfusion-tuned aggressive defaults (`max_retries=5`, `init_backoff=200ms`, `max_backoff=4s`, `retry_timeout=30s`). A single Python-level fallback retry (2s delay) is applied for PUT operations on `GenericError` only.
@@ -457,7 +457,7 @@ Vector types and functions are imported from subpackages (not re-exported at top
 ## Environment & Configuration Notes
 
 - Spark-based writer flows require **Java 17** (`JAVA_HOME` or `PATH`). Java 21 is not supported with Spark 3.5 (Arrow JVM module access issues). CI uses temurin distribution.
-- Spark writer uses `mapInArrow` which requires `pandas>=2.2` and `pyarrow>=15.0` (both included in the `writer-spark` extra).
+- Spark writer uses `mapInArrow` which requires `pandas>=2.2` and `pyarrow>=15.0` (both included in the `writer-spark-slatedb` and `writer-spark-sqlite` extras).
 - `SPARK_LOCAL_IP=127.0.0.1` is set in tox and devcontainer to avoid hostname resolution issues.
 - Reader-only, Python writer, Dask writer, and Ray writer usage do not require Spark/Java.
 - **Ray does not run on py3.14** (same as Dask and CEL).

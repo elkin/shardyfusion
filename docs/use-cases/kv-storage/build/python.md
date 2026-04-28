@@ -17,7 +17,7 @@ Use the **Python writer** (no Spark, no Java, no cluster) to build a sharded sna
 
 ```bash
 # SlateDB backend (default)
-uv add 'shardyfusion[writer-python]'
+uv add 'shardyfusion[writer-python-slatedb]'
 
 # SQLite backend
 uv add 'shardyfusion[writer-python-sqlite]'

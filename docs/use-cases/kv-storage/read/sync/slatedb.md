@@ -15,7 +15,7 @@ Use **`ShardedReader`** for point-key and multi-key lookups against a published 
 ## Install
 
 ```bash
-uv add 'shardyfusion[read]'
+uv add 'shardyfusion[read-slatedb]'
 ```
 
 ## Minimal example

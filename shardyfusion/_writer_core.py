@@ -398,8 +398,8 @@ def wrap_factory_for_vector(factory: Any, config: WriteConfig) -> Any:
         )
     except ImportError as exc:
         raise ConfigValidationError(
-            "Unified KV+vector mode with SlateDB requires the 'vector' extra "
-            "(lancedb). Install with: pip install shardyfusion[vector]"
+            "Unified KV+vector mode with SlateDB requires the 'vector-lancedb' "
+            "extra. Install with: pip install shardyfusion[vector-lancedb]"
         ) from exc
 
     return CompositeFactory(

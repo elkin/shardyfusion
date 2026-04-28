@@ -15,7 +15,7 @@ Use the **Ray writer** to build a sharded snapshot from a Ray `Dataset` — Spar
 
 ```bash
 # SlateDB backend (default)
-uv add 'shardyfusion[writer-ray]'
+uv add 'shardyfusion[writer-ray-slatedb]'
 
 # SQLite backend
 uv add 'shardyfusion[writer-ray-sqlite]'

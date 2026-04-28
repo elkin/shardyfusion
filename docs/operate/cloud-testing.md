@@ -14,7 +14,7 @@ This document provides a structured checklist for validating shardyfusion agains
 
 ```bash
 # On EMR master node
-pip install shardyfusion[writer-spark]
+pip install shardyfusion[writer-spark-slatedb]
 ```
 
 ```python
@@ -66,7 +66,7 @@ reader.close()
 
 ### Prerequisites
 
-- Python 3.11-3.13 environment with `pip install "shardyfusion[writer-dask]"`
+- Python 3.11-3.13 environment with `pip install "shardyfusion[writer-dask-slatedb]"`
 - Use `pip install "shardyfusion[writer-dask-sqlite]"` to exercise the SQLite backend instead
 - S3 credentials configured via env vars or `~/.aws/credentials`
 
@@ -91,7 +91,7 @@ result = write_sharded(ddf, config, key_col="id", value_spec=ValueSpec.binary_co
 
 ### Prerequisites
 
-- Python 3.11-3.13 environment with `pip install shardyfusion[writer-ray]`
+- Python 3.11-3.13 environment with `pip install shardyfusion[writer-ray-slatedb]`
 - Ray cluster or local mode
 
 ### Test

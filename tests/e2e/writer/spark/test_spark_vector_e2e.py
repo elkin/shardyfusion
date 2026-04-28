@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-pytest.importorskip("pyspark", reason="requires writer-spark extra")
+pytest.importorskip("pyspark", reason="requires writer-spark-slatedb extra")
 
 from tests.e2e.conftest import (
     credential_provider_from_service,

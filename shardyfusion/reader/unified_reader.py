@@ -134,7 +134,8 @@ def _auto_reader_factory(
         except ImportError as exc:
             raise ConfigValidationError(
                 "Unified KV+vector reader with lancedb backend requires "
-                "the 'vector' extra. Install with: pip install shardyfusion[vector]"
+                "the 'vector-lancedb' extra. Install with: "
+                "pip install shardyfusion[vector-lancedb]"
             ) from exc
 
         return CompositeReaderFactory(

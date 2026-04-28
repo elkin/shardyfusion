@@ -33,9 +33,9 @@ slatedb = ["slatedb<0.12"]
 sqlite = []
 sqlite-range = ["apsw>=3.44"]
 
-# Convenience extras — default backend is SlateDB
-read = ["shardyfusion[slatedb]"]
-read-async = ["shardyfusion[read]"]
+# Convenience extras — backend is named explicitly in every extra (slatedb, sqlite, lancedb, sqlite-vec)
+read-slatedb = ["shardyfusion[slatedb]"]
+read-slatedb-async = ["shardyfusion[read-slatedb]"]
 read-sqlite = ["shardyfusion[sqlite]"]
 read-sqlite-range = ["shardyfusion[sqlite-range]"]
 # Adaptive composes both the download (sqlite) and range-read (sqlite-range) tiers
@@ -44,7 +44,7 @@ sqlite-adaptive = ["shardyfusion[sqlite]", "shardyfusion[sqlite-range]"]
 read-sqlite-adaptive = ["shardyfusion[sqlite-adaptive]"]
 sqlite-async = ["shardyfusion[read-sqlite]"]
 sqlite-adaptive-async = ["shardyfusion[sqlite-adaptive]"]
-writer-spark = [
+writer-spark-slatedb = [
   "shardyfusion[slatedb]",
   "pyspark>=3.3",
   "pandas>=2.2",
@@ -56,9 +56,9 @@ writer-spark-sqlite = [
   "pandas>=2.2",
   "pyarrow>=15.0",
 ]
-writer-python = ["shardyfusion[slatedb]"]
+writer-python-slatedb = ["shardyfusion[slatedb]"]
 writer-python-sqlite = ["shardyfusion[sqlite]"]
-writer-dask = [
+writer-dask-slatedb = [
   "shardyfusion[slatedb]",
   "dask[dataframe]>=2024.1",
 ]
@@ -66,7 +66,7 @@ writer-dask-sqlite = [
   "shardyfusion[sqlite]",
   "dask[dataframe]>=2024.1",
 ]
-writer-ray = [
+writer-ray-slatedb = [
   "shardyfusion[slatedb]",
   "ray[data]>=2.20",
 ]
@@ -79,48 +79,47 @@ cli-minimal = [
 ]
 cli = [
   "shardyfusion[cli-minimal]",
-  "shardyfusion[read]",
-  "shardyfusion[read-async]",
+  "shardyfusion[read-slatedb]",
+  "shardyfusion[read-slatedb-async]",
   "shardyfusion[read-sqlite]",
   "shardyfusion[read-sqlite-range]",
   "shardyfusion[read-sqlite-adaptive]",
   "shardyfusion[sqlite-async]",
   "shardyfusion[sqlite-adaptive-async]",
-  "shardyfusion[unified-vector]",
-  "shardyfusion[unified-vector-sqlite]",
+  "shardyfusion[unified-slatedb-lancedb]",
+  "shardyfusion[unified-sqlite-vec]",
 ]
 cel = ["cel-expr-python>=0.1"]
 metrics-prometheus = ["prometheus-client>=0.20"]
 metrics-otel = ["opentelemetry-api>=1.28"]
 vector-lancedb = ["lancedb>=0.17", "pyarrow>=14.0", "numpy>=1.24"]
-vector = ["shardyfusion[vector-lancedb]"]
 vector-sqlite = ["sqlite-vec>=0.1", "numpy>=1.24"]
-unified-vector = ["shardyfusion[vector]", "shardyfusion[cel]"]
-unified-vector-sqlite = ["shardyfusion[vector-sqlite]", "shardyfusion[cel]"]
+unified-slatedb-lancedb = ["shardyfusion[vector-lancedb]", "shardyfusion[cel]"]
+unified-sqlite-vec = ["shardyfusion[vector-sqlite]", "shardyfusion[cel]"]
 all = [
-  "shardyfusion[read-async]",
+  "shardyfusion[read-slatedb-async]",
   "shardyfusion[read-sqlite]",
   "shardyfusion[sqlite-range]",
   "shardyfusion[sqlite-adaptive]",
   "shardyfusion[sqlite-async]",
   "shardyfusion[sqlite-adaptive-async]",
-  "shardyfusion[writer-spark]",
+  "shardyfusion[writer-spark-slatedb]",
   "shardyfusion[writer-spark-sqlite]",
-  "shardyfusion[writer-python]",
+  "shardyfusion[writer-python-slatedb]",
   "shardyfusion[writer-python-sqlite]",
-  "shardyfusion[writer-dask]",
+  "shardyfusion[writer-dask-slatedb]",
   "shardyfusion[writer-dask-sqlite]",
-  "shardyfusion[writer-ray]",
+  "shardyfusion[writer-ray-slatedb]",
   "shardyfusion[writer-ray-sqlite]",
   "shardyfusion[cli-minimal]",
   "shardyfusion[cli]",
   "shardyfusion[cel]",
   "shardyfusion[metrics-prometheus]",
   "shardyfusion[metrics-otel]",
-  "shardyfusion[vector]",
+  "shardyfusion[vector-lancedb]",
   "shardyfusion[vector-sqlite]",
-  "shardyfusion[unified-vector]",
-  "shardyfusion[unified-vector-sqlite]",
+  "shardyfusion[unified-slatedb-lancedb]",
+  "shardyfusion[unified-sqlite-vec]",
 ]
 test = [
   "pytest>=7.4",
@@ -294,8 +293,8 @@ addopts = "-ra"
 testpaths = ["tests"]
 markers = [
   "spark: tests requiring local pyspark session",
-  "dask: tests requiring writer-dask extras",
-  "ray: tests requiring writer-ray extras",
+  "dask: tests requiring writer-dask-slatedb / writer-dask-sqlite extras",
+  "ray: tests requiring writer-ray-slatedb / writer-ray-sqlite extras",
   "cel: tests requiring cel extra (cel-expr-python)",
   "e2e: end-to-end tests requiring a container engine (podman/docker)",
   "vector: tests requiring vector extras (lancedb, pyarrow, numpy)",

@@ -17,7 +17,7 @@ Use the **`shardy` CLI** to inspect, query, and manage published snapshots.
 
 ```bash
 # Kitchen-sink: includes every read backend (slatedb, sqlite download/range/adaptive,
-# their async variants, plus unified-vector / unified-vector-sqlite).
+# their async variants, plus unified-slatedb-lancedb / unified-sqlite-vec).
 uv add 'shardyfusion[cli]'
 
 # Slim install: bare CLI; pair with whichever read backend you actually need.

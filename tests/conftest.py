@@ -73,7 +73,7 @@ class LocalS3Service(TypedDict):
 
 @pytest.fixture(scope="session")
 def spark() -> Generator[SparkSession, None, None]:
-    pytest.importorskip("pyspark", reason="requires writer-spark extra")
+    pytest.importorskip("pyspark", reason="requires writer-spark-slatedb extra")
     import pandas as pd
     from pyspark.sql import SparkSession
 

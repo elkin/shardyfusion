@@ -13,7 +13,7 @@ This page is the operational guide. The conceptual reasoning is in [`architectur
 | `[project.optional-dependencies]` | End users (`pip install 'shardyfusion[<extra>]'`) | `pyproject.toml` |
 | `[dependency-groups]` | Tox / CI envs | `pyproject.toml` |
 
-The user-facing extras compose into bundles (e.g. `read-async = ["shardyfusion[read]", "aiobotocore>=2.12"]`).
+The user-facing extras compose into bundles (e.g. `read-slatedb-async = ["shardyfusion[read-slatedb]", "aiobotocore>=2.12"]`).
 
 The dependency groups (`backend-slatedb`, `cap-writer-spark`, `mod-cel`, …) are the atomic units used by `tox.ini` to assemble per-env dependency sets.
 
@@ -123,10 +123,10 @@ This regenerates `.github/ci-matrix.json` from the tox env list.
 When two extras would have identical contents, the older / more-discoverable name becomes a thin alias:
 
 ```toml
-vector = ["shardyfusion[vector-lancedb]"]
+read-sqlite-adaptive = ["shardyfusion[sqlite-adaptive]"]
 ```
 
-Aliases are convenient for users but should not multiply — keep one canonical name per backend.
+Aliases are convenient for users but should not multiply — keep one canonical name per backend. Avoid backend-implicit aliases (e.g. a bare `vector` that silently means LanceDB); prefer explicit names like `vector-lancedb` so every extra advertises its backend in its name.
 
 ## When something belongs in `[project.dependencies]` instead
 

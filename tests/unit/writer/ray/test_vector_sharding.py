@@ -9,7 +9,7 @@ from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.vector._distributed import ResolvedVectorRouting
 from shardyfusion.vector.types import DistanceMetric, VectorShardingStrategy
 
-pytest.importorskip("ray", reason="requires writer-ray extra")
+pytest.importorskip("ray", reason="requires writer-ray-slatedb extra")
 
 import ray.data
 

@@ -52,7 +52,7 @@
 
 **`ShardAssignmentError`** — Raised by Spark/Dask/Ray writers when post-shuffle records don't match expected shard IDs (with `verify_routing=True`).
 
-**Two-backend extras** — `vector-lancedb` (LanceDB) and `vector-sqlite` (sqlite-vec). `unified-vector` = `vector-lancedb` + `cel`. `unified-vector-sqlite` = `vector-sqlite` + `cel`.
+**Two-backend extras** — `vector-lancedb` (LanceDB) and `vector-sqlite` (sqlite-vec). `unified-slatedb-lancedb` = `vector-lancedb` + `cel`. `unified-sqlite-vec` = `vector-sqlite` + `cel`.
 
 **Reader factory** — Construct a per-shard reader. Sync: `SlateDbReaderFactory`, `SqliteReaderFactory` (download-and-cache), `SqliteRangeReaderFactory` (range-read VFS). Async: `AsyncSlateDbReaderFactory`, `AsyncSqliteReaderFactory`.
 

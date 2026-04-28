@@ -16,7 +16,7 @@ Use the **Dask writer** to build a sharded snapshot from a Dask `DataFrame` — 
 
 ```bash
 # SlateDB backend (default)
-uv add 'shardyfusion[writer-dask]'
+uv add 'shardyfusion[writer-dask-slatedb]'
 
 # SQLite backend
 uv add 'shardyfusion[writer-dask-sqlite]'

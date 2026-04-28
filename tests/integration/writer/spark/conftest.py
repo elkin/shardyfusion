@@ -4,4 +4,4 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("pyspark", reason="requires writer-spark extra")
+pytest.importorskip("pyspark", reason="requires writer-spark-slatedb extra")

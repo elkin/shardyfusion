@@ -10,7 +10,7 @@ from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.vector._distributed import ResolvedVectorRouting
 from shardyfusion.vector.types import DistanceMetric, VectorShardingStrategy
 
-pytest.importorskip("pyspark", reason="requires writer-spark extra")
+pytest.importorskip("pyspark", reason="requires writer-spark-slatedb extra")
 
 from shardyfusion.writer.spark.sharding import (  # noqa: E402
     VECTOR_DB_ID_COL,

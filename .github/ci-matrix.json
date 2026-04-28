@@ -38,24 +38,6 @@
         "needs-java": false
       },
       {
-        "name": "py311 / readasync / slatedb / unit",
-        "tox-env": "py311-readasync-slatedb-unit",
-        "python-version": "3.11",
-        "needs-java": false
-      },
-      {
-        "name": "py312 / readasync / slatedb / unit",
-        "tox-env": "py312-readasync-slatedb-unit",
-        "python-version": "3.12",
-        "needs-java": false
-      },
-      {
-        "name": "py313 / readasync / slatedb / unit",
-        "tox-env": "py313-readasync-slatedb-unit",
-        "python-version": "3.13",
-        "needs-java": false
-      },
-      {
         "name": "py311 / pythonwriter / slatedb / unit",
         "tox-env": "py311-pythonwriter-slatedb-unit",
         "python-version": "3.11",

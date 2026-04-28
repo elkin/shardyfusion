@@ -46,7 +46,7 @@ Current Python support is 3.11 through 3.13.
 ## Quick start
 
 ```bash
-pip install "shardyfusion[writer-python,read]"
+pip install "shardyfusion[writer-python-slatedb,read-slatedb]"
 ```
 
 **Write** a sharded snapshot:

@@ -17,7 +17,7 @@ Use the **Spark writer** to build a sharded snapshot from a PySpark `DataFrame`.
 
 ```bash
 # SlateDB backend (default)
-uv add 'shardyfusion[writer-spark]'
+uv add 'shardyfusion[writer-spark-slatedb]'
 
 # SQLite backend
 uv add 'shardyfusion[writer-spark-sqlite]'

@@ -49,12 +49,12 @@ EXTRA_META: dict[str, _Meta] = {
     },
 
     # ---- KV Storage — Read ----
-    "read": {
+    "read-slatedb": {
         "section": "KV Storage — Read",
         "task": "Sync reader (SlateDB)",
-        "notes": "Default sync reader. Pulls in `slatedb`.",
+        "notes": "Sync SlateDB reader. Pulls in `slatedb`.",
     },
-    "read-async": {
+    "read-slatedb-async": {
         "section": "KV Storage — Read",
         "task": "Async reader (SlateDB)",
         "notes": "Async S3 manifest store + SlateDB shards via aiobotocore.",
@@ -91,7 +91,7 @@ EXTRA_META: dict[str, _Meta] = {
     },
 
     # ---- KV Storage — Write ----
-    "writer-python": {
+    "writer-python-slatedb": {
         "section": "KV Storage — Write",
         "task": "Python writer (SlateDB)",
         "notes": "Pure Python, single-process or multiprocessing.",
@@ -101,7 +101,7 @@ EXTRA_META: dict[str, _Meta] = {
         "task": "Python writer (SQLite)",
         "notes": "Pure Python writing SQLite shards.",
     },
-    "writer-spark": {
+    "writer-spark-slatedb": {
         "section": "KV Storage — Write",
         "task": "Spark writer (SlateDB)",
         "notes": "Requires Java 17. PySpark ≥3.3.",
@@ -111,7 +111,7 @@ EXTRA_META: dict[str, _Meta] = {
         "task": "Spark writer (SQLite)",
         "notes": "Requires Java 17. PySpark ≥3.3.",
     },
-    "writer-dask": {
+    "writer-dask-slatedb": {
         "section": "KV Storage — Write",
         "task": "Dask writer (SlateDB)",
         "notes": "Dask DataFrame input.",
@@ -121,7 +121,7 @@ EXTRA_META: dict[str, _Meta] = {
         "task": "Dask writer (SQLite)",
         "notes": "Dask DataFrame input writing SQLite shards.",
     },
-    "writer-ray": {
+    "writer-ray-slatedb": {
         "section": "KV Storage — Write",
         "task": "Ray writer (SlateDB)",
         "notes": "Ray Dataset input.",
@@ -135,13 +135,8 @@ EXTRA_META: dict[str, _Meta] = {
     # ---- Vector Search ----
     "vector-lancedb": {
         "section": "Vector Search",
-        "task": "LanceDB vector backend",
-        "notes": "HNSW index via LanceDB.",
-    },
-    "vector": {
-        "section": "Vector Search",
         "task": "Vector search (LanceDB)",
-        "notes": "Alias for `vector-lancedb`.",
+        "notes": "HNSW index via LanceDB.",
     },
     "vector-sqlite": {
         "section": "Vector Search",
@@ -150,12 +145,12 @@ EXTRA_META: dict[str, _Meta] = {
     },
 
     # ---- KV + Vector ----
-    "unified-vector": {
+    "unified-slatedb-lancedb": {
         "section": "KV + Vector",
-        "task": "Unified KV+vector (LanceDB)",
+        "task": "Unified KV+vector (SlateDB + LanceDB)",
         "notes": "Composite SlateDB + LanceDB sidecar. Enables UnifiedShardedReader.",
     },
-    "unified-vector-sqlite": {
+    "unified-sqlite-vec": {
         "section": "KV + Vector",
         "task": "Unified KV+vector (sqlite-vec)",
         "notes": "Single-file sqlite-vec backend. Enables UnifiedShardedReader.",
@@ -296,14 +291,14 @@ def generate() -> str:
     lines.append("## Common install commands")
     lines.append("")
     lines.append("```bash")
-    lines.append("# Reader only (default SlateDB backend)")
-    lines.append("uv sync --extra read")
+    lines.append("# Reader only (SlateDB backend)")
+    lines.append("uv sync --extra read-slatedb")
     lines.append("")
-    lines.append("# Async reader")
-    lines.append("uv sync --extra read-async")
+    lines.append("# Async reader (SlateDB backend)")
+    lines.append("uv sync --extra read-slatedb-async")
     lines.append("")
-    lines.append("# Spark writer (requires Java 17)")
-    lines.append("uv sync --extra writer-spark")
+    lines.append("# Spark writer (SlateDB backend; requires Java 17)")
+    lines.append("uv sync --extra writer-spark-slatedb")
     lines.append("")
     lines.append("# Kitchen-sink CLI (all read backends + vector)")
     lines.append("uv sync --extra cli")

@@ -57,7 +57,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Manifest `format_version` bumped to `4`** (was `2`/`3`). Readers strictly accept only `{4}`; older manifests are rejected with `ManifestParseError`. **No backward compatibility** — re-publish snapshots after upgrading.
 - **`RequiredShardMeta.db_bytes` is now mandatory** (`int`, non-optional). Synthetic empty shards (padded by `SnapshotRouter`) report `db_bytes=0`. Postgres-backed manifest stores must run `ALTER TABLE shardyfusion_manifests_shards ADD COLUMN db_bytes BIGINT NOT NULL DEFAULT 0` before upgrade.
 - **Reader-factory protocols (`ShardReaderFactory`, `AsyncShardReaderFactory`, vector counterparts) now require a `manifest` keyword argument** on `__call__`. Custom factory implementations must accept `manifest: ParsedManifest`. Built-in factories (`SqliteReaderFactory`, `SqliteRangeReaderFactory`, `SlateDbReaderFactory`, `LanceDbReaderFactory`, `SqliteVecReaderFactory`, and async variants) all accept and forward this parameter.
-- **`cli` extra now aggregates all read backends** (`read`, `read-async`, `read-sqlite`, `read-sqlite-range`, `sqlite-async`, `unified-vector`, `unified-vector-sqlite`) so any published snapshot can be opened without additional installs. Users who previously relied on a slim `cli` install must now opt in via narrower extras (`shardyfusion[read]` etc.) directly.
+- **`cli` extra now aggregates all read backends** (`read-slatedb`, `read-slatedb-async`, `read-sqlite`, `read-sqlite-range`, `sqlite-async`, `unified-slatedb-lancedb`, `unified-sqlite-vec`) so any published snapshot can be opened without additional installs. Users who previously relied on a slim `cli` install must now opt in via narrower extras (`shardyfusion[read-slatedb]` etc.) directly.
+- **Renamed extras to name the storage backend explicitly** (breaking; pre-1.0). Every extra now advertises its backend in its name, matching the existing `-sqlite` convention. Old → new:
+  - `read` → `read-slatedb`
+  - `read-async` → `read-slatedb-async`
+  - `writer-spark` → `writer-spark-slatedb`
+  - `writer-python` → `writer-python-slatedb`
+  - `writer-dask` → `writer-dask-slatedb`
+  - `writer-ray` → `writer-ray-slatedb`
+  - `unified-vector` → `unified-slatedb-lancedb`
+  - `unified-vector-sqlite` → `unified-sqlite-vec`
+
+### Removed
+- **`vector` extra alias** — removed in favor of explicit backend names. Use `vector-lancedb` (LanceDB) or `vector-sqlite` (sqlite-vec) directly.
 
 ### Removed
 - **`boto3` and `aiobotocore` dependencies** — completely removed from all extras and dependency groups. obstore is now the sole S3 client. No direct AWS SDK installation is required.

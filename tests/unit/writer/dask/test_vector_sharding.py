@@ -9,7 +9,7 @@ from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.vector._distributed import ResolvedVectorRouting
 from shardyfusion.vector.types import DistanceMetric, VectorShardingStrategy
 
-pytest.importorskip("dask", reason="requires writer-dask extra")
+pytest.importorskip("dask", reason="requires writer-dask-slatedb extra")
 
 import dask.dataframe as dd
 import pandas as pd

@@ -15,7 +15,7 @@ Use **`AsyncShardedReader`** to do point-key and multi-key lookups against a pub
 ## Install
 
 ```bash
-uv add 'shardyfusion[read-async]'
+uv add 'shardyfusion[read-slatedb-async]'
 ```
 
 Pulls SlateDB plus `aiobotocore`.

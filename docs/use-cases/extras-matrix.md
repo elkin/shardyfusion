@@ -5,14 +5,14 @@ This page maps every user-facing use case to the `pip install` / `uv sync --extr
 ## Common install commands
 
 ```bash
-# Reader only (default SlateDB backend)
-uv sync --extra read
+# Reader only (SlateDB backend)
+uv sync --extra read-slatedb
 
-# Async reader
-uv sync --extra read-async
+# Async reader (SlateDB backend)
+uv sync --extra read-slatedb-async
 
-# Spark writer (requires Java 17)
-uv sync --extra writer-spark
+# Spark writer (SlateDB backend; requires Java 17)
+uv sync --extra writer-spark-slatedb
 
 # Kitchen-sink CLI (all read backends + vector)
 uv sync --extra cli
@@ -42,36 +42,35 @@ flowchart LR
     n_sqlite_adaptive("sqlite-adaptive\nAdaptive SQLite reader deps")
     n_sqlite_async("sqlite-async\nAsync SQLite readers")
     n_sqlite_adaptive_async("sqlite-adaptive-async\nAsync adaptive SQLite reader")
-    n_read_async("read-async\nAsync reader (SlateDB)")
+    n_read_slatedb_async("read-slatedb-async\nAsync reader (SlateDB)")
     n_read_sqlite("read-sqlite\nSync SQLite reader (download)")
     n_read_sqlite_range("read-sqlite-range\nSync SQLite reader (range-read)")
     n_read_sqlite_adaptive("read-sqlite-adaptive\nSync adaptive SQLite reader")
-    n_read("read\nSync reader (SlateDB)")
+    n_read_slatedb("read-slatedb\nSync reader (SlateDB)")
   end
 
   subgraph kv_storage_write[KV Storage — Write]
     direction TB
     n_writer_dask_sqlite("writer-dask-sqlite\nDask writer (SQLite)")
-    n_writer_dask("writer-dask\nDask writer (SlateDB)")
+    n_writer_dask_slatedb("writer-dask-slatedb\nDask writer (SlateDB)")
     n_writer_python_sqlite("writer-python-sqlite\nPython writer (SQLite)")
-    n_writer_python("writer-python\nPython writer (SlateDB)")
+    n_writer_python_slatedb("writer-python-slatedb\nPython writer (SlateDB)")
     n_writer_ray_sqlite("writer-ray-sqlite\nRay writer (SQLite)")
-    n_writer_ray("writer-ray\nRay writer (SlateDB)")
+    n_writer_ray_slatedb("writer-ray-slatedb\nRay writer (SlateDB)")
     n_writer_spark_sqlite("writer-spark-sqlite\nSpark writer (SQLite)")
-    n_writer_spark("writer-spark\nSpark writer (SlateDB)")
+    n_writer_spark_slatedb("writer-spark-slatedb\nSpark writer (SlateDB)")
   end
 
   subgraph vector_search[Vector Search]
     direction TB
-    n_vector_lancedb("vector-lancedb\nLanceDB vector backend")
-    n_vector("vector\nVector search (LanceDB)")
+    n_vector_lancedb("vector-lancedb\nVector search (LanceDB)")
     n_vector_sqlite("vector-sqlite\nVector search (sqlite-vec)")
   end
 
   subgraph kv_plus_vector[KV + Vector]
     direction TB
-    n_unified_vector("unified-vector\nUnified KV+vector (LanceDB)")
-    n_unified_vector_sqlite("unified-vector-sqlite\nUnified KV+vector (sqlite-vec)")
+    n_unified_slatedb_lancedb("unified-slatedb-lancedb\nUnified KV+vector (SlateDB + LanceDB)")
+    n_unified_sqlite_vec("unified-sqlite-vec\nUnified KV+vector (sqlite-vec)")
   end
 
   subgraph operations_and_observability[Operations & Observability]
@@ -93,17 +92,17 @@ flowchart LR
   end
 
   n_cli --> n_cli_minimal
-  n_cli --> n_read
-  n_cli --> n_read_async
+  n_cli --> n_read_slatedb
+  n_cli --> n_read_slatedb_async
   n_cli --> n_read_sqlite
   n_cli --> n_read_sqlite_adaptive
   n_cli --> n_read_sqlite_range
   n_cli --> n_sqlite_adaptive_async
   n_cli --> n_sqlite_async
-  n_cli --> n_unified_vector
-  n_cli --> n_unified_vector_sqlite
-  n_read --> n_slatedb
-  n_read_async --> n_read
+  n_cli --> n_unified_slatedb_lancedb
+  n_cli --> n_unified_sqlite_vec
+  n_read_slatedb --> n_slatedb
+  n_read_slatedb_async --> n_read_slatedb
   n_read_sqlite --> n_sqlite
   n_read_sqlite_adaptive --> n_sqlite_adaptive
   n_read_sqlite_range --> n_sqlite_range
@@ -111,18 +110,17 @@ flowchart LR
   n_sqlite_adaptive --> n_sqlite_range
   n_sqlite_adaptive_async --> n_sqlite_adaptive
   n_sqlite_async --> n_read_sqlite
-  n_unified_vector --> n_cel
-  n_unified_vector --> n_vector
-  n_unified_vector_sqlite --> n_cel
-  n_unified_vector_sqlite --> n_vector_sqlite
-  n_vector --> n_vector_lancedb
-  n_writer_dask --> n_slatedb
+  n_unified_slatedb_lancedb --> n_cel
+  n_unified_slatedb_lancedb --> n_vector_lancedb
+  n_unified_sqlite_vec --> n_cel
+  n_unified_sqlite_vec --> n_vector_sqlite
+  n_writer_dask_slatedb --> n_slatedb
   n_writer_dask_sqlite --> n_sqlite
-  n_writer_python --> n_slatedb
+  n_writer_python_slatedb --> n_slatedb
   n_writer_python_sqlite --> n_sqlite
-  n_writer_ray --> n_slatedb
+  n_writer_ray_slatedb --> n_slatedb
   n_writer_ray_sqlite --> n_sqlite
-  n_writer_spark --> n_slatedb
+  n_writer_spark_slatedb --> n_slatedb
   n_writer_spark_sqlite --> n_sqlite
 ```
 
@@ -143,39 +141,38 @@ flowchart LR
 | `sqlite-adaptive` | Adaptive SQLite reader deps | Composes `sqlite` + `sqlite-range` so AdaptiveSqliteReaderFactory can pick per snapshot. |
 | `sqlite-async` | Async SQLite readers | Async wrappers for both download and range-read SQLite. |
 | `sqlite-adaptive-async` | Async adaptive SQLite reader | Async adaptive policy + aiobotocore. |
-| `read-async` | Async reader (SlateDB) | Async S3 manifest store + SlateDB shards via aiobotocore. |
+| `read-slatedb-async` | Async reader (SlateDB) | Async S3 manifest store + SlateDB shards via aiobotocore. |
 | `read-sqlite` | Sync SQLite reader (download) | Downloads full DB locally before opening. |
 | `read-sqlite-range` | Sync SQLite reader (range-read) | Uses APSW VFS to read S3 pages on demand. |
 | `read-sqlite-adaptive` | Sync adaptive SQLite reader | Alias for `sqlite-adaptive`. Auto-picks download vs range per snapshot. |
-| `read` | Sync reader (SlateDB) | Default sync reader. Pulls in `slatedb`. |
+| `read-slatedb` | Sync reader (SlateDB) | Sync SlateDB reader. Pulls in `slatedb`. |
 
 ### KV Storage — Write
 
 | Extra | Task | Notes |
 |---|---|---|
 | `writer-dask-sqlite` | Dask writer (SQLite) | Dask DataFrame input writing SQLite shards. |
-| `writer-dask` | Dask writer (SlateDB) | Dask DataFrame input. |
+| `writer-dask-slatedb` | Dask writer (SlateDB) | Dask DataFrame input. |
 | `writer-python-sqlite` | Python writer (SQLite) | Pure Python writing SQLite shards. |
-| `writer-python` | Python writer (SlateDB) | Pure Python, single-process or multiprocessing. |
+| `writer-python-slatedb` | Python writer (SlateDB) | Pure Python, single-process or multiprocessing. |
 | `writer-ray-sqlite` | Ray writer (SQLite) | Ray Dataset input writing SQLite shards. |
-| `writer-ray` | Ray writer (SlateDB) | Ray Dataset input. |
+| `writer-ray-slatedb` | Ray writer (SlateDB) | Ray Dataset input. |
 | `writer-spark-sqlite` | Spark writer (SQLite) | Requires Java 17. PySpark ≥3.3. |
-| `writer-spark` | Spark writer (SlateDB) | Requires Java 17. PySpark ≥3.3. |
+| `writer-spark-slatedb` | Spark writer (SlateDB) | Requires Java 17. PySpark ≥3.3. |
 
 ### Vector Search
 
 | Extra | Task | Notes |
 |---|---|---|
-| `vector-lancedb` | LanceDB vector backend | HNSW index via LanceDB. |
-| `vector` | Vector search (LanceDB) | Alias for `vector-lancedb`. |
+| `vector-lancedb` | Vector search (LanceDB) | HNSW index via LanceDB. |
 | `vector-sqlite` | Vector search (sqlite-vec) | sqlite-vec unified KV+vector in single DB. |
 
 ### KV + Vector
 
 | Extra | Task | Notes |
 |---|---|---|
-| `unified-vector` | Unified KV+vector (LanceDB) | Composite SlateDB + LanceDB sidecar. Enables UnifiedShardedReader. |
-| `unified-vector-sqlite` | Unified KV+vector (sqlite-vec) | Single-file sqlite-vec backend. Enables UnifiedShardedReader. |
+| `unified-slatedb-lancedb` | Unified KV+vector (SlateDB + LanceDB) | Composite SlateDB + LanceDB sidecar. Enables UnifiedShardedReader. |
+| `unified-sqlite-vec` | Unified KV+vector (sqlite-vec) | Single-file sqlite-vec backend. Enables UnifiedShardedReader. |
 
 ### Operations & Observability
 
