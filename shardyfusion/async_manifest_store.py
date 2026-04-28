@@ -11,7 +11,6 @@ from typing import Protocol
 
 from .logging import FailureSeverity, get_logger, log_failure
 from .manifest import ManifestRef, ParsedManifest
-from .metrics import MetricsCollector
 from .storage import AsyncStorageBackend, join_s3
 
 _logger = get_logger(__name__)
@@ -41,13 +40,11 @@ class AsyncS3ManifestStore:
         *,
         manifest_name: str = "manifest",
         current_pointer_key: str = "_CURRENT",
-        metrics_collector: MetricsCollector | None = None,
     ) -> None:
         self._backend = backend
         self.s3_prefix = s3_prefix.rstrip("/")
         self.manifest_name = manifest_name
         self.current_pointer_key = current_pointer_key
-        self._metrics = metrics_collector
 
     async def load_current(self) -> ManifestRef | None:
         from .manifest_store import parse_current_pointer_to_ref

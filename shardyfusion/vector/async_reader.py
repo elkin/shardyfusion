@@ -98,7 +98,6 @@ class AsyncShardedVectorReader:
             self._store = AsyncS3ManifestStore(
                 backend,
                 s3_prefix,
-                metrics_collector=metrics_collector,
             )
 
         if reader_factory is not None:

@@ -510,7 +510,6 @@ def publish_to_store(
         store = S3ManifestStore(
             backend,
             config.s3_prefix,
-            metrics_collector=config.metrics_collector,
         )
 
     mc = config.metrics_collector

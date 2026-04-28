@@ -297,7 +297,6 @@ class AsyncShardedReader:
                 backend,
                 s3_prefix,
                 current_pointer_key=current_pointer_key,
-                metrics_collector=metrics_collector,
             )
 
         # Resolve reader factory

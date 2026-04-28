@@ -14,7 +14,6 @@ from pydantic import BaseModel, ConfigDict
 
 from .credentials import CredentialProvider
 from .logging import FailureSeverity, get_logger, log_failure
-from .metrics import MetricsCollector
 from .storage import ObstoreBackend, StorageBackend, create_s3_store, join_s3
 from .type_defs import S3ConnectionOptions
 
@@ -78,7 +77,6 @@ class _RunRecordConfig(Protocol):
     run_registry: Any
     credential_provider: CredentialProvider | None
     s3_connection_options: S3ConnectionOptions | None
-    metrics_collector: MetricsCollector | None
 
 
 def _utc_now() -> datetime:
@@ -114,12 +112,10 @@ class S3RunRegistry:
         s3_prefix: str,
         *,
         run_registry_prefix: str = "runs",
-        metrics_collector: MetricsCollector | None = None,
     ) -> None:
         self._backend = backend
         self.s3_prefix = s3_prefix.rstrip("/")
         self.run_registry_prefix = run_registry_prefix
-        self._metrics = metrics_collector
 
     def create(self, record: RunRecord) -> str:
         ref = join_s3(
@@ -187,7 +183,6 @@ def resolve_run_registry(config: _RunRecordConfig) -> RunRegistry:
         backend=backend,
         s3_prefix=config.s3_prefix,
         run_registry_prefix=config.output.run_registry_prefix,
-        metrics_collector=config.metrics_collector,
     )
 
 

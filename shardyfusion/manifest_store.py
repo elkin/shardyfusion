@@ -29,7 +29,6 @@ from .manifest import (
     RequiredShardMeta,
     SqliteManifestBuilder,
 )
-from .metrics import MetricsCollector
 from .sharding_types import ShardHashAlgorithm
 from .storage import StorageBackend, join_s3
 
@@ -127,13 +126,11 @@ class S3ManifestStore:
         *,
         manifest_name: str = "manifest",
         current_pointer_key: str = "_CURRENT",
-        metrics_collector: MetricsCollector | None = None,
     ) -> None:
         self._backend = backend
         self.s3_prefix = s3_prefix.rstrip("/")
         self.manifest_name = manifest_name
         self.current_pointer_key = current_pointer_key
-        self._metrics = metrics_collector
 
     def publish(
         self,

@@ -112,7 +112,6 @@ class ShardedVectorReader:
             self._store = S3ManifestStore(
                 backend,
                 s3_prefix,
-                metrics_collector=metrics_collector,
             )
 
         if reader_factory is not None:

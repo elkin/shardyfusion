@@ -533,7 +533,6 @@ def publish_vector_manifest(
         store = S3ManifestStore(
             backend,
             config.s3_prefix,
-            metrics_collector=config.metrics_collector,
         )
 
     manifest_ref = store.publish(
