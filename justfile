@@ -188,11 +188,11 @@ integration n="4" p="2" path="": _check-venv _check-java
 ci n="4" p="2":
     PYTEST_WORKERS={{n}} uv run tox p -m quality -m unit -m integration -p {{p}}
 
-# Run unit tests with coverage and produce a report
+# Run unit and integration tests with coverage and produce a report
 [group('test')]
 [arg('n', short='n', help='pytest-xdist workers')]
 coverage n="4": _check-venv _check-java
-    RAY_ENABLE_UV_RUN_RUNTIME_ENV=0 SPARK_LOCAL_IP=127.0.0.1 uv run pytest --cov -n {{n}} -q tests/unit
+    RAY_ENABLE_UV_RUN_RUNTIME_ENV=0 SPARK_LOCAL_IP=127.0.0.1 uv run pytest --cov -n {{n}} -q tests/unit tests/integration
     uv run coverage html
     @echo "HTML report: htmlcov/index.html"
 
