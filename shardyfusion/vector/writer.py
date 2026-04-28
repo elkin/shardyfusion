@@ -23,6 +23,7 @@ from ..manifest import (
 )
 from ..metrics._events import MetricEvent
 from ..run_registry import managed_run_record
+from ..storage import ObstoreBackend, create_s3_store, parse_s3_url
 from ._distributed import (
     ResolvedVectorRouting,
     VectorShardState,
@@ -203,11 +204,23 @@ def write_vector_sharded(
                     {"db_id": db_id, "row_count": state.row_count},
                 )
 
+        credentials = (
+            config.credential_provider.resolve() if config.credential_provider else None
+        )
+        bucket, _ = parse_s3_url(config.s3_prefix)
+        backend = ObstoreBackend(
+            create_s3_store(
+                bucket=bucket,
+                credentials=credentials,
+                connection_options=config.s3_connection_options,
+            )
+        )
         centroids_ref, hyperplanes_ref = upload_routing_metadata(
             s3_prefix=config.s3_prefix,
             run_id=run_id,
             centroids=routing.centroids,
             hyperplanes=routing.hyperplanes,
+            backend=backend,
         )
 
         manifest_start = time.perf_counter()
