@@ -630,50 +630,43 @@ def cleanup_losers(
         Total number of S3 objects deleted across all losing attempts.
     """
 
+    if not all_attempt_urls:
+        return 0
+
     winner_urls = {w.db_url for w in winners if w.db_url is not None}
     total_deleted = 0
     num_losers = 0
 
-    try:
-        if backend is None:
-            from .storage import parse_s3_url
+    if backend is None:
+        from .storage import parse_s3_url
 
-            bucket, _ = (
-                parse_s3_url(all_attempt_urls[0]) if all_attempt_urls else ("", "")
-            )
-            store = create_s3_store(bucket=bucket)
-            backend = ObstoreBackend(store)
+        bucket, _ = parse_s3_url(all_attempt_urls[0])
+        store = create_s3_store(bucket=bucket)
+        backend = ObstoreBackend(store)
 
-        for url in all_attempt_urls:
-            if url not in winner_urls:
-                num_losers += 1
-                try:
-                    deleted = backend.delete_prefix(url)
-                except Exception as exc:
-                    log_failure(
-                        "loser_cleanup_failed",
-                        severity=FailureSeverity.TRANSIENT,
-                        logger=_logger,
-                        error=exc,
-                        db_url=url,
-                    )
-                    deleted = 0
-                total_deleted += deleted
-                if deleted > 0:
-                    log_event(
-                        "loser_attempt_cleaned",
-                        level=logging.DEBUG,
-                        logger=_logger,
-                        db_url=url,
-                        objects_deleted=deleted,
-                    )
-    except Exception as exc:
-        log_failure(
-            "losers_cleanup_failed",
-            severity=FailureSeverity.TRANSIENT,
-            logger=_logger,
-            error=exc,
-        )
+    for url in all_attempt_urls:
+        if url not in winner_urls:
+            num_losers += 1
+            try:
+                deleted = backend.delete_prefix(url)
+            except Exception as exc:
+                log_failure(
+                    "loser_cleanup_failed",
+                    severity=FailureSeverity.TRANSIENT,
+                    logger=_logger,
+                    error=exc,
+                    db_url=url,
+                )
+                deleted = 0
+            total_deleted += deleted
+            if deleted > 0:
+                log_event(
+                    "loser_attempt_cleaned",
+                    level=logging.DEBUG,
+                    logger=_logger,
+                    db_url=url,
+                    objects_deleted=deleted,
+                )
 
     if total_deleted > 0:
         log_event(
