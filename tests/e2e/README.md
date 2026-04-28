@@ -132,15 +132,15 @@ so scenario helpers are backend-agnostic.  Both backends satisfy the
 
 ## Test matrix
 
-| Framework | Smoke (7×2) | Publish (×2) | Refresh (×2) | Total |
-|-----------|-------------|--------------|--------------|-------|
-| Spark     | 14 | 2 | 2 | 18 |
-| Python    | 14 | 4 (seq + parallel) | 2 | 20 |
-| Dask      | 14 | 2 | 2 | 18 |
-| Ray       | 14 | 2 | 2 | 18 |
-| Reader    | — | — | — | 2 |
-| Range-read | 1 | — | — | 2 (smoke + manifest) |
-| **Total** | 56 | 10 | 8 | **78** |
+| Framework | Smoke (7×2) | Property (4×2) | Publish (×2) | Refresh (×2) | Total |
+|-----------|-------------|----------------|--------------|--------------|-------|
+| Spark     | 14 | 8 | 2 | 2 | 26 |
+| Python    | 14 | 8 | 4 (seq + parallel) | 2 | 28 |
+| Dask      | 14 | 8 | 2 | 2 | 26 |
+| Ray       | 14 | 8 | 2 | 2 | 26 |
+| Reader    | — | — | — | — | 2 |
+| Range-read | 1 | — | — | — | 2 (smoke + manifest) |
+| **Total** | 56 | 32 | 10 | 8 | **110** |
 
 CEL smoke tests require `cel-expr-python` (installed via `mod-cel` dependency
 group).  On Python 3.14, where `cel-expr-python` has no wheels, these tests
@@ -157,6 +157,11 @@ writer frameworks:
   functions accept a `write_fn` callback and `adapter_factory`/`reader_factory`
   parameters so each framework provides its own write implementation while
   sharing assertion logic across backends.
+
+- **`tests/helpers/property_scenarios.py`** — generated KV datasets plus
+  `run_property_kv_e2e_scenario`.  The property tests share the same assertions
+  across writer frameworks and backends for HASH, HASH with
+  `max_keys_per_shard`, CEL routing-context, and CEL categorical sharding.
 
 - **`tests/helpers/s3_test_scenarios.py`** — `run_writer_publishes_manifest_scenario`,
   `run_writer_reader_refresh_scenario`, and framework-specific variants.  Accept
