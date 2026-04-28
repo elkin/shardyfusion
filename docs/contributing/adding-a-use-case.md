@@ -145,7 +145,7 @@ When you add a use-case page, `validate-docs` will check:
 Run before pushing:
 
 ```bash
-uv run python scripts/check_docs.py
+just docs-check
 ```
 
 ## Index updates

@@ -56,9 +56,10 @@ List recent manifests to see the snapshot build timeline:
 uv run shardy history --limit 10
 
 # Programmatic
-from shardyfusion import S3ManifestStore
+from shardyfusion import S3ManifestStore, ObstoreBackend, create_s3_store
 
-store = S3ManifestStore(s3_prefix="s3://bucket/prefix")
+backend = ObstoreBackend(create_s3_store(bucket="bucket"))
+store = S3ManifestStore(backend, s3_prefix="s3://bucket/prefix")
 for ref in store.list_manifests(limit=10):
     print(f"{ref.published_at}  {ref.run_id}  {ref.ref}")
 ```
@@ -83,9 +84,10 @@ uv run shardy rollback --ref s3://bucket/prefix/manifests/.../manifest
 **Programmatic:**
 
 ```python
-from shardyfusion import S3ManifestStore
+from shardyfusion import S3ManifestStore, ObstoreBackend, create_s3_store
 
-store = S3ManifestStore(s3_prefix="s3://bucket/prefix")
+backend = ObstoreBackend(create_s3_store(bucket="bucket"))
+store = S3ManifestStore(backend, s3_prefix="s3://bucket/prefix")
 
 # Find the manifest to roll back to
 refs = store.list_manifests(limit=5)

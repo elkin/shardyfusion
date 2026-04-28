@@ -33,13 +33,13 @@ Verify that documentation is consistent with the code changes:
    - The "Public API Summary" lists all exports from `__init__.py`
    - The "Testing Notes" section covers any new test directories or markers
 3. **AGENTS.md** — Reflects the current project structure, build commands, test commands, and coding style.
-4. **docs/ directory** — MkDocs source files are consistent with code changes. Run the automated docs validation script:
+4. **docs/ directory** — MkDocs source files are consistent with code changes. Run docs validation via:
 
    ```bash
-   uv run python scripts/check_docs.py
+   just docs-check
    ```
 
-   This script verifies:
+   This verifies:
    - **Public-API references** — every `::: shardyfusion.<symbol>` mkdocstrings reference and every qualified `shardyfusion.X.Y` mention in inline code or fenced Python blocks resolves to a real attribute.
    - **Config dataclass fields** — every field name listed in a docs configuration table for tracked dataclasses (`WriteConfig`, `ShardingSpec`, `OutputOptions`, `ManifestOptions`, `VectorSpec`, `RetryConfig`, `S3ConnectionOptions`) exists on that class.
    - **Pyproject extras** — every `--extra <name>` and `shardyfusion[<name>]` line in `docs/**/*.md` references an extra defined in `[project.optional-dependencies]`.

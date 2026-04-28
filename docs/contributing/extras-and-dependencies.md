@@ -98,10 +98,10 @@ Then regenerate the matrix page:
 uv run python scripts/generate_extras_matrix.py
 ```
 
-### 6. Verify with `validate-docs`
+### 6. Verify with `docs-check`
 
 ```bash
-uv run python scripts/check_docs.py
+just docs-check
 ```
 
 The skill cross-checks:
