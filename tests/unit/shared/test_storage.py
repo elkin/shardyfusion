@@ -91,7 +91,9 @@ class TestObstoreBackend:
         monkeypatch.setattr("obstore.get", mock_get)
 
         backend.put("s3://bucket/key", b"payload", "text/plain")
-        mock_put.assert_called_once_with(store, "key", b"payload")
+        mock_put.assert_called_once_with(
+            store, "key", b"payload", attributes={"Content-Type": "text/plain"}
+        )
 
         result = backend.get("s3://bucket/key")
         mock_get.assert_called_once_with(store, "key")
@@ -153,7 +155,7 @@ class TestObstoreBackend:
 
         calls = []
 
-        def mock_put(store_arg, key, payload):
+        def mock_put(store_arg, key, payload, **kwargs):
             calls.append((key, payload))
             if len(calls) == 1:
                 raise FakeGenericError()

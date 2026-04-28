@@ -90,11 +90,17 @@ class ObstoreBackend:
         bucket, key = parse_s3_url(url)
         import obstore  # pyright: ignore[reportMissingImports]
 
+        attributes: dict[str, str] = {}
+        if content_type:
+            attributes["Content-Type"] = content_type
+        if headers:
+            attributes.update(headers)
+
         # obstore retries 5xx/429 internally.  We add one fallback retry for
         # GenericError wrapping a PUT timeout that Rust declined to retry
         # (non-idempotent methods are not retried on timeout).
         try:
-            obstore.put(self._store, key, payload)
+            obstore.put(self._store, key, payload, attributes=attributes or None)
         except Exception as exc:
             if _is_put_retryable(exc):
                 log_event(
@@ -104,7 +110,7 @@ class ObstoreBackend:
                     delay_s=2.0,
                 )
                 time.sleep(2.0)
-                obstore.put(self._store, key, payload)
+                obstore.put(self._store, key, payload, attributes=attributes or None)
             else:
                 raise
 
@@ -172,8 +178,16 @@ class AsyncObstoreBackend:
         bucket, key = parse_s3_url(url)
         import obstore  # pyright: ignore[reportMissingImports]
 
+        attributes: dict[str, str] = {}
+        if content_type:
+            attributes["Content-Type"] = content_type
+        if headers:
+            attributes.update(headers)
+
         try:
-            await obstore.put_async(self._store, key, payload)
+            await obstore.put_async(
+                self._store, key, payload, attributes=attributes or None
+            )
         except Exception as exc:
             if _is_put_retryable(exc):
                 import asyncio
@@ -185,7 +199,9 @@ class AsyncObstoreBackend:
                     delay_s=2.0,
                 )
                 await asyncio.sleep(2.0)
-                await obstore.put_async(self._store, key, payload)
+                await obstore.put_async(
+                    self._store, key, payload, attributes=attributes or None
+                )
             else:
                 raise
 
@@ -242,7 +258,9 @@ class _MemoryStore:
     """Shared in-memory store backing both sync and async test doubles."""
 
     def __init__(self) -> None:
-        self._data: dict[str, tuple[bytes, str]] = {}  # url → (payload, content_type)
+        self._data: dict[
+            str, tuple[bytes, str, Mapping[str, str] | None]
+        ] = {}  # url → (payload, content_type, headers)
 
     def _put(
         self,
@@ -251,7 +269,7 @@ class _MemoryStore:
         content_type: str,
         headers: Mapping[str, str] | None = None,
     ) -> None:
-        self._data[url] = (payload, content_type)
+        self._data[url] = (payload, content_type, headers)
 
     def _get(self, url: str) -> bytes:
         if url not in self._data:
@@ -259,7 +277,7 @@ class _MemoryStore:
         return self._data[url][0]
 
     def _try_get(self, url: str) -> bytes | None:
-        return self._data.get(url, (None, None))[0]
+        return self._data.get(url, (None, "", None))[0]
 
     def _list_prefixes(self, prefix_url: str) -> list[str]:
         if not prefix_url.endswith("/"):
@@ -356,6 +374,8 @@ def parse_s3_url(url: str) -> tuple[str, str]:
     if parsed.scheme != "s3" or not parsed.netloc:
         raise ValueError(f"Invalid S3 URL: {url}")
     key = parsed.path.lstrip("/")
+    if not key:
+        raise ValueError(f"S3 URL must include key path: {url}")
     return parsed.netloc, key
 
 
