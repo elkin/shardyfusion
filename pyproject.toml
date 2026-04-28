@@ -180,7 +180,6 @@ cap-writer-dask = [
 cap-writer-ray = [
   "ray[data]>=2.20",
 ]
-cap-read-async = []
 cap-cli = [
   "click>=8.0",
 ]
