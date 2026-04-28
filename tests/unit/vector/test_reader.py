@@ -164,7 +164,7 @@ def _make_manifest(
             run_id="test-run",
             created_at=datetime.now(UTC),
             num_dbs=num_dbs,
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             key_col="_vector_id",
             sharding=ManifestShardingSpec(
                 strategy=ShardingStrategy.HASH,
@@ -273,7 +273,7 @@ class TestShardedVectorReader:
         store = MockManifestStore(manifest)
         factory = MockReaderFactory()
         reader = ShardedVectorReader(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
             reader_factory=factory,
             manifest_store=store,
@@ -359,7 +359,7 @@ class TestShardedVectorReader:
         store = MockManifestStore(manifest)
         factory = MockReaderFactory()
         with ShardedVectorReader(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
             reader_factory=factory,
             manifest_store=store,
@@ -387,7 +387,7 @@ class TestShardedVectorReader:
         store = MockManifestStore(manifest)
         factory = MockReaderFactory()
         reader = ShardedVectorReader(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
             reader_factory=factory,
             manifest_store=store,
@@ -409,7 +409,7 @@ class TestShardedVectorReader:
         store = MockManifestStore(manifest)
         factory = MockReaderFactory()
         reader = ShardedVectorReader(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
             reader_factory=factory,
             manifest_store=store,
@@ -450,7 +450,7 @@ class TestShardedVectorReader:
         store = MockManifestStore(manifest)
         factory = MockReaderFactory()
         reader = ShardedVectorReader(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
             reader_factory=factory,
             manifest_store=store,
@@ -464,7 +464,7 @@ class TestShardedVectorReader:
         store = MockManifestStore(manifest_v1)
         factory = MockReaderFactory()
         reader = ShardedVectorReader(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
             reader_factory=factory,
             manifest_store=store,
@@ -490,7 +490,7 @@ class TestShardedVectorReader:
         store = MockManifestStore(manifest)
         factory = MockReaderFactory()
         reader = ShardedVectorReader(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
             reader_factory=factory,
             manifest_store=store,
@@ -519,7 +519,7 @@ class TestShardedVectorReader:
             release_search=release_search,
         )
         reader = ShardedVectorReader(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
             reader_factory=factory,
             manifest_store=store,
@@ -556,7 +556,7 @@ class TestShardedVectorReader:
         store = MockManifestStore(manifest)
         factory = MockReaderFactory()
         reader = ShardedVectorReader(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
             reader_factory=factory,
             manifest_store=store,
@@ -582,7 +582,7 @@ class TestShardedVectorReader:
         store = MockManifestStore(manifest_v1)
         factory = MockReaderFactory()
         reader = ShardedVectorReader(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
             reader_factory=factory,
             manifest_store=store,
@@ -620,7 +620,7 @@ class TestShardedVectorReader:
 
         with pytest.raises(ReaderStateError, match="does not contain vector metadata"):
             ShardedVectorReader(
-                s3_prefix="s3://bucket",
+                s3_prefix="s3://bucket/prefix",
                 local_root=str(tmp_path),
                 reader_factory=MockReaderFactory(),
                 manifest_store=store,
@@ -641,7 +641,7 @@ class TestShardedVectorReader:
         store = MockManifestStore(manifest)
         factory = MockReaderFactory()
         reader = ShardedVectorReader(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
             reader_factory=factory,
             manifest_store=store,
@@ -661,7 +661,7 @@ class TestShardedVectorReader:
         store = MockManifestStore(manifest)
         factory = MockReaderFactory()
         reader = ShardedVectorReader(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
             reader_factory=factory,
             manifest_store=store,
@@ -704,7 +704,7 @@ class TestShardedVectorReader:
             side_effect=_make_executor,
         ) as mock_pool:
             reader = ShardedVectorReader(
-                s3_prefix="s3://bucket",
+                s3_prefix="s3://bucket/prefix",
                 local_root=str(tmp_path),
                 reader_factory=factory,
                 manifest_store=store,
@@ -729,7 +729,7 @@ class TestShardedVectorReader:
         store = MockManifestStore(manifest)
         factory = MockReaderFactory()
         reader = ShardedVectorReader(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
             reader_factory=factory,
             manifest_store=store,
@@ -747,7 +747,7 @@ class TestShardedVectorReader:
         factory = MockReaderFactory()
         limiter = MockRateLimiter()
         reader = ShardedVectorReader(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
             reader_factory=factory,
             manifest_store=store,
@@ -774,7 +774,7 @@ class TestShardedVectorReader:
         )
         factory = MockReaderFactory()
         reader = ShardedVectorReader(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
             reader_factory=factory,
             manifest_store=store,
@@ -831,7 +831,7 @@ class TestManifestFallbackIteration:
 
         factory = MagicMock()
         reader = ShardedVectorReader(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
             reader_factory=factory,
             manifest_store=FallbackStore(),
@@ -866,7 +866,7 @@ class TestManifestFallbackIteration:
         factory = MagicMock()
         with pytest.raises(ManifestParseError):
             ShardedVectorReader(
-                s3_prefix="s3://bucket",
+                s3_prefix="s3://bucket/prefix",
                 local_root=str(tmp_path),
                 reader_factory=factory,
                 manifest_store=AllBadStore(),
@@ -896,7 +896,7 @@ class TestManifestFallbackIteration:
 
         with pytest.raises(ManifestParseError):
             ShardedVectorReader(
-                s3_prefix="s3://bucket",
+                s3_prefix="s3://bucket/prefix",
                 local_root=str(tmp_path),
                 reader_factory=MagicMock(),
                 manifest_store=BadStore(),

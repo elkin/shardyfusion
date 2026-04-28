@@ -97,7 +97,7 @@ class TestValidateConfig:
     def test_zero_dim_raises(self):
         with pytest.raises(ConfigValidationError, match=r"index_config\.dim"):
             VectorWriteConfig(
-                s3_prefix="s3://bucket",
+                s3_prefix="s3://bucket/prefix",
                 index_config=VectorIndexConfig(dim=0),
             )
 
@@ -111,7 +111,7 @@ class TestValidateConfig:
 
     def test_cluster_without_centroids_or_training_raises(self):
         cfg = VectorWriteConfig(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=128),
             sharding=VectorShardingSpec(
                 strategy=VectorShardingStrategy.CLUSTER,
@@ -498,7 +498,7 @@ class TestWriteSingleProcess:
 class TestValidateConfigAdditional:
     def test_negative_batch_size_raises(self):
         cfg = VectorWriteConfig(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=128),
             batch_size=0,
         )
@@ -507,7 +507,7 @@ class TestValidateConfigAdditional:
 
     def test_cel_missing_expr_raises(self):
         cfg = VectorWriteConfig(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=128),
             sharding=VectorShardingSpec(
                 strategy=VectorShardingStrategy.CEL,
@@ -519,7 +519,7 @@ class TestValidateConfigAdditional:
 
     def test_cel_missing_columns_raises(self):
         cfg = VectorWriteConfig(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=128),
             sharding=VectorShardingSpec(
                 strategy=VectorShardingStrategy.CEL,
@@ -531,7 +531,7 @@ class TestValidateConfigAdditional:
 
     def test_num_probes_zero_raises(self):
         cfg = VectorWriteConfig(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=128),
             sharding=VectorShardingSpec(
                 strategy=VectorShardingStrategy.EXPLICIT,

@@ -383,7 +383,7 @@ class TestReaderCelSearch:
                 run_id="test-run",
                 created_at=datetime.now(UTC),
                 num_dbs=3,
-                s3_prefix="s3://bucket",
+                s3_prefix="s3://bucket/prefix",
                 key_col="_vector_id",
                 sharding=ManifestShardingSpec(
                     strategy=ShardingStrategy.HASH,
@@ -443,7 +443,7 @@ class TestReaderCelSearch:
 
         factory = MockReaderFactory()
         reader = ShardedVectorReader(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
             reader_factory=factory,
             manifest_store=MockStore(),

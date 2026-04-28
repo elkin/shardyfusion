@@ -110,7 +110,7 @@ class TestAsyncShardedVectorReader:
         store = MockAsyncManifestStore(manifest)
         factory = MockAsyncReaderFactory()
         reader = await AsyncShardedVectorReader.open(
-            s3_prefix="s3://bucket",
+            s3_prefix="s3://bucket/prefix",
             local_root=str(tmp_path),
             reader_factory=factory,
             manifest_store=store,

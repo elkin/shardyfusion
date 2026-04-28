@@ -143,6 +143,7 @@ def _make_records(n: int, shard_id: int = 0) -> list[VectorRecord]:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("_patch_obstore_backend")
 class TestWriteVectorShardedExplicit:
     """Test write_vector_sharded with EXPLICIT sharding (no optional deps)."""
 
@@ -297,6 +298,7 @@ class TestWriteVectorShardedExplicit:
                 write_vector_sharded(records, config)
 
 
+@pytest.mark.usefixtures("_patch_obstore_backend")
 class TestWriteVectorShardedCluster:
     """Test write_vector_sharded with CLUSTER sharding."""
 
@@ -410,6 +412,7 @@ class TestWriteVectorShardedCluster:
             write_vector_sharded(records, config)
 
 
+@pytest.mark.usefixtures("_patch_obstore_backend")
 class TestWriteVectorShardedLSH:
     """Test write_vector_sharded with LSH sharding."""
 

@@ -8,14 +8,22 @@ import numpy as np
 import pytest
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def _patch_obstore_backend():
-    """Patch ObstoreBackend in vector._distributed to use MemoryBackend."""
-    from shardyfusion.storage import MemoryBackend
+    """Patch obstore put/get to prevent real S3 calls in tests that need it."""
+    from unittest.mock import MagicMock
 
-    with patch(
-        "shardyfusion.vector._distributed.ObstoreBackend",
-        side_effect=lambda store: MemoryBackend(),
+    with (
+        patch("obstore.put", MagicMock()),
+        patch("obstore.put_async", MagicMock()),
+        patch("obstore.get", MagicMock()),
+        patch("obstore.get_async", MagicMock()),
+        patch("obstore.list", MagicMock(return_value=iter([]))),
+        patch(
+            "obstore.list_with_delimiter",
+            MagicMock(return_value={"common_prefixes": [], "objects": []}),
+        ),
+        patch("obstore.delete", MagicMock()),
     ):
         yield
 
