@@ -154,7 +154,9 @@ def _build_config(
     )
 
 
-def _route_fn(kind: PropertyCaseKind, case: PropertyInput) -> Callable[[PropertyRow], int]:
+def _route_fn(
+    kind: PropertyCaseKind, case: PropertyInput
+) -> Callable[[PropertyRow], int]:
     from shardyfusion.cel import compile_cel, route_cel
     from shardyfusion.routing import xxh3_db_id
 
@@ -276,9 +278,9 @@ def _verify_readers(
                 )
                 assert reader.get(row.key, routing_context=ctx) == row.value
 
-            groups: dict[
-                tuple[tuple[str, object], ...], list[PropertyRow]
-            ] = defaultdict(list)
+            groups: dict[tuple[tuple[str, object], ...], list[PropertyRow]] = (
+                defaultdict(list)
+            )
             for row in case.rows:
                 ctx = _routing_context(kind, row)
                 ctx_key = tuple(sorted(ctx.items())) if ctx else ()
