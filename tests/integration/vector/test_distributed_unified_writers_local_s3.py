@@ -5,7 +5,6 @@ from __future__ import annotations
 import importlib.util
 import json
 
-import pandas as pd
 import pytest
 
 from shardyfusion._writer_core import VectorColumnMapping
@@ -35,10 +34,21 @@ pytestmark = [
 
 def _base_config(local_s3_service: dict[str, object], *, prefix: str) -> WriteConfig:
     bucket = local_s3_service["bucket"]
+    cred_provider = StaticCredentialProvider(
+        access_key_id=local_s3_service["access_key_id"],  # type: ignore[index]
+        secret_access_key=local_s3_service["secret_access_key"],  # type: ignore[index]
+    )
+    s3_conn_opts = S3ConnectionOptions(
+        endpoint_url=local_s3_service["endpoint_url"],  # type: ignore[index]
+        region_name=local_s3_service["region_name"],  # type: ignore[index]
+    )
     return WriteConfig(
         num_dbs=None,
         s3_prefix=f"s3://{bucket}/{prefix}",
-        adapter_factory=FakeUnifiedFactory(),
+        adapter_factory=FakeUnifiedFactory(
+            credential_provider=cred_provider,
+            s3_connection_options=s3_conn_opts,
+        ),
         vector_spec=VectorSpec(dim=4, vector_col="embedding"),
         sharding=ShardingSpec(
             strategy=ShardingStrategy.CEL,
@@ -47,14 +57,8 @@ def _base_config(local_s3_service: dict[str, object], *, prefix: str) -> WriteCo
         ),
         output=OutputOptions(run_id=prefix, local_root="/tmp/shardyfusion-int"),
         manifest=ManifestOptions(
-            credential_provider=StaticCredentialProvider(
-                access_key_id=local_s3_service["access_key_id"],  # type: ignore[index]
-                secret_access_key=local_s3_service["secret_access_key"],  # type: ignore[index]
-            ),
-            s3_connection_options=S3ConnectionOptions(
-                endpoint_url=local_s3_service["endpoint_url"],  # type: ignore[index]
-                region_name=local_s3_service["region_name"],  # type: ignore[index]
-            ),
+            credential_provider=cred_provider,
+            s3_connection_options=s3_conn_opts,
         ),
     )
 
@@ -79,10 +83,11 @@ def _assert_vector_manifest(
 def test_dask_unified_vector_write(local_s3_service):
     dask = pytest.importorskip("dask")
     dd = pytest.importorskip("dask.dataframe")
+    pandas = pytest.importorskip("pandas")
     from shardyfusion.writer.dask import write_sharded as write_dask_sharded
 
     config = _base_config(local_s3_service, prefix="dask-unified-vectors")
-    pdf = pd.DataFrame(
+    pdf = pandas.DataFrame(
         {
             "key": [0, 1, 2, 3],
             "value": ["v0", "v1", "v2", "v3"],

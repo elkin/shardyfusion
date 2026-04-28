@@ -35,6 +35,8 @@ class FakeUnifiedAdapter:
 
     db_url: str
     local_dir: Path
+    credential_provider: StaticCredentialProvider | None = None
+    s3_connection_options: S3ConnectionOptions | None = None
     _kv: list[tuple[bytes, bytes]] = field(default_factory=list)
     _vec_ids: list[int | str] = field(default_factory=list)
     _vec_data: list[list[float]] = field(default_factory=list)
@@ -89,7 +91,14 @@ class FakeUnifiedAdapter:
             }
         )
         bucket, _ = parse_s3_url(s3_key)
-        store = create_s3_store(bucket=bucket)
+        credentials = (
+            self.credential_provider.resolve() if self.credential_provider else None
+        )
+        store = create_s3_store(
+            bucket=bucket,
+            credentials=credentials,
+            connection_options=self.s3_connection_options,
+        )
         backend = ObstoreBackend(store)
         backend.put(s3_key, payload.encode(), content_type="application/json")
         self._closed = True
@@ -100,9 +109,22 @@ class FakeUnifiedFactory:
 
     supports_vector_writes = True
 
+    def __init__(
+        self,
+        credential_provider: StaticCredentialProvider | None = None,
+        s3_connection_options: S3ConnectionOptions | None = None,
+    ) -> None:
+        self.credential_provider = credential_provider
+        self.s3_connection_options = s3_connection_options
+
     def __call__(self, *, db_url: str, local_dir: Path) -> FakeUnifiedAdapter:
         local_dir.mkdir(parents=True, exist_ok=True)
-        return FakeUnifiedAdapter(db_url=db_url, local_dir=local_dir)
+        return FakeUnifiedAdapter(
+            db_url=db_url,
+            local_dir=local_dir,
+            credential_provider=self.credential_provider,
+            s3_connection_options=self.s3_connection_options,
+        )
 
 
 @dataclass
@@ -110,13 +132,22 @@ class FakeUnifiedReader:
     """Reads from FakeUnifiedAdapter's JSON on S3."""
 
     db_url: str
+    credential_provider: StaticCredentialProvider | None = None
+    s3_connection_options: S3ConnectionOptions | None = None
     _data: dict[str, Any] = field(default_factory=dict)
     _closed: bool = False
 
     def __post_init__(self) -> None:
         s3_key = f"{self.db_url.rstrip('/')}/data.json"
         bucket, _ = parse_s3_url(s3_key)
-        store = create_s3_store(bucket=bucket)
+        credentials = (
+            self.credential_provider.resolve() if self.credential_provider else None
+        )
+        store = create_s3_store(
+            bucket=bucket,
+            credentials=credentials,
+            connection_options=self.s3_connection_options,
+        )
         backend = ObstoreBackend(store)
         raw = backend.get(s3_key)
         self._data = json.loads(raw)
@@ -149,10 +180,22 @@ class FakeUnifiedReader:
 
 
 class FakeUnifiedReaderFactory:
+    def __init__(
+        self,
+        credential_provider: StaticCredentialProvider | None = None,
+        s3_connection_options: S3ConnectionOptions | None = None,
+    ) -> None:
+        self.credential_provider = credential_provider
+        self.s3_connection_options = s3_connection_options
+
     def __call__(
         self, *, db_url: str, local_dir: Path, checkpoint_id: str | None = None
     ) -> FakeUnifiedReader:
-        return FakeUnifiedReader(db_url=db_url)
+        return FakeUnifiedReader(
+            db_url=db_url,
+            credential_provider=self.credential_provider,
+            s3_connection_options=self.s3_connection_options,
+        )
 
 
 # ---------------------------------------------------------------------------
