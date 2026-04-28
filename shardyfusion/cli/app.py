@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from ..manifest import ManifestRef, ParsedManifest
     from ..manifest_store import ManifestStore
     from ..reader import ConcurrentShardedReader
+    from ..type_defs import S3ConnectionOptions
 
 import click
 
@@ -962,6 +963,13 @@ def _parse_duration(value: str) -> timedelta:
     metavar="N",
     help="Keep shard data for only the N most recent runs.",
 )
+@click.option(
+    "--max-retries",
+    default=None,
+    type=int,
+    metavar="N",
+    help="Maximum retry attempts for S3 operations during cleanup.",
+)
 @click.pass_context
 def cleanup_cmd(
     ctx: click.Context,
@@ -969,6 +977,7 @@ def cleanup_cmd(
     include_old_runs: bool,
     older_than: str | None,
     keep_last: int | None,
+    max_retries: int | None,
 ) -> None:
     """Delete stale attempt directories and optionally old run data from S3."""
     from .._writer_core import cleanup_old_runs, cleanup_stale_attempts
@@ -998,10 +1007,13 @@ def cleanup_cmd(
         cred_provider = params.get("credential_provider")
         credentials = cred_provider.resolve() if cred_provider else None
         bucket, _ = parse_s3_url(manifest.required_build.s3_prefix)
+        conn_opts: S3ConnectionOptions = params.get("s3_connection_options") or {}
+        if max_retries is not None:
+            conn_opts["max_attempts"] = max_retries + 1
         store = create_s3_store(
             bucket=bucket,
             credentials=credentials,
-            connection_options=params.get("s3_connection_options"),
+            connection_options=conn_opts,
         )
         backend = ObstoreBackend(store)
 
