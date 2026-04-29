@@ -22,7 +22,7 @@ from ..manifest import (
     WriterInfo,
 )
 from ..metrics._events import MetricEvent
-from ..run_registry import managed_run_record
+from ..run_registry import RunRecordLifecycle
 from ..storage import ObstoreBackend, create_s3_store, parse_s3_url
 from ._distributed import (
     ResolvedVectorRouting,
@@ -130,7 +130,7 @@ def write_vector_sharded(
 
     validate_vector_config(config)
 
-    with managed_run_record(
+    with RunRecordLifecycle.start(
         config=copy(config),
         run_id=run_id,
         writer_type="vector-python",

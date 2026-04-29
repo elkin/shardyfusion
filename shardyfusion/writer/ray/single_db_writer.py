@@ -26,7 +26,7 @@ from shardyfusion.errors import (
 )
 from shardyfusion.logging import FailureSeverity, log_failure
 from shardyfusion.manifest import BuildResult, WriterInfo
-from shardyfusion.run_registry import managed_run_record
+from shardyfusion.run_registry import RunRecordLifecycle
 from shardyfusion.serde import ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
 from shardyfusion.slatedb_adapter import (
@@ -115,7 +115,7 @@ def _write_single_db_impl(
     max_write_bytes_per_second: float | None,
 ) -> BuildResult:
     """Implementation: sort, stream batches, write, publish."""
-    with managed_run_record(
+    with RunRecordLifecycle.start(
         config=config,
         run_id=run_id,
         writer_type="ray",

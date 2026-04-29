@@ -87,6 +87,7 @@ from .routing import ShardLookup, SnapshotRouter
 from .run_registry import (
     InMemoryRunRegistry,
     RunRecord,
+    RunRecordLifecycle,
     RunRegistry,
     RunStatus,
     S3RunRegistry,
@@ -163,6 +164,7 @@ __all__ = [
     "RequiredShardMeta",
     "RetryConfig",
     "RunRecord",
+    "RunRecordLifecycle",
     "RunRegistry",
     "RunStatus",
     "S3ConnectionOptions",

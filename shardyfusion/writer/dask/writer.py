@@ -41,7 +41,7 @@ from shardyfusion.manifest import (
     RequiredShardMeta,
 )
 from shardyfusion.metrics import MetricEvent, MetricsCollector
-from shardyfusion.run_registry import managed_run_record
+from shardyfusion.run_registry import RunRecordLifecycle
 from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import (
     DB_ID_COL,
@@ -201,7 +201,7 @@ def write_sharded(
 
     with (
         LogContext(run_id=run_id),
-        managed_run_record(
+        RunRecordLifecycle.start(
             config=config,
             run_id=run_id,
             writer_type="dask",
@@ -695,7 +695,7 @@ def write_vector_sharded(
     run_id = config.output.run_id or uuid4().hex
 
     mc = config.metrics_collector
-    with managed_run_record(
+    with RunRecordLifecycle.start(
         config=config,
         run_id=run_id,
         writer_type="vector-dask",

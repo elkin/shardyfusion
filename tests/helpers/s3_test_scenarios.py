@@ -243,6 +243,8 @@ def run_writer_publishes_manifest_scenario(
     config = WriteConfig(
         num_dbs=4,
         s3_prefix=s3_prefix,
+        credential_provider=cred_provider,
+        s3_connection_options=conn_options,
         sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
         adapter_factory=adapter_factory,
         manifest=ManifestOptions(
@@ -334,6 +336,8 @@ def run_writer_reader_refresh_scenario(
         return WriteConfig(
             num_dbs=4,
             s3_prefix=s3_prefix,
+            credential_provider=cred_provider,
+            s3_connection_options=conn_options,
             output=OutputOptions(
                 run_id=run_id,
                 local_root=local_root,
@@ -427,6 +431,8 @@ def run_python_writer_publishes_manifest_scenario(
     config = WriteConfig(
         num_dbs=4,
         s3_prefix=s3_prefix,
+        credential_provider=cred_provider,
+        s3_connection_options=conn_options,
         sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
         adapter_factory=adapter_factory,
         manifest=ManifestOptions(
@@ -510,6 +516,8 @@ def run_dask_writer_publishes_manifest_scenario(
     config = WriteConfig(
         num_dbs=4,
         s3_prefix=s3_prefix,
+        credential_provider=cred_provider,
+        s3_connection_options=conn_options,
         sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
         adapter_factory=adapter_factory,
         manifest=ManifestOptions(
@@ -592,6 +600,8 @@ def run_python_writer_reader_refresh_scenario(
         return WriteConfig(
             num_dbs=4,
             s3_prefix=s3_prefix,
+            credential_provider=cred_provider,
+            s3_connection_options=conn_options,
             output=OutputOptions(run_id=run_id, local_root=local_root),
             sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
             adapter_factory=adapter_factory,
@@ -677,6 +687,8 @@ def run_dask_writer_reader_refresh_scenario(
         return WriteConfig(
             num_dbs=4,
             s3_prefix=s3_prefix,
+            credential_provider=cred_provider,
+            s3_connection_options=conn_options,
             output=OutputOptions(run_id=run_id, local_root=local_root),
             sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
             adapter_factory=adapter_factory,
@@ -767,6 +779,8 @@ def run_ray_writer_publishes_manifest_scenario(
     config = WriteConfig(
         num_dbs=4,
         s3_prefix=s3_prefix,
+        credential_provider=cred_provider,
+        s3_connection_options=conn_options,
         sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
         adapter_factory=adapter_factory,
         manifest=ManifestOptions(
@@ -853,6 +867,8 @@ def run_ray_writer_reader_refresh_scenario(
         return WriteConfig(
             num_dbs=4,
             s3_prefix=s3_prefix,
+            credential_provider=cred_provider,
+            s3_connection_options=conn_options,
             output=OutputOptions(run_id=run_id, local_root=local_root),
             sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
             adapter_factory=adapter_factory,

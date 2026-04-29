@@ -25,10 +25,20 @@ def test_python_writer_publishes_manifest_and_current_to_local_s3(
     endpoint_url = local_s3_service["endpoint_url"]
     s3_prefix = f"s3://{bucket}/python-writer"
     file_backed_root = str(tmp_path / "file-backed")
+    credential_provider = StaticCredentialProvider(
+        access_key_id=local_s3_service["access_key_id"],
+        secret_access_key=local_s3_service["secret_access_key"],
+    )
+    connection_options = S3ConnectionOptions(
+        endpoint_url=endpoint_url,
+        region_name=local_s3_service["region_name"],
+    )
 
     config = WriteConfig(
         num_dbs=4,
         s3_prefix=s3_prefix,
+        credential_provider=credential_provider,
+        s3_connection_options=connection_options,
         adapter_factory=file_backed_adapter_factory(file_backed_root),
         sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
         output=OutputOptions(
@@ -36,14 +46,8 @@ def test_python_writer_publishes_manifest_and_current_to_local_s3(
             local_root=str(tmp_path / "local"),
         ),
         manifest=ManifestOptions(
-            credential_provider=StaticCredentialProvider(
-                access_key_id=local_s3_service["access_key_id"],
-                secret_access_key=local_s3_service["secret_access_key"],
-            ),
-            s3_connection_options=S3ConnectionOptions(
-                endpoint_url=endpoint_url,
-                region_name=local_s3_service["region_name"],
-            ),
+            credential_provider=credential_provider,
+            s3_connection_options=connection_options,
         ),
     )
 
@@ -91,10 +95,20 @@ def test_python_writer_parallel_publishes_manifest_and_current_to_local_s3(
     endpoint_url = local_s3_service["endpoint_url"]
     s3_prefix = f"s3://{bucket}/python-writer-parallel"
     file_backed_root = str(tmp_path / "file-backed-parallel")
+    credential_provider = StaticCredentialProvider(
+        access_key_id=local_s3_service["access_key_id"],
+        secret_access_key=local_s3_service["secret_access_key"],
+    )
+    connection_options = S3ConnectionOptions(
+        endpoint_url=endpoint_url,
+        region_name=local_s3_service["region_name"],
+    )
 
     config = WriteConfig(
         num_dbs=4,
         s3_prefix=s3_prefix,
+        credential_provider=credential_provider,
+        s3_connection_options=connection_options,
         adapter_factory=file_backed_adapter_factory(file_backed_root),
         sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
         output=OutputOptions(
@@ -102,14 +116,8 @@ def test_python_writer_parallel_publishes_manifest_and_current_to_local_s3(
             local_root=str(tmp_path / "local-parallel"),
         ),
         manifest=ManifestOptions(
-            credential_provider=StaticCredentialProvider(
-                access_key_id=local_s3_service["access_key_id"],
-                secret_access_key=local_s3_service["secret_access_key"],
-            ),
-            s3_connection_options=S3ConnectionOptions(
-                endpoint_url=endpoint_url,
-                region_name=local_s3_service["region_name"],
-            ),
+            credential_provider=credential_provider,
+            s3_connection_options=connection_options,
         ),
     )
 
@@ -159,10 +167,20 @@ def test_python_writer_parallel_retry_publishes_succeeded_run_record_to_local_s3
     endpoint_url = local_s3_service["endpoint_url"]
     s3_prefix = f"s3://{bucket}/python-writer-retry"
     file_backed_root = str(tmp_path / "file-backed-retry")
+    credential_provider = StaticCredentialProvider(
+        access_key_id=local_s3_service["access_key_id"],
+        secret_access_key=local_s3_service["secret_access_key"],
+    )
+    connection_options = S3ConnectionOptions(
+        endpoint_url=endpoint_url,
+        region_name=local_s3_service["region_name"],
+    )
 
     config = WriteConfig(
         num_dbs=4,
         s3_prefix=s3_prefix,
+        credential_provider=credential_provider,
+        s3_connection_options=connection_options,
         adapter_factory=FailOnceAdapterFactory(
             file_backed_adapter_factory(file_backed_root),
             marker_root=str(tmp_path / "retry-markers"),
@@ -178,14 +196,8 @@ def test_python_writer_parallel_retry_publishes_succeeded_run_record_to_local_s3
             local_root=str(tmp_path / "local-retry"),
         ),
         manifest=ManifestOptions(
-            credential_provider=StaticCredentialProvider(
-                access_key_id=local_s3_service["access_key_id"],
-                secret_access_key=local_s3_service["secret_access_key"],
-            ),
-            s3_connection_options=S3ConnectionOptions(
-                endpoint_url=endpoint_url,
-                region_name=local_s3_service["region_name"],
-            ),
+            credential_provider=credential_provider,
+            s3_connection_options=connection_options,
         ),
     )
 

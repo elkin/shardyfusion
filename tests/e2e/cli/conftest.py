@@ -168,6 +168,7 @@ def _write_kv_data(
     config = WriteConfig(
         num_dbs=num_dbs,
         s3_prefix=s3_prefix,
+        **s3_kwargs,
         sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
         adapter_factory=backend.adapter_factory,
         manifest=ManifestOptions(**s3_kwargs),
@@ -199,6 +200,7 @@ def _write_two_kv_manifests(
         return WriteConfig(
             num_dbs=2,
             s3_prefix=s3_prefix,
+            **s3_kwargs,
             sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
             adapter_factory=backend.adapter_factory,
             manifest=ManifestOptions(**s3_kwargs),

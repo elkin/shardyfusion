@@ -181,10 +181,15 @@ class WriteConfig:
         shard_retry: Optional retry configuration. Used for per-shard retry in
             Dask/Ray sharded writes, whole-database retry in Spark/Dask/Ray
             `write_single_db()`, and retry-enabled Python parallel writes.
-        credential_provider: Credential provider for S3 access. When also
-            set on ``manifest``, the manifest-level provider takes precedence.
-        s3_connection_options: S3 transport/connection overrides. When also
-            set on ``manifest``, the manifest-level options take precedence.
+        credential_provider: Writer-level credential provider for S3 access.
+            Shard adapters and the default run registry use this directly. The
+            default S3 manifest store uses ``manifest.credential_provider``
+            when provided, otherwise this provider.
+        s3_connection_options: Writer-level S3 transport/connection overrides.
+            Shard adapters and the default run registry use this directly.
+            The default S3 manifest store uses
+            ``manifest.s3_connection_options`` when provided, otherwise these
+            options.
 
     Raises:
         ConfigValidationError: If any parameter fails validation.

@@ -32,24 +32,28 @@ def test_single_db_spark_publishes_manifest_and_current(
     endpoint_url = local_s3_service["endpoint_url"]
     s3_prefix = f"s3://{bucket}/single-db-spark"
     file_backed_root = str(tmp_path / "file-backed")
+    credential_provider = StaticCredentialProvider(
+        access_key_id=local_s3_service["access_key_id"],
+        secret_access_key=local_s3_service["secret_access_key"],
+    )
+    connection_options = S3ConnectionOptions(
+        endpoint_url=endpoint_url,
+        region_name=local_s3_service["region_name"],
+    )
 
     config = WriteConfig(
         num_dbs=1,
         s3_prefix=s3_prefix,
+        credential_provider=credential_provider,
+        s3_connection_options=connection_options,
         adapter_factory=file_backed_adapter_factory(file_backed_root),
         output=OutputOptions(
             run_id="single-db-spark-test",
             local_root=str(tmp_path / "local"),
         ),
         manifest=ManifestOptions(
-            credential_provider=StaticCredentialProvider(
-                access_key_id=local_s3_service["access_key_id"],
-                secret_access_key=local_s3_service["secret_access_key"],
-            ),
-            s3_connection_options=S3ConnectionOptions(
-                endpoint_url=endpoint_url,
-                region_name=local_s3_service["region_name"],
-            ),
+            credential_provider=credential_provider,
+            s3_connection_options=connection_options,
         ),
     )
 
@@ -97,10 +101,20 @@ def test_single_db_spark_retry_publishes_succeeded_run_record(
     endpoint_url = local_s3_service["endpoint_url"]
     s3_prefix = f"s3://{bucket}/single-db-spark-retry"
     file_backed_root = str(tmp_path / "file-backed-retry")
+    credential_provider = StaticCredentialProvider(
+        access_key_id=local_s3_service["access_key_id"],
+        secret_access_key=local_s3_service["secret_access_key"],
+    )
+    connection_options = S3ConnectionOptions(
+        endpoint_url=endpoint_url,
+        region_name=local_s3_service["region_name"],
+    )
 
     config = WriteConfig(
         num_dbs=1,
         s3_prefix=s3_prefix,
+        credential_provider=credential_provider,
+        s3_connection_options=connection_options,
         adapter_factory=FailOnceAdapterFactory(
             file_backed_adapter_factory(file_backed_root),
             marker_root=str(tmp_path / "retry-markers"),
@@ -115,14 +129,8 @@ def test_single_db_spark_retry_publishes_succeeded_run_record(
             local_root=str(tmp_path / "local-retry"),
         ),
         manifest=ManifestOptions(
-            credential_provider=StaticCredentialProvider(
-                access_key_id=local_s3_service["access_key_id"],
-                secret_access_key=local_s3_service["secret_access_key"],
-            ),
-            s3_connection_options=S3ConnectionOptions(
-                endpoint_url=endpoint_url,
-                region_name=local_s3_service["region_name"],
-            ),
+            credential_provider=credential_provider,
+            s3_connection_options=connection_options,
         ),
     )
 

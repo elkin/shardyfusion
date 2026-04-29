@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import threading
-from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Any, Protocol
+from types import TracebackType
+from typing import TYPE_CHECKING, Protocol
 from uuid import uuid4
 
 import yaml
@@ -16,6 +16,9 @@ from .credentials import CredentialProvider
 from .logging import FailureSeverity, get_logger, log_failure
 from .storage import ObstoreBackend, StorageBackend, create_s3_store, join_s3
 from .type_defs import S3ConnectionOptions
+
+if TYPE_CHECKING:
+    from .manifest_store import ManifestStore
 
 _logger = get_logger(__name__)
 
@@ -70,13 +73,40 @@ class RunRegistry(Protocol):
         ...
 
 
+class _RunRecordOutputConfig(Protocol):
+    @property
+    def shard_prefix(self) -> str: ...
+
+    @property
+    def db_path_template(self) -> str: ...
+
+    @property
+    def run_registry_prefix(self) -> str: ...
+
+
+class _RunRecordManifestConfig(Protocol):
+    @property
+    def store(self) -> ManifestStore | None: ...
+
+
 class _RunRecordConfig(Protocol):
-    s3_prefix: str
-    output: Any
-    manifest: Any
-    run_registry: Any
-    credential_provider: CredentialProvider | None
-    s3_connection_options: S3ConnectionOptions | None
+    @property
+    def s3_prefix(self) -> str: ...
+
+    @property
+    def output(self) -> _RunRecordOutputConfig: ...
+
+    @property
+    def manifest(self) -> _RunRecordManifestConfig: ...
+
+    @property
+    def run_registry(self) -> RunRegistry | None: ...
+
+    @property
+    def credential_provider(self) -> CredentialProvider | None: ...
+
+    @property
+    def s3_connection_options(self) -> S3ConnectionOptions | None: ...
 
 
 def _utc_now() -> datetime:
@@ -168,8 +198,9 @@ def resolve_run_registry(config: _RunRecordConfig) -> RunRegistry:
     if isinstance(config.manifest.store, InMemoryManifestStore):
         return InMemoryRunRegistry()
 
-    credentials = config.manifest.credential_provider or config.credential_provider
-    conn_opts = config.manifest.s3_connection_options or config.s3_connection_options
+    # The run registry is writer-scoped metadata, not manifest-store metadata.
+    credentials = config.credential_provider
+    conn_opts = config.s3_connection_options
     from .storage import parse_s3_url
 
     bucket, _ = parse_s3_url(config.s3_prefix)
@@ -219,6 +250,20 @@ class RunRecordLifecycle:
     @property
     def run_record_ref(self) -> str | None:
         return self._ref
+
+    def __enter__(self) -> RunRecordLifecycle:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        if exc is not None:
+            self.mark_failed(exc)
+        if not self._terminal:
+            self.close()
 
     @classmethod
     def start(
@@ -333,27 +378,3 @@ class RunRecordLifecycle:
                 run_record_ref=self._ref,
                 include_traceback=True,
             )
-
-
-@contextmanager
-def managed_run_record(
-    *,
-    config: _RunRecordConfig,
-    run_id: str,
-    writer_type: str,
-) -> Any:
-    """Context manager that keeps a run record current during a write."""
-
-    lifecycle = RunRecordLifecycle.start(
-        config=config,
-        run_id=run_id,
-        writer_type=writer_type,
-    )
-    try:
-        yield lifecycle
-    except Exception as exc:
-        lifecycle.mark_failed(exc)
-        raise
-    finally:
-        if not lifecycle._terminal:
-            lifecycle.close()

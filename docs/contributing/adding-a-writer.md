@@ -17,7 +17,7 @@ A writer is responsible for:
 3. **Selecting winners** — call `select_winners` once all attempts are reported.
 4. **Building and publishing the manifest** — call `assemble_build_result` then `publish_to_store`.
 5. **Cleaning up losers** — call `cleanup_losers`.
-6. **Run-registry lifecycle** — `managed_run_record(...)` context manager bookends the whole thing.
+6. **Run-registry lifecycle** — `RunRecordLifecycle.start(...)` context manager bookends the whole thing.
 
 Steps 2–6 are framework-agnostic and live in `_writer_core`. Step 1 is what makes each writer different.
 
@@ -81,7 +81,7 @@ manifest_ref = publish_to_store(build, manifest_options)
 cleanup_losers(attempts, winners, ...)
 ```
 
-Wrap everything in `managed_run_record(config)` so the run-registry lifecycle (start → set_manifest_ref → mark_succeeded/mark_failed → close) is correctly emitted.
+Wrap everything in `with RunRecordLifecycle.start(config=..., run_id=..., writer_type=...) as run_record:` so the run-registry lifecycle (start → set_manifest_ref → mark_succeeded/mark_failed → close) is correctly emitted.
 
 ### 5. Retries
 
@@ -138,7 +138,7 @@ Update [`architecture/writer-core.md`](../architecture/writer-core.md) if you in
 ## Common mistakes
 
 - **Re-implementing `route_key`.** Always reuse `_writer_core.route_key`.
-- **Forgetting `managed_run_record`.** Run records won't be written; loser cleanup deferred from a previous run can't progress.
+- **Forgetting `RunRecordLifecycle.start(...)`.** Run records won't be written; loser cleanup deferred from a previous run can't progress.
 - **Top-level framework import.** Breaks the base install.
 - **Accepting `key_col` instead of `key_fn`.** Spark is the exception (DataFrame-native); for everything else, use `key_fn`.
 - **Adding new `WriteConfig` fields for one framework.** Framework knobs go on the writer function signature.

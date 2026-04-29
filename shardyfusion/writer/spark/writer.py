@@ -46,7 +46,7 @@ from shardyfusion.manifest import (
     WriterInfo,
 )
 from shardyfusion.metrics import MetricEvent, MetricsCollector
-from shardyfusion.run_registry import managed_run_record
+from shardyfusion.run_registry import RunRecordLifecycle
 from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import DB_ID_COL, KeyEncoding
 from shardyfusion.slatedb_adapter import (
@@ -195,7 +195,7 @@ def _write_sharded_impl(
 
     with (
         LogContext(run_id=run_id),
-        managed_run_record(
+        RunRecordLifecycle.start(
             config=config,
             run_id=run_id,
             writer_type="spark",
@@ -749,7 +749,7 @@ def write_vector_sharded(
 
     run_id = config.output.run_id or uuid4().hex
 
-    with managed_run_record(
+    with RunRecordLifecycle.start(
         config=config,
         run_id=run_id,
         writer_type="vector-spark",

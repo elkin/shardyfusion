@@ -220,6 +220,8 @@ error_message: null
 
 Run records are operational writer metadata. Readers do not consume them. `BuildResult.run_record_ref` points to the record when one was published.
 
+Default S3 run-registry resolution uses writer-level `credential_provider` and `s3_connection_options`. `manifest.credential_provider` and `manifest.s3_connection_options` are manifest-store scoped and are not used for run-registry S3 access. Pass an explicit `run_registry` if the run registry needs different settings.
+
 **PostgreSQL manifest store** (`db_manifest_store.py:PostgresManifestStore`) uses `shardyfusion_manifests_builds` and `shardyfusion_manifests_shards` tables for build metadata and shard details (derived from the configurable `table_name` prefix, default `"shardyfusion_manifests"`), and an append-only `shardyfusion_pointer` table for current-pointer tracking (one INSERT per `publish()` or `set_current()` call). `load_current()` reads the newest pointer row. Accepts a zero-arg `connection_factory` callable for connection management (typically a psycopg2 connection pool).
 
 ### Key Abstractions
@@ -353,7 +355,7 @@ Top-level exports from `shardyfusion.__init__` (`__all__`, grouped only for read
 - Credentials/connectivity: `CredentialProvider`, `EnvCredentialProvider`, `RetryConfig`, `S3ConnectionOptions`, `S3Credentials`, `StaticCredentialProvider`
 - Errors: `ConfigValidationError`, `DbAdapterError`, `ManifestBuildError`, `ManifestParseError`, `ManifestStoreError`, `PoolExhaustedError`, `PublishCurrentError`, `PublishManifestError`, `ReaderStateError`, `S3TransientError`, `ShardAssignmentError`, `ShardCoverageError`, `ShardWriteError`, `ShardyfusionError`
 - Manifest/store: `InMemoryManifestStore`, `ManifestArtifact`, `ManifestRef`, `ManifestShardingSpec`, `ManifestStore`, `ParsedManifest`, `RequiredBuildMeta`, `RequiredShardMeta`, `S3ManifestStore`, `SQLITE_MANIFEST_CONTENT_TYPE`, `SqliteManifestBuilder`, `SqliteShardLookup`, `load_sqlite_build_meta`, `parse_manifest_payload`, `parse_sqlite_manifest`
-- Run registry: `InMemoryRunRegistry`, `RunRecord`, `RunRegistry`, `RunStatus`, `S3RunRegistry`
+- Run registry: `InMemoryRunRegistry`, `RunRecord`, `RunRecordLifecycle`, `RunRegistry`, `RunStatus`, `S3RunRegistry`
 - Reader/routing: `AsyncManifestStore`, `AsyncS3ManifestStore`, `AsyncShardReader`, `AsyncShardReaderFactory`, `AsyncShardReaderHandle`, `AsyncShardedReader`, `AsyncSlateDbReaderFactory`, `AsyncUnifiedShardedReader` (lazy import via `__getattr__`), `ConcurrentShardedReader`, `ReaderHealth`, `ShardDetail`, `ShardLookup`, `ShardReader`, `ShardReaderFactory`, `ShardReaderHandle`, `ShardedReader`, `SlateDbReaderFactory`, `SnapshotInfo`, `SnapshotRouter`, `UnifiedShardedReader` (lazy import via `__getattr__`)
 - Adapters: `DbAdapter`, `DbAdapterFactory`, `SlateDbFactory`
 - Rate limiting: `AcquireResult`, `RateLimiter`, `ThreadSafeTokenBucket`, `TokenBucket`

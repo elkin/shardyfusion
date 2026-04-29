@@ -35,7 +35,7 @@ from shardyfusion.errors import ConfigValidationError
 from shardyfusion.logging import get_logger, log_event
 from shardyfusion.manifest import BuildResult, WriterInfo
 from shardyfusion.metrics import MetricEvent
-from shardyfusion.run_registry import managed_run_record
+from shardyfusion.run_registry import RunRecordLifecycle
 from shardyfusion.serde import make_key_encoder
 from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
 from shardyfusion.slatedb_adapter import DbAdapterFactory, SlateDbFactory
@@ -207,7 +207,7 @@ def write_sharded(
 
     with (
         LogContext(run_id=run_id),
-        managed_run_record(
+        RunRecordLifecycle.start(
             config=config,
             run_id=run_id,
             writer_type="python",

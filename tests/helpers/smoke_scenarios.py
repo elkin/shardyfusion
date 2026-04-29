@@ -246,6 +246,8 @@ def run_smoke_write_then_read_scenario(
     config = WriteConfig(
         num_dbs=num_dbs,
         s3_prefix=s3_prefix,
+        credential_provider=cred_provider,
+        s3_connection_options=conn_options,
         sharding=ShardingSpec(
             strategy=ShardingStrategy.HASH,
             max_keys_per_shard=max_keys_per_shard,
@@ -357,6 +359,8 @@ def run_smoke_cel_scenario(
     config = WriteConfig(
         num_dbs=None,  # CEL always discovers from data
         s3_prefix=s3_prefix,
+        credential_provider=cred_provider,
+        s3_connection_options=conn_options,
         sharding=ShardingSpec(
             strategy=ShardingStrategy.CEL,
             cel_expr=cel_expr,

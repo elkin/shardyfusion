@@ -49,13 +49,13 @@ Readers atomically observe either the old `_CURRENT` or the new one. Manifest ob
 
 ## Cleanup phases
 
-After a successful publish, the writer runs three cleanup operations (any of them can be disabled by config):
+After a successful publish, the writer can run cleanup operations to remove data that is no longer part of the published snapshot:
 
 - **`cleanup_losers`** — delete shard attempts that lost winner selection in *this* build.
-- **`cleanup_stale_attempts`** — delete uncommitted attempts from *prior* runs older than `stale_attempt_age`.
-- **`cleanup_old_runs`** — delete completed runs older than `keep_runs` to bound storage growth.
+- **`cleanup_stale_attempts`** — list attempt directories for the current manifest run and delete attempts that are not the winning `db_url` for each shard.
+- **`cleanup_old_runs`** — delete run directories whose run IDs are not in the protected set passed by the caller.
 
-All three respect the `RunRecordLifecycle` (see [`run-registry.md`](run-registry.md)) and refuse to delete data belonging to runs in non-terminal states.
+`RunRecordLifecycle` (see [`run-registry.md`](run-registry.md)) records writer status and a heartbeat lease so cleanup tooling can reason about active vs stale runs.
 
 ## What this module does *not* do
 

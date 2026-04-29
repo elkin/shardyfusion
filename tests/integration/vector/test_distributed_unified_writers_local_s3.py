@@ -45,6 +45,8 @@ def _base_config(local_s3_service: dict[str, object], *, prefix: str) -> WriteCo
     return WriteConfig(
         num_dbs=None,
         s3_prefix=f"s3://{bucket}/{prefix}",
+        credential_provider=cred_provider,
+        s3_connection_options=s3_conn_opts,
         adapter_factory=FakeUnifiedFactory(
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
