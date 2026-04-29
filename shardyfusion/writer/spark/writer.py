@@ -28,6 +28,7 @@ from shardyfusion._writer_core import (
     inject_vector_manifest_fields,
     publish_to_store,
     resolve_distributed_vector_fn,
+    resolve_num_dbs,
     select_winners,
     wrap_factory_for_vector,
 )
@@ -449,13 +450,6 @@ def verify_vector_routing_agreement(
         )
 
 
-def _resolve_num_dbs_before_sharding(df: DataFrame, config: WriteConfig) -> int | None:
-    """Resolve num_dbs that can be determined before add_db_id_column."""
-    from shardyfusion._writer_core import resolve_num_dbs
-
-    return resolve_num_dbs(config, df.count)
-
-
 def _prepare_partitioned_rows(
     *,
     df: DataFrame,
@@ -471,7 +465,7 @@ def _prepare_partitioned_rows(
     from shardyfusion._writer_core import discover_cel_num_dbs
 
     shard_started = time.perf_counter()
-    num_dbs = _resolve_num_dbs_before_sharding(df, config)
+    num_dbs = resolve_num_dbs(config, df.count)
 
     df_with_db_id, resolved_sharding = add_db_id_column(
         df,
