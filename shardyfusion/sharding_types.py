@@ -5,13 +5,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Self
+from typing import Self, get_args
 
 DB_ID_COL = "_shard_id"
 
 RoutingValue = int | str | bytes
 
-_SUPPORTED_ROUTING_VALUE_TYPES = (int, str, bytes)
+_SUPPORTED_ROUTING_VALUE_TYPES = get_args(RoutingValue)
 
 
 def _validate_homogeneous_non_null_values(
