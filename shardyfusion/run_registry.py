@@ -260,13 +260,44 @@ class RunRecordLifecycle:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        # Returning None (implicitly) re-raises any in-flight exception, matching
-        # the prior `managed_run_record` semantics. `mark_failed` records the
-        # terminal status before the exception propagates.
-        if exc is not None:
+        # The run registry is observability metadata: its own failures must never
+        # mask the user's in-flight exception or leak the heartbeat thread.
+        # Both branches swallow registry-side errors via log_failure(); returning
+        # None re-raises any in-flight exception from the with-block.
+        try:
+            if exc is not None:
+                self._safe_mark_failed(exc)
+        finally:
+            if not self._terminal:
+                self._safe_close()
+
+    def _safe_mark_failed(self, exc: BaseException) -> None:
+        try:
             self.mark_failed(exc)
-        if not self._terminal:
+        except Exception as registry_exc:
+            log_failure(
+                "run_record_mark_failed_failed",
+                severity=FailureSeverity.ERROR,
+                logger=_logger,
+                error=registry_exc,
+                run_id=self._record.run_id,
+                run_record_ref=self._ref,
+                include_traceback=True,
+            )
+
+    def _safe_close(self) -> None:
+        try:
             self.close()
+        except Exception as registry_exc:
+            log_failure(
+                "run_record_close_failed",
+                severity=FailureSeverity.ERROR,
+                logger=_logger,
+                error=registry_exc,
+                run_id=self._record.run_id,
+                run_record_ref=self._ref,
+                include_traceback=True,
+            )
 
     @classmethod
     def start(
