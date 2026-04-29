@@ -6,7 +6,6 @@ import contextlib
 import time
 import uuid
 from collections.abc import Iterable
-from copy import copy
 from pathlib import Path
 
 import numpy as np
@@ -131,7 +130,7 @@ def write_vector_sharded(
     validate_vector_config(config)
 
     with RunRecordLifecycle.start(
-        config=copy(config),
+        config=config,
         run_id=run_id,
         writer_type="vector-python",
     ) as run_record:

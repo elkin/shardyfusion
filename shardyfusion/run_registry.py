@@ -260,6 +260,9 @@ class RunRecordLifecycle:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        # Returning None (implicitly) re-raises any in-flight exception, matching
+        # the prior `managed_run_record` semantics. `mark_failed` records the
+        # terminal status before the exception propagates.
         if exc is not None:
             self.mark_failed(exc)
         if not self._terminal:
