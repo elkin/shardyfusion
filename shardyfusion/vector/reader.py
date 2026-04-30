@@ -16,7 +16,7 @@ import numpy as np
 
 from .._rate_limiter import RateLimiter
 from ..credentials import CredentialProvider
-from ..errors import ReaderStateError
+from ..errors import ManifestParseError, ReaderStateError
 from ..logging import get_logger, log_event
 from ..manifest import ManifestRef, ParsedManifest, RequiredShardMeta
 from ..manifest_store import ManifestStore, S3ManifestStore
@@ -437,8 +437,6 @@ class ShardedVectorReader:
 
     def _load_initial_manifest(self) -> None:
         """Load manifest on construction, with fallback."""
-        from ..errors import ManifestParseError
-
         ref = self._store.load_current()
         if ref is None:
             raise ReaderStateError("No CURRENT pointer found")

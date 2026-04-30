@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import io
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -326,8 +327,6 @@ def coerce_vector_value(value: object) -> np.ndarray:
     Handles string representations (from Dask serialization), objects with
     a ``tolist()`` method (Arrow arrays, numpy arrays), and plain sequences.
     """
-    import ast
-
     if isinstance(value, np.ndarray):
         return value.astype(np.float32, copy=False)
     if isinstance(value, str):

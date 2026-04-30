@@ -16,12 +16,17 @@ import numpy as np
 from .._rate_limiter import RateLimiter
 from ..async_manifest_store import AsyncManifestStore, AsyncS3ManifestStore
 from ..credentials import CredentialProvider
-from ..errors import ReaderStateError
+from ..errors import ManifestParseError, ReaderStateError
 from ..logging import get_logger, log_event
 from ..manifest import ManifestRef, ParsedManifest, RequiredShardMeta
 from ..metrics._events import MetricEvent
 from ..metrics._protocol import MetricsCollector
-from ..storage import ObstoreBackend, create_s3_store, parse_s3_url
+from ..storage import (
+    AsyncObstoreBackend,
+    ObstoreBackend,
+    create_s3_store,
+    parse_s3_url,
+)
 from ..type_defs import S3ConnectionOptions
 from ._merge import merge_results
 from .config import VectorIndexConfig
@@ -85,8 +90,6 @@ class AsyncShardedVectorReader:
         if manifest_store is not None:
             self._store = manifest_store
         else:
-            from ..storage import AsyncObstoreBackend
-
             credentials = credential_provider.resolve() if credential_provider else None
             bucket, _ = parse_s3_url(s3_prefix)
             store = create_s3_store(
@@ -440,8 +443,6 @@ class AsyncShardedVectorReader:
             raise ReaderStateError("Reader is closed")
 
     async def _load_initial_manifest(self) -> None:
-        from ..errors import ManifestParseError
-
         ref = await self._store.load_current()
         if ref is None:
             raise ReaderStateError("No CURRENT pointer found")

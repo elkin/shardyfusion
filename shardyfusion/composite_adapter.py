@@ -37,9 +37,11 @@ from .type_defs import (
     ShardReader,
     ShardReaderFactory,
 )
+from .vector.config import VectorIndexConfig
 from .vector.types import (
     AsyncVectorShardReader,
     AsyncVectorShardReaderFactory,
+    DistanceMetric,
     SearchResult,
     VectorIndexWriter,
     VectorIndexWriterFactory,
@@ -81,9 +83,6 @@ class CompositeFactory:
     vector_spec: VectorSpec
 
     def __call__(self, *, db_url: str, local_dir: Path) -> CompositeAdapter:
-        from .vector.config import VectorIndexConfig
-        from .vector.types import DistanceMetric
-
         index_config = VectorIndexConfig(
             dim=self.vector_spec.dim,
             metric=DistanceMetric(vector_metric_to_str(self.vector_spec.metric)),
@@ -218,9 +217,6 @@ class CompositeReaderFactory:
         checkpoint_id: str | None = None,
         manifest: Manifest,
     ) -> CompositeShardReader:
-        from .vector.config import VectorIndexConfig
-        from .vector.types import DistanceMetric
-
         index_config = VectorIndexConfig(
             dim=self.vector_spec.dim,
             metric=DistanceMetric(vector_metric_to_str(self.vector_spec.metric)),
@@ -314,9 +310,6 @@ class AsyncCompositeReaderFactory:
         checkpoint_id: str | None = None,
         manifest: Manifest,
     ) -> AsyncCompositeShardReader:
-        from .vector.config import VectorIndexConfig
-        from .vector.types import DistanceMetric
-
         index_config = VectorIndexConfig(
             dim=self.vector_spec.dim,
             metric=DistanceMetric(vector_metric_to_str(self.vector_spec.metric)),
