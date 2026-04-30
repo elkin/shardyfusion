@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Self, get_args
 
@@ -129,20 +129,95 @@ class ShardHashAlgorithm(str, Enum):
 
 @dataclass(slots=True)
 class ShardingSpec:
-    """Configuration for mapping rows to shard database ids.
+    """Base class for sharding specifications."""
 
-    Two strategies are supported:
+    def to_manifest_dict(self) -> dict[str, object]:
+        """Return manifest-safe representation."""
+        raise NotImplementedError
 
-    **HASH** (default): Uniform distribution via
-    ``hash_algorithm(canonical_bytes(key)) % num_dbs``.
-    Supports int, str, and bytes keys. Requires ``num_dbs > 0`` (explicit or computed
-    from ``max_keys_per_shard``).
 
-    **CEL**: Flexible shard assignment via a CEL expression. The expression may return
+@dataclass(slots=True)
+class HashShardingSpec(ShardingSpec):
+    """HASH sharding configuration.
+
+    Uniform distribution via ``hash_algorithm(canonical_bytes(key)) % num_dbs``.
+    Supports int, str, and bytes keys. ``num_dbs`` lives on :class:`HashWriteConfig`.
+    """
+
+    hash_algorithm: ShardHashAlgorithm = ShardHashAlgorithm.XXH3_64
+    max_keys_per_shard: int | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.hash_algorithm, ShardHashAlgorithm):
+            try:
+                self.hash_algorithm = ShardHashAlgorithm.from_value(self.hash_algorithm)
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
+        if self.max_keys_per_shard is not None and self.max_keys_per_shard <= 0:
+            raise ValueError("max_keys_per_shard must be > 0")
+
+    def to_manifest_dict(self) -> dict[str, object]:
+        d: dict[str, object] = {
+            "strategy": ShardingStrategy.HASH.value,
+            "hash_algorithm": self.hash_algorithm.value,
+        }
+        return d
+
+
+@dataclass(slots=True)
+class CelShardingSpec(ShardingSpec):
+    """CEL sharding configuration.
+
+    Flexible shard assignment via a CEL expression. The expression may return
     a dense integer shard id directly, or a categorical token resolved by exact match
     against ``routing_values``. A built-in ``shard_hash()`` function (wrapping xxh3_64)
     is available in CEL expressions. ``num_dbs`` is always derived from routing
-    metadata or discovered from data; it must not be provided explicitly.
+    metadata or discovered from data.
+    """
+
+    cel_expr: str = ""
+    cel_columns: dict[str, str] = field(default_factory=dict)
+    routing_values: list[RoutingValue] | None = None
+    infer_routing_values_from_data: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.cel_expr:
+            raise ValueError("CEL strategy requires cel_expr")
+        if not self.cel_columns:
+            raise ValueError("CEL strategy requires cel_columns")
+        if self.infer_routing_values_from_data:
+            if self.routing_values is not None:
+                raise ValueError(
+                    "infer_routing_values_from_data cannot be combined with "
+                    "routing_values"
+                )
+        if self.routing_values is not None:
+            validate_routing_values(self.routing_values)
+
+    def to_manifest_dict(self) -> dict[str, object]:
+        d: dict[str, object] = {
+            "strategy": ShardingStrategy.CEL.value,
+            "hash_algorithm": ShardHashAlgorithm.XXH3_64.value,
+        }
+        if self.routing_values is not None:
+            d["routing_values"] = self.routing_values
+        d["cel_expr"] = self.cel_expr
+        d["cel_columns"] = dict(self.cel_columns)
+        return d
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible unified ShardingSpec (deprecated — will be removed).
+# ---------------------------------------------------------------------------
+
+@dataclass(slots=True)
+class _LegacyShardingSpec(ShardingSpec):
+    """Backward-compatible unified sharding spec.
+
+    .. deprecated::
+
+       Use :class:`HashShardingSpec` or :class:`CelShardingSpec` instead.
+       This class exists only to keep existing code working during migration.
     """
 
     strategy: ShardingStrategy = ShardingStrategy.HASH
@@ -191,8 +266,6 @@ class ShardingSpec:
             raise ValueError("max_keys_per_shard must be > 0")
 
     def to_manifest_dict(self) -> dict[str, object]:
-        """Return manifest-safe representation (Spark callables omitted)."""
-
         d: dict[str, object] = {
             "strategy": self.strategy.value,
             "hash_algorithm": self.hash_algorithm.value,
@@ -204,3 +277,7 @@ class ShardingSpec:
         if self.cel_columns is not None:
             d["cel_columns"] = self.cel_columns
         return d
+
+
+# Keep old name working during migration.
+LegacyShardingSpec = _LegacyShardingSpec

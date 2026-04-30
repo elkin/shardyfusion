@@ -12,10 +12,12 @@ from .async_manifest_store import (
 )
 from .cel import CelColumn, CelType, cel_sharding, cel_sharding_by_columns
 from .config import (
+    CelWriteConfig,
+    HashWriteConfig,
+    LegacyWriteConfig as WriteConfig,
     ManifestOptions,
     OutputOptions,
     VectorSpec,
-    WriteConfig,
 )
 from .credentials import (
     CredentialProvider,
@@ -94,9 +96,11 @@ from .run_registry import (
 )
 from .serde import ValueSpec
 from .sharding_types import (
+    CelShardingSpec,
+    HashShardingSpec,
     KeyEncoding,
+    LegacyShardingSpec as ShardingSpec,
     ShardHashAlgorithm,
-    ShardingSpec,
     ShardingStrategy,
 )
 from .slatedb_adapter import (
@@ -127,7 +131,9 @@ __all__ = [
     "BuildResult",
     "BuildStats",
     "CelColumn",
+    "CelShardingSpec",
     "CelType",
+    "CelWriteConfig",
     "ConcurrentShardedReader",
     "ConfigValidationError",
     "CredentialProvider",
@@ -139,6 +145,8 @@ __all__ = [
     "FailureSeverity",
     "InMemoryManifestStore",
     "InMemoryRunRegistry",
+    "HashShardingSpec",
+    "HashWriteConfig",
     "JsonFormatter",
     "KeyEncoding",
     "LogContext",

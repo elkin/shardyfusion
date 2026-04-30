@@ -11,7 +11,15 @@ from urllib.parse import urlparse
 from .credentials import CredentialProvider
 from .errors import ConfigValidationError
 from .metrics import MetricsCollector
-from .sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
+from .sharding_types import (
+    CelShardingSpec,
+    HashShardingSpec,
+    KeyEncoding,
+    ShardingSpec,
+    ShardingStrategy,
+    _LegacyShardingSpec,
+    validate_routing_values,
+)
 from .slatedb_adapter import DbAdapterFactory
 from .type_defs import JsonObject, RetryConfig, S3ConnectionOptions
 
@@ -156,17 +164,13 @@ class VectorSpec:
 
 @dataclass(slots=True)
 class WriteConfig:
-    """Top-level configuration for sharded snapshot writes.
+    """Base configuration for sharded snapshot writes.
 
     Framework-specific parameters (``key_col``, ``value_spec``,
     ``sort_within_partitions``) live on the writer function signature,
     not here.
 
     Args:
-        num_dbs: Number of shard databases to create. Must be > 0 for
-            explicit HASH sharding. Set to ``None`` (default) when using
-            CEL sharding or ``max_keys_per_shard`` (auto-discovered at
-            write time).
         s3_prefix: S3 location for shard databases and manifests
             (e.g. ``s3://bucket/prefix``).
         key_encoding: How keys are serialized to bytes. Default ``u64be``
@@ -174,13 +178,12 @@ class WriteConfig:
         batch_size: Number of key-value pairs per write batch. Default 50,000.
         adapter_factory: Factory for creating shard database adapters.
             Default: ``SlateDbFactory()``.
-        sharding: Sharding strategy configuration (hash, range, or custom).
         output: Output path/layout settings.
         manifest: Manifest build and publish settings.
         metrics_collector: Optional observer for write lifecycle events.
         shard_retry: Optional retry configuration. Used for per-shard retry in
             Dask/Ray sharded writes, whole-database retry in Spark/Dask/Ray
-            `write_single_db()`, and retry-enabled Python parallel writes.
+            ``write_single_db()``, and retry-enabled Python parallel writes.
         credential_provider: Writer-level credential provider for S3 access.
             Shard adapters and the default run registry use this directly. The
             default S3 manifest store uses ``manifest.credential_provider``
@@ -195,14 +198,12 @@ class WriteConfig:
         ConfigValidationError: If any parameter fails validation.
     """
 
-    num_dbs: int | None = None
     s3_prefix: str = ""
     key_encoding: KeyEncoding = KeyEncoding.U64BE
 
     batch_size: int = 50_000
     adapter_factory: DbAdapterFactory | None = None  # None → SlateDbFactory()
 
-    sharding: ShardingSpec = field(default_factory=ShardingSpec)
     output: OutputOptions = field(default_factory=OutputOptions)
     manifest: ManifestOptions = field(default_factory=ManifestOptions)
 
@@ -217,8 +218,6 @@ class WriteConfig:
     vector_spec: VectorSpec | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.sharding, ShardingSpec):
-            raise ConfigValidationError("sharding must be ShardingSpec")
         if not isinstance(self.output, OutputOptions):
             raise ConfigValidationError("output must be OutputOptions")
         if not isinstance(self.manifest, ManifestOptions):
@@ -229,23 +228,6 @@ class WriteConfig:
                 self.key_encoding = KeyEncoding.from_value(self.key_encoding)
             except ValueError as exc:
                 raise ConfigValidationError(str(exc)) from exc
-
-        if self.sharding.strategy == ShardingStrategy.CEL:
-            # CEL: num_dbs is derived from routing metadata or discovered from data.
-            if self.num_dbs is not None:
-                raise ConfigValidationError(
-                    "num_dbs must be None for CEL strategy "
-                    "(shard count is determined by the CEL expression)"
-                )
-        elif self.sharding.max_keys_per_shard is not None:
-            # HASH + max_keys_per_shard: num_dbs computed at write time
-            if self.num_dbs is not None:
-                raise ConfigValidationError(
-                    "num_dbs must be None when max_keys_per_shard is set "
-                    "(num_dbs will be computed at write time)"
-                )
-        elif self.num_dbs is None or self.num_dbs <= 0:
-            raise ConfigValidationError("num_dbs must be > 0")
 
         if self.batch_size <= 0:
             raise ConfigValidationError("batch_size must be > 0")
@@ -276,6 +258,114 @@ class WriteConfig:
                     f"vector_spec.dim must be > 0, got {vs.dim}"
                 )
             vs.metric = _coerce_vector_metric(vs.metric)
+
+
+@dataclass(slots=True)
+class HashWriteConfig(WriteConfig):
+    """Write configuration for HASH sharding.
+
+    Args:
+        num_dbs: Number of shard databases to create. Must be > 0 unless
+            ``max_keys_per_shard`` is set (in which case it is computed at
+            write time).
+        max_keys_per_shard: Alternative to ``num_dbs`` — computes shard
+            count as ``ceil(total_rows / max_keys_per_shard)``.
+    """
+
+    num_dbs: int | None = None
+    max_keys_per_shard: int | None = None
+
+    def __post_init__(self) -> None:
+        WriteConfig.__post_init__(self)
+        if self.max_keys_per_shard is not None:
+            if self.num_dbs is not None:
+                raise ConfigValidationError(
+                    "num_dbs must be None when max_keys_per_shard is set "
+                    "(num_dbs will be computed at write time)"
+                )
+            if self.max_keys_per_shard <= 0:
+                raise ConfigValidationError("max_keys_per_shard must be > 0")
+        elif self.num_dbs is None or self.num_dbs <= 0:
+            raise ConfigValidationError("num_dbs must be > 0")
+
+
+@dataclass(slots=True)
+class CelWriteConfig(WriteConfig):
+    """Write configuration for CEL sharding.
+
+    Args:
+        cel_expr: CEL expression that produces a shard ID or categorical token.
+        cel_columns: Mapping of CEL variable names to their types
+            (e.g. ``{"key": "int"}``).
+        routing_values: Optional categorical values for token-based routing.
+        infer_routing_values_from_data: If True, discover routing values from
+            the input data at write time.
+    """
+
+    cel_expr: str = ""
+    cel_columns: dict[str, str] = field(default_factory=dict)
+    routing_values: list[object] | None = None
+    infer_routing_values_from_data: bool = False
+
+    def __post_init__(self) -> None:
+        WriteConfig.__post_init__(self)
+        if not self.cel_expr:
+            raise ConfigValidationError("CEL strategy requires cel_expr")
+        if not self.cel_columns:
+            raise ConfigValidationError("CEL strategy requires cel_columns")
+        if self.infer_routing_values_from_data:
+            if self.routing_values is not None:
+                raise ConfigValidationError(
+                    "infer_routing_values_from_data cannot be combined with "
+                    "routing_values"
+                )
+        if self.routing_values is not None:
+            try:
+                validate_routing_values(self.routing_values)
+            except ValueError as exc:
+                raise ConfigValidationError(str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible unified WriteConfig (deprecated — will be removed).
+# ---------------------------------------------------------------------------
+
+@dataclass(slots=True)
+class _LegacyWriteConfig(WriteConfig):
+    """Backward-compatible unified write config.
+
+    .. deprecated::
+
+       Use :class:`HashWriteConfig` or :class:`CelWriteConfig` instead.
+       This class exists only to keep existing code working during migration.
+    """
+
+    num_dbs: int | None = None
+    sharding: ShardingSpec = field(default_factory=_LegacyShardingSpec)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.sharding, ShardingSpec):
+            raise ConfigValidationError("sharding must be ShardingSpec")
+        WriteConfig.__post_init__(self)
+
+        if self.sharding.strategy == ShardingStrategy.CEL:  # type: ignore[union-attr]
+            if self.num_dbs is not None:
+                raise ConfigValidationError(
+                    "num_dbs must be None for CEL strategy "
+                    "(shard count is determined by the CEL expression)"
+                )
+        elif self.sharding.max_keys_per_shard is not None:  # type: ignore[union-attr]
+            if self.num_dbs is not None:
+                raise ConfigValidationError(
+                    "num_dbs must be None when max_keys_per_shard is set "
+                    "(num_dbs will be computed at write time)"
+                )
+        elif self.num_dbs is None or self.num_dbs <= 0:
+            raise ConfigValidationError("num_dbs must be > 0")
+
+
+# Keep old name working during migration.
+LegacyWriteConfig = _LegacyWriteConfig
 
 
 # ---------------------------------------------------------------------------

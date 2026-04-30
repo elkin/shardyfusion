@@ -7,9 +7,9 @@ from shardyfusion._writer_core import (
     discover_cel_num_dbs,
     resolve_num_dbs,
 )
-from shardyfusion.config import WriteConfig
+from shardyfusion.config import _LegacyWriteConfig
 from shardyfusion.errors import ConfigValidationError, ShardAssignmentError
-from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
+from shardyfusion.sharding_types import _LegacyShardingSpec, ShardingStrategy
 
 # ---------------------------------------------------------------------------
 # resolve_num_dbs
@@ -18,12 +18,12 @@ from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
 
 class TestResolveNumDbs:
     def test_explicit_num_dbs_returned_directly(self) -> None:
-        cfg = WriteConfig(num_dbs=4, s3_prefix="s3://b/p")
+        cfg = _LegacyWriteConfig(num_dbs=4, s3_prefix="s3://b/p")
         result = resolve_num_dbs(cfg, count_fn=lambda: 999)
         assert result == 4
 
     def test_explicit_num_dbs_does_not_call_count_fn(self) -> None:
-        cfg = WriteConfig(num_dbs=4, s3_prefix="s3://b/p")
+        cfg = _LegacyWriteConfig(num_dbs=4, s3_prefix="s3://b/p")
         called = False
 
         def boom() -> int:
@@ -35,33 +35,33 @@ class TestResolveNumDbs:
         assert not called
 
     def test_max_keys_per_shard_basic(self) -> None:
-        cfg = WriteConfig(
+        cfg = _LegacyWriteConfig(
             s3_prefix="s3://b/p",
-            sharding=ShardingSpec(max_keys_per_shard=100),
+            sharding=_LegacyShardingSpec(max_keys_per_shard=100),
         )
         result = resolve_num_dbs(cfg, count_fn=lambda: 500)
         assert result == 5
 
     def test_max_keys_per_shard_rounds_up(self) -> None:
-        cfg = WriteConfig(
+        cfg = _LegacyWriteConfig(
             s3_prefix="s3://b/p",
-            sharding=ShardingSpec(max_keys_per_shard=3),
+            sharding=_LegacyShardingSpec(max_keys_per_shard=3),
         )
         result = resolve_num_dbs(cfg, count_fn=lambda: 10)
         assert result == 4  # ceil(10/3)
 
     def test_max_keys_per_shard_zero_count_returns_one(self) -> None:
-        cfg = WriteConfig(
+        cfg = _LegacyWriteConfig(
             s3_prefix="s3://b/p",
-            sharding=ShardingSpec(max_keys_per_shard=100),
+            sharding=_LegacyShardingSpec(max_keys_per_shard=100),
         )
         result = resolve_num_dbs(cfg, count_fn=lambda: 0)
         assert result == 1
 
     def test_cel_mode_returns_none(self) -> None:
-        cfg = WriteConfig(
+        cfg = _LegacyWriteConfig(
             s3_prefix="s3://b/p",
-            sharding=ShardingSpec(
+            sharding=_LegacyShardingSpec(
                 strategy=ShardingStrategy.CEL,
                 cel_expr="key % 4",
                 cel_columns={"key": "int"},

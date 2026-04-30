@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from shardyfusion._writer_core import publish_to_store
-from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+from shardyfusion.config import ManifestOptions, OutputOptions, _LegacyWriteConfig
 from shardyfusion.errors import PublishCurrentError, PublishManifestError
 from shardyfusion.manifest import (
     ManifestRef,
@@ -22,7 +22,7 @@ from shardyfusion.manifest import (
     RequiredShardMeta,
 )
 from shardyfusion.metrics import MetricEvent
-from shardyfusion.sharding_types import KeyEncoding, ShardingSpec, ShardingStrategy
+from shardyfusion.sharding_types import KeyEncoding, _LegacyShardingSpec, ShardingStrategy
 
 
 def _build(run_id: str = "r1") -> RequiredBuildMeta:
@@ -99,8 +99,8 @@ class _FakeManifestStore:
         return []
 
 
-def _config(store: _FakeManifestStore) -> WriteConfig:
-    return WriteConfig(
+def _config(store: _FakeManifestStore) -> _LegacyWriteConfig:
+    return _LegacyWriteConfig(
         num_dbs=2,
         s3_prefix="s3://bucket/prefix",
         manifest=ManifestOptions(store=store),
@@ -115,7 +115,7 @@ class TestPublishToStoreHappyPath:
         ref = publish_to_store(
             config=cfg,
             run_id="r1",
-            resolved_sharding=ShardingSpec(),
+            resolved_sharding=_LegacyShardingSpec(),
             winners=[_shard(0), _shard(1)],
             num_dbs=2,
         )
@@ -124,7 +124,7 @@ class TestPublishToStoreHappyPath:
     def test_metrics_emitted_on_success(self) -> None:
         mc = MagicMock()
         store = _FakeManifestStore()
-        cfg = WriteConfig(
+        cfg = _LegacyWriteConfig(
             num_dbs=2,
             s3_prefix="s3://bucket/prefix",
             manifest=ManifestOptions(store=store),
@@ -134,7 +134,7 @@ class TestPublishToStoreHappyPath:
         publish_to_store(
             config=cfg,
             run_id="r1",
-            resolved_sharding=ShardingSpec(),
+            resolved_sharding=_LegacyShardingSpec(),
             winners=[_shard(0)],
             num_dbs=2,
         )
@@ -156,7 +156,7 @@ class TestPublishCurrentErrorRetry:
         ref = publish_to_store(
             config=cfg,
             run_id="r1",
-            resolved_sharding=ShardingSpec(),
+            resolved_sharding=_LegacyShardingSpec(),
             winners=[_shard(0)],
             num_dbs=2,
         )
@@ -175,7 +175,7 @@ class TestPublishCurrentErrorRetry:
         ref = publish_to_store(
             config=cfg,
             run_id="r1",
-            resolved_sharding=ShardingSpec(),
+            resolved_sharding=_LegacyShardingSpec(),
             winners=[_shard(0)],
             num_dbs=2,
         )
@@ -202,7 +202,7 @@ class TestPublishCurrentErrorRetry:
             publish_to_store(
                 config=cfg,
                 run_id="r1",
-                resolved_sharding=ShardingSpec(),
+                resolved_sharding=_LegacyShardingSpec(),
                 winners=[_shard(0)],
                 num_dbs=2,
             )
@@ -217,7 +217,7 @@ class TestPublishCurrentErrorRetry:
             publish_to_store(
                 config=cfg,
                 run_id="r1",
-                resolved_sharding=ShardingSpec(),
+                resolved_sharding=_LegacyShardingSpec(),
                 winners=[_shard(0)],
                 num_dbs=2,
             )
@@ -234,7 +234,7 @@ class TestPublishGenericFailure:
             publish_to_store(
                 config=cfg,
                 run_id="r1",
-                resolved_sharding=ShardingSpec(),
+                resolved_sharding=_LegacyShardingSpec(),
                 winners=[_shard(0)],
                 num_dbs=2,
             )

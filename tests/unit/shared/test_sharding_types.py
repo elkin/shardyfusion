@@ -1,25 +1,109 @@
-"""Tests for ``ShardingSpec`` CEL fields and categorical routing values."""
+"""Tests for split sharding specs and categorical routing values."""
 
 import pytest
 
 from shardyfusion.sharding_types import (
+    CelShardingSpec,
+    HashShardingSpec,
     ShardHashAlgorithm,
-    ShardingSpec,
     ShardingStrategy,
+    _LegacyShardingSpec,
 )
 
 
-class TestShardingSpecCel:
+class TestHashShardingSpec:
+    def test_defaults(self) -> None:
+        spec = HashShardingSpec()
+        assert spec.hash_algorithm == ShardHashAlgorithm.XXH3_64
+        assert spec.max_keys_per_shard is None
+
+    def test_custom_hash_algorithm(self) -> None:
+        spec = HashShardingSpec(hash_algorithm="xxh3_64")  # type: ignore[arg-type]
+        assert spec.hash_algorithm == ShardHashAlgorithm.XXH3_64
+
+    def test_max_keys_per_shard(self) -> None:
+        spec = HashShardingSpec(max_keys_per_shard=1000)
+        assert spec.max_keys_per_shard == 1000
+
+    def test_rejects_non_positive_max_keys(self) -> None:
+        with pytest.raises(ValueError, match="max_keys_per_shard must be > 0"):
+            HashShardingSpec(max_keys_per_shard=0)
+
+    def test_to_manifest_dict(self) -> None:
+        spec = HashShardingSpec()
+        d = spec.to_manifest_dict()
+        assert d["strategy"] == "hash"
+        assert d["hash_algorithm"] == "xxh3_64"
+
+
+class TestCelShardingSpec:
+    def test_requires_cel_expr(self) -> None:
+        with pytest.raises(ValueError, match="cel_expr"):
+            CelShardingSpec(cel_columns={"key": "int"})
+
+    def test_requires_cel_columns(self) -> None:
+        with pytest.raises(ValueError, match="cel_columns"):
+            CelShardingSpec(cel_expr="key % 10")
+
+    def test_valid(self) -> None:
+        spec = CelShardingSpec(
+            cel_expr="key % 10",
+            cel_columns={"key": "int"},
+        )
+        assert spec.cel_expr == "key % 10"
+        assert spec.cel_columns == {"key": "int"}
+
+    def test_accepts_routing_values(self) -> None:
+        spec = CelShardingSpec(
+            cel_expr="region",
+            cel_columns={"region": "string"},
+            routing_values=["ap", "eu", "us"],
+        )
+        assert spec.routing_values == ["ap", "eu", "us"]
+
+    def test_rejects_infer_flag_with_routing_values(self) -> None:
+        with pytest.raises(ValueError, match="cannot be combined"):
+            CelShardingSpec(
+                cel_expr="region",
+                cel_columns={"region": "string"},
+                routing_values=["ap", "eu"],
+                infer_routing_values_from_data=True,
+            )
+
+    def test_to_manifest_dict(self) -> None:
+        spec = CelShardingSpec(
+            cel_expr="key % 10",
+            cel_columns={"key": "int"},
+        )
+        d = spec.to_manifest_dict()
+        assert d["strategy"] == "cel"
+        assert d["cel_expr"] == "key % 10"
+        assert d["cel_columns"] == {"key": "int"}
+        assert "routing_values" not in d
+
+    def test_to_manifest_dict_with_routing_values(self) -> None:
+        spec = CelShardingSpec(
+            cel_expr="region",
+            cel_columns={"region": "string"},
+            routing_values=["ap", "eu", "us"],
+        )
+        d = spec.to_manifest_dict()
+        assert d["routing_values"] == ["ap", "eu", "us"]
+
+
+class TestLegacyShardingSpec:
+    """Backward-compatibility tests for the old unified ShardingSpec."""
+
     def test_cel_requires_cel_expr(self) -> None:
         with pytest.raises(ValueError, match="cel_expr"):
-            ShardingSpec(strategy=ShardingStrategy.CEL, cel_columns={"key": "int"})
+            _LegacyShardingSpec(strategy=ShardingStrategy.CEL, cel_columns={"key": "int"})
 
     def test_cel_requires_cel_columns(self) -> None:
         with pytest.raises(ValueError, match="cel_columns"):
-            ShardingSpec(strategy=ShardingStrategy.CEL, cel_expr="key % 10")
+            _LegacyShardingSpec(strategy=ShardingStrategy.CEL, cel_expr="key % 10")
 
     def test_cel_valid(self) -> None:
-        spec = ShardingSpec(
+        spec = _LegacyShardingSpec(
             strategy=ShardingStrategy.CEL,
             cel_expr="key % 10",
             cel_columns={"key": "int"},
@@ -28,7 +112,7 @@ class TestShardingSpecCel:
         assert spec.cel_columns == {"key": "int"}
 
     def test_cel_accepts_routing_values(self) -> None:
-        spec = ShardingSpec(
+        spec = _LegacyShardingSpec(
             strategy=ShardingStrategy.CEL,
             cel_expr="region",
             cel_columns={"region": "string"},
@@ -38,7 +122,7 @@ class TestShardingSpecCel:
 
     def test_rejects_infer_flag_with_routing_values(self) -> None:
         with pytest.raises(ValueError, match="cannot be combined"):
-            ShardingSpec(
+            _LegacyShardingSpec(
                 strategy=ShardingStrategy.CEL,
                 cel_expr="region",
                 cel_columns={"region": "string"},
@@ -48,7 +132,7 @@ class TestShardingSpecCel:
 
     def test_cel_expr_rejected_for_hash(self) -> None:
         with pytest.raises(ValueError, match="cel_expr is only valid with CEL"):
-            ShardingSpec(
+            _LegacyShardingSpec(
                 strategy=ShardingStrategy.HASH,
                 cel_expr="key % 10",
             )
@@ -57,7 +141,7 @@ class TestShardingSpecCel:
         with pytest.raises(
             ValueError, match="max_keys_per_shard is only valid with HASH"
         ):
-            ShardingSpec(
+            _LegacyShardingSpec(
                 strategy=ShardingStrategy.CEL,
                 cel_expr="key",
                 cel_columns={"key": "int"},
@@ -66,13 +150,13 @@ class TestShardingSpecCel:
 
     def test_max_keys_per_shard_positive(self) -> None:
         with pytest.raises(ValueError, match="max_keys_per_shard must be > 0"):
-            ShardingSpec(
+            _LegacyShardingSpec(
                 strategy=ShardingStrategy.HASH,
                 max_keys_per_shard=0,
             )
 
     def test_max_keys_per_shard_valid(self) -> None:
-        spec = ShardingSpec(
+        spec = _LegacyShardingSpec(
             strategy=ShardingStrategy.HASH,
             max_keys_per_shard=1000,
         )
@@ -80,9 +164,8 @@ class TestShardingSpecCel:
 
 
 class TestRoutingValueValidation:
-    def _cel_spec(self, routing_values: list[int | str | bytes]) -> ShardingSpec:
-        return ShardingSpec(
-            strategy=ShardingStrategy.CEL,
+    def _cel_spec(self, routing_values: list[int | str | bytes]) -> CelShardingSpec:
+        return CelShardingSpec(
             cel_expr="region",
             cel_columns={"region": "string"},
             routing_values=routing_values,
@@ -127,8 +210,7 @@ class TestRoutingValueValidation:
 
 class TestToManifestDict:
     def test_cel_fields_included(self) -> None:
-        spec = ShardingSpec(
-            strategy=ShardingStrategy.CEL,
+        spec = CelShardingSpec(
             cel_expr="key % 10",
             cel_columns={"key": "int"},
         )
@@ -140,8 +222,7 @@ class TestToManifestDict:
         assert "routing_values" not in d
 
     def test_categorical_fields_included(self) -> None:
-        spec = ShardingSpec(
-            strategy=ShardingStrategy.CEL,
+        spec = CelShardingSpec(
             cel_expr="region",
             cel_columns={"region": "string"},
             routing_values=["ap", "eu", "us"],
@@ -150,7 +231,7 @@ class TestToManifestDict:
         assert d["routing_values"] == ["ap", "eu", "us"]
 
     def test_hash_no_cel_fields(self) -> None:
-        spec = ShardingSpec(strategy=ShardingStrategy.HASH)
+        spec = HashShardingSpec()
         d = spec.to_manifest_dict()
         assert "cel_expr" not in d
         assert "cel_columns" not in d

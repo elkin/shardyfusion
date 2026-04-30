@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from shardyfusion.config import ManifestOptions, WriteConfig
+from shardyfusion.config import ManifestOptions, _LegacyWriteConfig
 from shardyfusion.credentials import S3Credentials, StaticCredentialProvider
 from shardyfusion.run_registry import (
     InMemoryRunRegistry,
@@ -63,8 +63,8 @@ class _RecordingRegistry:
         return self.records[ref].model_copy(deep=True)
 
 
-def _config(*, registry: InMemoryRunRegistry | None = None) -> WriteConfig:
-    return WriteConfig(
+def _config(*, registry: InMemoryRunRegistry | None = None) -> _LegacyWriteConfig:
+    return _LegacyWriteConfig(
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
         run_registry=registry,
@@ -193,7 +193,7 @@ def test_resolve_run_registry_uses_only_writer_s3_settings(
         "shardyfusion.run_registry.ObstoreBackend", fake_obstore_backend
     )
 
-    cfg = WriteConfig(
+    cfg = _LegacyWriteConfig(
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
         credential_provider=StaticCredentialProvider(
@@ -258,7 +258,7 @@ def test_resolve_run_registry_does_not_use_manifest_s3_settings(
         "shardyfusion.run_registry.ObstoreBackend", lambda store: _RecordingBackend()
     )
 
-    cfg = WriteConfig(
+    cfg = _LegacyWriteConfig(
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
         manifest=ManifestOptions(
