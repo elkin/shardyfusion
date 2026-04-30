@@ -363,10 +363,12 @@ Top-level exports from `shardyfusion.__init__` (`__all__`, grouped only for read
 - Sharding/serialization: `CelColumn`, `CelType`, `KeyEncoding`, `ShardingSpec`, `ShardingStrategy`, `ValueSpec`, `cel_sharding`, `cel_sharding_by_columns`
 
 Writer functions are imported from subpackages (not re-exported at top level):
-- **Spark:** `from shardyfusion.writer.spark import write_sharded, write_single_db, DataFrameCacheContext, SparkConfOverrideContext`
-- **Dask:** `from shardyfusion.writer.dask import write_sharded, write_single_db, DaskCacheContext`
-- **Ray:** `from shardyfusion.writer.ray import write_sharded, write_single_db, RayCacheContext`
-- **Python:** `from shardyfusion.writer.python import write_sharded` (KV + unified KV+vector via `VectorSpec` on `WriteConfig`)
+- **Spark:** `from shardyfusion.writer.spark import write_sharded_by_hash, write_sharded_by_cel, write_single_db, DataFrameCacheContext, SparkConfOverrideContext`
+- **Dask:** `from shardyfusion.writer.dask import write_sharded_by_hash, write_sharded_by_cel, write_single_db, DaskCacheContext`
+- **Ray:** `from shardyfusion.writer.ray import write_sharded_by_hash, write_sharded_by_cel, write_single_db, RayCacheContext`
+- **Python:** `from shardyfusion.writer.python import write_sharded_by_hash, write_sharded_by_cel` (KV + unified KV+vector via `VectorSpec` on `WriteConfig`)
+
+> **Hard break note:** The unified `write_sharded` entry point has been removed in favor of per-strategy functions (`write_sharded_by_hash` / `write_sharded_by_cel`). `WriteConfig` and `ShardingSpec` are now strategy-agnostic base classes; use `HashWriteConfig`/`CelWriteConfig` and `HashShardingSpec`/`CelShardingSpec` instead.
 
 SQLite backend adapters are imported from their module (not re-exported at top level):
 - `from shardyfusion.sqlite_adapter import SqliteFactory, SqliteReaderFactory, SqliteRangeReaderFactory, AdaptiveSqliteReaderFactory`

@@ -225,10 +225,9 @@ def run_writer_publishes_manifest_scenario(
 ) -> None:
     """Writer publishes manifest + CURRENT to S3, then reads shards back."""
 
-    from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+    from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
     from shardyfusion.serde import ValueSpec
-    from shardyfusion.sharding_types import ShardingSpec
-    from shardyfusion.writer.spark import write_sharded
+    from shardyfusion.writer.spark import write_sharded_by_hash
 
     rows = [(i, f"v{i}".encode()) for i in range(24)]
     df = spark.createDataFrame(rows, ["id", "payload"])
@@ -240,12 +239,11 @@ def run_writer_publishes_manifest_scenario(
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=4,
         s3_prefix=s3_prefix,
         credential_provider=cred_provider,
         s3_connection_options=conn_options,
-        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
         adapter_factory=adapter_factory,
         manifest=ManifestOptions(
             credential_provider=cred_provider,
@@ -257,7 +255,7 @@ def run_writer_publishes_manifest_scenario(
         ),
     )
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         df,
         config,
         key_col="id",
@@ -320,10 +318,9 @@ def run_writer_reader_refresh_scenario(
 ) -> None:
     """Writer publishes v1, reader opens, writer publishes v2, reader refreshes."""
 
-    from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+    from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
     from shardyfusion.serde import ValueSpec
-    from shardyfusion.sharding_types import ShardingSpec
-    from shardyfusion.writer.spark import write_sharded
+    from shardyfusion.writer.spark import write_sharded_by_hash
 
     bucket = s3_service["bucket"]
     s3_prefix = f"s3://{bucket}/writer-reader-refresh"
@@ -332,8 +329,8 @@ def run_writer_reader_refresh_scenario(
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
 
-    def build_config(run_id: str) -> WriteConfig:
-        return WriteConfig(
+    def build_config(run_id: str) -> HashWriteConfig:
+        return HashWriteConfig(
             num_dbs=4,
             s3_prefix=s3_prefix,
             credential_provider=cred_provider,
@@ -342,7 +339,6 @@ def run_writer_reader_refresh_scenario(
                 run_id=run_id,
                 local_root=local_root,
             ),
-            sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
             adapter_factory=adapter_factory,
             manifest=ManifestOptions(
                 credential_provider=cred_provider,
@@ -354,7 +350,7 @@ def run_writer_reader_refresh_scenario(
         [(i, f"old-{i}".encode()) for i in range(32)],
         ["id", "payload"],
     )
-    result_v1 = write_sharded(
+    result_v1 = write_sharded_by_hash(
         df_v1,
         build_config("refresh-run-1"),
         key_col="id",
@@ -381,7 +377,7 @@ def run_writer_reader_refresh_scenario(
             [(i, f"new-{i}".encode()) for i in range(32)],
             ["id", "payload"],
         )
-        result_v2 = write_sharded(
+        result_v2 = write_sharded_by_hash(
             df_v2,
             build_config("refresh-run-2"),
             key_col="id",
@@ -501,10 +497,9 @@ def run_dask_writer_publishes_manifest_scenario(
     import dask.dataframe as dd
     import pandas as pd
 
-    from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+    from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
     from shardyfusion.serde import ValueSpec
-    from shardyfusion.sharding_types import ShardingSpec
-    from shardyfusion.writer.dask import write_sharded
+    from shardyfusion.writer.dask import write_sharded_by_hash
 
     bucket = s3_service["bucket"]
     s3_prefix = f"s3://{bucket}/dask-writer"
@@ -513,12 +508,11 @@ def run_dask_writer_publishes_manifest_scenario(
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=4,
         s3_prefix=s3_prefix,
         credential_provider=cred_provider,
         s3_connection_options=conn_options,
-        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
         adapter_factory=adapter_factory,
         manifest=ManifestOptions(
             credential_provider=cred_provider,
@@ -534,7 +528,7 @@ def run_dask_writer_publishes_manifest_scenario(
     ddf = dd.from_pandas(pdf, npartitions=4)
 
     with dask.config.set(scheduler="synchronous"):
-        result = write_sharded(
+        result = write_sharded_by_hash(
             ddf,
             config,
             key_col="id",
@@ -671,10 +665,9 @@ def run_dask_writer_reader_refresh_scenario(
     import dask.dataframe as dd
     import pandas as pd
 
-    from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+    from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
     from shardyfusion.serde import ValueSpec
-    from shardyfusion.sharding_types import ShardingSpec
-    from shardyfusion.writer.dask import write_sharded
+    from shardyfusion.writer.dask import write_sharded_by_hash
 
     bucket = s3_service["bucket"]
     s3_prefix = f"s3://{bucket}/dask-writer-reader-refresh"
@@ -683,14 +676,13 @@ def run_dask_writer_reader_refresh_scenario(
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
 
-    def build_config(run_id: str) -> WriteConfig:
-        return WriteConfig(
+    def build_config(run_id: str) -> HashWriteConfig:
+        return HashWriteConfig(
             num_dbs=4,
             s3_prefix=s3_prefix,
             credential_provider=cred_provider,
             s3_connection_options=conn_options,
             output=OutputOptions(run_id=run_id, local_root=local_root),
-            sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
             adapter_factory=adapter_factory,
             manifest=ManifestOptions(
                 credential_provider=cred_provider,
@@ -707,7 +699,7 @@ def run_dask_writer_reader_refresh_scenario(
         return dd.from_pandas(pdf, npartitions=4)
 
     with dask.config.set(scheduler="synchronous"):
-        result_v1 = write_sharded(
+        result_v1 = write_sharded_by_hash(
             make_ddf("old"),
             build_config("dask-refresh-run-1"),
             key_col="id",
@@ -730,7 +722,7 @@ def run_dask_writer_reader_refresh_scenario(
         assert reader.get(7) == b"old-7"
 
         with dask.config.set(scheduler="synchronous"):
-            result_v2 = write_sharded(
+            result_v2 = write_sharded_by_hash(
                 make_ddf("new"),
                 build_config("dask-refresh-run-2"),
                 key_col="id",
@@ -764,10 +756,9 @@ def run_ray_writer_publishes_manifest_scenario(
 
     import ray.data
 
-    from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+    from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
     from shardyfusion.serde import ValueSpec
-    from shardyfusion.sharding_types import ShardingSpec
-    from shardyfusion.writer.ray import write_sharded
+    from shardyfusion.writer.ray import write_sharded_by_hash
 
     bucket = s3_service["bucket"]
     s3_prefix = f"s3://{bucket}/ray-writer"
@@ -776,12 +767,11 @@ def run_ray_writer_publishes_manifest_scenario(
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=4,
         s3_prefix=s3_prefix,
         credential_provider=cred_provider,
         s3_connection_options=conn_options,
-        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
         adapter_factory=adapter_factory,
         manifest=ManifestOptions(
             credential_provider=cred_provider,
@@ -791,6 +781,18 @@ def run_ray_writer_publishes_manifest_scenario(
             run_id="ray-writer-e2e",
             local_root=local_root,
         ),
+    )
+
+    ds = ray.data.from_items(
+        [{"id": i, "val": f"v{i}"} for i in range(24)],
+        override_num_blocks=4,
+    )
+
+    result = write_sharded_by_hash(
+        ds,
+        config,
+        key_col="id",
+        value_spec=ValueSpec.callable_encoder(lambda row: str(row["val"]).encode()),
     )
 
     ds = ray.data.from_items(
@@ -851,10 +853,9 @@ def run_ray_writer_reader_refresh_scenario(
 
     import ray.data
 
-    from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+    from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
     from shardyfusion.serde import ValueSpec
-    from shardyfusion.sharding_types import ShardingSpec
-    from shardyfusion.writer.ray import write_sharded
+    from shardyfusion.writer.ray import write_sharded_by_hash
 
     bucket = s3_service["bucket"]
     s3_prefix = f"s3://{bucket}/ray-writer-reader-refresh"
@@ -863,14 +864,13 @@ def run_ray_writer_reader_refresh_scenario(
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
 
-    def build_config(run_id: str) -> WriteConfig:
-        return WriteConfig(
+    def build_config(run_id: str) -> HashWriteConfig:
+        return HashWriteConfig(
             num_dbs=4,
             s3_prefix=s3_prefix,
             credential_provider=cred_provider,
             s3_connection_options=conn_options,
             output=OutputOptions(run_id=run_id, local_root=local_root),
-            sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
             adapter_factory=adapter_factory,
             manifest=ManifestOptions(
                 credential_provider=cred_provider,
@@ -886,7 +886,7 @@ def run_ray_writer_reader_refresh_scenario(
             override_num_blocks=4,
         )
 
-    result_v1 = write_sharded(
+    result_v1 = write_sharded_by_hash(
         make_ds("old"),
         build_config("ray-refresh-run-1"),
         key_col="id",
@@ -908,7 +908,7 @@ def run_ray_writer_reader_refresh_scenario(
     with ConcurrentShardedReader(**reader_kwargs) as reader:
         assert reader.get(7) == b"old-7"
 
-        result_v2 = write_sharded(
+        result_v2 = write_sharded_by_hash(
             make_ds("new"),
             build_config("ray-refresh-run-2"),
             key_col="id",

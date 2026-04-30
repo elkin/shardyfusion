@@ -79,21 +79,21 @@ uv add 'shardyfusion[unified-vector-sqlite,writer-python]'
 === "Dask"
 
     ```python
-    from shardyfusion import WriteConfig, VectorSpec
-    from shardyfusion.writer.dask import write_sharded
+    from shardyfusion import HashWriteConfig, VectorSpec
+    from shardyfusion.writer.dask import write_sharded_by_hash
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
     from shardyfusion.serde import ValueSpec
 
     vector_spec = VectorSpec(dim=384, metric="cosine")
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=16,
         s3_prefix="s3://my-bucket/snapshots/items",
         adapter_factory=SqliteVecFactory(vector_spec=vector_spec),
         vector_spec=vector_spec,
     )
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         ddf,
         config,
         key_col="id",

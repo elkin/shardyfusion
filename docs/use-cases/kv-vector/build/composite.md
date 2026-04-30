@@ -90,8 +90,8 @@ uv add 'shardyfusion[unified-vector,writer-python]'
 === "Dask"
 
     ```python
-    from shardyfusion import WriteConfig, VectorSpec
-    from shardyfusion.writer.dask import write_sharded
+    from shardyfusion import HashWriteConfig, VectorSpec
+    from shardyfusion.writer.dask import write_sharded_by_hash
     from shardyfusion.slatedb_adapter import SlateDbFactory
     from shardyfusion.vector.adapters.lancedb_adapter import LanceDbFactory
     from shardyfusion.composite_adapter import CompositeFactory
@@ -99,7 +99,7 @@ uv add 'shardyfusion[unified-vector,writer-python]'
 
     vector_spec = VectorSpec(dim=384, metric="cosine")
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=16,
         s3_prefix="s3://my-bucket/snapshots/items",
         adapter_factory=CompositeFactory(
@@ -110,7 +110,7 @@ uv add 'shardyfusion[unified-vector,writer-python]'
         vector_spec=vector_spec,
     )
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         ddf,
         config,
         key_col="id",

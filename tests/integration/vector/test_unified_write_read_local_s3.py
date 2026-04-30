@@ -17,7 +17,7 @@ import pytest
 
 pytest.importorskip("cel_expr_python", reason="requires cel extra")
 
-from shardyfusion.config import ManifestOptions, OutputOptions, VectorSpec, WriteConfig
+from shardyfusion.config import CelWriteConfig, ManifestOptions, OutputOptions, VectorSpec, WriteConfig
 from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.manifest_store import S3ManifestStore
 from shardyfusion.storage import ObstoreBackend, create_s3_store, parse_s3_url
@@ -250,26 +250,20 @@ class TestUnifiedWriteReadRoundTrip:
         tmp_path: Path,
     ) -> None:
         from shardyfusion.reader.unified_reader import UnifiedShardedReader
-        from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
         from shardyfusion.sqlite_vec_adapter import (
             SqliteVecFactory,
             SqliteVecReaderFactory,
         )
-        from shardyfusion.writer.python.writer import write_sharded
+        from shardyfusion.writer.python.writer import write_sharded_by_cel
 
         rng = np.random.default_rng(42)
         records = _make_records(rng)
 
-        sharding = ShardingSpec(
-            strategy=ShardingStrategy.CEL,
+        config = CelWriteConfig(
+            s3_prefix=s3_prefix,
             cel_expr="shard_hash(key) % 3u",
             cel_columns={"key": "int"},
             routing_values=[0, 1, 2],
-        )
-
-        config = WriteConfig(
-            s3_prefix=s3_prefix,
-            sharding=sharding,
             vector_spec=VectorSpec(dim=8),
             adapter_factory=SqliteVecFactory(
                 vector_spec=VectorSpec(dim=8),
@@ -285,7 +279,7 @@ class TestUnifiedWriteReadRoundTrip:
             output=OutputOptions(local_root=str(tmp_path / "unified_writer")),
         )
 
-        result = write_sharded(
+        result = write_sharded_by_cel(
             records,
             config,
             key_fn=lambda r: r.key,
@@ -348,23 +342,17 @@ class TestUnifiedWriteReadRoundTrip:
         tmp_path: Path,
     ) -> None:
         """vector_col extracts vectors from columns_fn without explicit vector_fn."""
-        from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
         from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-        from shardyfusion.writer.python.writer import write_sharded
+        from shardyfusion.writer.python.writer import write_sharded_by_cel
 
         rng = np.random.default_rng(123)
         records = _make_records(rng)
 
-        sharding = ShardingSpec(
-            strategy=ShardingStrategy.CEL,
+        config = CelWriteConfig(
+            s3_prefix=f"{s3_prefix}-col",
             cel_expr="shard_hash(key) % 3u",
             cel_columns={"key": "int"},
             routing_values=[0, 1, 2],
-        )
-
-        config = WriteConfig(
-            s3_prefix=f"{s3_prefix}-col",
-            sharding=sharding,
             vector_spec=VectorSpec(dim=8, vector_col="embedding"),
             adapter_factory=SqliteVecFactory(
                 vector_spec=VectorSpec(dim=8, vector_col="embedding"),
@@ -380,7 +368,7 @@ class TestUnifiedWriteReadRoundTrip:
             output=OutputOptions(local_root=str(tmp_path / "unified_writer2")),
         )
 
-        result = write_sharded(
+        result = write_sharded_by_cel(
             records,
             config,
             key_fn=lambda r: r.key,

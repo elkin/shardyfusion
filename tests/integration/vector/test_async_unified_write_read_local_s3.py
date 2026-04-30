@@ -14,7 +14,7 @@ import pytest
 pytest.importorskip("cel_expr_python", reason="requires cel extra")
 
 from shardyfusion.async_manifest_store import AsyncS3ManifestStore
-from shardyfusion.config import ManifestOptions, OutputOptions, VectorSpec, WriteConfig
+from shardyfusion.config import CelWriteConfig, ManifestOptions, OutputOptions, VectorSpec, WriteConfig
 from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.storage import AsyncObstoreBackend, create_s3_store, parse_s3_url
 from shardyfusion.type_defs import S3ConnectionOptions
@@ -71,26 +71,20 @@ class TestAsyncUnifiedWriteReadRoundTrip:
         tmp_path: Path,
     ) -> None:
         from shardyfusion.reader.async_unified_reader import AsyncUnifiedShardedReader
-        from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
         from shardyfusion.sqlite_vec_adapter import (
             AsyncSqliteVecReaderFactory,
             SqliteVecFactory,
         )
-        from shardyfusion.writer.python.writer import write_sharded
+        from shardyfusion.writer.python.writer import write_sharded_by_cel
 
         rng = np.random.default_rng(42)
         records = _make_records(rng)
 
-        sharding = ShardingSpec(
-            strategy=ShardingStrategy.CEL,
+        config = CelWriteConfig(
+            s3_prefix=s3_prefix,
             cel_expr="shard_hash(key) % 3u",
             cel_columns={"key": "int"},
             routing_values=[0, 1, 2],
-        )
-
-        config = WriteConfig(
-            s3_prefix=s3_prefix,
-            sharding=sharding,
             vector_spec=VectorSpec(dim=8),
             adapter_factory=SqliteVecFactory(
                 vector_spec=VectorSpec(dim=8),
@@ -107,7 +101,7 @@ class TestAsyncUnifiedWriteReadRoundTrip:
         )
 
         # Write synchronously
-        result = write_sharded(
+        result = write_sharded_by_cel(
             records,
             config,
             key_fn=lambda r: r.key,

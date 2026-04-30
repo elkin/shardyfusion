@@ -30,18 +30,18 @@ uv add 'shardyfusion[writer-dask-sqlite]'
 
 ```python
 import dask.dataframe as dd
-from shardyfusion import WriteConfig
-from shardyfusion.writer.dask import write_sharded
+from shardyfusion import HashWriteConfig
+from shardyfusion.writer.dask import write_sharded_by_hash
 from shardyfusion.serde import ValueSpec
 
 ddf = dd.read_parquet("s3://lake/users/")
 
-config = WriteConfig(
+config = HashWriteConfig(
     num_dbs=16,
     s3_prefix="s3://my-bucket/snapshots/users",
 )
 
-result = write_sharded(
+result = write_sharded_by_hash(
     ddf,
     config,
     key_col="id",
@@ -55,7 +55,7 @@ print(result.manifest_ref.ref)
 ```python
 from shardyfusion.sqlite_adapter import SqliteFactory
 
-config = WriteConfig(
+config = HashWriteConfig(
     num_dbs=16,
     s3_prefix="s3://my-bucket/snapshots/users-sqlite",
     adapter_factory=SqliteFactory(),
@@ -66,7 +66,7 @@ config = WriteConfig(
 
 ```mermaid
 flowchart TD
-    A[Dask DataFrame + WriteConfig] --> B["Assign shard IDs<br/>(hash or CEL per partition)"]
+    A[Dask DataFrame + HashWriteConfig] --> B["Assign shard IDs<br/>(hash per partition)"]
     B --> C{"verify_routing?"}
     C -->|yes| D["Verify routing<br/>(sample 20 rows, eager)"]
     C -->|no| E[Skip verification]
@@ -83,7 +83,7 @@ flowchart TD
 
 ## Configuration
 
-Dask-specific knobs on `write_sharded` (`shardyfusion/writer/dask/writer.py:151`):
+Dask-specific knobs on `write_sharded_by_hash` (`shardyfusion/writer/dask/writer.py`):
 
 | Param | Default | Purpose |
 |---|---|---|

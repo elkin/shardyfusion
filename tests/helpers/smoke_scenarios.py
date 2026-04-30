@@ -233,8 +233,7 @@ def run_smoke_write_then_read_scenario(
         reader_factory: Backend-specific factory for opening shard readers.
     """
 
-    from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
-    from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
+    from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
 
     bucket = s3_service["bucket"]
     s3_prefix = f"s3://{bucket}/smoke-hash-{tmp_path.name}"
@@ -243,15 +242,12 @@ def run_smoke_write_then_read_scenario(
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=num_dbs,
         s3_prefix=s3_prefix,
         credential_provider=cred_provider,
         s3_connection_options=conn_options,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.HASH,
-            max_keys_per_shard=max_keys_per_shard,
-        ),
+        max_keys_per_shard=max_keys_per_shard,
         adapter_factory=adapter_factory,
         manifest=ManifestOptions(
             credential_provider=cred_provider,
@@ -339,8 +335,7 @@ def run_smoke_cel_scenario(
             how to route each key.
     """
 
-    from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
-    from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
+    from shardyfusion.config import CelWriteConfig, ManifestOptions, OutputOptions
 
     bucket = s3_service["bucket"]
     # Include a short hash of the expression in the prefix to avoid collisions.
@@ -356,17 +351,13 @@ def run_smoke_cel_scenario(
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
 
-    config = WriteConfig(
-        num_dbs=None,  # CEL always discovers from data
+    config = CelWriteConfig(
         s3_prefix=s3_prefix,
         credential_provider=cred_provider,
         s3_connection_options=conn_options,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.CEL,
-            cel_expr=cel_expr,
-            cel_columns=cel_columns,
-            routing_values=routing_values,
-        ),
+        cel_expr=cel_expr,
+        cel_columns=cel_columns,
+        routing_values=routing_values,
         adapter_factory=adapter_factory,
         manifest=ManifestOptions(
             credential_provider=cred_provider,

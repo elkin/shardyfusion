@@ -74,16 +74,16 @@ reader.close()
 
 ```python
 import dask.dataframe as dd
-from shardyfusion import WriteConfig, ValueSpec
-from shardyfusion.writer.dask import write_sharded
+from shardyfusion import HashWriteConfig, ValueSpec
+from shardyfusion.writer.dask import write_sharded_by_hash
 
 ddf = dd.from_pandas(pdf, npartitions=4)
-config = WriteConfig(num_dbs=8, s3_prefix="s3://my-org-shardyfusion-test/dask-test")
-result = write_sharded(ddf, config, key_col="id", value_spec=ValueSpec.binary_col("payload"))
+config = HashWriteConfig(num_dbs=8, s3_prefix="s3://my-org-shardyfusion-test/dask-test")
+result = write_sharded_by_hash(ddf, config, key_col="id", value_spec=ValueSpec.binary_col("payload"))
 ```
 
 - [ ] Hash sharding completes
-- [ ] CEL sharding completes (with `ShardingSpec(strategy=ShardingStrategy.CEL, ...)`)
+- [ ] CEL sharding completes (with `CelWriteConfig(cel_expr=..., cel_columns=...)`) and `write_sharded_by_cel`
 - [ ] Rate limiting verified (`max_writes_per_second=1000`)
 - [ ] Read test with `ShardedReader` passes
 
