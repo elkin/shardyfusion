@@ -170,6 +170,7 @@ def _write_single_db_impl(
             winners=winners,
             key_col=key_col,
             started=started,
+            num_dbs=1,
         )
         run_record.set_manifest_ref(manifest_ref)
         manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)

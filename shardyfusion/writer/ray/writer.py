@@ -24,8 +24,10 @@ from shardyfusion._writer_core import (
     cleanup_losers,
     inject_vector_manifest_fields,
     publish_to_store,
+    resolve_cel_num_dbs,
     resolve_distributed_vector_fn,
-    route_key,
+    route_cel,
+    route_hash,
     select_winners,
     wrap_factory_for_vector,
 )
@@ -352,7 +354,7 @@ def _write_sharded_impl(
         if num_dbs is None:
             assert isinstance(resolved_sharding, CelShardingSpec)
             if resolved_sharding.routing_values is not None:
-                num_dbs = max(1, len(resolved_sharding.routing_values))
+                num_dbs = resolve_cel_num_dbs(resolved_sharding)
             else:
                 distinct_ids = set(ds_with_id.unique(DB_ID_COL))
                 num_dbs = discover_cel_num_dbs(distinct_ids)
@@ -548,12 +550,21 @@ def _verify_routing_agreement(
                 for col in cel_columns
             }
 
-        expected_db_id = route_key(
-            key,
-            num_dbs=num_dbs,
-            sharding=resolved_sharding,
-            routing_context=routing_context,
-        )
+        if isinstance(resolved_sharding, HashShardingSpec):
+            expected_db_id = route_hash(
+                key,
+                num_dbs=num_dbs,
+                hash_algorithm=resolved_sharding.hash_algorithm,
+            )
+        else:
+            assert isinstance(resolved_sharding, CelShardingSpec)
+            expected_db_id = route_cel(
+                key,
+                cel_expr=resolved_sharding.cel_expr,
+                cel_columns=resolved_sharding.cel_columns,
+                routing_values=resolved_sharding.routing_values,
+                routing_context=routing_context,
+            )
 
         if expected_db_id != computed_db_id:
             mismatches.append((key, computed_db_id, expected_db_id))

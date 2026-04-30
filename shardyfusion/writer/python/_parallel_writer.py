@@ -18,7 +18,12 @@ from pathlib import Path
 from typing import Any, TypeVar, cast
 
 from shardyfusion._rate_limiter import RateLimiter, TokenBucket
-from shardyfusion._writer_core import ShardAttemptResult, route_key, update_min_max
+from shardyfusion._writer_core import (
+    ShardAttemptResult,
+    route_cel,
+    route_hash,
+    update_min_max,
+)
 from shardyfusion.config import WriteConfig
 from shardyfusion.errors import (
     ConfigValidationError,
@@ -29,7 +34,7 @@ from shardyfusion.logging import FailureSeverity, get_logger, log_failure
 from shardyfusion.manifest import WriterInfo
 from shardyfusion.metrics import MetricEvent
 from shardyfusion.serde import make_key_encoder
-from shardyfusion.sharding_types import ShardingSpec
+from shardyfusion.sharding_types import CelShardingSpec, HashShardingSpec, ShardingSpec
 from shardyfusion.slatedb_adapter import DbAdapterFactory
 from shardyfusion.storage import join_s3
 from shardyfusion.type_defs import KeyInput, RetryConfig
@@ -1110,12 +1115,19 @@ def _route_records_to_workers(
     for record in records:
         key = key_fn(record)
         routing_context = columns_fn(record) if columns_fn is not None else None
-        db_id = route_key(
-            key,
-            num_dbs=num_dbs,
-            sharding=sharding,
-            routing_context=routing_context,
-        )
+        if isinstance(sharding, HashShardingSpec):
+            db_id = route_hash(
+                key, num_dbs=num_dbs, hash_algorithm=sharding.hash_algorithm
+            )
+        else:
+            assert isinstance(sharding, CelShardingSpec)
+            db_id = route_cel(
+                key,
+                cel_expr=sharding.cel_expr,
+                cel_columns=sharding.cel_columns,
+                routing_values=sharding.routing_values,
+                routing_context=routing_context,
+            )
         key_bytes = runtime.key_encoder(key)
         value_bytes = value_fn(record)
         pair_bytes = (
@@ -1170,12 +1182,19 @@ def _route_records_to_retry_workers(
 
         key = key_fn(record)
         routing_context = columns_fn(record) if columns_fn is not None else None
-        db_id = route_key(
-            key,
-            num_dbs=num_dbs,
-            sharding=sharding,
-            routing_context=routing_context,
-        )
+        if isinstance(sharding, HashShardingSpec):
+            db_id = route_hash(
+                key, num_dbs=num_dbs, hash_algorithm=sharding.hash_algorithm
+            )
+        else:
+            assert isinstance(sharding, CelShardingSpec)
+            db_id = route_cel(
+                key,
+                cel_expr=sharding.cel_expr,
+                cel_columns=sharding.cel_columns,
+                routing_values=sharding.routing_values,
+                routing_context=routing_context,
+            )
         key_bytes = runtime.key_encoder(key)
         value_bytes = value_fn(record)
         pair_bytes = (

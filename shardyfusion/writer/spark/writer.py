@@ -27,8 +27,11 @@ from shardyfusion._writer_core import (
     empty_shard_result,
     inject_vector_manifest_fields,
     publish_to_store,
+    resolve_cel_num_dbs,
     resolve_distributed_vector_fn,
     resolve_num_dbs,
+    route_cel,
+    route_hash,
     select_winners,
     wrap_factory_for_vector,
 )
@@ -437,9 +440,8 @@ def verify_routing_agreement(
 
     Since all strategies now use Python-based mapInArrow, this is a
     safety net verifying the mapInArrow output against the reader's
-    route_key() function.
+    route_hash() / route_cel() functions.
     """
-    from shardyfusion._writer_core import route_key
 
     # CEL multi-column: can't verify without routing_context
     if (
@@ -458,11 +460,21 @@ def verify_routing_agreement(
         key = row[key_col]
         spark_db_id = int(row[DB_ID_COL])
 
-        python_db_id = route_key(
-            key,
-            num_dbs=num_dbs,
-            sharding=resolved_sharding,
-        )
+        if isinstance(resolved_sharding, HashShardingSpec):
+            python_db_id = route_hash(
+                key,
+                num_dbs=num_dbs,
+                hash_algorithm=resolved_sharding.hash_algorithm,
+            )
+        else:
+            assert isinstance(resolved_sharding, CelShardingSpec)
+            python_db_id = route_cel(
+                key,
+                cel_expr=resolved_sharding.cel_expr,
+                cel_columns=resolved_sharding.cel_columns,
+                routing_values=resolved_sharding.routing_values,
+                routing_context=None,
+            )
 
         if python_db_id != spark_db_id:
             mismatches.append((key, spark_db_id, python_db_id))
@@ -573,7 +585,7 @@ def _prepare_partitioned_rows(
     if num_dbs is None:
         assert isinstance(resolved_sharding, CelShardingSpec)
         if resolved_sharding.routing_values is not None:
-            num_dbs = max(1, len(resolved_sharding.routing_values))
+            num_dbs = resolve_cel_num_dbs(resolved_sharding)
         else:
             agg_row = df_with_db_id.agg(
                 F.max(DB_ID_COL).alias("max_id"),

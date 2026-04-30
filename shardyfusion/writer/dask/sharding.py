@@ -4,10 +4,11 @@ import dask.dataframe as dd
 import numpy as np
 import pandas as pd
 
-from shardyfusion._writer_core import build_categorical_routing_values, route_key
+from shardyfusion._writer_core import build_categorical_routing_values, route_hash
 from shardyfusion.sharding_types import (
     DB_ID_COL,
     CelShardingSpec,
+    HashShardingSpec,
     KeyEncoding,
     ShardingSpec,
 )
@@ -29,8 +30,8 @@ def add_db_id_column(
 ) -> tuple[dd.DataFrame, ShardingSpec]:
     """Add deterministic ``_shard_id`` column via Python routing function.
 
-    Uses the same ``route_key()`` as the reader, guaranteeing the
-    sharding invariant without reimplementation.
+    Uses the same ``route_hash()`` / ``route_cel()`` as the reader,
+    guaranteeing the sharding invariant without reimplementation.
 
     For CEL sharding, builds per-row routing contexts from the CEL columns
     so that expressions referencing non-key columns evaluate correctly.
@@ -39,6 +40,7 @@ def add_db_id_column(
     if isinstance(sharding, CelShardingSpec):
         return _add_db_id_cel(ddf, sharding=sharding)
     assert num_dbs is not None, "num_dbs required for HASH sharding"
+    assert isinstance(sharding, HashShardingSpec)
     return _add_db_id_hash(
         ddf,
         key_col=key_col,
@@ -53,15 +55,13 @@ def _add_db_id_hash(
     *,
     key_col: str,
     num_dbs: int,
-    sharding: ShardingSpec,
+    sharding: HashShardingSpec,
     key_encoding: KeyEncoding,
 ) -> tuple[dd.DataFrame, ShardingSpec]:
     def _apply_routing(pdf: pd.DataFrame) -> pd.DataFrame:
         db_ids = pdf[key_col].apply(
-            lambda key: route_key(
-                key,
-                num_dbs=num_dbs,
-                sharding=sharding,
+            lambda key: route_hash(
+                key, num_dbs=num_dbs, hash_algorithm=sharding.hash_algorithm
             )
         )
         return pdf.assign(**{DB_ID_COL: db_ids})
@@ -80,10 +80,12 @@ def _add_db_id_cel(
     resolved = CelShardingSpec(
         cel_expr=sharding.cel_expr,
         cel_columns=dict(sharding.cel_columns),
-        routing_values=list(sharding.routing_values)
-        if sharding.routing_values is not None
-        else None,
-        infer_routing_values_from_data=sharding.infer_routing_values_from_data,
+        routing_values=(
+            list(sharding.routing_values)
+            if sharding.routing_values is not None
+            else None
+        ),
+        infer_routing_values_from_data=False,
     )
     cel_expr = resolved.cel_expr
     cel_columns = resolved.cel_columns

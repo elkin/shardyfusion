@@ -4,7 +4,7 @@ import numpy as np
 import pyarrow as pa
 import ray.data
 
-from shardyfusion._writer_core import build_categorical_routing_values, route_key
+from shardyfusion._writer_core import build_categorical_routing_values, route_hash
 from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.sharding_types import (
     DB_ID_COL,
@@ -28,8 +28,8 @@ def add_db_id_column(
 ) -> tuple[ray.data.Dataset, ShardingSpec]:
     """Add deterministic ``_shard_id`` column via Python routing function.
 
-    Uses the same ``route_key()`` as the reader, guaranteeing the
-    sharding invariant without reimplementation.
+    Uses the same ``route_hash()`` / ``route_cel()`` as the reader,
+    guaranteeing the sharding invariant without reimplementation.
 
     Uses Arrow batch format to avoid Arrow->pandas->Arrow round-trip.
     For CEL sharding, delegates to ``route_cel_batch()`` which evaluates
@@ -57,17 +57,13 @@ def _add_db_id_hash(
     *,
     key_col: str,
     num_dbs: int,
-    sharding: ShardingSpec,
+    sharding: HashShardingSpec,
     key_encoding: KeyEncoding,
 ) -> tuple[ray.data.Dataset, ShardingSpec]:
     def _apply_routing(table: pa.Table) -> pa.Table:
         keys = table.column(key_col).to_pylist()
         db_ids = [
-            route_key(
-                key,
-                num_dbs=num_dbs,
-                sharding=sharding,
-            )
+            route_hash(key, num_dbs=num_dbs, hash_algorithm=sharding.hash_algorithm)
             for key in keys
         ]
         return table.append_column(DB_ID_COL, pa.array(db_ids, type=pa.int64()))

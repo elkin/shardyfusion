@@ -14,7 +14,9 @@ from shardyfusion._writer_core import (
     build_categorical_routing_values,
     cleanup_losers,
     publish_to_store,
-    route_key,
+    resolve_cel_num_dbs,
+    route_cel,
+    route_hash,
     select_winners,
     update_min_max,
 )
@@ -267,9 +269,9 @@ def write_sharded_by_cel(
         )
 
     assert isinstance(sharding, CelShardingSpec)
-    num_dbs = len(config.routing_values) if config.routing_values else None
-    if sharding.routing_values is not None:
-        num_dbs = max(1, len(sharding.routing_values))
+    num_dbs = (
+        resolve_cel_num_dbs(sharding) if sharding.routing_values is not None else None
+    )
 
     return _write_sharded_impl(
         records=records,
@@ -921,13 +923,21 @@ def _write_single_process(
         for record in records:
             key = key_fn(record)
             routing_context = columns_fn(record) if columns_fn is not None else None
-            db_id = route_key(
-                key,
-                num_dbs=num_dbs,
-                sharding=sharding,
-                routing_context=routing_context,
-                cel_lookup=cel_lookup,
-            )
+            if isinstance(sharding, HashShardingSpec):
+                assert num_dbs is not None, "num_dbs required for HASH sharding"
+                db_id = route_hash(
+                    key, num_dbs=num_dbs, hash_algorithm=sharding.hash_algorithm
+                )
+            else:
+                assert isinstance(sharding, CelShardingSpec)
+                db_id = route_cel(
+                    key,
+                    cel_expr=sharding.cel_expr,
+                    cel_columns=sharding.cel_columns,
+                    routing_values=sharding.routing_values,
+                    routing_context=routing_context,
+                    cel_lookup=cel_lookup,
+                )
             key_bytes = key_encoder(key)
             value_bytes = value_fn(record)
             _buffer_single_process_record(
@@ -984,7 +994,7 @@ def _write_single_process(
 
         assert isinstance(sharding, CelShardingSpec)
         if sharding.routing_values is not None:
-            num_dbs = max(1, len(sharding.routing_values))
+            num_dbs = resolve_cel_num_dbs(sharding)
         else:
             num_dbs = discover_cel_num_dbs(set(state.row_counts))
 
