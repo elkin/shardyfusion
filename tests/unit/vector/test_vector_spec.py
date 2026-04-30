@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
-from shardyfusion.config import VectorSpec, WriteConfig
+from shardyfusion.config import CelWriteConfig, HashWriteConfig, VectorSpec, WriteConfig
 from shardyfusion.errors import ConfigValidationError
-from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
+from shardyfusion.sharding_types import CelShardingSpec
 
 
 class TestVectorSpec:
@@ -35,17 +37,18 @@ class TestVectorSpec:
 
 
 class TestWriteConfigVectorValidation:
-    def _cel_sharding(self) -> ShardingSpec:
-        return ShardingSpec(
-            strategy=ShardingStrategy.CEL,
+    def _cel_config(self, **kwargs: Any) -> CelWriteConfig:
+        return CelWriteConfig(
+            s3_prefix="s3://bucket/prefix",
             cel_expr="shard_hash(key) % 4u",
             cel_columns={"key": "int"},
             routing_values=[0, 1, 2, 3],
+            **kwargs,
         )
 
     def test_vector_spec_accepted_with_hash_sharding(self) -> None:
         """Vector sharding is independent of KV sharding strategy."""
-        config = WriteConfig(
+        config = HashWriteConfig(
             num_dbs=4,
             s3_prefix="s3://bucket/prefix",
             vector_spec=VectorSpec(dim=128),
@@ -54,37 +57,21 @@ class TestWriteConfigVectorValidation:
         assert config.vector_spec.dim == 128
 
     def test_vector_spec_with_cel_valid(self) -> None:
-        config = WriteConfig(
-            s3_prefix="s3://bucket/prefix",
-            sharding=self._cel_sharding(),
-            vector_spec=VectorSpec(dim=128),
-        )
+        config = self._cel_config(vector_spec=VectorSpec(dim=128))
         assert config.vector_spec is not None
         assert config.vector_spec.dim == 128
 
     def test_vector_spec_dim_zero(self) -> None:
         with pytest.raises(ConfigValidationError, match="dim must be > 0"):
-            WriteConfig(
-                s3_prefix="s3://bucket/prefix",
-                sharding=self._cel_sharding(),
-                vector_spec=VectorSpec(dim=0),
-            )
+            self._cel_config(vector_spec=VectorSpec(dim=0))
 
     def test_vector_spec_dim_negative(self) -> None:
         with pytest.raises(ConfigValidationError, match="dim must be > 0"):
-            WriteConfig(
-                s3_prefix="s3://bucket/prefix",
-                sharding=self._cel_sharding(),
-                vector_spec=VectorSpec(dim=-1),
-            )
+            self._cel_config(vector_spec=VectorSpec(dim=-1))
 
     def test_vector_spec_invalid_metric(self) -> None:
         with pytest.raises(ConfigValidationError, match="metric must be one of"):
-            WriteConfig(
-                s3_prefix="s3://bucket/prefix",
-                sharding=self._cel_sharding(),
-                vector_spec=VectorSpec(dim=128, metric="manhattan"),
-            )
+            self._cel_config(vector_spec=VectorSpec(dim=128, metric="manhattan"))
 
     def test_vector_spec_all_valid_metrics(self) -> None:
         for metric, expected in (
@@ -92,16 +79,12 @@ class TestWriteConfigVectorValidation:
             ("l2", "l2"),
             ("dot_product", "dot_product"),
         ):
-            config = WriteConfig(
-                s3_prefix="s3://bucket/prefix",
-                sharding=self._cel_sharding(),
-                vector_spec=VectorSpec(dim=128, metric=metric),
-            )
+            config = self._cel_config(vector_spec=VectorSpec(dim=128, metric=metric))
             assert config.vector_spec is not None
             assert config.vector_spec.metric == expected
 
     def test_no_vector_spec_is_valid(self) -> None:
-        config = WriteConfig(
+        config = HashWriteConfig(
             num_dbs=4,
             s3_prefix="s3://bucket/prefix",
         )

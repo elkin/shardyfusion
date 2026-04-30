@@ -36,9 +36,9 @@ from shardyfusion.routing import (
     xxh3_digest,
 )
 from shardyfusion.sharding_types import (
+    HashShardingSpec,
     KeyEncoding,
     ShardHashAlgorithm,
-    ShardingSpec,
     ShardingStrategy,
 )
 
@@ -167,7 +167,7 @@ def test_hash_dispatch_matches_xxh3_helpers() -> None:
 
 
 def test_sharding_spec_accepts_hash_algorithm_string() -> None:
-    spec = ShardingSpec(hash_algorithm="xxh3_64")  # type: ignore[arg-type]
+    spec = HashShardingSpec(hash_algorithm="xxh3_64")  # type: ignore[arg-type]
     assert spec.hash_algorithm == ShardHashAlgorithm.XXH3_64
     assert spec.to_manifest_dict()["hash_algorithm"] == "xxh3_64"
 
@@ -265,7 +265,7 @@ def test_writer_reader_routing_identity_int(key: int, num_dbs: int) -> None:
     writer_result = route_key(
         key,
         num_dbs=num_dbs,
-        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
+        sharding=HashShardingSpec(),
     )
     router = _build_router(num_dbs=num_dbs)
     reader_result = router.route_one(key)
@@ -284,7 +284,7 @@ def test_writer_reader_routing_identity_str(key: str, num_dbs: int) -> None:
     writer_result = route_key(
         key,
         num_dbs=num_dbs,
-        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
+        sharding=HashShardingSpec(),
     )
     router = _build_router(num_dbs=num_dbs, encoding=KeyEncoding.UTF8)
     reader_result = router.route_one(key)
@@ -303,7 +303,7 @@ def test_writer_reader_routing_identity_bytes(key: bytes, num_dbs: int) -> None:
     writer_result = route_key(
         key,
         num_dbs=num_dbs,
-        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
+        sharding=HashShardingSpec(),
     )
     router = _build_router(num_dbs=num_dbs, encoding=KeyEncoding.RAW)
     reader_result = router.route_one(key)

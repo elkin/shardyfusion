@@ -19,7 +19,6 @@ from shardyfusion.cel import (
     route_cel,
 )
 from shardyfusion.errors import ConfigValidationError
-from shardyfusion.sharding_types import ShardingStrategy
 
 pytestmark = pytest.mark.cel
 
@@ -170,7 +169,6 @@ class TestEvaluateCelArrowBatch:
 class TestCelShardingByColumns:
     def test_single_string_column(self) -> None:
         spec = cel_sharding_by_columns("region", num_shards=10)
-        assert spec.strategy == ShardingStrategy.CEL
         assert spec.cel_expr == "shard_hash(region) % 10u"
         assert spec.cel_columns == {"region": "string"}
 
@@ -298,7 +296,6 @@ class TestCelSharding:
     def test_direct_mode_helper(self) -> None:
         spec = cel_sharding("key % 4", {"key": "int"})
 
-        assert spec.strategy == ShardingStrategy.CEL
         assert spec.cel_expr == "key % 4"
         assert spec.cel_columns == {"key": "int"}
 
@@ -311,7 +308,6 @@ class TestCelSharding:
             routing_values=["ap", "eu", "us"],
         )
 
-        assert spec.strategy == ShardingStrategy.CEL
         assert spec.cel_expr == "region"
         assert spec.cel_columns == {"region": "string"}
         assert spec.routing_values == ["ap", "eu", "us"]
@@ -323,7 +319,6 @@ class TestCelSharding:
             routing_values=["ap", "eu", "us"],
         )
 
-        assert spec.strategy == ShardingStrategy.CEL
         assert spec.cel_expr == "region"
         assert spec.cel_columns == {"region": "string"}
         assert spec.routing_values == ["ap", "eu", "us"]

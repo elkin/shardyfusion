@@ -16,8 +16,6 @@ from .sharding_types import (
     HashShardingSpec,
     KeyEncoding,
     ShardingSpec,
-    ShardingStrategy,
-    _LegacyShardingSpec,
     validate_routing_values,
 )
 from .slatedb_adapter import DbAdapterFactory
@@ -324,48 +322,6 @@ class CelWriteConfig(WriteConfig):
                 validate_routing_values(self.routing_values)
             except ValueError as exc:
                 raise ConfigValidationError(str(exc)) from exc
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatible unified WriteConfig (deprecated — will be removed).
-# ---------------------------------------------------------------------------
-
-@dataclass(slots=True)
-class _LegacyWriteConfig(WriteConfig):
-    """Backward-compatible unified write config.
-
-    .. deprecated::
-
-       Use :class:`HashWriteConfig` or :class:`CelWriteConfig` instead.
-       This class exists only to keep existing code working during migration.
-    """
-
-    num_dbs: int | None = None
-    sharding: ShardingSpec = field(default_factory=_LegacyShardingSpec)
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.sharding, ShardingSpec):
-            raise ConfigValidationError("sharding must be ShardingSpec")
-        WriteConfig.__post_init__(self)
-
-        if self.sharding.strategy == ShardingStrategy.CEL:  # type: ignore[union-attr]
-            if self.num_dbs is not None:
-                raise ConfigValidationError(
-                    "num_dbs must be None for CEL strategy "
-                    "(shard count is determined by the CEL expression)"
-                )
-        elif self.sharding.max_keys_per_shard is not None:  # type: ignore[union-attr]
-            if self.num_dbs is not None:
-                raise ConfigValidationError(
-                    "num_dbs must be None when max_keys_per_shard is set "
-                    "(num_dbs will be computed at write time)"
-                )
-        elif self.num_dbs is None or self.num_dbs <= 0:
-            raise ConfigValidationError("num_dbs must be > 0")
-
-
-# Keep old name working during migration.
-LegacyWriteConfig = _LegacyWriteConfig
 
 
 # ---------------------------------------------------------------------------

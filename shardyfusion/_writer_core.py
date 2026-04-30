@@ -36,6 +36,7 @@ from .sharding_types import (
     CelShardingSpec,
     HashShardingSpec,
     RoutingValue,
+    ShardHashAlgorithm,
     ShardingSpec,
     ShardingStrategy,
     validate_routing_values,
@@ -195,20 +196,6 @@ def route_key(
             routing_context=routing_context,
             cel_lookup=cel_lookup,
         )
-    # Legacy _LegacyShardingSpec fallback
-    if hasattr(sharding, "strategy"):
-        if sharding.strategy == ShardingStrategy.HASH:
-            assert num_dbs is not None, "num_dbs required for HASH routing"
-            return hash_db_id(key, num_dbs, sharding.hash_algorithm)
-        if sharding.strategy == ShardingStrategy.CEL:
-            return route_cel(
-                key,
-                cel_expr=sharding.cel_expr,
-                cel_columns=sharding.cel_columns,
-                routing_values=sharding.routing_values,
-                routing_context=routing_context,
-                cel_lookup=cel_lookup,
-            )
     raise ConfigValidationError(
         f"Unsupported sharding type: {type(sharding).__name__}"
     )
@@ -237,21 +224,6 @@ def resolve_num_dbs(config: WriteConfig, count_fn: Callable[[], int]) -> int | N
                 return 1
             return max(1, math.ceil(count / config.max_keys_per_shard))
         return config.num_dbs
-
-    # Legacy WriteConfig fallback
-    if hasattr(config, "num_dbs") and config.num_dbs is not None and config.num_dbs > 0:
-        return config.num_dbs
-
-    if hasattr(config, "sharding"):
-        sharding = config.sharding
-        if hasattr(sharding, "strategy"):
-            if sharding.strategy == ShardingStrategy.CEL and sharding.routing_values is not None:
-                return max(1, len(sharding.routing_values))
-            if sharding.max_keys_per_shard is not None:
-                count = count_fn()
-                if count == 0:
-                    return 1
-                return max(1, math.ceil(count / sharding.max_keys_per_shard))
 
     # CEL: will discover after add_db_id_column
     return None
@@ -888,17 +860,8 @@ def manifest_safe_sharding(sharding: ShardingSpec) -> ManifestShardingSpec:
             cel_columns=dict(sharding.cel_columns),
             hash_algorithm=ShardHashAlgorithm.XXH3_64,
         )
-    # Legacy fallback
-    return ManifestShardingSpec(
-        strategy=sharding.strategy,  # type: ignore[union-attr]
-        routing_values=list(sharding.routing_values)
-        if sharding.routing_values is not None
-        else None,
-        cel_expr=sharding.cel_expr,
-        cel_columns=dict(sharding.cel_columns)
-        if sharding.cel_columns is not None
-        else None,
-        hash_algorithm=sharding.hash_algorithm,
+    raise ConfigValidationError(
+        f"Unsupported sharding type: {type(sharding).__name__}"
     )
 
 

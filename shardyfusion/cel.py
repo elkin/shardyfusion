@@ -27,7 +27,7 @@ from enum import Enum
 from typing import Any
 
 from .errors import ConfigValidationError
-from .sharding_types import RoutingValue, ShardingSpec, ShardingStrategy
+from .sharding_types import CelShardingSpec, RoutingValue
 
 # ---------------------------------------------------------------------------
 # Lazy imports — fail fast with a clear message
@@ -366,12 +366,12 @@ def cel_sharding(
     columns: dict[str, str | CelType],
     *,
     routing_values: Sequence[RoutingValue] | None = None,
-) -> ShardingSpec:
-    """Build a :class:`ShardingSpec` for an arbitrary CEL expression.
+) -> CelShardingSpec:
+    """Build a :class:`CelShardingSpec` for an arbitrary CEL expression.
 
     This is the general-purpose companion to :func:`cel_sharding_by_columns`.
     Use it when you want raw CEL control but do not want to construct
-    ``ShardingSpec(strategy=ShardingStrategy.CEL, ...)`` manually.
+    ``CelShardingSpec(...)`` manually.
 
     Direct routing example::
 
@@ -383,11 +383,11 @@ def cel_sharding(
         routing_values: Optional categorical routing values for exact-match mode.
 
     Returns:
-        A :class:`ShardingSpec` with strategy CEL.
+        A :class:`CelShardingSpec`.
 
     Raises:
         ConfigValidationError: If no columns are given or an unsupported CEL type
-            is declared.
+        is declared.
     """
     if not columns:
         raise ConfigValidationError("cel_sharding requires at least one column")
@@ -404,8 +404,7 @@ def cel_sharding(
             )
         normalized_columns[name] = normalized_type
 
-    return ShardingSpec(
-        strategy=ShardingStrategy.CEL,
+    return CelShardingSpec(
         routing_values=list(routing_values) if routing_values is not None else None,
         cel_expr=expr,
         cel_columns=normalized_columns,
@@ -416,8 +415,8 @@ def cel_sharding_by_columns(
     *columns: str | CelColumn,
     num_shards: int | None = None,
     separator: str = ":",
-) -> ShardingSpec:
-    """Build a :class:`ShardingSpec` for CEL-based partitioning by column values.
+) -> CelShardingSpec:
+    """Build a :class:`CelShardingSpec` for CEL-based partitioning by column values.
 
     Each column is either a bare name (``str``, defaults to
     :attr:`CelType.STRING`) or a :class:`CelColumn` instance.  The generated
@@ -451,7 +450,7 @@ def cel_sharding_by_columns(
         separator: Delimiter for multi-column concatenation (default ``":"``).
 
     Returns:
-        A :class:`ShardingSpec` with strategy CEL.
+        A :class:`CelShardingSpec`.
 
     Raises:
         ConfigValidationError: If no columns given or ``num_shards < 1``.
@@ -496,8 +495,7 @@ def cel_sharding_by_columns(
         inner = f" + {separator_literal} + ".join(parts)
 
     if num_shards is None:
-        return ShardingSpec(
-            strategy=ShardingStrategy.CEL,
+        return CelShardingSpec(
             cel_expr=inner,
             cel_columns=cel_columns,
             infer_routing_values_from_data=True,
