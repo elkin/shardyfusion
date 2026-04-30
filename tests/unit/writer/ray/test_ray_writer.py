@@ -10,7 +10,7 @@ import ray
 import ray.data
 
 from shardyfusion._shard_writer import results_pdf_to_attempts
-from shardyfusion._writer_core import ShardAttemptResult, route_key
+from shardyfusion._writer_core import ShardAttemptResult, route_hash
 from shardyfusion.config import (
     HashWriteConfig,
     ManifestOptions,
@@ -23,7 +23,6 @@ from shardyfusion.run_registry import InMemoryRunRegistry
 from shardyfusion.serde import ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import (
     DB_ID_COL,
-    HashShardingSpec,
     KeyEncoding,
 )
 from shardyfusion.testing import (
@@ -549,10 +548,9 @@ def test_data_integrity(tmp_path: pathlib.Path) -> None:
         shard_data = file_backed_load_db(root_dir, winner.db_url)
         for key_bytes in shard_data:
             key_int = int.from_bytes(key_bytes, byteorder="big", signed=False)
-            expected_db_id = route_key(
+            expected_db_id = route_hash(
                 key_int,
                 num_dbs=config.num_dbs,
-                sharding=HashShardingSpec(),
             )
             assert expected_db_id == winner.db_id
 

@@ -20,7 +20,7 @@ import struct
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from shardyfusion._writer_core import route_key
+from shardyfusion._writer_core import route_hash
 from shardyfusion.manifest import (
     ManifestShardingSpec,
     RequiredBuildMeta,
@@ -261,11 +261,10 @@ def test_single_shard_always_zero() -> None:
 @given(key=int_keys, num_dbs=num_dbs_st)
 @settings(max_examples=500)
 def test_writer_reader_routing_identity_int(key: int, num_dbs: int) -> None:
-    """route_key (writer) and SnapshotRouter.route_one (reader) must agree for int keys."""
-    writer_result = route_key(
+    """route_hash (writer) and SnapshotRouter.route_one (reader) must agree for int keys."""
+    writer_result = route_hash(
         key,
         num_dbs=num_dbs,
-        sharding=HashShardingSpec(),
     )
     router = _build_router(num_dbs=num_dbs)
     reader_result = router.route_one(key)
@@ -280,11 +279,10 @@ def test_writer_reader_routing_identity_int(key: int, num_dbs: int) -> None:
 @given(key=str_keys, num_dbs=num_dbs_st)
 @settings(max_examples=500)
 def test_writer_reader_routing_identity_str(key: str, num_dbs: int) -> None:
-    """route_key (writer) and SnapshotRouter.route_one (reader) must agree for str keys."""
-    writer_result = route_key(
+    """route_hash (writer) and SnapshotRouter.route_one (reader) must agree for str keys."""
+    writer_result = route_hash(
         key,
         num_dbs=num_dbs,
-        sharding=HashShardingSpec(),
     )
     router = _build_router(num_dbs=num_dbs, encoding=KeyEncoding.UTF8)
     reader_result = router.route_one(key)
@@ -299,11 +297,10 @@ def test_writer_reader_routing_identity_str(key: str, num_dbs: int) -> None:
 @given(key=bytes_keys, num_dbs=num_dbs_st)
 @settings(max_examples=500)
 def test_writer_reader_routing_identity_bytes(key: bytes, num_dbs: int) -> None:
-    """route_key (writer) and SnapshotRouter.route_one (reader) must agree for bytes keys."""
-    writer_result = route_key(
+    """route_hash (writer) and SnapshotRouter.route_one (reader) must agree for bytes keys."""
+    writer_result = route_hash(
         key,
         num_dbs=num_dbs,
-        sharding=HashShardingSpec(),
     )
     router = _build_router(num_dbs=num_dbs, encoding=KeyEncoding.RAW)
     reader_result = router.route_one(key)

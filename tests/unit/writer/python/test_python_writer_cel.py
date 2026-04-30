@@ -15,15 +15,16 @@ import pytest
 
 cel_expr_python = pytest.importorskip("cel_expr_python")  # noqa: F841
 
-from shardyfusion._writer_core import route_key
-from shardyfusion.cel import compile_cel, route_cel
+from shardyfusion._writer_core import route_cel as route_cel_raw
+from shardyfusion.cel import compile_cel
+from shardyfusion.cel import route_cel as route_cel_compiled
 from shardyfusion.config import CelWriteConfig, ManifestOptions, OutputOptions
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.manifest import BuildResult
 from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.routing import SnapshotRouter
 from shardyfusion.serde import make_key_encoder
-from shardyfusion.sharding_types import CelShardingSpec, KeyEncoding, ShardingStrategy
+from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
 from shardyfusion.testing import (
     file_backed_adapter_factory,
     file_backed_load_db,
@@ -100,7 +101,7 @@ class TestCelUnifiedMode:
             shard_data = file_backed_load_db(root_dir, winner.db_url)
             for key_bytes in shard_data:
                 key_int = int.from_bytes(key_bytes, byteorder="big", signed=False)
-                expected_db_id = route_cel(compiled, {"key": key_int})
+                expected_db_id = route_cel_compiled(compiled, {"key": key_int})
                 assert expected_db_id == winner.db_id, (
                     f"key={key_int}, "
                     f"expected_db_id={expected_db_id}, actual={winner.db_id}"
@@ -155,13 +156,11 @@ class TestCelUnifiedMode:
         # Verify routing matches write-time routing
         assert router.strategy == ShardingStrategy.CEL
         for key in range(30):
-            write_db_id = route_key(
+            write_db_id = route_cel_raw(
                 key,
-                num_dbs=3,
-                sharding=CelShardingSpec(
-                    cel_expr=config.cel_expr,
-                    cel_columns=config.cel_columns,
-                ),
+                cel_expr=config.cel_expr,
+                cel_columns=config.cel_columns,
+                routing_values=config.routing_values,
             )
             read_db_id = router.route_one(key)
             assert write_db_id == read_db_id, f"key={key}"
@@ -348,7 +347,7 @@ class TestCelSplitMode:
                 user_id = key_bytes.decode("utf-8")
                 payload = val_bytes.decode("utf-8")
                 region = payload.split("@")[1]
-                expected_db_id = route_cel(
+                expected_db_id = route_cel_compiled(
                     compiled,
                     {"region": region},
                     ["ap", "eu", "us"],

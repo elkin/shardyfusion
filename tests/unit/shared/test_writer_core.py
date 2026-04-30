@@ -7,7 +7,7 @@ from shardyfusion._writer_core import (
     discover_cel_num_dbs,
     resolve_num_dbs,
 )
-from shardyfusion.config import CelWriteConfig, HashWriteConfig
+from shardyfusion.config import HashWriteConfig
 from shardyfusion.errors import ConfigValidationError, ShardAssignmentError
 
 # ---------------------------------------------------------------------------
@@ -56,15 +56,6 @@ class TestResolveNumDbs:
         )
         result = resolve_num_dbs(cfg, count_fn=lambda: 0)
         assert result == 1
-
-    def test_cel_mode_returns_none(self) -> None:
-        cfg = CelWriteConfig(
-            s3_prefix="s3://b/p",
-            cel_expr="key % 4",
-            cel_columns={"key": "int"},
-        )
-        result = resolve_num_dbs(cfg, count_fn=lambda: 1000)
-        assert result is None
 
 
 # ---------------------------------------------------------------------------

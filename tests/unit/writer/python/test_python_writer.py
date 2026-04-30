@@ -8,7 +8,7 @@ from typing import Self
 
 import pytest
 
-from shardyfusion._writer_core import route_key
+from shardyfusion._writer_core import route_hash
 from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.manifest import BuildResult
@@ -17,7 +17,6 @@ from shardyfusion.metrics import MetricEvent
 from shardyfusion.run_registry import InMemoryRunRegistry
 from shardyfusion.serde import make_key_encoder
 from shardyfusion.sharding_types import (
-    HashShardingSpec,
     KeyEncoding,
 )
 from shardyfusion.slatedb_adapter import DbAdapterFactory
@@ -589,10 +588,9 @@ def test_parallel_data_integrity(tmp_path: Path) -> None:
         shard_data = file_backed_load_db(root_dir, winner.db_url)
         for key_bytes in shard_data:
             key_int = int.from_bytes(key_bytes, byteorder="big", signed=False)
-            expected_db_id = route_key(
+            expected_db_id = route_hash(
                 key_int,
                 num_dbs=config.num_dbs,
-                sharding=HashShardingSpec(),
             )
             assert expected_db_id == winner.db_id
 
