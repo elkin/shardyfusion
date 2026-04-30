@@ -13,9 +13,9 @@ import pytest
 from shardyfusion._shard_writer import results_pdf_to_attempts
 from shardyfusion._writer_core import ShardAttemptResult, route_key
 from shardyfusion.config import (
+    HashWriteConfig,
     ManifestOptions,
     OutputOptions,
-    WriteConfig,
 )
 from shardyfusion.manifest import BuildResult, WriterInfo
 from shardyfusion.manifest_store import InMemoryManifestStore
@@ -24,8 +24,8 @@ from shardyfusion.run_registry import InMemoryRunRegistry
 from shardyfusion.serde import ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import (
     DB_ID_COL,
+    HashShardingSpec,
     KeyEncoding,
-    ShardingSpec,
 )
 from shardyfusion.testing import (
     ListMetricsCollector,
@@ -33,7 +33,7 @@ from shardyfusion.testing import (
     file_backed_load_db,
 )
 from shardyfusion.writer.dask import sharding as dask_sharding
-from shardyfusion.writer.dask import write_sharded
+from shardyfusion.writer.dask import write_sharded_by_hash
 from tests.helpers.run_record_assertions import (
     assert_success_run_record,
     load_in_memory_run_record,
@@ -105,16 +105,14 @@ def _make_config(
     factory: _TrackingFactory | None = None,
     run_registry: InMemoryRunRegistry | None = None,
     batch_size: int = 50_000,
-    sharding: ShardingSpec | None = None,
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
-) -> WriteConfig:
-    return WriteConfig(
+) -> HashWriteConfig:
+    return HashWriteConfig(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/prefix",
         key_encoding=key_encoding,
         batch_size=batch_size,
         adapter_factory=factory or _TrackingFactory(),
-        sharding=sharding or ShardingSpec(),
         output=OutputOptions(run_id="test-run"),
         manifest=ManifestOptions(store=InMemoryManifestStore()),
         run_registry=run_registry,
@@ -126,17 +124,15 @@ def _make_file_backed_config(
     *,
     num_dbs: int = 4,
     batch_size: int = 50_000,
-    sharding: ShardingSpec | None = None,
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
-) -> tuple[WriteConfig, str]:
+) -> tuple[HashWriteConfig, str]:
     root_dir = str(tmp_path / "file_backed")
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/prefix",
         key_encoding=key_encoding,
         batch_size=batch_size,
         adapter_factory=file_backed_adapter_factory(root_dir),
-        sharding=sharding or ShardingSpec(),
         output=OutputOptions(
             run_id="test-run",
             local_root=str(tmp_path / "local"),
@@ -165,7 +161,7 @@ def test_hash_routing_round_trip() -> None:
     records = [{"id": i} for i in range(40)]
     ddf = _make_dask_df(records, npartitions=2)
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -186,7 +182,7 @@ def test_hash_routing_round_trip_records_succeeded_run_record() -> None:
     records = [{"id": i} for i in range(12)]
     ddf = _make_dask_df(records, npartitions=2)
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -212,7 +208,7 @@ def test_empty_input() -> None:
     pdf = pd.DataFrame({"id": pd.Series(dtype="int64")})
     ddf = dd.from_pandas(pdf, npartitions=1)
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -258,7 +254,7 @@ def test_batch_flushing() -> None:
     records = [{"id": i} for i in range(7)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_sharded(
+    write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -334,7 +330,7 @@ def test_min_max_key_tracking() -> None:
     records = [{"id": k} for k in [10, 20, 30, 60, 70, 80]]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -355,7 +351,7 @@ def test_rate_limited_write() -> None:
     records = [{"id": i} for i in range(5)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -407,7 +403,7 @@ def test_rate_limiter_bucket_created_with_correct_rate(
     records = [{"id": i} for i in range(5)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_sharded(
+    write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -426,7 +422,7 @@ def test_rate_limiter_no_bucket_when_rate_is_none(
     records = [{"id": i} for i in range(5)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_sharded(
+    write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -443,7 +439,7 @@ def test_rate_limiter_acquire_count_matches_batch_writes(
     records = [{"id": i} for i in range(7)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_sharded(
+    write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -466,7 +462,7 @@ def test_rate_limiter_single_batch_single_acquire(
     records = [{"id": i} for i in range(5)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_sharded(
+    write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -487,7 +483,7 @@ def test_rate_limiter_exact_batch_boundary(
     records = [{"id": i} for i in range(6)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_sharded(
+    write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -508,7 +504,7 @@ def test_rate_limiter_multiple_shards_independent_buckets(
     records = [{"id": i} for i in range(6)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_sharded(
+    write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -531,7 +527,7 @@ def test_rate_limiter_empty_shard_no_bucket(
     records = [{"id": 0}, {"id": 1}]
     ddf = _make_dask_df(records, npartitions=1)
 
-    write_sharded(
+    write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -551,7 +547,7 @@ def test_value_spec_binary_col(tmp_path: Path) -> None:
     records = [{"id": i, "payload": f"data-{i}".encode()} for i in range(10)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -576,7 +572,7 @@ def test_value_spec_json_cols(tmp_path: Path) -> None:
     records = [{"id": i, "name": f"user{i}"} for i in range(10)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -606,7 +602,7 @@ def test_sort_within_partitions(tmp_path: Path) -> None:
     records = [{"id": k} for k in [30, 10, 20, 80, 60, 70]]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -631,7 +627,7 @@ def test_u32be_key_encoding(tmp_path: Path) -> None:
     records = [{"id": i} for i in range(20)]
     ddf = _make_dask_df(records, npartitions=1)
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -656,7 +652,7 @@ def test_verify_routing_enabled() -> None:
     ddf = _make_dask_df(records, npartitions=2)
 
     # Should not raise — verification passes when routing is correct
-    result = write_sharded(
+    result = write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -673,7 +669,7 @@ def test_data_integrity(tmp_path: Path) -> None:
     records = [{"id": i} for i in range(100)]
     ddf = _make_dask_df(records, npartitions=4)
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         ddf,
         config,
         key_col="id",
@@ -704,7 +700,7 @@ def test_data_integrity(tmp_path: Path) -> None:
             expected_db_id = route_key(
                 key_int,
                 num_dbs=config.num_dbs,
-                sharding=config.sharding,
+                sharding=HashShardingSpec(),
             )
             assert expected_db_id == winner.db_id
 
@@ -723,7 +719,7 @@ def test_metrics_emitted_on_write() -> None:
         pd.DataFrame({"key": range(10), "val": [b"v"] * 10}),
         npartitions=2,
     )
-    write_sharded(ddf, config, key_col="key", value_spec=ValueSpec.binary_col("val"))
+    write_sharded_by_hash(ddf, config, key_col="key", value_spec=ValueSpec.binary_col("val"))
 
     event_names = [e[0] for e in mc.events]
     assert MetricEvent.WRITE_STARTED in event_names

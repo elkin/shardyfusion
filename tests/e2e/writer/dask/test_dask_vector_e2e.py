@@ -21,12 +21,11 @@ def test_dask_vector_cluster_write_to_sqlite(garage_s3_service, tmp_path) -> Non
     import pandas as pd
 
     from shardyfusion.config import (
+        HashWriteConfig,
         ManifestOptions,
         OutputOptions,
         VectorSpec,
-        WriteConfig,
     )
-    from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
     from shardyfusion.vector.config import VectorSpecSharding
     from shardyfusion.writer.dask.writer import write_vector_sharded
@@ -60,13 +59,10 @@ def test_dask_vector_cluster_write_to_sqlite(garage_s3_service, tmp_path) -> Non
     )
     ddf = dd.from_pandas(pdf, npartitions=4)
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=num_dbs,
         s3_prefix=f"s3://{prefix}",
         vector_spec=vector_spec,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.HASH,
-        ),
         output=OutputOptions(run_id=run_id, local_root=str(tmp_path)),
         adapter_factory=SqliteVecFactory(
             vector_spec=vector_spec,
@@ -106,12 +102,11 @@ def test_dask_vector_lsh_write_to_sqlite(garage_s3_service, tmp_path) -> None:
     import pandas as pd
 
     from shardyfusion.config import (
+        HashWriteConfig,
         ManifestOptions,
         OutputOptions,
         VectorSpec,
-        WriteConfig,
     )
-    from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
     from shardyfusion.vector.config import VectorSpecSharding
     from shardyfusion.writer.dask.writer import write_vector_sharded
@@ -145,13 +140,10 @@ def test_dask_vector_lsh_write_to_sqlite(garage_s3_service, tmp_path) -> None:
     )
     ddf = dd.from_pandas(pdf, npartitions=4)
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=num_dbs,
         s3_prefix=f"s3://{prefix}",
         vector_spec=vector_spec,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.HASH,
-        ),
         output=OutputOptions(run_id=run_id, local_root=str(tmp_path)),
         adapter_factory=SqliteVecFactory(
             vector_spec=vector_spec,

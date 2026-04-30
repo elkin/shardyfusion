@@ -14,9 +14,8 @@ import pytest
 from shardyfusion._writer_core import route_key
 from shardyfusion.sharding_types import (
     DB_ID_COL,
+    HashShardingSpec,
     KeyEncoding,
-    ShardingSpec,
-    ShardingStrategy,
 )
 from shardyfusion.writer.dask.sharding import add_db_id_column
 
@@ -33,7 +32,7 @@ def test_dask_python_hash_agreement_u64be(num_dbs: int) -> None:
 
     pdf = pd.DataFrame({"id": EDGE_CASE_KEYS})
     ddf = dd.from_pandas(pdf, npartitions=4)
-    sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
+    sharding = HashShardingSpec()
 
     result_ddf, _ = add_db_id_column(
         ddf,
@@ -63,7 +62,7 @@ def test_dask_python_hash_agreement_u32be(num_dbs: int) -> None:
 
     pdf = pd.DataFrame({"id": U32_EDGE_CASE_KEYS})
     ddf = dd.from_pandas(pdf, npartitions=4)
-    sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
+    sharding = HashShardingSpec()
 
     result_ddf, _ = add_db_id_column(
         ddf,

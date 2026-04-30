@@ -27,7 +27,7 @@ from shardyfusion._writer_core import (
     select_winners,
     wrap_factory_for_vector,
 )
-from shardyfusion.config import WriteConfig
+from shardyfusion.config import CelWriteConfig, HashWriteConfig, WriteConfig
 from shardyfusion.credentials import CredentialProvider
 from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.logging import (
@@ -44,10 +44,12 @@ from shardyfusion.metrics import MetricEvent, MetricsCollector
 from shardyfusion.run_registry import RunRecordLifecycle
 from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import (
+    CelShardingSpec,
     DB_ID_COL,
+    HashShardingSpec,
     KeyEncoding,
+    ShardHashAlgorithm,
     ShardingSpec,
-    ShardingStrategy,
 )
 from shardyfusion.slatedb_adapter import (
     DbAdapterFactory,
@@ -151,9 +153,9 @@ def _vector_result_row(result: RequiredShardMeta) -> dict[str, object]:
     }
 
 
-def write_sharded(
+def write_sharded_by_hash(
     ddf: dd.DataFrame,
-    config: WriteConfig,
+    config: HashWriteConfig,
     *,
     key_col: str,
     value_spec: ValueSpec,
@@ -166,12 +168,11 @@ def write_sharded(
     ) = None,
     vector_columns: VectorColumnMapping | None = None,
 ) -> BuildResult:
-    """Write a Dask DataFrame into N independent sharded databases and publish manifest.
+    """Write a Dask DataFrame into N independent sharded databases using HASH routing.
 
     Args:
         ddf: Dask DataFrame containing at least the key column and value column(s).
-        config: Write configuration (num_dbs, s3_prefix, sharding strategy, etc.).
-            HASH and CEL sharding strategies are supported.
+        config: Hash write configuration (num_dbs, s3_prefix, etc.).
         key_col: Name of the key column used for shard routing.
         value_spec: Specifies how DataFrame rows are serialized to bytes
             (binary_col, json_cols, or a callable encoder).
@@ -191,13 +192,116 @@ def write_sharded(
         PublishManifestError: If manifest upload to S3 fails.
         PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
     """
+    from shardyfusion._writer_core import resolve_num_dbs
 
+    hash_algorithm = ShardHashAlgorithm.XXH3_64
+    sharding = HashShardingSpec(
+        hash_algorithm=hash_algorithm,
+        max_keys_per_shard=config.max_keys_per_shard,
+    )
+    num_dbs = resolve_num_dbs(config, lambda: len(ddf))
+
+    return _write_sharded_impl(
+        ddf=ddf,
+        config=config,
+        sharding=sharding,
+        num_dbs=num_dbs,
+        key_col=key_col,
+        value_spec=value_spec,
+        sort_within_partitions=sort_within_partitions,
+        max_writes_per_second=max_writes_per_second,
+        max_write_bytes_per_second=max_write_bytes_per_second,
+        verify_routing=verify_routing,
+        vector_fn=vector_fn,
+        vector_columns=vector_columns,
+    )
+
+
+def write_sharded_by_cel(
+    ddf: dd.DataFrame,
+    config: CelWriteConfig,
+    *,
+    key_col: str,
+    value_spec: ValueSpec,
+    sort_within_partitions: bool = False,
+    max_writes_per_second: float | None = None,
+    max_write_bytes_per_second: float | None = None,
+    verify_routing: bool = True,
+    vector_fn: (
+        Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None
+    ) = None,
+    vector_columns: VectorColumnMapping | None = None,
+) -> BuildResult:
+    """Write a Dask DataFrame into N independent sharded databases using CEL routing.
+
+    Args:
+        ddf: Dask DataFrame containing at least the key column and value column(s).
+        config: CEL write configuration (cel_expr, cel_columns, etc.).
+        key_col: Name of the key column used for shard routing.
+        value_spec: Specifies how DataFrame rows are serialized to bytes
+            (binary_col, json_cols, or a callable encoder).
+        sort_within_partitions: If True, sort rows by key within each partition.
+        max_writes_per_second: Optional rate limit (token-bucket) for write ops/sec.
+        max_write_bytes_per_second: Optional rate limit (token-bucket) for write bytes/sec.
+        verify_routing: If True (default), spot-check that Dask-assigned shard IDs
+            match Python routing on a sample of written rows.
+
+    Returns:
+        BuildResult with manifest reference, shard metadata, and build statistics.
+
+    Raises:
+        ConfigValidationError: If configuration is invalid.
+        ShardAssignmentError: If rows cannot be assigned to valid shard IDs.
+        ShardCoverageError: If partition results don't cover all expected shards.
+        PublishManifestError: If manifest upload to S3 fails.
+        PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
+    """
+    sharding: ShardingSpec = CelShardingSpec(
+        cel_expr=config.cel_expr,
+        cel_columns=config.cel_columns,
+        routing_values=config.routing_values,
+        infer_routing_values_from_data=config.infer_routing_values_from_data,
+    )
+
+    return _write_sharded_impl(
+        ddf=ddf,
+        config=config,
+        sharding=sharding,
+        num_dbs=None,
+        key_col=key_col,
+        value_spec=value_spec,
+        sort_within_partitions=sort_within_partitions,
+        max_writes_per_second=max_writes_per_second,
+        max_write_bytes_per_second=max_write_bytes_per_second,
+        verify_routing=verify_routing,
+        vector_fn=vector_fn,
+        vector_columns=vector_columns,
+    )
+
+
+def _write_sharded_impl(
+    *,
+    ddf: dd.DataFrame,
+    config: WriteConfig,
+    sharding: ShardingSpec,
+    num_dbs: int | None,
+    key_col: str,
+    value_spec: ValueSpec,
+    sort_within_partitions: bool,
+    max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
+    verify_routing: bool,
+    vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
+    vector_columns: VectorColumnMapping | None,
+) -> BuildResult:
+    """Shared implementation for hash and CEL Dask sharded writes."""
     from shardyfusion.logging import LogContext
 
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
 
     mc = config.metrics_collector
+    _strategy_name = "hash" if isinstance(sharding, HashShardingSpec) else "cel"
 
     with (
         LogContext(run_id=run_id),
@@ -210,9 +314,9 @@ def write_sharded(
         log_event(
             "write_started",
             logger=_logger,
-            num_dbs=config.num_dbs,
+            num_dbs=num_dbs,
             s3_prefix=config.s3_prefix,
-            strategy=config.sharding.strategy,
+            strategy=_strategy_name,
             key_encoding=config.key_encoding,
             writer_type="dask",
         )
@@ -229,8 +333,7 @@ def write_sharded(
         shard_started = time.perf_counter()
         from shardyfusion._writer_core import discover_cel_num_dbs
 
-        resolved_sharding = config.sharding
-        num_dbs = _resolve_num_dbs_before_sharding(ddf, config)
+        resolved_sharding = sharding
 
         ddf_with_id, resolved_sharding = add_db_id_column(
             ddf,
@@ -247,7 +350,7 @@ def write_sharded(
             distinct_ids = set(ddf_with_id[DB_ID_COL].unique().compute().tolist())
             num_dbs = discover_cel_num_dbs(distinct_ids)
 
-        if verify_routing and num_dbs > 0:
+        if verify_routing and num_dbs is not None and num_dbs > 0:
             _verify_routing_agreement(
                 ddf_with_id,
                 key_col=key_col,
@@ -286,6 +389,7 @@ def write_sharded(
         )
 
         write_started = time.perf_counter()
+        assert num_dbs is not None, "num_dbs must be resolved before shuffle"
         ddf_shuffled = ddf_with_id.shuffle(on=DB_ID_COL, npartitions=num_dbs)
         ddf_results = ddf_shuffled.map_partitions(
             _write_partition,
@@ -375,15 +479,6 @@ def write_sharded(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_num_dbs_before_sharding(
-    ddf: dd.DataFrame, config: WriteConfig
-) -> int | None:
-    """Resolve num_dbs that can be determined before add_db_id_column."""
-    from shardyfusion._writer_core import resolve_num_dbs
-
-    return resolve_num_dbs(config, lambda: len(ddf))
-
-
 def _verify_routing_agreement(
     ddf_with_id: dd.DataFrame,
     *,
@@ -398,7 +493,7 @@ def _verify_routing_agreement(
     # For CEL with non-key columns, include those columns in the sample.
     cel_columns = (
         resolved_sharding.cel_columns
-        if resolved_sharding.strategy == ShardingStrategy.CEL
+        if isinstance(resolved_sharding, CelShardingSpec)
         else None
     )
     sample_cols = [key_col, DB_ID_COL]
@@ -650,7 +745,7 @@ def _write_partition(
 
 def write_vector_sharded(
     ddf: dd.DataFrame,
-    config: WriteConfig,
+    config: HashWriteConfig,
     *,
     vector_col: str,
     id_col: str,
@@ -664,7 +759,7 @@ def write_vector_sharded(
 
     Args:
         ddf: Dask DataFrame with vector and ID columns.
-        config: Write configuration.
+        config: Hash write configuration.
         vector_col: Name of the vector column.
         id_col: Name of the ID column.
         payload_cols: Optional payload columns.

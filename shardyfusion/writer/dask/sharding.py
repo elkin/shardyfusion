@@ -6,10 +6,11 @@ import pandas as pd
 
 from shardyfusion._writer_core import build_categorical_routing_values, route_key
 from shardyfusion.sharding_types import (
+    CelShardingSpec,
     DB_ID_COL,
+    HashShardingSpec,
     KeyEncoding,
     ShardingSpec,
-    ShardingStrategy,
 )
 from shardyfusion.vector._distributed import (
     ResolvedVectorRouting,
@@ -36,7 +37,7 @@ def add_db_id_column(
     so that expressions referencing non-key columns evaluate correctly.
     """
 
-    if sharding.strategy == ShardingStrategy.CEL:
+    if isinstance(sharding, CelShardingSpec):
         return _add_db_id_cel(ddf, sharding=sharding)
     assert num_dbs is not None, "num_dbs required for HASH sharding"
     return _add_db_id_hash(
@@ -76,14 +77,13 @@ def _add_db_id_cel(
     sharding: ShardingSpec,
 ) -> tuple[dd.DataFrame, ShardingSpec]:
     assert sharding.cel_expr is not None and sharding.cel_columns is not None
-    resolved = ShardingSpec(
-        strategy=ShardingStrategy.CEL,
+    resolved = CelShardingSpec(
+        cel_expr=sharding.cel_expr,
+        cel_columns=dict(sharding.cel_columns),
         routing_values=list(sharding.routing_values)
         if sharding.routing_values is not None
         else None,
-        cel_expr=sharding.cel_expr,
-        cel_columns=dict(sharding.cel_columns),
-        hash_algorithm=sharding.hash_algorithm,
+        infer_routing_values_from_data=sharding.infer_routing_values_from_data,
     )
     cel_expr = resolved.cel_expr
     cel_columns = resolved.cel_columns

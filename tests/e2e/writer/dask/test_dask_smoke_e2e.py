@@ -29,12 +29,19 @@ def _write_fn(data, config):
     import pandas as pd
 
     from shardyfusion.serde import ValueSpec
-    from shardyfusion.writer.dask import write_sharded
+    from shardyfusion.writer.dask import write_sharded_by_cel, write_sharded_by_hash
 
     pdf = pd.DataFrame(data, columns=["key", "value", "group"])
     ddf = dd.from_pandas(pdf, npartitions=2)
     with dask.config.set(scheduler="synchronous"):
-        return write_sharded(
+        if hasattr(config, "cel_expr"):
+            return write_sharded_by_cel(
+                ddf,
+                config,
+                key_col="key",
+                value_spec=ValueSpec.binary_col("value"),
+            )
+        return write_sharded_by_hash(
             ddf,
             config,
             key_col="key",
@@ -48,7 +55,7 @@ def _retry_write_fn(data, config):
     import pandas as pd
 
     from shardyfusion.serde import ValueSpec
-    from shardyfusion.writer.dask import write_sharded
+    from shardyfusion.writer.dask import write_sharded_by_cel, write_sharded_by_hash
 
     config.shard_retry = RetryConfig(
         max_retries=1,
@@ -57,7 +64,14 @@ def _retry_write_fn(data, config):
     pdf = pd.DataFrame(data, columns=["key", "value", "group"])
     ddf = dd.from_pandas(pdf, npartitions=2)
     with dask.config.set(scheduler="synchronous"):
-        return write_sharded(
+        if hasattr(config, "cel_expr"):
+            return write_sharded_by_cel(
+                ddf,
+                config,
+                key_col="key",
+                value_spec=ValueSpec.binary_col("value"),
+            )
+        return write_sharded_by_hash(
             ddf,
             config,
             key_col="key",
