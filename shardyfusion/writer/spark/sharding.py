@@ -11,9 +11,10 @@ from pyspark.sql.types import IntegerType, StructField, StructType
 from shardyfusion._writer_core import build_categorical_routing_values
 from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.sharding_types import (
+    CelShardingSpec,
     DB_ID_COL,
+    HashShardingSpec,
     ShardingSpec,
-    ShardingStrategy,
 )
 from shardyfusion.vector._distributed import ResolvedVectorRouting
 from shardyfusion.vector.sharding import cluster_assign, lsh_assign
@@ -29,90 +30,88 @@ def add_db_id_column(
 ) -> tuple[DataFrame, ShardingSpec]:
     """Add deterministic db id column and return resolved sharding spec."""
 
-    resolved = ShardingSpec(
-        strategy=sharding.strategy,
-        routing_values=sharding.routing_values,
-        cel_expr=sharding.cel_expr,
-        cel_columns=sharding.cel_columns,
-        hash_algorithm=sharding.hash_algorithm,
-    )
-
     output_schema = StructType(
         list(df.schema.fields) + [StructField(DB_ID_COL, IntegerType(), False)]
     )
 
     df_with_db_id: DataFrame
-    match sharding.strategy:
-        case ShardingStrategy.HASH:
-            assert num_dbs is not None, "num_dbs required for HASH sharding"
-            _key_col = key_col
-            _num_dbs = num_dbs
-            _hash_algorithm = sharding.hash_algorithm
+    if isinstance(sharding, HashShardingSpec):
+        assert num_dbs is not None, "num_dbs required for HASH sharding"
+        _key_col = key_col
+        _num_dbs = num_dbs
+        _hash_algorithm = sharding.hash_algorithm
+        resolved: ShardingSpec = HashShardingSpec(
+            hash_algorithm=sharding.hash_algorithm,
+            max_keys_per_shard=sharding.max_keys_per_shard,
+        )
 
-            def _hash_map_arrow(iterator):  # type: ignore[no-untyped-def]
-                import pyarrow as pa  # type: ignore[import-not-found]
+        def _hash_map_arrow(iterator):  # type: ignore[no-untyped-def]
+            import pyarrow as pa  # type: ignore[import-not-found]
 
-                from shardyfusion.routing import hash_db_id
+            from shardyfusion.routing import hash_db_id
 
-                for batch in iterator:
-                    keys = batch.column(_key_col).to_pylist()
-                    db_ids = [hash_db_id(k, _num_dbs, _hash_algorithm) for k in keys]
-                    yield batch.append_column(
-                        DB_ID_COL, pa.array(db_ids, type=pa.int32())
-                    )
-
-            df_with_db_id = df.mapInArrow(_hash_map_arrow, output_schema)
-
-        case ShardingStrategy.CEL:
-            from shardyfusion.cel import compile_cel
-
-            assert sharding.cel_expr is not None and sharding.cel_columns is not None
-            routing_values_for_cel = (
-                _discover_categorical_routing_values(
-                    df,
-                    cel_expr=sharding.cel_expr,
-                    cel_columns=dict(sharding.cel_columns),
+            for batch in iterator:
+                keys = batch.column(_key_col).to_pylist()
+                db_ids = [hash_db_id(k, _num_dbs, _hash_algorithm) for k in keys]
+                yield batch.append_column(
+                    DB_ID_COL, pa.array(db_ids, type=pa.int32())
                 )
-                if sharding.infer_routing_values_from_data
-                else (
-                    list(sharding.routing_values)
-                    if sharding.routing_values is not None
-                    else None
+
+        df_with_db_id = df.mapInArrow(_hash_map_arrow, output_schema)
+
+    elif isinstance(sharding, CelShardingSpec):
+        from shardyfusion.cel import compile_cel
+
+        assert sharding.cel_expr is not None and sharding.cel_columns is not None
+        routing_values_for_cel = (
+            _discover_categorical_routing_values(
+                df,
+                cel_expr=sharding.cel_expr,
+                cel_columns=dict(sharding.cel_columns),
+            )
+            if sharding.infer_routing_values_from_data
+            else (
+                list(sharding.routing_values)
+                if sharding.routing_values is not None
+                else None
+            )
+        )
+        resolved = CelShardingSpec(
+            cel_expr=sharding.cel_expr,
+            cel_columns=dict(sharding.cel_columns),
+            routing_values=routing_values_for_cel,
+            infer_routing_values_from_data=False,
+        )
+
+        _cel_expr = sharding.cel_expr
+        _cel_cols = dict(sharding.cel_columns)
+        _cel_routing_values = routing_values_for_cel
+
+        compile_cel(_cel_expr, _cel_cols)  # validate eagerly on driver
+
+        def _cel_map_arrow(iterator):  # type: ignore[no-untyped-def]
+            import pyarrow as pa  # type: ignore[import-not-found]
+
+            from shardyfusion.cel import compile_cel as _compile
+            from shardyfusion.cel import route_cel_batch
+
+            _compiled = _compile(_cel_expr, _cel_cols)
+            for batch in iterator:
+                db_ids = route_cel_batch(
+                    _compiled,
+                    batch,
+                    _cel_routing_values,
                 )
-            )
-            resolved.routing_values = routing_values_for_cel
-            resolved.cel_expr = sharding.cel_expr
-            resolved.cel_columns = sharding.cel_columns
+                yield batch.append_column(
+                    DB_ID_COL, pa.array(db_ids, type=pa.int32())
+                )
 
-            _cel_expr = sharding.cel_expr
-            _cel_cols = dict(sharding.cel_columns)
-            _cel_routing_values = routing_values_for_cel
+        df_with_db_id = df.mapInArrow(_cel_map_arrow, output_schema)
 
-            compile_cel(_cel_expr, _cel_cols)  # validate eagerly on driver
-
-            def _cel_map_arrow(iterator):  # type: ignore[no-untyped-def]
-                import pyarrow as pa  # type: ignore[import-not-found]
-
-                from shardyfusion.cel import compile_cel as _compile
-                from shardyfusion.cel import route_cel_batch
-
-                _compiled = _compile(_cel_expr, _cel_cols)
-                for batch in iterator:
-                    db_ids = route_cel_batch(
-                        _compiled,
-                        batch,
-                        _cel_routing_values,
-                    )
-                    yield batch.append_column(
-                        DB_ID_COL, pa.array(db_ids, type=pa.int32())
-                    )
-
-            df_with_db_id = df.mapInArrow(_cel_map_arrow, output_schema)
-
-        case _:
-            raise ShardAssignmentError(
-                f"Unsupported sharding strategy: {sharding.strategy!r}"
-            )
+    else:
+        raise ShardAssignmentError(
+            f"Unsupported sharding strategy: {type(sharding).__name__}"
+        )
 
     # Validate db_id range (skip for CEL direct mode where num_dbs is None)
     if num_dbs is not None:

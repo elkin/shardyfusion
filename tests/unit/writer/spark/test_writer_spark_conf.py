@@ -7,7 +7,7 @@ from shardyfusion.writer.spark.util import (
     SparkConfOverrideContext,
 )
 from shardyfusion.writer.spark.writer import (
-    write_sharded,
+    write_sharded_by_hash,
 )
 
 
@@ -43,6 +43,9 @@ class _FakeDataFrame:
     def unpersist(self, *, blocking: bool = False):
         self.unpersist_calls.append(blocking)
         return self
+
+    def count(self):
+        return 10
 
 
 def test_spark_conf_context_overrides_and_restores() -> None:
@@ -87,8 +90,12 @@ def test_dataframe_cache_context_caches_and_unpersists() -> None:
 def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> None:
     calls: list[tuple[str, object]] = []
     fake_spark = _FakeSparkSession()
-    fake_df = SimpleNamespace(sparkSession=fake_spark)
-    fake_config = SimpleNamespace(output=SimpleNamespace(run_id=None))
+    fake_df = SimpleNamespace(sparkSession=fake_spark, count=lambda: 10)
+    fake_config = SimpleNamespace(
+        output=SimpleNamespace(run_id=None),
+        num_dbs=4,
+        max_keys_per_shard=None,
+    )
 
     class _RecordingCtx:
         def __init__(self, spark, overrides):
@@ -105,6 +112,8 @@ def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> 
         *,
         df,
         config,
+        sharding,
+        num_dbs,
         run_id,
         started,
         key_col,
@@ -117,6 +126,8 @@ def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> 
         vector_columns,
     ):
         _ = (
+            sharding,
+            num_dbs,
             started,
             key_col,
             value_spec,
@@ -138,10 +149,14 @@ def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> 
         "shardyfusion.writer.spark.writer._write_sharded_impl",
         _fake_impl,
     )
+    monkeypatch.setattr(
+        "shardyfusion.writer.spark.writer.resolve_num_dbs",
+        lambda _config, _count_fn: 4,
+    )
 
     from shardyfusion.serde import ValueSpec
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         fake_df,  # type: ignore[arg-type]
         fake_config,  # type: ignore[arg-type]
         key_col="id",
@@ -160,7 +175,11 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
     calls: list[tuple[str, object]] = []
     fake_spark = _FakeSparkSession()
     fake_df = _FakeDataFrame(fake_spark)
-    fake_config = SimpleNamespace(output=SimpleNamespace(run_id=None))
+    fake_config = SimpleNamespace(
+        output=SimpleNamespace(run_id=None),
+        num_dbs=4,
+        max_keys_per_shard=None,
+    )
 
     class _RecordingCtx:
         def __init__(self, spark, overrides):
@@ -177,6 +196,8 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
         *,
         df,
         config,
+        sharding,
+        num_dbs,
         run_id,
         started,
         key_col,
@@ -189,6 +210,8 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
         vector_columns,
     ):
         _ = (
+            sharding,
+            num_dbs,
             started,
             key_col,
             value_spec,
@@ -210,10 +233,14 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
         "shardyfusion.writer.spark.writer._write_sharded_impl",
         _fake_impl,
     )
+    monkeypatch.setattr(
+        "shardyfusion.writer.spark.writer.resolve_num_dbs",
+        lambda _config, _count_fn: 4,
+    )
 
     from shardyfusion.serde import ValueSpec
 
-    result1 = write_sharded(
+    result1 = write_sharded_by_hash(
         fake_df,  # type: ignore[arg-type]
         fake_config,  # type: ignore[arg-type]
         key_col="id",
@@ -221,7 +248,7 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
         cache_input=True,
         storage_level="test-level",  # type: ignore[arg-type]
     )
-    result2 = write_sharded(
+    result2 = write_sharded_by_hash(
         fake_df,  # type: ignore[arg-type]
         fake_config,  # type: ignore[arg-type]
         key_col="id",

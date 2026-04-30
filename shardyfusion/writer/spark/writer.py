@@ -32,7 +32,7 @@ from shardyfusion._writer_core import (
     select_winners,
     wrap_factory_for_vector,
 )
-from shardyfusion.config import WriteConfig
+from shardyfusion.config import CelWriteConfig, HashWriteConfig, WriteConfig
 from shardyfusion.credentials import CredentialProvider
 from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.logging import (
@@ -49,7 +49,14 @@ from shardyfusion.manifest import (
 from shardyfusion.metrics import MetricEvent, MetricsCollector
 from shardyfusion.run_registry import RunRecordLifecycle
 from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
-from shardyfusion.sharding_types import DB_ID_COL, KeyEncoding
+from shardyfusion.sharding_types import (
+    CelShardingSpec,
+    DB_ID_COL,
+    HashShardingSpec,
+    KeyEncoding,
+    ShardHashAlgorithm,
+    ShardingSpec,
+)
 from shardyfusion.slatedb_adapter import (
     DbAdapterFactory,
     SlateDbFactory,
@@ -63,7 +70,6 @@ from shardyfusion.writer.spark.util import (
 
 from .sharding import (
     VECTOR_DB_ID_COL,
-    ShardingSpec,
     add_db_id_column,
     add_vector_db_id_column,
     prepare_partitioned_rdd,
@@ -103,9 +109,9 @@ class _PreparedPartitionRows:
     shard_duration_ms: int
 
 
-def write_sharded(
+def write_sharded_by_hash(
     df: DataFrame,
-    config: WriteConfig,
+    config: HashWriteConfig,
     *,
     key_col: str,
     value_spec: ValueSpec,
@@ -121,11 +127,11 @@ def write_sharded(
     ) = None,
     vector_columns: VectorColumnMapping | None = None,
 ) -> BuildResult:
-    """Write a DataFrame into N independent sharded databases and publish manifest metadata.
+    """Write a DataFrame into N independent sharded databases using HASH routing.
 
     Args:
         df: PySpark DataFrame containing at least the key column and value column(s).
-        config: Write configuration (num_dbs, s3_prefix, sharding strategy, etc.).
+        config: Hash write configuration (num_dbs, s3_prefix, etc.).
         key_col: Name of the integer key column used for shard routing.
         value_spec: Specifies how DataFrame rows are serialized to bytes
             (binary_col, json_cols, or a callable encoder).
@@ -150,7 +156,11 @@ def write_sharded(
         PublishManifestError: If manifest upload to S3 fails.
         PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
     """
-
+    hash_algorithm = ShardHashAlgorithm.XXH3_64
+    sharding = HashShardingSpec(
+        hash_algorithm=hash_algorithm,
+        max_keys_per_shard=config.max_keys_per_shard,
+    )
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
     spark = df.sparkSession
@@ -161,6 +171,86 @@ def write_sharded(
             return _write_sharded_impl(
                 df=cached_df,
                 config=config,
+                sharding=sharding,
+                num_dbs=resolve_num_dbs(config, cached_df.count),
+                run_id=run_id,
+                started=started,
+                key_col=key_col,
+                value_spec=value_spec,
+                sort_within_partitions=sort_within_partitions,
+                max_writes_per_second=max_writes_per_second,
+                max_write_bytes_per_second=max_write_bytes_per_second,
+                verify_routing=verify_routing,
+                vector_fn=vector_fn,
+                vector_columns=vector_columns,
+            )
+
+
+def write_sharded_by_cel(
+    df: DataFrame,
+    config: CelWriteConfig,
+    *,
+    key_col: str,
+    value_spec: ValueSpec,
+    sort_within_partitions: bool = False,
+    spark_conf_overrides: dict[str, str] | None = None,
+    cache_input: bool = False,
+    storage_level: StorageLevel | None = None,
+    max_writes_per_second: float | None = None,
+    max_write_bytes_per_second: float | None = None,
+    verify_routing: bool = True,
+    vector_fn: (
+        Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None
+    ) = None,
+    vector_columns: VectorColumnMapping | None = None,
+) -> BuildResult:
+    """Write a DataFrame into N independent sharded databases using CEL routing.
+
+    Args:
+        df: PySpark DataFrame containing at least the key column and value column(s).
+        config: CEL write configuration (cel_expr, cel_columns, etc.).
+        key_col: Name of the integer key column used for shard routing.
+        value_spec: Specifies how DataFrame rows are serialized to bytes
+            (binary_col, json_cols, or a callable encoder).
+        sort_within_partitions: If True, sort rows by key within each partition
+            before writing. Useful for range-scan workloads.
+        spark_conf_overrides: Optional Spark config overrides applied for the
+            duration of the write (restored after completion).
+        cache_input: If True, cache the input DataFrame before processing.
+        storage_level: Spark storage level for caching (default: MEMORY_AND_DISK).
+        max_writes_per_second: Optional rate limit (token-bucket) for write ops/sec.
+        max_write_bytes_per_second: Optional rate limit (token-bucket) for write bytes/sec.
+        verify_routing: If True (default), spot-check that Spark-assigned shard IDs
+            match Python routing on a sample of written rows.
+
+    Returns:
+        BuildResult with manifest reference, shard metadata, and build statistics.
+
+    Raises:
+        ConfigValidationError: If configuration is invalid.
+        ShardAssignmentError: If rows cannot be assigned to valid shard IDs.
+        ShardCoverageError: If partition results don't cover all expected shards.
+        PublishManifestError: If manifest upload to S3 fails.
+        PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
+    """
+    sharding: ShardingSpec = CelShardingSpec(
+        cel_expr=config.cel_expr,
+        cel_columns=config.cel_columns,
+        routing_values=config.routing_values,
+        infer_routing_values_from_data=config.infer_routing_values_from_data,
+    )
+    started = time.perf_counter()
+    run_id = config.output.run_id or uuid4().hex
+    spark = df.sparkSession
+    with SparkConfOverrideContext(spark, spark_conf_overrides):
+        with DataFrameCacheContext(
+            df, storage_level=storage_level, enabled=cache_input
+        ) as cached_df:
+            return _write_sharded_impl(
+                df=cached_df,
+                config=config,
+                sharding=sharding,
+                num_dbs=None,
                 run_id=run_id,
                 started=started,
                 key_col=key_col,
@@ -178,6 +268,8 @@ def _write_sharded_impl(
     *,
     df: DataFrame,
     config: WriteConfig,
+    sharding: ShardingSpec,
+    num_dbs: int | None,
     run_id: str,
     started: float,
     key_col: str,
@@ -193,6 +285,7 @@ def _write_sharded_impl(
     from shardyfusion.logging import LogContext
 
     mc = config.metrics_collector
+    _strategy_name = "hash" if isinstance(sharding, HashShardingSpec) else "cel"
 
     with (
         LogContext(run_id=run_id),
@@ -205,9 +298,9 @@ def _write_sharded_impl(
         log_event(
             "write_started",
             logger=_logger,
-            num_dbs=config.num_dbs,
+            num_dbs=num_dbs,
             s3_prefix=config.s3_prefix,
-            strategy=config.sharding.strategy,
+            strategy=_strategy_name,
             key_encoding=config.key_encoding,
             writer_type="spark",
         )
@@ -223,6 +316,8 @@ def _write_sharded_impl(
         prepared_rows = _prepare_partitioned_rows(
             df=df,
             config=config,
+            sharding=sharding,
+            num_dbs=num_dbs,
             key_col=key_col,
             sort_within_partitions=sort_within_partitions,
             verify_routing=verify_routing,
@@ -345,11 +440,10 @@ def verify_routing_agreement(
     route_key() function.
     """
     from shardyfusion._writer_core import route_key
-    from shardyfusion.sharding_types import ShardingStrategy
 
     # CEL multi-column: can't verify without routing_context
     if (
-        resolved_sharding.strategy == ShardingStrategy.CEL
+        isinstance(resolved_sharding, CelShardingSpec)
         and resolved_sharding.cel_columns
         and set(resolved_sharding.cel_columns.keys()) != {"key"}
     ):
@@ -454,6 +548,8 @@ def _prepare_partitioned_rows(
     *,
     df: DataFrame,
     config: WriteConfig,
+    sharding: ShardingSpec,
+    num_dbs: int | None,
     key_col: str,
     sort_within_partitions: bool,
     verify_routing: bool = True,
@@ -465,13 +561,12 @@ def _prepare_partitioned_rows(
     from shardyfusion._writer_core import discover_cel_num_dbs
 
     shard_started = time.perf_counter()
-    num_dbs = resolve_num_dbs(config, df.count)
 
     df_with_db_id, resolved_sharding = add_db_id_column(
         df,
         key_col=key_col,
         num_dbs=num_dbs,
-        sharding=config.sharding,
+        sharding=sharding,
     )
 
     # CEL: discover num_dbs from data and validate consecutive IDs
@@ -695,7 +790,7 @@ def write_one_shard_partition(
 
 def write_vector_sharded(
     df: DataFrame,
-    config: WriteConfig,
+    config: HashWriteConfig,
     *,
     vector_col: str,
     id_col: str,

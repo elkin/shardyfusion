@@ -18,8 +18,7 @@ import pytest
 from shardyfusion.routing import xxh3_db_id
 from shardyfusion.sharding_types import (
     DB_ID_COL,
-    ShardingSpec,
-    ShardingStrategy,
+    HashShardingSpec,
 )
 from shardyfusion.writer.spark.sharding import add_db_id_column
 from tests.unit.writer.core.test_routing_contract import EDGE_CASE_KEYS
@@ -52,7 +51,7 @@ def test_spark_hash_agreement_int_keys(spark, num_dbs: int) -> None:
     """Spark add_db_id_column matches xxh3_db_id for integer edge-case keys."""
 
     df = spark.createDataFrame([(k,) for k in EDGE_CASE_KEYS], ["id"])
-    sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
+    sharding = HashShardingSpec()
 
     result_df, _ = add_db_id_column(
         df,
@@ -76,7 +75,7 @@ def test_spark_hash_agreement_string_keys(spark, num_dbs: int) -> None:
     """Spark add_db_id_column matches xxh3_db_id for string edge-case keys."""
 
     df = spark.createDataFrame([(k,) for k in _STRING_EDGE_CASE_KEYS], ["id"])
-    sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
+    sharding = HashShardingSpec()
 
     result_df, _ = add_db_id_column(
         df,

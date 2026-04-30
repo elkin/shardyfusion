@@ -20,12 +20,11 @@ def test_spark_vector_cluster_write_to_sqlite(
 ) -> None:
     """Spark writes 1000 vectors with CLUSTER strategy to SQLite backend."""
     from shardyfusion.config import (
+        HashWriteConfig,
         ManifestOptions,
         OutputOptions,
         VectorSpec,
-        WriteConfig,
     )
-    from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
     from shardyfusion.vector.config import VectorSpecSharding
     from shardyfusion.writer.spark.writer import write_vector_sharded
@@ -54,13 +53,10 @@ def test_spark_vector_cluster_write_to_sqlite(
     rows = [(i, vectors[i].tolist()) for i in range(num_records)]
     df = spark.createDataFrame(rows, ["id", "embedding"])
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=num_dbs,
         s3_prefix=f"s3://{prefix}",
         vector_spec=vector_spec,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.HASH,
-        ),
         output=OutputOptions(run_id=run_id, local_root=str(tmp_path)),
         adapter_factory=SqliteVecFactory(
             vector_spec=vector_spec,
@@ -128,12 +124,11 @@ def test_spark_vector_cluster_write_to_sqlite(
 def test_spark_vector_lsh_write_to_sqlite(spark, garage_s3_service, tmp_path) -> None:
     """Spark writes 1000 vectors with LSH strategy to SQLite backend."""
     from shardyfusion.config import (
+        HashWriteConfig,
         ManifestOptions,
         OutputOptions,
         VectorSpec,
-        WriteConfig,
     )
-    from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
     from shardyfusion.vector.config import VectorSpecSharding
     from shardyfusion.writer.spark.writer import write_vector_sharded
@@ -162,13 +157,10 @@ def test_spark_vector_lsh_write_to_sqlite(spark, garage_s3_service, tmp_path) ->
     rows = [(i, vectors[i].tolist()) for i in range(num_records)]
     df = spark.createDataFrame(rows, ["id", "embedding"])
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=num_dbs,
         s3_prefix=f"s3://{prefix}",
         vector_spec=vector_spec,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.HASH,
-        ),
         output=OutputOptions(run_id=run_id, local_root=str(tmp_path)),
         adapter_factory=SqliteVecFactory(
             vector_spec=vector_spec,
@@ -238,12 +230,11 @@ def test_spark_vector_lancedb_write_and_read(
 ) -> None:
     """Spark writes 1000 vectors to LanceDB and reads back."""
     from shardyfusion.config import (
+        HashWriteConfig,
         ManifestOptions,
         OutputOptions,
         VectorSpec,
-        WriteConfig,
     )
-    from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
     from shardyfusion.vector.adapters.lancedb_adapter import (
         LanceDbReaderFactory,
         LanceDbWriterFactory,
@@ -278,13 +269,10 @@ def test_spark_vector_lancedb_write_and_read(
     rows = [(i, vectors[i].tolist()) for i in range(num_records)]
     df = spark.createDataFrame(rows, ["id", "embedding"])
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=num_dbs,
         s3_prefix=prefix,
         vector_spec=vector_spec,
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.HASH,
-        ),
         output=OutputOptions(run_id=run_id, local_root=str(tmp_path)),
         adapter_factory=LanceDbWriterFactory(
             credential_provider=creds,

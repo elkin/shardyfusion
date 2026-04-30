@@ -17,7 +17,7 @@ from shardyfusion._writer_core import (
     select_winners,
     update_min_max,
 )
-from shardyfusion.config import WriteConfig
+from shardyfusion.config import HashWriteConfig
 from shardyfusion.errors import (
     ConfigValidationError,
     ShardWriteError,
@@ -27,7 +27,7 @@ from shardyfusion.logging import FailureSeverity, log_failure
 from shardyfusion.manifest import BuildResult, WriterInfo
 from shardyfusion.run_registry import RunRecordLifecycle
 from shardyfusion.serde import ValueSpec, make_key_encoder
-from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
+from shardyfusion.sharding_types import HashShardingSpec, ShardHashAlgorithm
 from shardyfusion.slatedb_adapter import (
     DbAdapterFactory,
     SlateDbFactory,
@@ -39,7 +39,7 @@ from .util import DataFrameCacheContext, SparkConfOverrideContext
 
 def write_single_db(
     df: DataFrame,
-    config: WriteConfig,
+    config: HashWriteConfig,
     *,
     key_col: str,
     value_spec: ValueSpec,
@@ -97,7 +97,7 @@ def write_single_db(
 def _write_single_db_impl(
     *,
     df: DataFrame,
-    config: WriteConfig,
+    config: HashWriteConfig,
     run_id: str,
     started: float,
     key_col: str,
@@ -162,9 +162,8 @@ def _write_single_db_impl(
         attempts = [attempt_result]
         winners, num_attempts, all_attempt_urls = select_winners(attempts, num_dbs=1)
 
-        resolved_sharding = ShardingSpec(
-            strategy=ShardingStrategy.HASH,
-            hash_algorithm=config.sharding.hash_algorithm,
+        resolved_sharding = HashShardingSpec(
+            hash_algorithm=ShardHashAlgorithm.XXH3_64,
         )
 
         manifest_started = time.perf_counter()
@@ -201,7 +200,7 @@ def _write_single_db_impl(
 def _stream_to_single_db(
     *,
     df: DataFrame,
-    config: WriteConfig,
+    config: HashWriteConfig,
     run_id: str,
     key_col: str,
     value_spec: ValueSpec,

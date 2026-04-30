@@ -9,9 +9,9 @@ import pytest
 from pyspark.sql import SparkSession
 
 from shardyfusion.config import (
+    HashWriteConfig,
     ManifestOptions,
     OutputOptions,
-    WriteConfig,
 )
 from shardyfusion.errors import ConfigValidationError, ShardyfusionError
 from shardyfusion.manifest import BuildResult
@@ -49,8 +49,8 @@ def _make_config(
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
     num_dbs: int = 1,
     run_registry: InMemoryRunRegistry | None = None,
-) -> WriteConfig:
-    return WriteConfig(
+) -> HashWriteConfig:
+    return HashWriteConfig(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/prefix",
         key_encoding=key_encoding,
@@ -476,7 +476,7 @@ def test_min_max_keys(spark: SparkSession) -> None:
 @pytest.mark.spark
 def test_manifest_structure(spark: SparkSession) -> None:
     store = InMemoryManifestStore()
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
         adapter_factory=TrackingFactory(),

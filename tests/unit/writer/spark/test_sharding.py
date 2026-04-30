@@ -4,11 +4,9 @@ import pytest
 from pyspark.sql import functions as F
 
 from shardyfusion.errors import ShardAssignmentError
-from shardyfusion.sharding_types import KeyEncoding
+from shardyfusion.sharding_types import HashShardingSpec, KeyEncoding
 from shardyfusion.writer.spark.sharding import (
     DB_ID_COL,
-    ShardingSpec,
-    ShardingStrategy,
     add_db_id_column,
 )
 from shardyfusion.writer.spark.writer import verify_routing_agreement
@@ -20,7 +18,7 @@ def test_hash_sharding_produces_db_id_in_range(spark) -> None:
         df,
         key_col="id",
         num_dbs=8,
-        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
+        sharding=HashShardingSpec(),
     )
 
     bad = with_db_id.where((F.col(DB_ID_COL) < 0) | (F.col(DB_ID_COL) >= 8)).count()
@@ -34,7 +32,7 @@ def test_hash_sharding_accepts_string_key(spark) -> None:
         df,
         key_col="id",
         num_dbs=4,
-        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
+        sharding=HashShardingSpec(),
     )
 
     bad = with_db_id.where((F.col(DB_ID_COL) < 0) | (F.col(DB_ID_COL) >= 4)).count()
@@ -44,7 +42,7 @@ def test_hash_sharding_accepts_string_key(spark) -> None:
 def test_hash_sharding_is_deterministic(spark) -> None:
     """Running add_db_id_column twice produces the same shard assignments."""
     df = spark.createDataFrame([(i,) for i in range(50)], ["id"])
-    spec = ShardingSpec(strategy=ShardingStrategy.HASH)
+    spec = HashShardingSpec()
 
     first, _ = add_db_id_column(df, key_col="id", num_dbs=8, sharding=spec)
     second, _ = add_db_id_column(df, key_col="id", num_dbs=8, sharding=spec)
@@ -52,16 +50,6 @@ def test_hash_sharding_is_deterministic(spark) -> None:
     first_map = {row["id"]: row[DB_ID_COL] for row in first.collect()}
     second_map = {row["id"]: row[DB_ID_COL] for row in second.collect()}
     assert first_map == second_map
-
-
-def test_sharding_strategy_requires_enum() -> None:
-    with pytest.raises(ValueError, match="strategy must be ShardingStrategy"):
-        ShardingSpec(strategy="hash")  # type: ignore[arg-type]
-
-
-def test_sharding_strategy_rejects_unknown_value() -> None:
-    with pytest.raises(ValueError, match="strategy must be ShardingStrategy"):
-        ShardingSpec(strategy="unknown")  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +64,7 @@ def test_verify_routing_agreement_passes_for_hash(spark) -> None:
         df,
         key_col="id",
         num_dbs=8,
-        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
+        sharding=HashShardingSpec(),
     )
     # Should not raise
     verify_routing_agreement(
@@ -97,10 +85,10 @@ def test_verify_routing_agreement_catches_wrong_db_ids(spark) -> None:
         df,
         key_col="id",
         num_dbs=8,
-        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
+        sharding=HashShardingSpec(),
     )
     wrong_df = correct.withColumn(DB_ID_COL, (F.lit(7) - F.col(DB_ID_COL)).cast("int"))
-    sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
+    sharding = HashShardingSpec()
     with pytest.raises(ShardAssignmentError, match="Spark/Python routing mismatch"):
         verify_routing_agreement(
             wrong_df,

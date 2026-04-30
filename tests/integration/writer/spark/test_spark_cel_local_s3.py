@@ -7,15 +7,15 @@ import pytest
 cel_expr_python = pytest.importorskip("cel_expr_python")  # noqa: F841
 
 from shardyfusion.cel import compile_cel, route_cel
-from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+from shardyfusion.config import CelWriteConfig, ManifestOptions, OutputOptions
 from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.manifest_store import parse_manifest_payload
 from shardyfusion.routing import SnapshotRouter
 from shardyfusion.serde import ValueSpec
-from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
+from shardyfusion.sharding_types import ShardingStrategy
 from shardyfusion.testing import file_backed_adapter_factory
 from shardyfusion.type_defs import S3ConnectionOptions
-from shardyfusion.writer.spark import write_sharded
+from shardyfusion.writer.spark import write_sharded_by_cel
 
 pytestmark = pytest.mark.cel
 
@@ -25,15 +25,11 @@ def test_spark_cel_unified_publishes_manifest(spark, local_s3_service, tmp_path)
     s3_prefix = f"s3://{bucket}/spark-cel"
     root = str(tmp_path / "file-backed")
 
-    config = WriteConfig(
-        num_dbs=None,
+    config = CelWriteConfig(
         s3_prefix=s3_prefix,
         adapter_factory=file_backed_adapter_factory(root),
-        sharding=ShardingSpec(
-            strategy=ShardingStrategy.CEL,
-            cel_expr="key % 4",
-            cel_columns={"key": "int"},
-        ),
+        cel_expr="key % 4",
+        cel_columns={"key": "int"},
         output=OutputOptions(
             run_id="spark-cel",
             local_root=str(tmp_path / "local"),
@@ -52,7 +48,7 @@ def test_spark_cel_unified_publishes_manifest(spark, local_s3_service, tmp_path)
 
     df = spark.createDataFrame([(i, f"v{i}") for i in range(40)], schema=["key", "val"])
 
-    result = write_sharded(
+    result = write_sharded_by_cel(
         df,
         config,
         key_col="key",
