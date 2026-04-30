@@ -85,8 +85,6 @@ def _sharding_strategy_name(sharding: ShardingSpec) -> str:
         return "hash"
     if isinstance(sharding, CelShardingSpec):
         return "cel"
-    if hasattr(sharding, "strategy"):
-        return str(sharding.strategy)
     return "unknown"
 
 
@@ -156,11 +154,7 @@ def write_sharded_by_hash(
         PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
         ShardyfusionError: If a worker process fails in parallel mode.
     """
-    hash_algorithm = (
-        config.sharding.hash_algorithm
-        if hasattr(config, "sharding") and config.sharding is not None
-        else ShardHashAlgorithm.XXH3_64
-    )
+    hash_algorithm = ShardHashAlgorithm.XXH3_64
     sharding = HashShardingSpec(
         hash_algorithm=hash_algorithm,
         max_keys_per_shard=config.max_keys_per_shard,
@@ -272,6 +266,7 @@ def write_sharded_by_cel(
             columns_fn=columns_fn,
         )
 
+    assert isinstance(sharding, CelShardingSpec)
     num_dbs = len(config.routing_values) if config.routing_values else None
     if sharding.routing_values is not None:
         num_dbs = max(1, len(sharding.routing_values))
@@ -558,6 +553,7 @@ def _resolve_inferred_categorical_sharding(
 
     from shardyfusion.cel import compile_cel
 
+    assert isinstance(sharding, CelShardingSpec)
     assert sharding.cel_expr is not None and sharding.cel_columns is not None
     compiled = compile_cel(sharding.cel_expr, sharding.cel_columns)
     tokens = []
@@ -986,6 +982,7 @@ def _write_single_process(
     if cel_mode:
         from shardyfusion._writer_core import discover_cel_num_dbs
 
+        assert isinstance(sharding, CelShardingSpec)
         if sharding.routing_values is not None:
             num_dbs = max(1, len(sharding.routing_values))
         else:

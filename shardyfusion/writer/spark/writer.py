@@ -570,23 +570,26 @@ def _prepare_partitioned_rows(
     )
 
     # CEL: discover num_dbs from data and validate consecutive IDs
-    if num_dbs is None and resolved_sharding.routing_values is not None:
-        num_dbs = max(1, len(resolved_sharding.routing_values))
-    elif num_dbs is None:
-        agg_row = df_with_db_id.agg(
-            F.max(DB_ID_COL).alias("max_id"),
-            F.count_distinct(DB_ID_COL).alias("n_distinct"),
-        ).collect()[0]
-        max_id = agg_row["max_id"]
-        n_distinct = agg_row["n_distinct"]
-        distinct_ids = (
-            set(range(n_distinct))
-            if n_distinct == (max_id + 1 if max_id is not None else 0)
-            else {
-                row[0] for row in df_with_db_id.select(DB_ID_COL).distinct().collect()
-            }
-        )
-        num_dbs = discover_cel_num_dbs(distinct_ids)
+    if num_dbs is None:
+        assert isinstance(resolved_sharding, CelShardingSpec)
+        if resolved_sharding.routing_values is not None:
+            num_dbs = max(1, len(resolved_sharding.routing_values))
+        else:
+            agg_row = df_with_db_id.agg(
+                F.max(DB_ID_COL).alias("max_id"),
+                F.count_distinct(DB_ID_COL).alias("n_distinct"),
+            ).collect()[0]
+            max_id = agg_row["max_id"]
+            n_distinct = agg_row["n_distinct"]
+            distinct_ids = (
+                set(range(n_distinct))
+                if n_distinct == (max_id + 1 if max_id is not None else 0)
+                else {
+                    row[0]
+                    for row in df_with_db_id.select(DB_ID_COL).distinct().collect()
+                }
+            )
+            num_dbs = discover_cel_num_dbs(distinct_ids)
 
     if verify_routing and num_dbs > 0:
         verify_routing_agreement(

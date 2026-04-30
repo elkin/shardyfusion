@@ -75,6 +75,7 @@ def _add_db_id_cel(
     *,
     sharding: ShardingSpec,
 ) -> tuple[dd.DataFrame, ShardingSpec]:
+    assert isinstance(sharding, CelShardingSpec)
     assert sharding.cel_expr is not None and sharding.cel_columns is not None
     resolved = CelShardingSpec(
         cel_expr=sharding.cel_expr,

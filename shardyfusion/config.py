@@ -13,6 +13,7 @@ from .errors import ConfigValidationError
 from .metrics import MetricsCollector
 from .sharding_types import (
     KeyEncoding,
+    RoutingValue,
     validate_routing_values,
 )
 from .slatedb_adapter import DbAdapterFactory
@@ -299,7 +300,7 @@ class CelWriteConfig(WriteConfig):
 
     cel_expr: str = ""
     cel_columns: dict[str, str] = field(default_factory=dict)
-    routing_values: list[object] | None = None
+    routing_values: list[RoutingValue] | None = None
     infer_routing_values_from_data: bool = False
 
     def __post_init__(self) -> None:

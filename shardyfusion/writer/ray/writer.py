@@ -349,11 +349,13 @@ def _write_sharded_impl(
         )
 
         # CEL: discover num_dbs from data and validate consecutive IDs
-        if num_dbs is None and resolved_sharding.routing_values is not None:
-            num_dbs = max(1, len(resolved_sharding.routing_values))
-        elif num_dbs is None:
-            distinct_ids = set(ds_with_id.unique(DB_ID_COL))
-            num_dbs = discover_cel_num_dbs(distinct_ids)
+        if num_dbs is None:
+            assert isinstance(resolved_sharding, CelShardingSpec)
+            if resolved_sharding.routing_values is not None:
+                num_dbs = max(1, len(resolved_sharding.routing_values))
+            else:
+                distinct_ids = set(ds_with_id.unique(DB_ID_COL))
+                num_dbs = discover_cel_num_dbs(distinct_ids)
 
         if verify_routing and num_dbs > 0:
             _verify_routing_agreement(

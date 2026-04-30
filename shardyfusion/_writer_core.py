@@ -508,7 +508,7 @@ def publish_to_store(
             for CEL or max_keys_per_shard modes.
     """
 
-    resolved_num_dbs = num_dbs if num_dbs > 0 else config.num_dbs
+    resolved_num_dbs = num_dbs if num_dbs > 0 else getattr(config, "num_dbs", None)
     assert resolved_num_dbs is not None and resolved_num_dbs > 0, (
         "num_dbs must be resolved to a positive integer before publishing"
     )
