@@ -1,14 +1,21 @@
 """Public sharded snapshot writer entrypoint."""
 
+from __future__ import annotations
+
 import time
+from collections import defaultdict
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from itertools import chain
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from pyspark import RDD, StorageLevel, TaskContext
 from pyspark.sql import DataFrame, Row
+from pyspark.sql import functions as F
+
+if TYPE_CHECKING:
+    import numpy as np
 
 from shardyfusion._rate_limiter import RateLimiter, TokenBucket
 from shardyfusion._shard_writer import (
@@ -24,6 +31,7 @@ from shardyfusion._writer_core import (
     VectorColumnMapping,
     assemble_build_result,
     cleanup_losers,
+    discover_cel_num_dbs,
     empty_shard_result,
     inject_vector_manifest_fields,
     publish_to_store,
@@ -37,8 +45,9 @@ from shardyfusion._writer_core import (
 )
 from shardyfusion.config import CelWriteConfig, HashWriteConfig, WriteConfig
 from shardyfusion.credentials import CredentialProvider
-from shardyfusion.errors import ShardAssignmentError
+from shardyfusion.errors import ConfigValidationError, ShardAssignmentError
 from shardyfusion.logging import (
+    LogContext,
     get_logger,
     log_event,
 )
@@ -64,6 +73,7 @@ from shardyfusion.slatedb_adapter import (
     DbAdapterFactory,
     SlateDbFactory,
 )
+from shardyfusion.storage import ObstoreBackend, create_s3_store, parse_s3_url
 from shardyfusion.vector.config import VectorWriteConfig
 from shardyfusion.vector.types import VectorIndexWriterFactory
 from shardyfusion.writer.spark.util import (
@@ -285,8 +295,6 @@ def _write_sharded_impl(
     vector_columns: VectorColumnMapping | None,
 ) -> BuildResult:
     """Implementation assuming Spark conf already prepared."""
-    from shardyfusion.logging import LogContext
-
     mc = config.metrics_collector
     _strategy_name = "hash" if isinstance(sharding, HashShardingSpec) else "cel"
 
@@ -568,10 +576,6 @@ def _prepare_partitioned_rows(
 ) -> _PreparedPartitionRows:
     """Assign shard ids and build the one-writer-per-db partitioned RDD."""
 
-    from pyspark.sql import functions as F
-
-    from shardyfusion._writer_core import discover_cel_num_dbs
-
     shard_started = time.perf_counter()
 
     df_with_db_id, resolved_sharding = add_db_id_column(
@@ -834,7 +838,6 @@ def write_vector_sharded(
     """
     import numpy as np
 
-    from shardyfusion.errors import ConfigValidationError
     from shardyfusion.vector._distributed import (
         write_vector_shard as write_vector_shard_core,
     )
@@ -958,8 +961,6 @@ def write_vector_sharded(
         total_vectors = sum(w.row_count for w in winners)
         total_duration_ms = int((time.perf_counter() - started) * 1000)
 
-        from shardyfusion.storage import ObstoreBackend, create_s3_store, parse_s3_url
-
         credentials = (
             config.credential_provider.resolve() if config.credential_provider else None
         )
@@ -1033,8 +1034,6 @@ def _write_vector_partition(
     batch_size: int,
 ) -> list:
     """Write vectors for a single partition."""
-    from collections import defaultdict
-
     from shardyfusion.vector._distributed import coerce_vector_value as _coerce_vec
 
     rows_list = list(rows)
