@@ -7,12 +7,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from shardyfusion import VectorSpec, WriteConfig
+from shardyfusion import HashWriteConfig, VectorSpec
 from shardyfusion.composite_adapter import CompositeFactory
 from shardyfusion.reader.unified_reader import UnifiedShardedReader
 from shardyfusion.slatedb_adapter import SlateDbFactory
 from shardyfusion.vector.adapters.lancedb_adapter import LanceDbWriterFactory
-from shardyfusion.writer.python.writer import write_sharded
+from shardyfusion.writer.python.writer import write_sharded_by_hash
 from tests.e2e.conftest import (
     credential_provider_from_service,
     s3_connection_options_from_service,
@@ -47,7 +47,7 @@ def test_unified_composite_e2e(
 
     vector_spec = VectorSpec(dim=dim, metric="cosine")
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=num_dbs,
         s3_prefix=s3_prefix,
         adapter_factory=CompositeFactory(
@@ -63,7 +63,7 @@ def test_unified_composite_e2e(
         s3_connection_options=s3_conn_opts,
     )
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         records,
         config,
         key_fn=lambda r: r["id"].encode(),

@@ -48,9 +48,9 @@ def test_smoke_hash_range_reader(garage_s3_service, tmp_path) -> None:
     adapter_factory, reader_factory = _sqlite_range_factories(garage_s3_service)
 
     def _write_fn(data, config):
-        from shardyfusion.writer.python import write_sharded
+        from shardyfusion.writer.python import write_sharded_by_hash
 
-        return write_sharded(
+        return write_sharded_by_hash(
             data, config, key_fn=lambda r: r[0], value_fn=lambda r: r[1]
         )
 

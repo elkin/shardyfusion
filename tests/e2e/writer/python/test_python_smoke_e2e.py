@@ -29,16 +29,18 @@ def _s3(svc):
 
 
 def _hash_write_fn(data, config):
-    from shardyfusion.writer.python import write_sharded
+    from shardyfusion.writer.python import write_sharded_by_hash
 
-    return write_sharded(data, config, key_fn=lambda r: r[0], value_fn=lambda r: r[1])
+    return write_sharded_by_hash(
+        data, config, key_fn=lambda r: r[0], value_fn=lambda r: r[1]
+    )
 
 
 def _cel_context_write_fn(data, config):
     """Like _hash_write_fn but provides the ``group`` column for CEL routing."""
-    from shardyfusion.writer.python import write_sharded
+    from shardyfusion.writer.python import write_sharded_by_cel
 
-    return write_sharded(
+    return write_sharded_by_cel(
         data,
         config,
         key_fn=lambda r: r[0],
@@ -48,13 +50,13 @@ def _cel_context_write_fn(data, config):
 
 
 def _hash_retry_write_fn(data, config):
-    from shardyfusion.writer.python import write_sharded
+    from shardyfusion.writer.python import write_sharded_by_hash
 
     config.shard_retry = RetryConfig(
         max_retries=1,
         initial_backoff=timedelta(seconds=0),
     )
-    return write_sharded(
+    return write_sharded_by_hash(
         data,
         config,
         key_fn=lambda r: r[0],

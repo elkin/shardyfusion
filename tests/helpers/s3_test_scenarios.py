@@ -410,9 +410,8 @@ def run_python_writer_publishes_manifest_scenario(
 ) -> None:
     """Python writer publishes manifest + CURRENT to S3, then reads shards back."""
 
-    from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
-    from shardyfusion.sharding_types import ShardingSpec
-    from shardyfusion.writer.python import write_sharded
+    from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
+    from shardyfusion.writer.python import write_sharded_by_hash
 
     mode_label = "parallel" if parallel else "sequential"
     records = list(range(24))
@@ -424,12 +423,11 @@ def run_python_writer_publishes_manifest_scenario(
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=4,
         s3_prefix=s3_prefix,
         credential_provider=cred_provider,
         s3_connection_options=conn_options,
-        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
         adapter_factory=adapter_factory,
         manifest=ManifestOptions(
             credential_provider=cred_provider,
@@ -441,7 +439,7 @@ def run_python_writer_publishes_manifest_scenario(
         ),
     )
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         records,
         config,
         key_fn=lambda r: r,
@@ -579,9 +577,8 @@ def run_python_writer_reader_refresh_scenario(
 ) -> None:
     """Python writer publishes v1, reader opens, Python writer publishes v2, reader refreshes."""
 
-    from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
-    from shardyfusion.sharding_types import ShardingSpec
-    from shardyfusion.writer.python import write_sharded
+    from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
+    from shardyfusion.writer.python import write_sharded_by_hash
 
     bucket = s3_service["bucket"]
     s3_prefix = f"s3://{bucket}/python-writer-reader-refresh"
@@ -590,14 +587,13 @@ def run_python_writer_reader_refresh_scenario(
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
 
-    def build_config(run_id: str) -> WriteConfig:
-        return WriteConfig(
+    def build_config(run_id: str) -> HashWriteConfig:
+        return HashWriteConfig(
             num_dbs=4,
             s3_prefix=s3_prefix,
             credential_provider=cred_provider,
             s3_connection_options=conn_options,
             output=OutputOptions(run_id=run_id, local_root=local_root),
-            sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
             adapter_factory=adapter_factory,
             manifest=ManifestOptions(
                 credential_provider=cred_provider,
@@ -605,7 +601,7 @@ def run_python_writer_reader_refresh_scenario(
             ),
         )
 
-    result_v1 = write_sharded(
+    result_v1 = write_sharded_by_hash(
         list(range(32)),
         build_config("python-refresh-run-1"),
         key_fn=lambda r: r,
@@ -627,7 +623,7 @@ def run_python_writer_reader_refresh_scenario(
     with ConcurrentShardedReader(**reader_kwargs) as reader:
         assert reader.get(7) == b"old-7"
 
-        result_v2 = write_sharded(
+        result_v2 = write_sharded_by_hash(
             list(range(32)),
             build_config("python-refresh-run-2"),
             key_fn=lambda r: r,

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 
-from shardyfusion import OutputOptions, VectorSpec, WriteConfig
+from shardyfusion import HashWriteConfig, OutputOptions, VectorSpec
 from shardyfusion.vector.adapters.lancedb_adapter import LanceDbWriterFactory
 from shardyfusion.vector.config import (
     VectorIndexConfig,
@@ -169,7 +169,7 @@ def _write_sqlite_vec_data(s3_service: LocalS3Service, tmp_path: Path) -> str:
 
     from shardyfusion.sharding_types import KeyEncoding
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-    from shardyfusion.writer.python.writer import write_sharded
+    from shardyfusion.writer.python.writer import write_sharded_by_hash
 
     rng = np.random.default_rng(42)
     num_records = 10
@@ -186,7 +186,7 @@ def _write_sqlite_vec_data(s3_service: LocalS3Service, tmp_path: Path) -> str:
 
     vector_spec = VectorSpec(dim=dim, metric="cosine")
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=2,
         s3_prefix=s3_prefix,
         adapter_factory=SqliteVecFactory(
@@ -203,7 +203,7 @@ def _write_sqlite_vec_data(s3_service: LocalS3Service, tmp_path: Path) -> str:
         ),
     )
 
-    write_sharded(
+    write_sharded_by_hash(
         records,
         config,
         key_fn=lambda r: r["id"].encode(),

@@ -11,9 +11,8 @@ import click.testing
 import pytest
 
 from shardyfusion.cli.app import cli
-from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
-from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
-from shardyfusion.writer.python import write_sharded
+from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
+from shardyfusion.writer.python import write_sharded_by_hash
 
 if TYPE_CHECKING:
     from tests.conftest import LocalS3Service
@@ -165,17 +164,16 @@ def _write_kv_data(
     ]
 
     s3_kwargs = _s3(s3_service)
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=num_dbs,
         s3_prefix=s3_prefix,
         **s3_kwargs,
-        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
         adapter_factory=backend.adapter_factory,
         manifest=ManifestOptions(**s3_kwargs),
         output=OutputOptions(run_id="cli-e2e-run", local_root=local_root),
     )
 
-    write_sharded(
+    write_sharded_by_hash(
         records,
         config,
         key_fn=lambda r: r[0],
@@ -196,24 +194,23 @@ def _write_two_kv_manifests(
 
     s3_kwargs = _s3(s3_service)
 
-    def _build_config(run_id: str) -> WriteConfig:
-        return WriteConfig(
+    def _build_config(run_id: str) -> HashWriteConfig:
+        return HashWriteConfig(
             num_dbs=2,
             s3_prefix=s3_prefix,
             **s3_kwargs,
-            sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
             adapter_factory=backend.adapter_factory,
             manifest=ManifestOptions(**s3_kwargs),
             output=OutputOptions(run_id=run_id, local_root=local_root),
         )
 
-    write_sharded(
+    write_sharded_by_hash(
         [(i, f"old-{i}".encode()) for i in range(8)],
         _build_config("cli-e2e-run-v1"),
         key_fn=lambda r: r[0],
         value_fn=lambda r: r[1],
     )
-    write_sharded(
+    write_sharded_by_hash(
         [(i, f"new-{i}".encode()) for i in range(8)],
         _build_config("cli-e2e-run-v2"),
         key_fn=lambda r: r[0],
