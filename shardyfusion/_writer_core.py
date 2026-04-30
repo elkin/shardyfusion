@@ -277,17 +277,11 @@ def discover_cel_num_dbs(
 def resolve_cel_num_dbs(sharding: CelShardingSpec) -> int:
     """Return num_dbs for a resolved CEL sharding spec.
 
-    When ``routing_values`` is known (the common case), this is simply
-    ``max(1, len(routing_values))``.  When it is ``None`` (expression
-    must be discovered from data), callers should use
-    :func:`discover_cel_num_dbs` after observing the actual db_ids.
+    Preconditions: ``sharding.routing_values`` is not ``None`` (callers
+    must guard or use :func:`discover_cel_num_dbs` for the ``None`` case).
     """
-    if sharding.routing_values is not None:
-        return max(1, len(sharding.routing_values))
-    raise ConfigValidationError(
-        "Cannot resolve num_dbs from CEL sharding with routing_values=None; "
-        "use discover_cel_num_dbs after data is routed."
-    )
+    assert sharding.routing_values is not None
+    return max(1, len(sharding.routing_values))
 
 
 def build_categorical_routing_values(
