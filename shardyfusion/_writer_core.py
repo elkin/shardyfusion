@@ -33,6 +33,8 @@ from .metrics import MetricEvent, MetricsCollector
 from .ordering import compare_ordered
 from .routing import hash_db_id
 from .sharding_types import (
+    CelShardingSpec,
+    HashShardingSpec,
     RoutingValue,
     ShardingSpec,
     ShardingStrategy,
@@ -127,6 +129,45 @@ def _get_cel_imports() -> tuple[Any, ...]:
     return _cel_imports
 
 
+def route_hash(
+    key: KeyInput,
+    *,
+    num_dbs: int,
+    hash_algorithm: ShardHashAlgorithm = ShardHashAlgorithm.XXH3_64,
+) -> int:
+    """Route a key to a shard db_id using HASH sharding."""
+    return hash_db_id(key, num_dbs, hash_algorithm)
+
+
+def route_cel(
+    key: KeyInput,
+    *,
+    cel_expr: str,
+    cel_columns: dict[str, str],
+    routing_values: list[RoutingValue] | None = None,
+    routing_context: dict[str, object] | None = None,
+    cel_lookup: dict[RoutingValue, int] | None = None,
+) -> int:
+    """Route a key to a shard db_id using CEL sharding."""
+    _compile_cel_cached, _route_cel = _get_cel_imports()
+    columns_key = tuple(sorted(cel_columns.items()))
+    cached = _compile_cel_cached(cel_expr, columns_key)
+    ctx = routing_context if routing_context is not None else {"key": key}
+    try:
+        return _route_cel(
+            cached,
+            ctx,
+            routing_values,
+            cel_lookup,
+        )
+    except Exception as exc:
+        from .cel import UnknownRoutingTokenError
+
+        if isinstance(exc, UnknownRoutingTokenError):
+            raise ShardAssignmentError(str(exc)) from exc
+        raise
+
+
 def route_key(
     key: KeyInput,
     *,
@@ -135,32 +176,41 @@ def route_key(
     routing_context: dict[str, object] | None = None,
     cel_lookup: dict[RoutingValue, int] | None = None,
 ) -> int:
-    """Route a key to a shard db_id (shared by all writer paths)."""
+    """Route a key to a shard db_id (shared by all writer paths).
 
-    if sharding.strategy == ShardingStrategy.HASH:
+    .. deprecated::
+
+       Use :func:`route_hash` or :func:`route_cel` directly for new code.
+       This dispatcher remains for backward compatibility during migration.
+    """
+    if isinstance(sharding, HashShardingSpec):
         assert num_dbs is not None, "num_dbs required for HASH routing"
-        return hash_db_id(key, num_dbs, sharding.hash_algorithm)
-    if sharding.strategy == ShardingStrategy.CEL:
-        _compile_cel_cached, route_cel = _get_cel_imports()
-        assert sharding.cel_expr is not None and sharding.cel_columns is not None
-        columns_key = tuple(sorted(sharding.cel_columns.items()))
-        cached = _compile_cel_cached(sharding.cel_expr, columns_key)
-        ctx = routing_context if routing_context is not None else {"key": key}
-        try:
+        return route_hash(key, num_dbs=num_dbs, hash_algorithm=sharding.hash_algorithm)
+    if isinstance(sharding, CelShardingSpec):
+        return route_cel(
+            key,
+            cel_expr=sharding.cel_expr,
+            cel_columns=sharding.cel_columns,
+            routing_values=sharding.routing_values,
+            routing_context=routing_context,
+            cel_lookup=cel_lookup,
+        )
+    # Legacy _LegacyShardingSpec fallback
+    if hasattr(sharding, "strategy"):
+        if sharding.strategy == ShardingStrategy.HASH:
+            assert num_dbs is not None, "num_dbs required for HASH routing"
+            return hash_db_id(key, num_dbs, sharding.hash_algorithm)
+        if sharding.strategy == ShardingStrategy.CEL:
             return route_cel(
-                cached,
-                ctx,
-                sharding.routing_values,
-                cel_lookup,
+                key,
+                cel_expr=sharding.cel_expr,
+                cel_columns=sharding.cel_columns,
+                routing_values=sharding.routing_values,
+                routing_context=routing_context,
+                cel_lookup=cel_lookup,
             )
-        except Exception as exc:
-            from .cel import UnknownRoutingTokenError
-
-            if isinstance(exc, UnknownRoutingTokenError):
-                raise ShardAssignmentError(str(exc)) from exc
-            raise
     raise ConfigValidationError(
-        f"Sharding strategy {sharding.strategy!r} not supported."
+        f"Unsupported sharding type: {type(sharding).__name__}"
     )
 
 
@@ -176,20 +226,32 @@ def resolve_num_dbs(config: WriteConfig, count_fn: Callable[[], int]) -> int | N
     """
     import math
 
-    if config.num_dbs is not None and config.num_dbs > 0:
+    from .config import HashWriteConfig
+
+    if isinstance(config, HashWriteConfig):
+        if config.num_dbs is not None and config.num_dbs > 0:
+            return config.num_dbs
+        if config.max_keys_per_shard is not None:
+            count = count_fn()
+            if count == 0:
+                return 1
+            return max(1, math.ceil(count / config.max_keys_per_shard))
         return config.num_dbs
 
-    if (
-        config.sharding.strategy == ShardingStrategy.CEL
-        and config.sharding.routing_values is not None
-    ):
-        return max(1, len(config.sharding.routing_values))
+    # Legacy WriteConfig fallback
+    if hasattr(config, "num_dbs") and config.num_dbs is not None and config.num_dbs > 0:
+        return config.num_dbs
 
-    if config.sharding.max_keys_per_shard is not None:
-        count = count_fn()
-        if count == 0:
-            return 1
-        return max(1, math.ceil(count / config.sharding.max_keys_per_shard))
+    if hasattr(config, "sharding"):
+        sharding = config.sharding
+        if hasattr(sharding, "strategy"):
+            if sharding.strategy == ShardingStrategy.CEL and sharding.routing_values is not None:
+                return max(1, len(sharding.routing_values))
+            if sharding.max_keys_per_shard is not None:
+                count = count_fn()
+                if count == 0:
+                    return 1
+                return max(1, math.ceil(count / sharding.max_keys_per_shard))
 
     # CEL: will discover after add_db_id_column
     return None
@@ -811,8 +873,24 @@ def _utc_now() -> datetime:
 
 
 def manifest_safe_sharding(sharding: ShardingSpec) -> ManifestShardingSpec:
+    if isinstance(sharding, HashShardingSpec):
+        return ManifestShardingSpec(
+            strategy=ShardingStrategy.HASH,
+            hash_algorithm=sharding.hash_algorithm,
+        )
+    if isinstance(sharding, CelShardingSpec):
+        return ManifestShardingSpec(
+            strategy=ShardingStrategy.CEL,
+            routing_values=list(sharding.routing_values)
+            if sharding.routing_values is not None
+            else None,
+            cel_expr=sharding.cel_expr,
+            cel_columns=dict(sharding.cel_columns),
+            hash_algorithm=ShardHashAlgorithm.XXH3_64,
+        )
+    # Legacy fallback
     return ManifestShardingSpec(
-        strategy=sharding.strategy,
+        strategy=sharding.strategy,  # type: ignore[union-attr]
         routing_values=list(sharding.routing_values)
         if sharding.routing_values is not None
         else None,
