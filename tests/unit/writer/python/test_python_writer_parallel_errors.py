@@ -13,14 +13,15 @@ from typing import Self
 import pytest
 
 import shardyfusion.writer.python._parallel_writer as parallel_writer_mod
-from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
 from shardyfusion.errors import ShardyfusionError
 from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.run_registry import InMemoryRunRegistry
 from shardyfusion.serde import make_key_encoder
+from shardyfusion.sharding_types import HashShardingSpec
 from shardyfusion.testing import FileBackedSlateDbAdapter, file_backed_load_db
 from shardyfusion.type_defs import RetryConfig
-from shardyfusion.writer.python import write_sharded
+from shardyfusion.writer.python import write_sharded_by_hash
 from shardyfusion.writer.python._parallel_writer import (
     _file_shard_worker,
     _FileChunkRef,
@@ -215,8 +216,8 @@ def _make_config(
     local_root: str | None = None,
     shard_retry: RetryConfig | None = None,
     run_registry: InMemoryRunRegistry | None = None,
-) -> WriteConfig:
-    return WriteConfig(
+) -> HashWriteConfig:
+    return HashWriteConfig(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/test",
         adapter_factory=_good_factory,
@@ -232,7 +233,7 @@ def _make_config(
 
 def test_worker_crash_raises_error() -> None:
     """Worker process crash is detected and raises ShardyfusionError."""
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=2,
         s3_prefix="s3://bucket/test",
         adapter_factory=_crashing_factory,
@@ -246,6 +247,7 @@ def test_worker_crash_raises_error() -> None:
         _write_parallel(
             records=records,
             config=config,
+            sharding=HashShardingSpec(),
             num_dbs=config.num_dbs,
             run_id="crash-test",
             factory=_crashing_factory,
@@ -267,6 +269,7 @@ def test_parallel_succeeds_with_good_factory() -> None:
     results = _write_parallel(
         records=records,
         config=config,
+        sharding=HashShardingSpec(),
         num_dbs=config.num_dbs,
         run_id="good-test",
         factory=_good_factory,
@@ -388,6 +391,7 @@ def test_parallel_retry_replays_to_new_attempt_and_cleans_spool(
     results = _write_parallel(
         records=records,
         config=config,
+        sharding=HashShardingSpec(),
         num_dbs=1,
         run_id="retry-file-spool",
         factory=_FailOnceMarkerFactory(str(marker_path)),
@@ -428,7 +432,7 @@ def test_write_sharded_parallel_retry_records_succeeded_run_record(
     )
     config.adapter_factory = _FailOnceMarkerFactory(str(marker_path))
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         [{"id": i, "val": b"x"} for i in range(10)],
         config,
         key_fn=lambda r: r["id"],
@@ -466,6 +470,7 @@ def test_parallel_retry_replay_preserves_final_shard_contents(tmp_path: Path) ->
     results = _write_parallel(
         records=records,
         config=config,
+        sharding=HashShardingSpec(),
         num_dbs=1,
         run_id="retry-contract",
         factory=_FailOnceFileBackedFactory(file_backed_root, str(marker_path)),
@@ -508,6 +513,7 @@ def test_parallel_retry_respawns_worker_on_unexpected_exit(tmp_path: Path) -> No
     results = _write_parallel(
         records=records,
         config=config,
+        sharding=HashShardingSpec(),
         num_dbs=1,
         run_id="retry-worker-exit",
         factory=_ExitOnceMarkerFactory(str(marker_path)),

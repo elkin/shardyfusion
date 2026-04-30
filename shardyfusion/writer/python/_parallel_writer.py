@@ -29,6 +29,7 @@ from shardyfusion.logging import FailureSeverity, get_logger, log_failure
 from shardyfusion.manifest import WriterInfo
 from shardyfusion.metrics import MetricEvent
 from shardyfusion.serde import make_key_encoder
+from shardyfusion.sharding_types import ShardingSpec
 from shardyfusion.slatedb_adapter import DbAdapterFactory
 from shardyfusion.storage import join_s3
 from shardyfusion.type_defs import KeyInput, RetryConfig
@@ -1097,6 +1098,7 @@ def _route_records_to_workers(
     *,
     records: Iterable[T],
     config: WriteConfig,
+    sharding: ShardingSpec,
     num_dbs: int,
     key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
@@ -1111,7 +1113,7 @@ def _route_records_to_workers(
         db_id = route_key(
             key,
             num_dbs=num_dbs,
-            sharding=config.sharding,
+            sharding=sharding,
             routing_context=routing_context,
         )
         key_bytes = runtime.key_encoder(key)
@@ -1155,6 +1157,7 @@ def _route_records_to_retry_workers(
     *,
     records: Iterable[T],
     config: WriteConfig,
+    sharding: ShardingSpec,
     num_dbs: int,
     key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
@@ -1170,7 +1173,7 @@ def _route_records_to_retry_workers(
         db_id = route_key(
             key,
             num_dbs=num_dbs,
-            sharding=config.sharding,
+            sharding=sharding,
             routing_context=routing_context,
         )
         key_bytes = runtime.key_encoder(key)
@@ -1349,6 +1352,7 @@ def _write_parallel_retryable(
     *,
     records: Iterable[T],
     config: WriteConfig,
+    sharding: ShardingSpec,
     num_dbs: int,
     run_id: str,
     factory: DbAdapterFactory,
@@ -1378,6 +1382,7 @@ def _write_parallel_retryable(
             runtime,
             records=records,
             config=config,
+            sharding=sharding,
             num_dbs=num_dbs,
             key_fn=key_fn,
             value_fn=value_fn,
@@ -1397,6 +1402,7 @@ def _write_parallel(
     *,
     records: Iterable[T],
     config: WriteConfig,
+    sharding: ShardingSpec,
     num_dbs: int,
     run_id: str,
     factory: DbAdapterFactory,
@@ -1413,6 +1419,7 @@ def _write_parallel(
         return _write_parallel_retryable(
             records=records,
             config=config,
+            sharding=sharding,
             num_dbs=num_dbs,
             run_id=run_id,
             factory=factory,
@@ -1441,6 +1448,7 @@ def _write_parallel(
             runtime,
             records=records,
             config=config,
+            sharding=sharding,
             num_dbs=num_dbs,
             key_fn=key_fn,
             value_fn=value_fn,

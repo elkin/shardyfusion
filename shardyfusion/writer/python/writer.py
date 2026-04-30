@@ -30,14 +30,19 @@ from shardyfusion._writer_core import (
 from shardyfusion._writer_core import (
     wrap_factory_for_vector as _core_wrap_factory_for_vector,
 )
-from shardyfusion.config import WriteConfig
+from shardyfusion.config import CelWriteConfig, HashWriteConfig, WriteConfig
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.logging import get_logger, log_event
 from shardyfusion.manifest import BuildResult, WriterInfo
 from shardyfusion.metrics import MetricEvent
 from shardyfusion.run_registry import RunRecordLifecycle
 from shardyfusion.serde import make_key_encoder
-from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
+from shardyfusion.sharding_types import (
+    CelShardingSpec,
+    HashShardingSpec,
+    ShardHashAlgorithm,
+    ShardingSpec,
+)
 from shardyfusion.slatedb_adapter import DbAdapterFactory, SlateDbFactory
 from shardyfusion.type_defs import KeyInput
 from shardyfusion.writer.python._parallel_writer import (
@@ -75,9 +80,19 @@ class _SingleProcessState:
     )
 
 
-def write_sharded(
+def _sharding_strategy_name(sharding: ShardingSpec) -> str:
+    if isinstance(sharding, HashShardingSpec):
+        return "hash"
+    if isinstance(sharding, CelShardingSpec):
+        return "cel"
+    if hasattr(sharding, "strategy"):
+        return str(sharding.strategy)
+    return "unknown"
+
+
+def write_sharded_by_hash(
     records: Iterable[T],
-    config: WriteConfig,
+    config: HashWriteConfig,
     *,
     key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
@@ -97,13 +112,12 @@ def write_sharded(
     max_total_batched_items: int | None = None,
     max_total_batched_bytes: int | None = None,
 ) -> BuildResult:
-    """Write an iterable of records into N sharded databases.
+    """Write an iterable of records into N sharded databases using HASH routing.
 
     Args:
         records: Iterable of records to write. Each record is passed to
             ``key_fn`` and ``value_fn`` to extract the key and value bytes.
-        config: Write configuration (num_dbs, s3_prefix, sharding strategy, etc.).
-            HASH and CEL sharding strategies are supported.
+        config: Hash write configuration (num_dbs, s3_prefix, etc.).
         key_fn: Callable that extracts the routing key from each record.
         value_fn: Callable that serializes each record to value bytes.
         vector_fn: Optional callable that extracts ``(id, vector, payload)``
@@ -142,6 +156,171 @@ def write_sharded(
         PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
         ShardyfusionError: If a worker process fails in parallel mode.
     """
+    hash_algorithm = (
+        config.sharding.hash_algorithm
+        if hasattr(config, "sharding") and config.sharding is not None
+        else ShardHashAlgorithm.XXH3_64
+    )
+    sharding = HashShardingSpec(
+        hash_algorithm=hash_algorithm,
+        max_keys_per_shard=config.max_keys_per_shard,
+    )
+    num_dbs = _resolve_num_dbs_before_sharding(records, config)
+    return _write_sharded_impl(
+        records=records,
+        config=config,
+        sharding=sharding,
+        num_dbs=num_dbs,
+        key_fn=key_fn,
+        value_fn=value_fn,
+        columns_fn=columns_fn,
+        vector_fn=vector_fn,
+        parallel=parallel,
+        max_queue_size=max_queue_size,
+        max_parallel_shared_memory_bytes=max_parallel_shared_memory_bytes,
+        max_parallel_shared_memory_bytes_per_worker=max_parallel_shared_memory_bytes_per_worker,
+        max_writes_per_second=max_writes_per_second,
+        max_write_bytes_per_second=max_write_bytes_per_second,
+        max_total_batched_items=max_total_batched_items,
+        max_total_batched_bytes=max_total_batched_bytes,
+    )
+
+
+def write_sharded_by_cel(
+    records: Iterable[T],
+    config: CelWriteConfig,
+    *,
+    key_fn: Callable[[T], KeyInput],
+    value_fn: Callable[[T], bytes],
+    columns_fn: Callable[[T], dict[str, Any]] | None = None,
+    vector_fn: Callable[[T], tuple[int | str, Any, dict[str, Any] | None]]
+    | None = None,
+    parallel: bool = False,
+    max_queue_size: int = 100,
+    max_parallel_shared_memory_bytes: int | None = (
+        _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES
+    ),
+    max_parallel_shared_memory_bytes_per_worker: int | None = (
+        _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER
+    ),
+    max_writes_per_second: float | None = None,
+    max_write_bytes_per_second: float | None = None,
+    max_total_batched_items: int | None = None,
+    max_total_batched_bytes: int | None = None,
+) -> BuildResult:
+    """Write an iterable of records into N sharded databases using CEL routing.
+
+    Args:
+        records: Iterable of records to write. Each record is passed to
+            ``key_fn`` and ``value_fn`` to extract the key and value bytes.
+        config: CEL write configuration (cel_expr, cel_columns, etc.).
+        key_fn: Callable that extracts the routing key from each record.
+        value_fn: Callable that serializes each record to value bytes.
+        vector_fn: Optional callable that extracts ``(id, vector, payload)``
+            from each record for unified KV + vector mode.  Requires
+            ``config.vector_spec`` to be set.  The vector should be an
+            array-like of floats with shape ``(dim,)``.
+        parallel: If True, use one subprocess per shard (``multiprocessing.spawn``).
+            If False (default), all shard adapters are open simultaneously in
+            a single process.
+        max_queue_size: Maximum per-shard queue depth in parallel mode.
+            In shared-memory parallel mode this bounds control messages,
+            not payload bytes.
+        max_parallel_shared_memory_bytes: Global cap on outstanding shared-memory
+            payload bytes in parallel mode. When exceeded, the parent blocks until
+            workers reclaim segments. ``None`` disables the global cap.
+        max_parallel_shared_memory_bytes_per_worker: Per-worker cap on outstanding
+            shared-memory payload bytes in parallel mode. When exceeded, the parent
+            blocks until that worker reclaims segments. ``None`` disables the
+            per-worker cap.
+        max_writes_per_second: Optional rate limit (token-bucket) for write ops/sec.
+        max_write_bytes_per_second: Optional rate limit (token-bucket) for write bytes/sec.
+        max_total_batched_items: Global cap on total buffered items across all shard
+            batches (single-process mode only). When exceeded, the shard with the
+            largest batch is flushed. Prevents OOM with many shards.
+        max_total_batched_bytes: Global cap on total buffered bytes across all shard
+            batches (single-process mode only). When exceeded, the shard with the
+            largest byte footprint is flushed.
+
+    Returns:
+        BuildResult with manifest reference, shard metadata, and build statistics.
+
+    Raises:
+        ConfigValidationError: If configuration is invalid.
+        ShardCoverageError: If partition results don't cover all expected shards.
+        PublishManifestError: If manifest upload to S3 fails.
+        PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
+        ShardyfusionError: If a worker process fails in parallel mode.
+    """
+    sharding: ShardingSpec = CelShardingSpec(
+        cel_expr=config.cel_expr,
+        cel_columns=config.cel_columns,
+        routing_values=config.routing_values,
+        infer_routing_values_from_data=config.infer_routing_values_from_data,
+    )
+
+    if sharding.infer_routing_values_from_data:
+        if parallel:
+            raise ConfigValidationError(
+                "Parallel mode does not support inferred categorical CEL routing. "
+                "Materialize records and use single-process mode."
+            )
+        sharding = _resolve_inferred_categorical_sharding(
+            records,
+            sharding=sharding,
+            key_fn=key_fn,
+            columns_fn=columns_fn,
+        )
+
+    num_dbs = len(config.routing_values) if config.routing_values else None
+    if sharding.routing_values is not None:
+        num_dbs = max(1, len(sharding.routing_values))
+
+    return _write_sharded_impl(
+        records=records,
+        config=config,
+        sharding=sharding,
+        num_dbs=num_dbs,
+        key_fn=key_fn,
+        value_fn=value_fn,
+        columns_fn=columns_fn,
+        vector_fn=vector_fn,
+        parallel=parallel,
+        max_queue_size=max_queue_size,
+        max_parallel_shared_memory_bytes=max_parallel_shared_memory_bytes,
+        max_parallel_shared_memory_bytes_per_worker=max_parallel_shared_memory_bytes_per_worker,
+        max_writes_per_second=max_writes_per_second,
+        max_write_bytes_per_second=max_write_bytes_per_second,
+        max_total_batched_items=max_total_batched_items,
+        max_total_batched_bytes=max_total_batched_bytes,
+    )
+
+
+def _write_sharded_impl(
+    records: Iterable[T],
+    config: WriteConfig,
+    sharding: ShardingSpec,
+    num_dbs: int | None,
+    *,
+    key_fn: Callable[[T], KeyInput],
+    value_fn: Callable[[T], bytes],
+    columns_fn: Callable[[T], dict[str, Any]] | None = None,
+    vector_fn: Callable[[T], tuple[int | str, Any, dict[str, Any] | None]]
+    | None = None,
+    parallel: bool = False,
+    max_queue_size: int = 100,
+    max_parallel_shared_memory_bytes: int | None = (
+        _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES
+    ),
+    max_parallel_shared_memory_bytes_per_worker: int | None = (
+        _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER
+    ),
+    max_writes_per_second: float | None = None,
+    max_write_bytes_per_second: float | None = None,
+    max_total_batched_items: int | None = None,
+    max_total_batched_bytes: int | None = None,
+) -> BuildResult:
+    """Internal implementation for writing an iterable of records into N sharded databases."""
 
     from shardyfusion.logging import LogContext
 
@@ -185,22 +364,7 @@ def write_sharded(
         max_parallel_shared_memory_bytes_per_worker,
         field_name="max_parallel_shared_memory_bytes_per_worker",
     )
-    resolved_sharding = config.sharding
-    if config.sharding.infer_routing_values_from_data:
-        if parallel:
-            raise ConfigValidationError(
-                "Parallel mode does not support inferred categorical CEL routing. "
-                "Materialize records and use single-process mode."
-            )
-        resolved_sharding = _resolve_inferred_categorical_sharding(
-            records,
-            sharding=config.sharding,
-            key_fn=key_fn,
-            columns_fn=columns_fn,
-        )
-    num_dbs = _resolve_num_dbs_before_sharding(records, config)
-    if resolved_sharding.routing_values is not None:
-        num_dbs = max(1, len(resolved_sharding.routing_values))
+
     run_id = config.output.run_id or uuid4().hex
     started = time.perf_counter()
     mc = config.metrics_collector
@@ -216,9 +380,9 @@ def write_sharded(
         log_event(
             "write_started",
             logger=_logger,
-            num_dbs=config.num_dbs,
+            num_dbs=num_dbs,
             s3_prefix=config.s3_prefix,
-            strategy=config.sharding.strategy,
+            strategy=_sharding_strategy_name(sharding),
             key_encoding=config.key_encoding,
             writer_type="python",
         )
@@ -249,6 +413,7 @@ def write_sharded(
             attempts = _write_parallel(
                 records=records,
                 config=config,
+                sharding=sharding,
                 num_dbs=num_dbs,
                 run_id=run_id,
                 factory=factory,
@@ -265,7 +430,7 @@ def write_sharded(
             attempts, num_dbs = _write_single_process(
                 records=records,
                 config=config,
-                sharding=resolved_sharding,
+                sharding=sharding,
                 num_dbs=num_dbs,
                 run_id=run_id,
                 factory=factory,
@@ -310,7 +475,7 @@ def write_sharded(
         manifest_ref = publish_to_store(
             config=config,
             run_id=run_id,
-            resolved_sharding=resolved_sharding,
+            resolved_sharding=sharding,
             winners=winners,
             key_col="_key",
             started=started,
@@ -355,7 +520,7 @@ def write_sharded(
 
 def _resolve_num_dbs_before_sharding(
     records: Iterable[Any],
-    config: WriteConfig,
+    config: HashWriteConfig,
 ) -> int | None:
     """Resolve num_dbs that can be determined before writing.
 
@@ -365,9 +530,7 @@ def _resolve_num_dbs_before_sharding(
 
     from shardyfusion._writer_core import resolve_num_dbs
 
-    if config.sharding.max_keys_per_shard is not None and not isinstance(
-        records, Sized
-    ):
+    if config.max_keys_per_shard is not None and not isinstance(records, Sized):
         raise ConfigValidationError(
             "max_keys_per_shard requires a Sized input (e.g. list) "
             "so num_dbs can be computed from len(records). "
@@ -404,12 +567,10 @@ def _resolve_inferred_categorical_sharding(
         )
         tokens.append(compiled.evaluate(context))
 
-    return ShardingSpec(
-        strategy=ShardingStrategy.CEL,
-        routing_values=build_categorical_routing_values(tokens),
+    return CelShardingSpec(
         cel_expr=sharding.cel_expr,
         cel_columns=dict(sharding.cel_columns),
-        hash_algorithm=sharding.hash_algorithm,
+        routing_values=build_categorical_routing_values(tokens),
     )
 
 
@@ -752,11 +913,9 @@ def _write_single_process(
 
     with contextlib.ExitStack() as stack:
         key_encoder = make_key_encoder(config.key_encoding)
-        cel_lookup = (
-            {value: idx for idx, value in enumerate(sharding.routing_values)}
-            if sharding.routing_values is not None
-            else None
-        )
+        cel_lookup = None
+        if isinstance(sharding, CelShardingSpec) and sharding.routing_values is not None:
+            cel_lookup = {value: idx for idx, value in enumerate(sharding.routing_values)}
 
         for record in records:
             key = key_fn(record)

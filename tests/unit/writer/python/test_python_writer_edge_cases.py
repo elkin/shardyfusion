@@ -10,8 +10,9 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Self
 
-from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
 from shardyfusion.manifest_store import InMemoryManifestStore
+from shardyfusion.sharding_types import HashShardingSpec
 from shardyfusion.writer.python._parallel_writer import _write_parallel
 
 _MAX_PARALLEL_SHARED_MEMORY_BYTES = 256 * 1024 * 1024
@@ -75,8 +76,8 @@ def _close_fail_factory(*, db_url: str, local_dir: Path) -> _CloseFailAdapter:
     return _CloseFailAdapter()
 
 
-def _config(num_dbs: int = 2) -> WriteConfig:
-    return WriteConfig(
+def _config(num_dbs: int = 2) -> HashWriteConfig:
+    return HashWriteConfig(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/test",
         adapter_factory=_good_factory,
@@ -91,6 +92,7 @@ class TestParallelEmptyInput:
         results = _write_parallel(
             records=[],
             config=config,
+            sharding=HashShardingSpec(),
             num_dbs=2,
             run_id="empty-test",
             factory=_good_factory,
@@ -112,6 +114,7 @@ class TestParallelSingleShard:
         results = _write_parallel(
             records=records,
             config=config,
+            sharding=HashShardingSpec(),
             num_dbs=1,
             run_id="single-test",
             factory=_good_factory,
@@ -134,6 +137,7 @@ class TestParallelManyShards:
         results = _write_parallel(
             records=records,
             config=config,
+            sharding=HashShardingSpec(),
             num_dbs=4,
             run_id="many-test",
             factory=_good_factory,

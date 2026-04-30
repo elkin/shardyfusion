@@ -11,11 +11,11 @@ import pytest
 
 import shardyfusion.writer.python._parallel_writer as parallel_writer_mod
 from shardyfusion._writer_core import ShardAttemptResult
-from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
 from shardyfusion.errors import ShardyfusionError
 from shardyfusion.manifest import WriterInfo
 from shardyfusion.manifest_store import InMemoryManifestStore
-from shardyfusion.writer.python import write_sharded
+from shardyfusion.writer.python import write_sharded_by_hash
 from shardyfusion.writer.python._parallel_writer import (
     _cleanup_parallel_runtime,
     _collect_parallel_results,
@@ -68,10 +68,10 @@ class _DeadWorker:
         self.sentinel = object()
 
 
-def _make_parallel_config(tmp_path: Path) -> WriteConfig:
+def _make_parallel_config(tmp_path: Path) -> HashWriteConfig:
     from shardyfusion.testing import fake_adapter_factory
 
-    return WriteConfig(
+    return HashWriteConfig(
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
         adapter_factory=fake_adapter_factory,
@@ -445,7 +445,7 @@ def test_parallel_shared_memory_limit_rejects_large_record(tmp_path: Path) -> No
         ShardyfusionError,
         match="max_parallel_shared_memory_bytes_per_worker",
     ):
-        write_sharded(
+        write_sharded_by_hash(
             [0],
             config,
             key_fn=lambda r: r,
@@ -460,7 +460,7 @@ def test_shard_worker_consumes_shared_memory_chunks_and_reports_result(
     tmp_path: Path,
 ) -> None:
     factory = TrackingFactory()
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
         batch_size=2,

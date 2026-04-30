@@ -5,13 +5,12 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 
-from shardyfusion.config import ManifestOptions, OutputOptions, WriteConfig
+from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
 from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.manifest_store import parse_manifest_payload
-from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
 from shardyfusion.testing import FailOnceAdapterFactory, file_backed_adapter_factory
 from shardyfusion.type_defs import RetryConfig, S3ConnectionOptions
-from shardyfusion.writer.python import write_sharded
+from shardyfusion.writer.python import write_sharded_by_hash
 from tests.helpers.run_record_assertions import (
     assert_success_run_record,
     load_s3_run_record,
@@ -34,13 +33,13 @@ def test_python_writer_publishes_manifest_and_current_to_local_s3(
         region_name=local_s3_service["region_name"],
     )
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=4,
         s3_prefix=s3_prefix,
         credential_provider=credential_provider,
         s3_connection_options=connection_options,
         adapter_factory=file_backed_adapter_factory(file_backed_root),
-        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
+        
         output=OutputOptions(
             run_id="python-writer-local-s3",
             local_root=str(tmp_path / "local"),
@@ -52,7 +51,7 @@ def test_python_writer_publishes_manifest_and_current_to_local_s3(
     )
 
     records = list(range(24))
-    result = write_sharded(
+    result = write_sharded_by_hash(
         records,
         config,
         key_fn=lambda r: r,
@@ -104,13 +103,13 @@ def test_python_writer_parallel_publishes_manifest_and_current_to_local_s3(
         region_name=local_s3_service["region_name"],
     )
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=4,
         s3_prefix=s3_prefix,
         credential_provider=credential_provider,
         s3_connection_options=connection_options,
         adapter_factory=file_backed_adapter_factory(file_backed_root),
-        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
+        
         output=OutputOptions(
             run_id="python-writer-parallel-local-s3",
             local_root=str(tmp_path / "local-parallel"),
@@ -122,7 +121,7 @@ def test_python_writer_parallel_publishes_manifest_and_current_to_local_s3(
     )
 
     records = list(range(24))
-    result = write_sharded(
+    result = write_sharded_by_hash(
         records,
         config,
         key_fn=lambda r: r,
@@ -176,7 +175,7 @@ def test_python_writer_parallel_retry_publishes_succeeded_run_record_to_local_s3
         region_name=local_s3_service["region_name"],
     )
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=4,
         s3_prefix=s3_prefix,
         credential_provider=credential_provider,
@@ -186,7 +185,7 @@ def test_python_writer_parallel_retry_publishes_succeeded_run_record_to_local_s3
             marker_root=str(tmp_path / "retry-markers"),
             fail_db_ids=(0,),
         ),
-        sharding=ShardingSpec(strategy=ShardingStrategy.HASH),
+        
         shard_retry=RetryConfig(
             max_retries=1,
             initial_backoff=timedelta(seconds=0),
@@ -201,7 +200,7 @@ def test_python_writer_parallel_retry_publishes_succeeded_run_record_to_local_s3
         ),
     )
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         list(range(24)),
         config,
         key_fn=lambda r: r,

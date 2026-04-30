@@ -8,14 +8,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from shardyfusion.config import ManifestOptions, VectorSpec, WriteConfig
+from shardyfusion.config import CelWriteConfig, ManifestOptions, VectorSpec
 from shardyfusion.errors import ConfigValidationError
-from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
+from shardyfusion.sharding_types import CelShardingSpec
 
 
-def _cel_sharding() -> ShardingSpec:
-    return ShardingSpec(
-        strategy=ShardingStrategy.CEL,
+def _cel_sharding_spec() -> CelShardingSpec:
+    return CelShardingSpec(
         cel_expr="shard_hash(key) % 2u",
         cel_columns={"key": "int"},
         routing_values=[0, 1],
@@ -23,7 +22,7 @@ def _cel_sharding() -> ShardingSpec:
 
 
 # ---------------------------------------------------------------------------
-# _auto_vector_fn — exercised via write_sharded
+# _auto_vector_fn — exercised via write_sharded_by_cel
 # ---------------------------------------------------------------------------
 
 
@@ -36,15 +35,17 @@ class _Record:
 
 class TestAutoVectorFn:
     def test_vector_col_without_columns_fn_raises(self) -> None:
-        from shardyfusion.writer.python.writer import write_sharded
+        from shardyfusion.writer.python.writer import write_sharded_by_cel
 
-        config = WriteConfig(
+        config = CelWriteConfig(
             s3_prefix="s3://bucket/prefix",
-            sharding=_cel_sharding(),
+            cel_expr="shard_hash(key) % 2u",
+            cel_columns={"key": "int"},
+            routing_values=[0, 1],
             vector_spec=VectorSpec(dim=3, vector_col="embedding"),
         )
         with pytest.raises(ConfigValidationError, match="columns_fn is None"):
-            write_sharded(
+            write_sharded_by_cel(
                 records=[],
                 config=config,
                 key_fn=lambda r: r.key,
@@ -53,11 +54,13 @@ class TestAutoVectorFn:
 
     def test_auto_vector_fn_builds_and_runs(self) -> None:
         """When vector_col + columns_fn provided, auto vector_fn is built and used."""
-        from shardyfusion.writer.python.writer import write_sharded
+        from shardyfusion.writer.python.writer import write_sharded_by_cel
 
-        config = WriteConfig(
+        config = CelWriteConfig(
             s3_prefix="s3://bucket/prefix",
-            sharding=_cel_sharding(),
+            cel_expr="shard_hash(key) % 2u",
+            cel_columns={"key": "int"},
+            routing_values=[0, 1],
             vector_spec=VectorSpec(dim=3, vector_col="embedding"),
             manifest=ManifestOptions(custom_manifest_fields={}),
         )
@@ -77,7 +80,7 @@ class TestAutoVectorFn:
             ),
         ):
             mock_write.return_value = ([], 0)
-            write_sharded(
+            write_sharded_by_cel(
                 records=[],
                 config=config,
                 key_fn=lambda r: r.key,
@@ -92,11 +95,13 @@ class TestAutoVectorFn:
 
     def test_auto_vector_fn_converts_bytes_key(self) -> None:
         """auto_vector_fn converts bytes keys to hex strings for vector IDs."""
-        from shardyfusion.writer.python.writer import write_sharded
+        from shardyfusion.writer.python.writer import write_sharded_by_cel
 
-        config = WriteConfig(
+        config = CelWriteConfig(
             s3_prefix="s3://bucket/prefix",
-            sharding=_cel_sharding(),
+            cel_expr="shard_hash(key) % 2u",
+            cel_columns={"key": "int"},
+            routing_values=[0, 1],
             vector_spec=VectorSpec(dim=3, vector_col="emb"),
             manifest=ManifestOptions(custom_manifest_fields={}),
         )
@@ -123,7 +128,7 @@ class TestAutoVectorFn:
                 return_value="s3://manifest",
             ),
         ):
-            write_sharded(
+            write_sharded_by_cel(
                 records=[],
                 config=config,
                 key_fn=lambda r: b"\xde\xad",
@@ -166,9 +171,11 @@ class TestWrapFactoryImportFallback:
                 raise ImportError("no lancedb")
             return original_import(name, *args, **kwargs)
 
-        config = WriteConfig(
+        config = CelWriteConfig(
             s3_prefix="s3://bucket/prefix",
-            sharding=_cel_sharding(),
+            cel_expr="shard_hash(key) % 2u",
+            cel_columns={"key": "int"},
+            routing_values=[0, 1],
             vector_spec=VectorSpec(dim=8),
         )
         mock_factory = MagicMock()
@@ -281,9 +288,11 @@ class TestFlushSingleProcessShardVectorBatch:
         state.vector_vecs[0] = [[0.1, 0.2], [0.3, 0.4]]
         state.vector_payloads[0] = [None, {"label": "a"}]
 
-        config = WriteConfig(
-            num_dbs=1,
+        config = CelWriteConfig(
             s3_prefix="s3://bucket/prefix",
+            cel_expr="shard_hash(key) % 2u",
+            cel_columns={"key": "int"},
+            routing_values=[0, 1],
         )
 
         with contextlib.ExitStack() as stack:
@@ -308,7 +317,7 @@ class TestFlushSingleProcessShardVectorBatch:
         assert state.vector_payloads[0] == []
 
     def test_vector_buffer_in_write_loop(self) -> None:
-        """Exercises vector buffering (lines 766-769) via _write_single_process."""
+        """Exercises vector buffering via _write_single_process."""
         from shardyfusion.writer.python.writer import _write_single_process
 
         vector_batches: list[tuple] = []
@@ -346,9 +355,11 @@ class TestFlushSingleProcessShardVectorBatch:
         ) -> VectorAdapter:
             return VectorAdapter()
 
-        config = WriteConfig(
-            num_dbs=1,
+        config = CelWriteConfig(
             s3_prefix="s3://bucket/prefix",
+            cel_expr="shard_hash(key) % 2u",
+            cel_columns={"key": "int"},
+            routing_values=[0, 1],
         )
 
         @dataclass
@@ -361,8 +372,8 @@ class TestFlushSingleProcessShardVectorBatch:
         attempts, num_dbs = _write_single_process(
             records=records,
             config=config,
-            sharding=config.sharding,
-            num_dbs=1,
+            sharding=_cel_sharding_spec(),
+            num_dbs=2,
             run_id="test-run",
             factory=factory,
             key_fn=lambda r: r.key,
@@ -407,7 +418,12 @@ class TestFlushSingleProcessShardVectorBatch:
         state.vector_vecs[0] = []
         state.vector_payloads[0] = []
 
-        config = WriteConfig(num_dbs=1, s3_prefix="s3://bucket/prefix")
+        config = CelWriteConfig(
+            s3_prefix="s3://bucket/prefix",
+            cel_expr="shard_hash(key) % 2u",
+            cel_columns={"key": "int"},
+            routing_values=[0, 1],
+        )
 
         with contextlib.ExitStack() as stack:
             _flush_single_process_shard(

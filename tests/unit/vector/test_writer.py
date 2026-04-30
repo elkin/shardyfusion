@@ -551,25 +551,21 @@ class TestParallelVectorSpecBlocked:
     """parallel=True with vector_spec must raise ConfigValidationError."""
 
     def test_parallel_with_vector_spec_raises(self) -> None:
-        from shardyfusion.config import VectorSpec, WriteConfig
-        from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
-        from shardyfusion.writer.python.writer import write_sharded
+        from shardyfusion.config import CelWriteConfig, VectorSpec
+        from shardyfusion.writer.python.writer import write_sharded_by_cel
 
-        config = WriteConfig(
+        config = CelWriteConfig(
             s3_prefix="s3://bucket/prefix",
-            sharding=ShardingSpec(
-                strategy=ShardingStrategy.CEL,
-                cel_expr="shard_hash(key) % 4u",
-                cel_columns={"key": "int"},
-                routing_values=[0, 1, 2, 3],
-            ),
+            cel_expr="shard_hash(key) % 4u",
+            cel_columns={"key": "int"},
+            routing_values=[0, 1, 2, 3],
             vector_spec=VectorSpec(dim=8),
         )
 
         with pytest.raises(
             ConfigValidationError, match="Parallel mode is not supported"
         ):
-            write_sharded(
+            write_sharded_by_cel(
                 [],
                 config,
                 key_fn=lambda r: str(r),
