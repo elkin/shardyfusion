@@ -7,6 +7,7 @@ plus :class:`ObstoreBackend` (obstore-backed) and :class:`MemoryBackend`
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from collections.abc import Mapping
@@ -14,8 +15,14 @@ from datetime import timedelta
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
+import obstore  # pyright: ignore[reportMissingImports]
+import obstore.exceptions  # pyright: ignore[reportMissingImports]
+from obstore.exceptions import (  # pyright: ignore[reportMissingImports]
+    NotFoundError,
+)
+from obstore.store import S3Store  # pyright: ignore[reportMissingImports]
+
 from .credentials import S3Credentials
-from .errors import PublishManifestError
 from .logging import get_logger, log_event
 from .type_defs import S3ConnectionOptions
 
@@ -88,7 +95,6 @@ class ObstoreBackend:
         headers: Mapping[str, str] | None = None,
     ) -> None:
         bucket, key = parse_s3_url(url)
-        import obstore  # pyright: ignore[reportMissingImports]
 
         attributes: dict[str, str] = {}
         if content_type:
@@ -116,17 +122,12 @@ class ObstoreBackend:
 
     def get(self, url: str) -> bytes:
         bucket, key = parse_s3_url(url)
-        import obstore  # pyright: ignore[reportMissingImports]
 
         result = obstore.get(self._store, key)
         return bytes(result.bytes())
 
     def try_get(self, url: str) -> bytes | None:
         bucket, key = parse_s3_url(url)
-        import obstore  # pyright: ignore[reportMissingImports]
-        from obstore.exceptions import (
-            NotFoundError,  # pyright: ignore[reportMissingImports]
-        )
 
         try:
             result = obstore.get(self._store, key)
@@ -138,7 +139,6 @@ class ObstoreBackend:
         bucket, key_prefix = parse_s3_url(prefix_url)
         if not key_prefix.endswith("/"):
             key_prefix += "/"
-        import obstore  # pyright: ignore[reportMissingImports]
 
         list_result = obstore.list_with_delimiter(self._store, prefix=key_prefix)
         prefixes = [
@@ -149,7 +149,6 @@ class ObstoreBackend:
 
     def delete_prefix(self, prefix_url: str) -> int:
         bucket, key_prefix = parse_s3_url(prefix_url)
-        import obstore  # pyright: ignore[reportMissingImports]
 
         # obstore.list is an auto-paginating iterator of chunks.
         paths: list[str] = []
@@ -176,7 +175,6 @@ class AsyncObstoreBackend:
         headers: Mapping[str, str] | None = None,
     ) -> None:
         bucket, key = parse_s3_url(url)
-        import obstore  # pyright: ignore[reportMissingImports]
 
         attributes: dict[str, str] = {}
         if content_type:
@@ -190,8 +188,6 @@ class AsyncObstoreBackend:
             )
         except Exception as exc:
             if _is_put_retryable(exc):
-                import asyncio
-
                 log_event(
                     "s3_put_fallback_retry",
                     logger=_logger,
@@ -207,17 +203,12 @@ class AsyncObstoreBackend:
 
     async def get(self, url: str) -> bytes:
         bucket, key = parse_s3_url(url)
-        import obstore  # pyright: ignore[reportMissingImports]
 
         result = await obstore.get_async(self._store, key)
         return bytes(result.bytes())
 
     async def try_get(self, url: str) -> bytes | None:
         bucket, key = parse_s3_url(url)
-        import obstore  # pyright: ignore[reportMissingImports]
-        from obstore.exceptions import (
-            NotFoundError,  # pyright: ignore[reportMissingImports]
-        )
 
         try:
             result = await obstore.get_async(self._store, key)
@@ -229,7 +220,6 @@ class AsyncObstoreBackend:
         bucket, key_prefix = parse_s3_url(prefix_url)
         if not key_prefix.endswith("/"):
             key_prefix += "/"
-        import obstore  # pyright: ignore[reportMissingImports]
 
         list_result = await obstore.list_with_delimiter_async(
             self._store, prefix=key_prefix
@@ -242,7 +232,6 @@ class AsyncObstoreBackend:
 
     async def delete_prefix(self, prefix_url: str) -> int:
         bucket, key_prefix = parse_s3_url(prefix_url)
-        import obstore  # pyright: ignore[reportMissingImports]
 
         paths: list[str] = []
         async for chunk in obstore.list(self._store, prefix=key_prefix):
@@ -356,8 +345,6 @@ class AsyncMemoryBackend:
 
 def _is_put_retryable(exc: BaseException) -> bool:
     """Return True when *exc* looks like a transient error worth one PUT retry."""
-    import obstore.exceptions  # pyright: ignore[reportMissingImports]
-
     if isinstance(exc, obstore.exceptions.GenericError):
         return True
     exc_name = type(exc).__name__
@@ -398,14 +385,6 @@ def create_s3_store(
     configuration uses shardyfusion's aggressive defaults (5 retries,
     200ms initial backoff with jitter, 4s cap, 30s timeout).
     """
-    try:
-        from obstore.store import S3Store  # pyright: ignore[reportMissingImports]
-    except ImportError as exc:  # pragma: no cover - depends on runtime environment
-        raise PublishManifestError(
-            "obstore is required for S3 I/O. "
-            "Install via: pip install 'shardyfusion[slatedb]' or any backend extra."
-        ) from exc
-
     opts: S3ConnectionOptions = connection_options or {}
     kwargs: dict[str, Any] = {}
     client_options: dict[str, Any] = {}

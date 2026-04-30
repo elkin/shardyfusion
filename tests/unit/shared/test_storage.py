@@ -108,7 +108,7 @@ class TestObstoreBackend:
 
         mock_get = MagicMock(side_effect=FakeNotFoundError())
         monkeypatch.setattr("obstore.get", mock_get)
-        monkeypatch.setattr("obstore.exceptions.NotFoundError", FakeNotFoundError)
+        monkeypatch.setattr("shardyfusion.storage.NotFoundError", FakeNotFoundError)
 
         assert backend.try_get("s3://bucket/missing") is None
 
@@ -175,7 +175,7 @@ class TestCreateS3Store:
 
     def test_maps_credentials(self, monkeypatch):
         mock_s3store = MagicMock()
-        monkeypatch.setattr("obstore.store.S3Store", mock_s3store)
+        monkeypatch.setattr("shardyfusion.storage.S3Store", mock_s3store)
 
         from shardyfusion.credentials import S3Credentials
 
@@ -194,7 +194,7 @@ class TestCreateS3Store:
 
     def test_maps_endpoint_and_region(self, monkeypatch):
         mock_s3store = MagicMock()
-        monkeypatch.setattr("obstore.store.S3Store", mock_s3store)
+        monkeypatch.setattr("shardyfusion.storage.S3Store", mock_s3store)
 
         create_s3_store(
             "bucket",
@@ -214,7 +214,7 @@ class TestCreateS3Store:
 
     def test_maps_timeout_options(self, monkeypatch):
         mock_s3store = MagicMock()
-        monkeypatch.setattr("obstore.store.S3Store", mock_s3store)
+        monkeypatch.setattr("shardyfusion.storage.S3Store", mock_s3store)
 
         create_s3_store(
             "bucket",
@@ -231,7 +231,7 @@ class TestCreateS3Store:
 
     def test_uses_shardyfusion_retry_defaults(self, monkeypatch):
         mock_s3store = MagicMock()
-        monkeypatch.setattr("obstore.store.S3Store", mock_s3store)
+        monkeypatch.setattr("shardyfusion.storage.S3Store", mock_s3store)
 
         create_s3_store("bucket")
 
@@ -244,7 +244,7 @@ class TestCreateS3Store:
 
     def test_custom_max_attempts(self, monkeypatch):
         mock_s3store = MagicMock()
-        monkeypatch.setattr("obstore.store.S3Store", mock_s3store)
+        monkeypatch.setattr("shardyfusion.storage.S3Store", mock_s3store)
 
         create_s3_store("bucket", connection_options={"max_attempts": 3})
 

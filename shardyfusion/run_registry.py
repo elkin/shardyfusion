@@ -14,7 +14,14 @@ from pydantic import BaseModel, ConfigDict
 
 from .credentials import CredentialProvider
 from .logging import FailureSeverity, get_logger, log_failure
-from .storage import ObstoreBackend, StorageBackend, create_s3_store, join_s3
+from .manifest_store import InMemoryManifestStore
+from .storage import (
+    ObstoreBackend,
+    StorageBackend,
+    create_s3_store,
+    join_s3,
+    parse_s3_url,
+)
 from .type_defs import S3ConnectionOptions
 
 if TYPE_CHECKING:
@@ -193,15 +200,12 @@ def resolve_run_registry(config: _RunRecordConfig) -> RunRegistry:
     if config.run_registry is not None:
         return config.run_registry
 
-    from .manifest_store import InMemoryManifestStore
-
     if isinstance(config.manifest.store, InMemoryManifestStore):
         return InMemoryRunRegistry()
 
     # The run registry is writer-scoped metadata, not manifest-store metadata.
     credentials = config.credential_provider
     conn_opts = config.s3_connection_options
-    from .storage import parse_s3_url
 
     bucket, _ = parse_s3_url(config.s3_prefix)
     store = create_s3_store(

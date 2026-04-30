@@ -1,6 +1,7 @@
 """Framework-agnostic core functions shared by all writer implementations."""
 
 import logging
+import math
 import time
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
@@ -177,8 +178,6 @@ def resolve_num_dbs(config: HashWriteConfig, count_fn: Callable[[], int]) -> int
         count_fn: Framework-specific callable returning the row count
             (only called if max_keys_per_shard is set).
     """
-    import math
-
     if config.num_dbs is not None and config.num_dbs > 0:
         return config.num_dbs
     if config.max_keys_per_shard is not None:
@@ -255,8 +254,6 @@ def discover_cel_num_dbs(
     Raises:
         ShardAssignmentError: If db_ids are not consecutive starting from 0.
     """
-    from .errors import ShardAssignmentError
-
     if not distinct_db_ids:
         return 1
 
@@ -640,8 +637,6 @@ def cleanup_losers(
     num_losers = 0
 
     if backend is None:
-        from .storage import parse_s3_url
-
         bucket, _ = parse_s3_url(all_attempt_urls[0])
         store = create_s3_store(bucket=bucket)
         backend = ObstoreBackend(store)
@@ -719,8 +714,6 @@ def cleanup_stale_attempts(
     }
 
     if backend is None:
-        from .storage import parse_s3_url
-
         bucket, _ = parse_s3_url(build.s3_prefix)
         store = create_s3_store(bucket=bucket)
         backend = ObstoreBackend(store)
@@ -777,8 +770,6 @@ def cleanup_old_runs(
         runs_prefix += "/"
 
     if backend is None:
-        from .storage import parse_s3_url
-
         bucket, _ = parse_s3_url(s3_prefix)
         store = create_s3_store(bucket=bucket)
         backend = ObstoreBackend(store)

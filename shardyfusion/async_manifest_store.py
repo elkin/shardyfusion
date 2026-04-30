@@ -11,6 +11,11 @@ from typing import Protocol
 
 from .logging import FailureSeverity, get_logger, log_failure
 from .manifest import ManifestRef, ParsedManifest
+from .manifest_store import (
+    parse_current_pointer_to_ref,
+    parse_manifest_dir_entry,
+    parse_manifest_payload,
+)
 from .storage import AsyncStorageBackend, join_s3
 
 _logger = get_logger(__name__)
@@ -47,8 +52,6 @@ class AsyncS3ManifestStore:
         self.current_pointer_key = current_pointer_key
 
     async def load_current(self) -> ManifestRef | None:
-        from .manifest_store import parse_current_pointer_to_ref
-
         current_url = f"{self.s3_prefix}/{self.current_pointer_key}"
         payload = await self._backend.try_get(current_url)
         if payload is None:
@@ -67,13 +70,9 @@ class AsyncS3ManifestStore:
                 manifest_ref=ref,
             )
             raise
-        from .manifest_store import parse_manifest_payload
-
         return parse_manifest_payload(payload)
 
     async def list_manifests(self, *, limit: int = 10) -> list[ManifestRef]:
-        from .manifest_store import parse_manifest_dir_entry
-
         manifests_prefix = join_s3(self.s3_prefix, "manifests") + "/"
 
         refs: list[ManifestRef] = []

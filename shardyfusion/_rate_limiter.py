@@ -4,6 +4,7 @@
 default (single-threaded) implementation.
 """
 
+import asyncio
 import logging
 import threading
 import time
@@ -139,8 +140,6 @@ class TokenBucket:
 
     async def acquire_async(self, tokens: int = 1) -> None:
         """Async version of ``acquire()``: uses ``asyncio.sleep`` instead of ``time.sleep``."""
-        import asyncio
-
         while True:
             result = self.try_acquire(tokens)
             if result:
@@ -217,8 +216,6 @@ class ThreadSafeTokenBucket(TokenBucket):
 
     async def acquire_async(self, tokens: int = 1) -> None:
         """Async version of ``acquire()`` (thread-safe)."""
-        import asyncio
-
         while True:
             result = self.try_acquire(tokens)
             if result:
