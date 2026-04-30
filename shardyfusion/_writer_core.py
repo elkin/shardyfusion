@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from operator import index as operator_index
 from typing import Any, Literal, Protocol, SupportsIndex, cast
 
-from .config import WriteConfig, vector_metric_to_str
+from .config import HashWriteConfig, WriteConfig, vector_metric_to_str
 from .errors import (
     ConfigValidationError,
     PublishCurrentError,
@@ -169,62 +169,24 @@ def route_cel(
         raise
 
 
-def route_key(
-    key: KeyInput,
-    *,
-    num_dbs: int | None,
-    sharding: ShardingSpec,
-    routing_context: dict[str, object] | None = None,
-    cel_lookup: dict[RoutingValue, int] | None = None,
-) -> int:
-    """Route a key to a shard db_id (shared by all writer paths).
-
-    .. deprecated::
-
-       Use :func:`route_hash` or :func:`route_cel` directly for new code.
-       This dispatcher remains for backward compatibility during migration.
-    """
-    if isinstance(sharding, HashShardingSpec):
-        assert num_dbs is not None, "num_dbs required for HASH routing"
-        return route_hash(key, num_dbs=num_dbs, hash_algorithm=sharding.hash_algorithm)
-    if isinstance(sharding, CelShardingSpec):
-        return route_cel(
-            key,
-            cel_expr=sharding.cel_expr,
-            cel_columns=sharding.cel_columns,
-            routing_values=sharding.routing_values,
-            routing_context=routing_context,
-            cel_lookup=cel_lookup,
-        )
-    raise ConfigValidationError(f"Unsupported sharding type: {type(sharding).__name__}")
-
-
-def resolve_num_dbs(config: WriteConfig, count_fn: Callable[[], int]) -> int | None:
-    """Resolve num_dbs from config or max_keys_per_shard.
-
-    Returns ``None`` for CEL when shard cardinality must be discovered from data.
+def resolve_num_dbs(config: HashWriteConfig, count_fn: Callable[[], int]) -> int | None:
+    """Resolve num_dbs from HashWriteConfig or max_keys_per_shard.
 
     Args:
-        config: Write configuration.
+        config: Hash write configuration.
         count_fn: Framework-specific callable returning the row count
             (only called if max_keys_per_shard is set).
     """
     import math
 
-    from .config import HashWriteConfig
-
-    if isinstance(config, HashWriteConfig):
-        if config.num_dbs is not None and config.num_dbs > 0:
-            return config.num_dbs
-        if config.max_keys_per_shard is not None:
-            count = count_fn()
-            if count == 0:
-                return 1
-            return max(1, math.ceil(count / config.max_keys_per_shard))
+    if config.num_dbs is not None and config.num_dbs > 0:
         return config.num_dbs
-
-    # CEL: will discover after add_db_id_column
-    return None
+    if config.max_keys_per_shard is not None:
+        count = count_fn()
+        if count == 0:
+            return 1
+        return max(1, math.ceil(count / config.max_keys_per_shard))
+    return config.num_dbs
 
 
 def resolve_distributed_vector_fn(
@@ -310,6 +272,22 @@ def discover_cel_num_dbs(
         )
 
     return expected
+
+
+def resolve_cel_num_dbs(sharding: CelShardingSpec) -> int:
+    """Return num_dbs for a resolved CEL sharding spec.
+
+    When ``routing_values`` is known (the common case), this is simply
+    ``max(1, len(routing_values))``.  When it is ``None`` (expression
+    must be discovered from data), callers should use
+    :func:`discover_cel_num_dbs` after observing the actual db_ids.
+    """
+    if sharding.routing_values is not None:
+        return max(1, len(sharding.routing_values))
+    raise ConfigValidationError(
+        "Cannot resolve num_dbs from CEL sharding with routing_values=None; "
+        "use discover_cel_num_dbs after data is routed."
+    )
 
 
 def build_categorical_routing_values(
@@ -508,14 +486,13 @@ def publish_to_store(
             for CEL or max_keys_per_shard modes.
     """
 
-    resolved_num_dbs = num_dbs if num_dbs > 0 else getattr(config, "num_dbs", None)
-    assert resolved_num_dbs is not None and resolved_num_dbs > 0, (
+    assert num_dbs > 0, (
         "num_dbs must be resolved to a positive integer before publishing"
     )
     required_build = RequiredBuildMeta(
         run_id=run_id,
         created_at=_utc_now(),
-        num_dbs=resolved_num_dbs,
+        num_dbs=num_dbs,
         s3_prefix=config.s3_prefix,
         key_col=key_col,
         sharding=manifest_safe_sharding(resolved_sharding),
