@@ -35,7 +35,7 @@ Key workflows:
 - **Bootstrap**: `just setup` (fresh clone), `just doctor` (health check)
 - **Dependencies**: `just sync` (full dev), or `just setup` (idempotent bootstrap)
 - **Quality**: `just quality` (lint, format, type check, package, docs-check)
-- **Tests**: `just unit`, `just integration`, `just d-e2e` (E2E in container). Use `-p=N` for tox parallel envs and `-n=M` for pytest-xdist workers (e.g. `just unit -p=4 -n=6`).
+- **Tests**: `just unit`, `just integration`, `just d-e2e` (E2E in container). Use `-p=N` for tox parallel envs and `-n=M` for pytest-xdist workers (e.g. `just unit -p=4 -n=6`). **Always prefer `just` over direct `uv`/`pytest` invocations** — `just` runs tests across multiple tox envs with correct extras and environment setup (e.g. `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0` for Ray tests).
 - **Fix**: `just fix` (auto-format and lint-fix)
 - **Docs**: `just docs`, `just docs-serve`
 - **Coverage**: `just coverage` (unit tests with HTML report)
@@ -106,28 +106,28 @@ Layer internal — Symbols & compatibility: _slatedb_symbols.py (lazy SlateDB sy
 
 ### Write Pipeline
 
-**Spark writer** (`write_sharded`):
+**Spark writer** (`write_sharded_by_hash` / `write_sharded_by_cel`):
 1. Entry point in `writer/spark/writer.py`. Optionally applies Spark conf overrides via `SparkConfOverrideContext`.
 2. `writer/spark/sharding.py` adds `_shard_id` column via `mapInArrow` (hash or CEL, all Python-based), then converts the DataFrame to a pair RDD partitioned so partition index = db_id.
 3. Each partition writes one shard to S3 at a shard path (`shards/run_id=.../db=XXXXX/attempt=YY/`).
 4. The driver streams results via `toLocalIterator()` and selects deterministic winners (lowest attempt → task_attempt_id → URL).
 5. A manifest artifact is built and published, the `_CURRENT` pointer is updated, and the run record is marked terminal (`succeeded` or `failed`).
 
-**Dask writer** (`write_sharded`):
+**Dask writer** (`write_sharded_by_hash` / `write_sharded_by_cel`):
 1. Entry point in `writer/dask/writer.py`. Accepts `dd.DataFrame` with `key_col`/`value_spec`.
 2. `writer/dask/sharding.py` adds `_shard_id` column via Python routing function applied per partition. For CEL sharding, uses `pandas_rows_to_contexts()` + `route_cel()` with full row context (supporting non-key columns).
 3. Shuffles by `_shard_id`, then `map_partitions` writes each shard. Empty shards (no rows in partition) are omitted from the manifest; `select_winners()` filters them out.
 4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `verify_routing_agreement()`.
 5. Uses the same `_writer_core.py` functions for winner selection, manifest building, publishing, and the same run-record lifecycle helper.
 
-**Ray writer** (`write_sharded`):
+**Ray writer** (`write_sharded_by_hash` / `write_sharded_by_cel`):
 1. Entry point in `writer/ray/writer.py`. Accepts `ray.data.Dataset` with `key_col`/`value_spec`.
 2. `writer/ray/sharding.py` adds `_shard_id` column via Arrow batch format (`map_batches` with `batch_format="pyarrow"`, `zero_copy_batch=True`). For CEL sharding, uses `route_cel_batch()` directly on Arrow batches (same approach as Spark).
 3. Repartitions by `_shard_id` using hash shuffle (`DataContext.shuffle_strategy = "HASH_SHUFFLE"`; saved/restored). Then `map_batches` writes each shard with `batch_format="pandas"`. Empty shards (no rows in partition) are omitted from the manifest; `select_winners()` filters them out.
 4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `_verify_routing_agreement()`.
 5. Uses the same `_writer_core.py` functions for winner selection, manifest building, publishing, and the same run-record lifecycle helper.
 
-**Python writer** (`write_sharded`):
+**Python writer** (`write_sharded_by_hash` / `write_sharded_by_cel`):
 1. Entry point in `writer/python/writer.py`. Accepts `Iterable[T]` with `key_fn`/`value_fn` callables.
 2. Supports single-process (all adapters open simultaneously via `contextlib.ExitStack`) or multi-process (`parallel=True`, one worker per shard via `multiprocessing.spawn`).
 3. Multi-process mode uses `writer/python/_parallel_writer.py` with shared memory for passing rows to worker processes. Configurable memory budgets via `max_parallel_shared_memory_bytes` and `max_parallel_shared_memory_bytes_per_worker`.

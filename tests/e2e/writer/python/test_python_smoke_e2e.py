@@ -36,8 +36,20 @@ def _hash_write_fn(data, config):
     )
 
 
+def _cel_write_fn(data, config):
+    """Write using CEL routing (no extra context columns)."""
+    from shardyfusion.writer.python import write_sharded_by_cel
+
+    return write_sharded_by_cel(
+        data,
+        config,
+        key_fn=lambda r: r[0],
+        value_fn=lambda r: r[1],
+    )
+
+
 def _cel_context_write_fn(data, config):
-    """Like _hash_write_fn but provides the ``group`` column for CEL routing."""
+    """Like _cel_write_fn but provides the ``group`` column for CEL routing."""
     from shardyfusion.writer.python import write_sharded_by_cel
 
     return write_sharded_by_cel(
@@ -147,7 +159,7 @@ def test_smoke_hash_max_keys_per_shard(garage_s3_service, tmp_path, backend) -> 
 def test_smoke_cel_key_modulo(garage_s3_service, tmp_path, backend) -> None:
     pytest.importorskip("cel_expr_python")
     run_smoke_cel_scenario(
-        _hash_write_fn,
+        _cel_write_fn,
         garage_s3_service,
         tmp_path,
         writer_type="python",
@@ -166,7 +178,7 @@ def test_smoke_cel_shard_hash(garage_s3_service, tmp_path, backend) -> None:
     pytest.importorskip("cel_expr_python")
     # shard_hash(key) % 3u → direct mode, 3 shards
     run_smoke_cel_scenario(
-        _hash_write_fn,
+        _cel_write_fn,
         garage_s3_service,
         tmp_path,
         writer_type="python",
@@ -185,7 +197,7 @@ def test_smoke_cel_key_identity(garage_s3_service, tmp_path, backend) -> None:
     pytest.importorskip("cel_expr_python")
     # key itself as shard id (direct mode) → 10 shards (keys 0-9)
     run_smoke_cel_scenario(
-        _hash_write_fn,
+        _cel_write_fn,
         garage_s3_service,
         tmp_path,
         writer_type="python",
