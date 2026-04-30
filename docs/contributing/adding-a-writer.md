@@ -56,9 +56,9 @@ Spark uses a DataFrame; Dask uses a Bag/DataFrame; Ray uses Datasets; Python use
 
 ### 2. Routing
 
-Use `route_key(key, sharding, num_dbs)` from `_writer_core` for the per-row routing decision. Don't duplicate the HASH/CEL logic.
+Use `route_hash(key, num_dbs=num_dbs, hash_algorithm=sharding.hash_algorithm)` (for `HashShardingSpec`) or `route_cel(key, cel_expr=..., cel_columns=..., routing_values=..., routing_context=...)` (for `CelShardingSpec`) from `_writer_core` for the per-row routing decision. Don't duplicate the HASH/CEL logic.
 
-For frameworks that pre-partition (Spark, Dask), partition by `route_key` then hand each partition to a worker that runs the per-shard write loop. For frameworks without pre-partitioning (Ray Datasets, plain Python), groupby on the route key.
+For frameworks that pre-partition (Spark, Dask), partition by the routing function then hand each partition to a worker that runs the per-shard write loop. For frameworks without pre-partitioning (Ray Datasets, plain Python), groupby on the computed shard id.
 
 ### 3. Per-shard write loop
 
@@ -137,7 +137,7 @@ Update [`architecture/writer-core.md`](../architecture/writer-core.md) if you in
 
 ## Common mistakes
 
-- **Re-implementing `route_key`.** Always reuse `_writer_core.route_key`.
+- **Re-implementing `route_hash` or `route_cel`.** Always reuse `_writer_core.route_hash` and `_writer_core.route_cel`.
 - **Forgetting `RunRecordLifecycle.start(...)`.** Run records won't be written; loser cleanup deferred from a previous run can't progress.
 - **Top-level framework import.** Breaks the base install.
 - **Accepting `key_col` instead of `key_fn`.** Spark is the exception (DataFrame-native); for everything else, use `key_fn`.

@@ -6,16 +6,18 @@
 
 | Concern | Function | Source |
 |---|---|---|
-| Resolve `num_dbs` (HASH or CEL) | `resolve_num_dbs` | `_writer_core.py:159` |
-| Discover CEL `num_dbs` from data | `discover_cel_num_dbs` | `_writer_core.py:243` |
-| Build categorical CEL routing values | `build_categorical_routing_values` | `_writer_core.py:275` |
-| Route a row to a shard id | `route_key` | `_writer_core.py:122` |
-| Pick winner attempt per shard | `select_winners` | `_writer_core.py:296` |
-| Publish manifest + `_CURRENT` pointer | `publish_to_store` | `_writer_core.py:456` |
-| Assemble user-facing `BuildResult` | `assemble_build_result` | `_writer_core.py:566` |
-| Delete losing attempts | `cleanup_losers` | `_writer_core.py:602` |
-| Delete stale uncommitted attempts | `cleanup_stale_attempts` | `_writer_core.py:665` |
-| Delete old completed runs | `cleanup_old_runs` | `_writer_core.py:725` |
+| Resolve `num_dbs` from `HashWriteConfig` | `resolve_num_dbs` | `_writer_core.py:172` |
+| Resolve CEL `num_dbs` from spec | `resolve_cel_num_dbs` | `_writer_core.py:277` |
+| Discover CEL `num_dbs` from data | `discover_cel_num_dbs` | `_writer_core.py:245` |
+| Build categorical CEL routing values | `build_categorical_routing_values` | `_writer_core.py:293` |
+| Route a row to a shard id (hash) | `route_hash` | `_writer_core.py:133` |
+| Route a row to a shard id (CEL) | `route_cel` | `_writer_core.py:143` |
+| Pick winner attempt per shard | `select_winners` | `_writer_core.py:314` |
+| Publish manifest + `_CURRENT` pointer | `publish_to_store` | `_writer_core.py:471` |
+| Assemble user-facing `BuildResult` | `assemble_build_result` | `_writer_core.py:590` |
+| Delete losing attempts | `cleanup_losers` | `_writer_core.py:626` |
+| Delete stale uncommitted attempts | `cleanup_stale_attempts` | `_writer_core.py:704` |
+| Delete old completed runs | `cleanup_old_runs` | `_writer_core.py:764` |
 
 ## Per-shard outcome model
 

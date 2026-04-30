@@ -58,5 +58,5 @@ The hash is purely a function of the manifest-declared hash algorithm and the ke
 ## See also
 
 - [`sharding.md`](sharding.md) — `ShardingSpec`, `KeyEncoding`.
-- [`writer-core.md`](writer-core.md) — `route_key`, `discover_cel_num_dbs`.
+- [`writer-core.md`](writer-core.md) — `route_hash`, `route_cel`, `resolve_cel_num_dbs`, `discover_cel_num_dbs`.
 - [`adapters.md`](adapters.md) — `ShardLookup` implementations per backend.
