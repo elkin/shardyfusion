@@ -9,7 +9,6 @@ from shardyfusion._writer_core import (
 )
 from shardyfusion.config import CelWriteConfig, HashWriteConfig
 from shardyfusion.errors import ConfigValidationError, ShardAssignmentError
-from shardyfusion.sharding_types import HashShardingSpec
 
 # ---------------------------------------------------------------------------
 # resolve_num_dbs

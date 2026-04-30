@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from shardyfusion._writer_core import VectorColumnMapping, resolve_distributed_vector_fn
-from shardyfusion.config import CelWriteConfig, HashWriteConfig, VectorSpec, WriteConfig
+from shardyfusion.config import CelWriteConfig, HashWriteConfig, VectorSpec
 from shardyfusion.errors import ConfigValidationError
 
 

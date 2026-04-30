@@ -15,7 +15,7 @@ from shardyfusion._shard_writer import (
     write_shard_with_retry_distributed,
 )
 from shardyfusion._writer_core import VectorColumnMapping, resolve_distributed_vector_fn
-from shardyfusion.config import CelWriteConfig, HashWriteConfig, VectorSpec, WriteConfig
+from shardyfusion.config import CelWriteConfig, HashWriteConfig, VectorSpec
 from shardyfusion.errors import ConfigValidationError, ShardWriteError
 from shardyfusion.serde import make_key_encoder
 from shardyfusion.sharding_types import KeyEncoding

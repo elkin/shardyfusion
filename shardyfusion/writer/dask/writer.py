@@ -44,8 +44,8 @@ from shardyfusion.metrics import MetricEvent, MetricsCollector
 from shardyfusion.run_registry import RunRecordLifecycle
 from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import (
-    CelShardingSpec,
     DB_ID_COL,
+    CelShardingSpec,
     HashShardingSpec,
     KeyEncoding,
     ShardHashAlgorithm,

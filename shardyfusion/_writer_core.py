@@ -196,9 +196,7 @@ def route_key(
             routing_context=routing_context,
             cel_lookup=cel_lookup,
         )
-    raise ConfigValidationError(
-        f"Unsupported sharding type: {type(sharding).__name__}"
-    )
+    raise ConfigValidationError(f"Unsupported sharding type: {type(sharding).__name__}")
 
 
 def resolve_num_dbs(config: WriteConfig, count_fn: Callable[[], int]) -> int | None:
@@ -860,9 +858,7 @@ def manifest_safe_sharding(sharding: ShardingSpec) -> ManifestShardingSpec:
             cel_columns=dict(sharding.cel_columns),
             hash_algorithm=ShardHashAlgorithm.XXH3_64,
         )
-    raise ConfigValidationError(
-        f"Unsupported sharding type: {type(sharding).__name__}"
-    )
+    raise ConfigValidationError(f"Unsupported sharding type: {type(sharding).__name__}")
 
 
 def _manifest_format_version_for_sharding(sharding: ShardingSpec) -> int:

@@ -12,10 +12,7 @@ from .credentials import CredentialProvider
 from .errors import ConfigValidationError
 from .metrics import MetricsCollector
 from .sharding_types import (
-    CelShardingSpec,
-    HashShardingSpec,
     KeyEncoding,
-    ShardingSpec,
     validate_routing_values,
 )
 from .slatedb_adapter import DbAdapterFactory

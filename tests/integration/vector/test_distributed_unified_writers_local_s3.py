@@ -150,7 +150,9 @@ def test_spark_unified_vector_write(spark, local_s3_service):
         vector_spec=VectorSpec(dim=4, vector_col="embedding"),
         cel_expr="key % 2",
         cel_columns={"key": "int"},
-        output=OutputOptions(run_id="spark-unified-vectors", local_root="/tmp/shardyfusion-int"),
+        output=OutputOptions(
+            run_id="spark-unified-vectors", local_root="/tmp/shardyfusion-int"
+        ),
         manifest=ManifestOptions(
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,

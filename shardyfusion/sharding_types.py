@@ -204,5 +204,3 @@ class CelShardingSpec(ShardingSpec):
         d["cel_expr"] = self.cel_expr
         d["cel_columns"] = dict(self.cel_columns)
         return d
-
-

@@ -6,9 +6,8 @@ import pandas as pd
 
 from shardyfusion._writer_core import build_categorical_routing_values, route_key
 from shardyfusion.sharding_types import (
-    CelShardingSpec,
     DB_ID_COL,
-    HashShardingSpec,
+    CelShardingSpec,
     KeyEncoding,
     ShardingSpec,
 )

@@ -914,8 +914,13 @@ def _write_single_process(
     with contextlib.ExitStack() as stack:
         key_encoder = make_key_encoder(config.key_encoding)
         cel_lookup = None
-        if isinstance(sharding, CelShardingSpec) and sharding.routing_values is not None:
-            cel_lookup = {value: idx for idx, value in enumerate(sharding.routing_values)}
+        if (
+            isinstance(sharding, CelShardingSpec)
+            and sharding.routing_values is not None
+        ):
+            cel_lookup = {
+                value: idx for idx, value in enumerate(sharding.routing_values)
+            }
 
         for record in records:
             key = key_fn(record)

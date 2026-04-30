@@ -571,7 +571,9 @@ def test_metrics_emitted_on_write() -> None:
         [{"key": i, "val": b"v"} for i in range(10)], override_num_blocks=2
     )
 
-    write_sharded_by_hash(ds, config, key_col="key", value_spec=ValueSpec.binary_col("val"))
+    write_sharded_by_hash(
+        ds, config, key_col="key", value_spec=ValueSpec.binary_col("val")
+    )
 
     event_names = [e[0] for e in mc.events]
     assert MetricEvent.WRITE_STARTED in event_names

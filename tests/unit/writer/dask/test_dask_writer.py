@@ -719,7 +719,9 @@ def test_metrics_emitted_on_write() -> None:
         pd.DataFrame({"key": range(10), "val": [b"v"] * 10}),
         npartitions=2,
     )
-    write_sharded_by_hash(ddf, config, key_col="key", value_spec=ValueSpec.binary_col("val"))
+    write_sharded_by_hash(
+        ddf, config, key_col="key", value_spec=ValueSpec.binary_col("val")
+    )
 
     event_names = [e[0] for e in mc.events]
     assert MetricEvent.WRITE_STARTED in event_names

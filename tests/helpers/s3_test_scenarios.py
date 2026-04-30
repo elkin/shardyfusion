@@ -795,18 +795,6 @@ def run_ray_writer_publishes_manifest_scenario(
         value_spec=ValueSpec.callable_encoder(lambda row: str(row["val"]).encode()),
     )
 
-    ds = ray.data.from_items(
-        [{"id": i, "val": f"v{i}"} for i in range(24)],
-        override_num_blocks=4,
-    )
-
-    result = write_sharded(
-        ds,
-        config,
-        key_col="id",
-        value_spec=ValueSpec.callable_encoder(lambda row: str(row["val"]).encode()),
-    )
-
     assert len(result.winners) == 4
     assert result.manifest_ref.startswith(f"s3://{bucket}/ray-writer/manifests/")
 

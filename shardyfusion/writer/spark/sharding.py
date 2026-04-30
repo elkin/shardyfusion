@@ -11,8 +11,8 @@ from pyspark.sql.types import IntegerType, StructField, StructType
 from shardyfusion._writer_core import build_categorical_routing_values
 from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.sharding_types import (
-    CelShardingSpec,
     DB_ID_COL,
+    CelShardingSpec,
     HashShardingSpec,
     ShardingSpec,
 )
@@ -53,9 +53,7 @@ def add_db_id_column(
             for batch in iterator:
                 keys = batch.column(_key_col).to_pylist()
                 db_ids = [hash_db_id(k, _num_dbs, _hash_algorithm) for k in keys]
-                yield batch.append_column(
-                    DB_ID_COL, pa.array(db_ids, type=pa.int32())
-                )
+                yield batch.append_column(DB_ID_COL, pa.array(db_ids, type=pa.int32()))
 
         df_with_db_id = df.mapInArrow(_hash_map_arrow, output_schema)
 
@@ -102,9 +100,7 @@ def add_db_id_column(
                     batch,
                     _cel_routing_values,
                 )
-                yield batch.append_column(
-                    DB_ID_COL, pa.array(db_ids, type=pa.int32())
-                )
+                yield batch.append_column(DB_ID_COL, pa.array(db_ids, type=pa.int32()))
 
         df_with_db_id = df.mapInArrow(_cel_map_arrow, output_schema)
 

@@ -17,7 +17,12 @@ import pytest
 
 pytest.importorskip("cel_expr_python", reason="requires cel extra")
 
-from shardyfusion.config import CelWriteConfig, ManifestOptions, OutputOptions, VectorSpec, WriteConfig
+from shardyfusion.config import (
+    CelWriteConfig,
+    ManifestOptions,
+    OutputOptions,
+    VectorSpec,
+)
 from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.manifest_store import S3ManifestStore
 from shardyfusion.storage import ObstoreBackend, create_s3_store, parse_s3_url

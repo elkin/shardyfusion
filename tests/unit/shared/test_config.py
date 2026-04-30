@@ -201,7 +201,9 @@ def test_cel_write_config_requires_cel_expr() -> None:
 
 
 def test_cel_write_config_requires_cel_columns() -> None:
-    with pytest.raises(ConfigValidationError, match="CEL strategy requires cel_columns"):
+    with pytest.raises(
+        ConfigValidationError, match="CEL strategy requires cel_columns"
+    ):
         CelWriteConfig(
             s3_prefix="s3://bucket/prefix",
             cel_expr="key % 10",

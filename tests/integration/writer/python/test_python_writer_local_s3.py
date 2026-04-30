@@ -39,7 +39,6 @@ def test_python_writer_publishes_manifest_and_current_to_local_s3(
         credential_provider=credential_provider,
         s3_connection_options=connection_options,
         adapter_factory=file_backed_adapter_factory(file_backed_root),
-        
         output=OutputOptions(
             run_id="python-writer-local-s3",
             local_root=str(tmp_path / "local"),
@@ -109,7 +108,6 @@ def test_python_writer_parallel_publishes_manifest_and_current_to_local_s3(
         credential_provider=credential_provider,
         s3_connection_options=connection_options,
         adapter_factory=file_backed_adapter_factory(file_backed_root),
-        
         output=OutputOptions(
             run_id="python-writer-parallel-local-s3",
             local_root=str(tmp_path / "local-parallel"),
@@ -185,7 +183,6 @@ def test_python_writer_parallel_retry_publishes_succeeded_run_record_to_local_s3
             marker_root=str(tmp_path / "retry-markers"),
             fail_db_ids=(0,),
         ),
-        
         shard_retry=RetryConfig(
             max_retries=1,
             initial_backoff=timedelta(seconds=0),

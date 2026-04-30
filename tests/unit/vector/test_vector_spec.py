@@ -6,9 +6,8 @@ from typing import Any
 
 import pytest
 
-from shardyfusion.config import CelWriteConfig, HashWriteConfig, VectorSpec, WriteConfig
+from shardyfusion.config import CelWriteConfig, HashWriteConfig, VectorSpec
 from shardyfusion.errors import ConfigValidationError
-from shardyfusion.sharding_types import CelShardingSpec
 
 
 class TestVectorSpec:

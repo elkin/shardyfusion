@@ -26,7 +26,7 @@ def _s3(svc):
 def _write_fn(data, config):
     import ray.data
 
-    from shardyfusion.config import CelWriteConfig, HashWriteConfig
+    from shardyfusion.config import CelWriteConfig
     from shardyfusion.serde import ValueSpec
     from shardyfusion.writer.ray import write_sharded_by_cel, write_sharded_by_hash
 
@@ -44,7 +44,7 @@ def _write_fn(data, config):
 def _retry_write_fn(data, config):
     import ray.data
 
-    from shardyfusion.config import CelWriteConfig, HashWriteConfig
+    from shardyfusion.config import CelWriteConfig
     from shardyfusion.serde import ValueSpec
     from shardyfusion.writer.ray import write_sharded_by_cel, write_sharded_by_hash
 

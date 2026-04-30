@@ -7,8 +7,8 @@ import ray.data
 from shardyfusion._writer_core import build_categorical_routing_values, route_key
 from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.sharding_types import (
-    CelShardingSpec,
     DB_ID_COL,
+    CelShardingSpec,
     HashShardingSpec,
     KeyEncoding,
     ShardingSpec,
