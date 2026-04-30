@@ -299,9 +299,7 @@ class TestBuildManifestStore:
             "credential_provider": None,
             "s3_connection_options": {},
         }
-        with patch(
-            "shardyfusion.manifest_store.S3ManifestStore", autospec=True
-        ) as mock_cls:
+        with patch("shardyfusion.cli.app.S3ManifestStore", autospec=True) as mock_cls:
             mock_cls.return_value = MagicMock()
             store = _build_manifest_store(store_cfg, params)
             mock_cls.assert_called_once()
@@ -430,7 +428,7 @@ pool_checkout_timeout = 15.0
 
         with (
             patch(
-                "shardyfusion.reader.ConcurrentShardedReader",
+                "shardyfusion.cli.app.ConcurrentShardedReader",
                 side_effect=_capture_reader,
             ),
             patch(
@@ -467,7 +465,7 @@ current_url = "s3://bucket/prefix/_CURRENT"
 
         with (
             patch(
-                "shardyfusion.reader.ConcurrentShardedReader",
+                "shardyfusion.cli.app.ConcurrentShardedReader",
                 side_effect=_capture_reader,
             ),
             patch(
@@ -499,7 +497,7 @@ reader_backend = "sqlite"
 
         with (
             patch(
-                "shardyfusion.reader.ConcurrentShardedReader",
+                "shardyfusion.cli.app.ConcurrentShardedReader",
                 side_effect=_capture_reader,
             ),
             patch(
@@ -535,7 +533,7 @@ sqlite_mode = "download"
 
         with (
             patch(
-                "shardyfusion.reader.ConcurrentShardedReader",
+                "shardyfusion.cli.app.ConcurrentShardedReader",
                 side_effect=_capture_reader,
             ),
             patch(
@@ -569,7 +567,7 @@ sqlite_mode = "range"
 
         with (
             patch(
-                "shardyfusion.reader.ConcurrentShardedReader",
+                "shardyfusion.cli.app.ConcurrentShardedReader",
                 side_effect=_capture_reader,
             ),
             patch(
@@ -606,7 +604,7 @@ sqlite_mode = "auto"
 
         with (
             patch(
-                "shardyfusion.reader.ConcurrentShardedReader",
+                "shardyfusion.cli.app.ConcurrentShardedReader",
                 side_effect=_capture_reader,
             ),
             patch(
@@ -653,7 +651,7 @@ reader_backend = "sqlite"
 
         with (
             patch(
-                "shardyfusion.reader.ConcurrentShardedReader",
+                "shardyfusion.cli.app.ConcurrentShardedReader",
                 side_effect=_capture_reader,
             ),
             patch(
@@ -865,6 +863,61 @@ class TestManifestTargetingDoesNotMutate:
 
         assert result.exit_code == 0
         manifest_store.set_current.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _resolve_manifest_ref_obj
+# ---------------------------------------------------------------------------
+
+
+class TestResolveManifestRefObj:
+    """Regression tests for _resolve_manifest_ref_obj fallback path."""
+
+    def test_ref_not_in_recent_manifests_constructs_minimal_ref(self) -> None:
+        """When --ref points to a manifest not in the most recent 100 list,
+        the resolver must construct a minimal ManifestRef rather than raise
+        NameError. This is a regression test for the latent bug introduced
+        when the local `from ..manifest import ManifestRef` was removed.
+        """
+        from shardyfusion.cli.app import _resolve_manifest_ref_obj
+        from shardyfusion.manifest import ManifestRef
+
+        store = MagicMock()
+        store.list_manifests.return_value = []  # ref not found in recent list
+
+        result = _resolve_manifest_ref_obj(
+            store, ref="s3://bucket/old/manifest", offset=None
+        )
+
+        assert isinstance(result, ManifestRef)
+        assert result.ref == "s3://bucket/old/manifest"
+        assert result.run_id == "unknown"
+
+    def test_ref_found_in_recent_manifests_returns_full_ref(self) -> None:
+        from shardyfusion.cli.app import _resolve_manifest_ref_obj
+        from shardyfusion.manifest import ManifestRef
+
+        existing = ManifestRef(
+            ref="s3://bucket/known/manifest",
+            run_id="run-123",
+            published_at=_FAKE_CREATED_AT,
+        )
+        store = MagicMock()
+        store.list_manifests.return_value = [existing]
+
+        result = _resolve_manifest_ref_obj(
+            store, ref="s3://bucket/known/manifest", offset=None
+        )
+
+        assert result is existing
+
+    def test_no_ref_no_offset_returns_none(self) -> None:
+        from shardyfusion.cli.app import _resolve_manifest_ref_obj
+
+        store = MagicMock()
+        result = _resolve_manifest_ref_obj(store, ref=None, offset=None)
+        assert result is None
+        store.list_manifests.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
