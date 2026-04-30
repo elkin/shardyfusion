@@ -81,3 +81,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`parse_manifest()`** function — replaced by `parse_manifest_payload()` which only accepts SQLite manifests.
 - **`ManifestOptions.manifest_builder`** parameter — manifest format is no longer pluggable via config.
 - **`shardy schema`** CLI subcommand and its REPL counterpart — JSON Schemas remain accessible programmatically via `ParsedManifest.model_json_schema()` and `CurrentPointer.model_json_schema()`.
+
+### Changed (breaking)
+- **Split `WriteConfig` into `HashWriteConfig` and `CelWriteConfig`** — `WriteConfig` is now a strategy-agnostic base class. Use `HashWriteConfig` (with `num_dbs`/`max_keys_per_shard`) for hash sharding and `CelWriteConfig` (with `cel_expr`/`cel_columns`/`routing_values`) for CEL sharding.
+- **Split `ShardingSpec` into `HashShardingSpec` and `CelShardingSpec`** — `ShardingSpec` is now an empty base class. Use `HashShardingSpec` (with `hash_algorithm`) for hash sharding and `CelShardingSpec` (with `cel_expr`/`cel_columns`/`routing_values`) for CEL sharding.
+- **Removed unified `write_sharded` entry point** — all writer frameworks (Python, Spark, Dask, Ray) now expose per-strategy functions: `write_sharded_by_hash()` and `write_sharded_by_cel()`. The old `write_sharded` function has been removed entirely.
+- **`cel_sharding()` and `cel_sharding_by_columns()`** now return `CelShardingSpec` instead of the old unified `ShardingSpec`.
+- **Removed `_LegacyWriteConfig` and `_LegacyShardingSpec`** — these backward-compatibility aliases have been removed with no deprecation cycle.
+
+### Removed
+- **`route_key()` from `_writer_core.py`** — writer-side routing now uses `route_hash()` or `route_cel()` directly. Reader `route_key()` methods remain unchanged.
