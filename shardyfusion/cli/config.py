@@ -13,6 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from ..credentials import StaticCredentialProvider
+from ..sharding_types import KeyEncoding
 from ..type_defs import S3ConnectionOptions
 
 # ---------------------------------------------------------------------------
@@ -217,8 +218,6 @@ def coerce_cli_key(key: str, key_encoding: str) -> int | str | bytes:
     ``raw`` encoding the key is converted to bytes; for ``utf8`` and other
     encodings the raw string is returned unchanged.
     """
-    from ..sharding_types import KeyEncoding
-
     try:
         enc = KeyEncoding.from_value(key_encoding)
     except ValueError:

@@ -74,11 +74,11 @@ def _invoke_cleanup(
     with (
         patch("shardyfusion.cli.app._build_manifest_store", return_value=store),
         patch(
-            "shardyfusion._writer_core.cleanup_stale_attempts",
+            "shardyfusion.cli.app.cleanup_stale_attempts",
             return_value=stale_actions or [],
         ),
         patch(
-            "shardyfusion._writer_core.cleanup_old_runs",
+            "shardyfusion.cli.app.cleanup_old_runs",
             return_value=old_run_actions or [],
         ),
     ):
@@ -281,7 +281,7 @@ class TestCleanupTextOutput:
         with (
             patch("shardyfusion.cli.app._build_manifest_store", return_value=store),
             patch(
-                "shardyfusion._writer_core.cleanup_stale_attempts",
+                "shardyfusion.cli.app.cleanup_stale_attempts",
                 return_value=actions,
             ),
         ):

@@ -7,13 +7,19 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ..manifest import ManifestRef, ParsedManifest
+    from ..manifest import ParsedManifest
     from ..manifest_store import ManifestStore
-    from ..reader import ConcurrentShardedReader
     from ..type_defs import S3ConnectionOptions
 
 import click
+from pydantic import ValidationError
 
+from .._writer_core import cleanup_old_runs, cleanup_stale_attempts
+from ..config import VectorSpec, vector_metric_to_str
+from ..manifest import ManifestRef
+from ..manifest_store import S3ManifestStore
+from ..reader import ConcurrentShardedReader
+from ..storage import ObstoreBackend, create_s3_store, parse_s3_url
 from .batch import run_script
 from .config import (
     ManifestStoreConfig,
@@ -25,14 +31,18 @@ from .config import (
     coerce_s3_option,
     load_credentials_profile,
     load_reader_config,
+    parse_routing_context,
     resolve_current_url,
     resolve_dsn,
     split_current_url,
 )
+from .interactive import ShardyRepl
 from .output import (
+    build_cleanup_result,
     build_error_result,
     build_get_result,
     build_health_result,
+    build_history_result,
     build_info_result,
     build_multiget_result,
     build_route_result,
@@ -96,8 +106,6 @@ def _ensure_init_params(ctx: click.Context) -> dict[str, Any]:
         # model_copy(update=...) skips validators, so use model_validate to
         # enforce ge=0 on the threshold fields. Surface validation errors as
         # UsageError so they show up cleanly on the CLI.
-        from pydantic import ValidationError
-
         try:
             reader_cfg = ReaderConfig.model_validate(
                 {**reader_cfg.model_dump(), **sqlite_overrides}
@@ -164,9 +172,6 @@ def _build_manifest_store(
 ) -> ManifestStore:
     """Create the manifest store for the configured backend."""
     if store_cfg.backend == "s3":
-        from ..manifest_store import S3ManifestStore
-        from ..storage import ObstoreBackend, create_s3_store, parse_s3_url
-
         credentials = (
             params["credential_provider"].resolve()
             if params["credential_provider"]
@@ -248,10 +253,6 @@ def _resolve_manifest_ref_obj(
             if r.ref == ref:
                 return r
         # Fallback: construct minimal ManifestRef
-        from datetime import UTC, datetime
-
-        from ..manifest import ManifestRef
-
         return ManifestRef(ref=ref, run_id="unknown", published_at=datetime.now(UTC))
     return None
 
@@ -289,8 +290,6 @@ def _build_reader(ctx: click.Context) -> ConcurrentShardedReader:
     params = _ensure_init_params(ctx)
     reader_cfg: ReaderConfig = params["reader_cfg"]
     store_cfg: ManifestStoreConfig = params["store_cfg"]
-
-    from ..reader import ConcurrentShardedReader
 
     manifest_store = _build_manifest_store(store_cfg, params)
 
@@ -409,7 +408,6 @@ def _build_unified_kv_factory(
 
     # backend == "lancedb" with kv_backend == "sqlite": build composite factory
     from ..composite_adapter import CompositeReaderFactory
-    from ..config import VectorSpec, vector_metric_to_str
     from ..vector.adapters.lancedb_adapter import LanceDbReaderFactory
 
     if mode == "auto":
@@ -589,8 +587,6 @@ def cli(
 
     # If no subcommand was invoked, enter interactive mode
     if ctx.invoked_subcommand is None:
-        from .interactive import ShardyRepl
-
         params = _ensure_init_params(ctx)
         with _build_reader(ctx) as reader:
             repl = ShardyRepl(reader, params["output_cfg"])
@@ -626,8 +622,6 @@ def get_cmd(
     strict: bool,
 ) -> None:
     """Look up a single KEY."""
-    from .config import parse_routing_context
-
     output_cfg = _get_output_cfg(ctx)
     routing_context = (
         parse_routing_context(routing_ctx_pairs) if routing_ctx_pairs else None
@@ -663,8 +657,6 @@ def multiget_cmd(
 
     Pass a single '-' to read keys from stdin, one per line.
     """
-    from .config import parse_routing_context
-
     # Support reading keys from stdin when '-' is the sole argument
     if keys == ("-",):
         stdin_keys = [line.strip() for line in sys.stdin if line.strip()]
@@ -770,8 +762,6 @@ def health_cmd(ctx: click.Context, staleness_threshold: float | None) -> None:
 @click.pass_context
 def route_cmd(ctx: click.Context, key: str, routing_ctx_pairs: tuple[str, ...]) -> None:
     """Show which shard a KEY routes to (without performing a lookup)."""
-    from .config import parse_routing_context
-
     output_cfg = _get_output_cfg(ctx)
     routing_context = (
         parse_routing_context(routing_ctx_pairs) if routing_ctx_pairs else None
@@ -831,8 +821,6 @@ def exec_cmd(ctx: click.Context, script_path: str, output_path: str | None) -> N
 @click.pass_context
 def history_cmd(ctx: click.Context, limit: int) -> None:
     """List recent published manifests."""
-    from .output import build_history_result
-
     output_cfg = _get_output_cfg(ctx)
     params = _ensure_init_params(ctx)
     store_cfg: ManifestStoreConfig = params["store_cfg"]
@@ -980,10 +968,6 @@ def cleanup_cmd(
     max_retries: int | None,
 ) -> None:
     """Delete stale attempt directories and optionally old run data from S3."""
-    from .._writer_core import cleanup_old_runs, cleanup_stale_attempts
-    from ..storage import ObstoreBackend, create_s3_store, parse_s3_url
-    from .output import build_cleanup_result
-
     output_cfg = _get_output_cfg(ctx)
     params = _ensure_init_params(ctx)
     store_cfg: ManifestStoreConfig = params["store_cfg"]
