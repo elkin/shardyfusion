@@ -14,9 +14,8 @@ import ray.data
 from shardyfusion._writer_core import route_key
 from shardyfusion.sharding_types import (
     DB_ID_COL,
+    HashShardingSpec,
     KeyEncoding,
-    ShardingSpec,
-    ShardingStrategy,
 )
 from shardyfusion.writer.ray.sharding import add_db_id_column
 
@@ -32,7 +31,7 @@ def test_ray_python_hash_agreement_u64be(num_dbs: int) -> None:
     """Ray add_db_id_column matches route_key for u64be hash sharding."""
 
     ds = ray.data.from_items([{"id": k} for k in EDGE_CASE_KEYS], override_num_blocks=4)
-    sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
+    sharding = HashShardingSpec()
 
     result_ds, _ = add_db_id_column(
         ds,
@@ -62,7 +61,7 @@ def test_ray_python_hash_agreement_u32be(num_dbs: int) -> None:
     ds = ray.data.from_items(
         [{"id": k} for k in U32_EDGE_CASE_KEYS], override_num_blocks=4
     )
-    sharding = ShardingSpec(strategy=ShardingStrategy.HASH)
+    sharding = HashShardingSpec()
 
     result_ds, _ = add_db_id_column(
         ds,

@@ -5,11 +5,13 @@ import pyarrow as pa
 import ray.data
 
 from shardyfusion._writer_core import build_categorical_routing_values, route_key
+from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.sharding_types import (
+    CelShardingSpec,
     DB_ID_COL,
+    HashShardingSpec,
     KeyEncoding,
     ShardingSpec,
-    ShardingStrategy,
 )
 from shardyfusion.vector._distributed import ResolvedVectorRouting
 from shardyfusion.vector.sharding import cluster_assign, lsh_assign
@@ -34,15 +36,19 @@ def add_db_id_column(
     the CEL expression with the full row context (supporting non-key columns).
     """
 
-    if sharding.strategy == ShardingStrategy.CEL:
+    if isinstance(sharding, CelShardingSpec):
         return _add_db_id_cel(ds, sharding=sharding)
-    assert num_dbs is not None, "num_dbs required for HASH sharding"
-    return _add_db_id_hash(
-        ds,
-        key_col=key_col,
-        num_dbs=num_dbs,
-        sharding=sharding,
-        key_encoding=key_encoding,
+    if isinstance(sharding, HashShardingSpec):
+        assert num_dbs is not None, "num_dbs required for HASH sharding"
+        return _add_db_id_hash(
+            ds,
+            key_col=key_col,
+            num_dbs=num_dbs,
+            sharding=sharding,
+            key_encoding=key_encoding,
+        )
+    raise ShardAssignmentError(
+        f"Unsupported sharding strategy: {type(sharding).__name__}"
     )
 
 
@@ -78,14 +84,15 @@ def _add_db_id_cel(
     sharding: ShardingSpec,
 ) -> tuple[ray.data.Dataset, ShardingSpec]:
     assert sharding.cel_expr is not None and sharding.cel_columns is not None
-    resolved = ShardingSpec(
-        strategy=ShardingStrategy.CEL,
-        routing_values=list(sharding.routing_values)
-        if sharding.routing_values is not None
-        else None,
+    resolved = CelShardingSpec(
         cel_expr=sharding.cel_expr,
         cel_columns=dict(sharding.cel_columns),
-        hash_algorithm=sharding.hash_algorithm,
+        routing_values=(
+            list(sharding.routing_values)
+            if sharding.routing_values is not None
+            else None
+        ),
+        infer_routing_values_from_data=False,
     )
     cel_expr = resolved.cel_expr
     cel_columns = resolved.cel_columns

@@ -26,12 +26,17 @@ def _s3(svc):
 def _write_fn(data, config):
     import ray.data
 
+    from shardyfusion.config import CelWriteConfig, HashWriteConfig
     from shardyfusion.serde import ValueSpec
-    from shardyfusion.writer.ray import write_sharded
+    from shardyfusion.writer.ray import write_sharded_by_cel, write_sharded_by_hash
 
     items = [{"key": k, "value": v, "group": g} for k, v, g in data]
     ds = ray.data.from_items(items, override_num_blocks=2)
-    return write_sharded(
+    if isinstance(config, CelWriteConfig):
+        return write_sharded_by_cel(
+            ds, config, key_col="key", value_spec=ValueSpec.binary_col("value")
+        )
+    return write_sharded_by_hash(
         ds, config, key_col="key", value_spec=ValueSpec.binary_col("value")
     )
 
@@ -39,8 +44,9 @@ def _write_fn(data, config):
 def _retry_write_fn(data, config):
     import ray.data
 
+    from shardyfusion.config import CelWriteConfig, HashWriteConfig
     from shardyfusion.serde import ValueSpec
-    from shardyfusion.writer.ray import write_sharded
+    from shardyfusion.writer.ray import write_sharded_by_cel, write_sharded_by_hash
 
     config.shard_retry = RetryConfig(
         max_retries=1,
@@ -48,7 +54,11 @@ def _retry_write_fn(data, config):
     )
     items = [{"key": k, "value": v, "group": g} for k, v, g in data]
     ds = ray.data.from_items(items, override_num_blocks=2)
-    return write_sharded(
+    if isinstance(config, CelWriteConfig):
+        return write_sharded_by_cel(
+            ds, config, key_col="key", value_spec=ValueSpec.binary_col("value")
+        )
+    return write_sharded_by_hash(
         ds, config, key_col="key", value_spec=ValueSpec.binary_col("value")
     )
 

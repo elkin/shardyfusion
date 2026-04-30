@@ -9,16 +9,17 @@ import ray.data
 from ray.data.context import DataContext
 
 from shardyfusion.config import (
+    HashWriteConfig,
     ManifestOptions,
     OutputOptions,
-    WriteConfig,
 )
 from shardyfusion.manifest_store import InMemoryManifestStore
-from shardyfusion.writer.ray import write_sharded
+from shardyfusion.sharding_types import HashShardingSpec
+from shardyfusion.writer.ray import write_sharded_by_hash
 
 
-def _make_config(num_dbs: int = 2) -> WriteConfig:
-    return WriteConfig(
+def _make_config(num_dbs: int = 2) -> HashWriteConfig:
+    return HashWriteConfig(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/test",
         adapter_factory=lambda *, db_url, local_dir: MagicMock(),
@@ -41,14 +42,14 @@ def test_shuffle_strategy_restored_on_repartition_failure() -> None:
     with (
         patch(
             "shardyfusion.writer.ray.writer.add_db_id_column",
-            return_value=(mock_ds, config.sharding),
+            return_value=(mock_ds, HashShardingSpec()),
         ),
         patch(
             "shardyfusion.writer.ray.writer._verify_routing_agreement",
         ),
     ):
         with pytest.raises(RuntimeError, match="simulated repartition failure"):
-            write_sharded(
+            write_sharded_by_hash(
                 ds=MagicMock(spec=ray.data.Dataset),
                 config=config,
                 key_col="id",

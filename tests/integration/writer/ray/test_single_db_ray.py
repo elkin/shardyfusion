@@ -8,9 +8,9 @@ import ray
 import ray.data
 
 from shardyfusion.config import (
+    HashWriteConfig,
     ManifestOptions,
     OutputOptions,
-    WriteConfig,
 )
 from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.manifest_store import parse_manifest_payload
@@ -42,7 +42,7 @@ def test_single_db_ray_publishes_manifest_and_current(
         region_name=local_s3_service["region_name"],
     )
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=1,
         s3_prefix=s3_prefix,
         credential_provider=credential_provider,
