@@ -13,6 +13,9 @@ from uuid import uuid4
 from pyspark import RDD, StorageLevel, TaskContext
 from pyspark.sql import DataFrame, Row
 from pyspark.sql import functions as F
+from pyspark.sql.types import IntegerType, StructField, StructType
+
+from shardyfusion.vector._distributed import ResolvedVectorRouting
 
 if TYPE_CHECKING:
     import numpy as np
@@ -23,7 +26,6 @@ from shardyfusion._shard_writer import (
     make_shard_local_dir,
     make_shard_url,
     write_shard_core,
-    write_shard_core_distributed,
 )
 from shardyfusion._writer_core import (
     PartitionWriteOutcome,
@@ -43,6 +45,7 @@ from shardyfusion._writer_core import (
     select_winners,
     wrap_factory_for_vector,
 )
+from shardyfusion.cel import compile_cel
 from shardyfusion.config import CelWriteConfig, HashWriteConfig, WriteConfig
 from shardyfusion.credentials import CredentialProvider
 from shardyfusion.errors import ConfigValidationError, ShardAssignmentError
@@ -59,6 +62,7 @@ from shardyfusion.manifest import (
     WriterInfo,
 )
 from shardyfusion.metrics import MetricEvent, MetricsCollector
+from shardyfusion.routing import hash_db_id
 from shardyfusion.run_registry import RunRecordLifecycle
 from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import (
@@ -76,6 +80,11 @@ from shardyfusion.slatedb_adapter import (
 from shardyfusion.storage import ObstoreBackend, create_s3_store, parse_s3_url
 from shardyfusion.vector.config import VectorWriteConfig
 from shardyfusion.vector.types import VectorIndexWriterFactory
+from shardyfusion.writer._accumulators import (
+    KvAccumulator,
+    ShardBatchAccumulator,
+    UnifiedAccumulator,
+)
 from shardyfusion.writer.spark.util import (
     DataFrameCacheContext,
     SparkConfOverrideContext,
@@ -83,7 +92,7 @@ from shardyfusion.writer.spark.util import (
 
 from .sharding import (
     VECTOR_DB_ID_COL,
-    add_db_id_column,
+    _discover_categorical_routing_values,
     add_vector_db_id_column,
     prepare_partitioned_rdd,
 )
@@ -140,40 +149,7 @@ def write_sharded_by_hash(
     ) = None,
     vector_columns: VectorColumnMapping | None = None,
 ) -> BuildResult:
-    """Write a DataFrame into N independent sharded databases using HASH routing.
-
-    Args:
-        df: PySpark DataFrame containing at least the key column and value column(s).
-        config: Hash write configuration (num_dbs, s3_prefix, etc.).
-        key_col: Name of the integer key column used for shard routing.
-        value_spec: Specifies how DataFrame rows are serialized to bytes
-            (binary_col, json_cols, or a callable encoder).
-        sort_within_partitions: If True, sort rows by key within each partition
-            before writing. Useful for range-scan workloads.
-        spark_conf_overrides: Optional Spark config overrides applied for the
-            duration of the write (restored after completion).
-        cache_input: If True, cache the input DataFrame before processing.
-        storage_level: Spark storage level for caching (default: MEMORY_AND_DISK).
-        max_writes_per_second: Optional rate limit (token-bucket) for write ops/sec.
-        max_write_bytes_per_second: Optional rate limit (token-bucket) for write bytes/sec.
-        verify_routing: If True (default), spot-check that Spark-assigned shard IDs
-            match Python routing on a sample of written rows.
-
-    Returns:
-        BuildResult with manifest reference, shard metadata, and build statistics.
-
-    Raises:
-        ConfigValidationError: If configuration is invalid.
-        ShardAssignmentError: If rows cannot be assigned to valid shard IDs.
-        ShardCoverageError: If partition results don't cover all expected shards.
-        PublishManifestError: If manifest upload to S3 fails.
-        PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
-    """
-    hash_algorithm = ShardHashAlgorithm.XXH3_64
-    sharding = HashShardingSpec(
-        hash_algorithm=hash_algorithm,
-        max_keys_per_shard=config.max_keys_per_shard,
-    )
+    """Write a DataFrame into N independent sharded databases using HASH routing."""
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
     spark = df.sparkSession
@@ -181,11 +157,9 @@ def write_sharded_by_hash(
         with DataFrameCacheContext(
             df, storage_level=storage_level, enabled=cache_input
         ) as cached_df:
-            return _write_sharded_impl(
+            return _write_hash_sharded(
                 df=cached_df,
                 config=config,
-                sharding=sharding,
-                num_dbs=resolve_num_dbs(config, cached_df.count),
                 run_id=run_id,
                 started=started,
                 key_col=key_col,
@@ -217,41 +191,7 @@ def write_sharded_by_cel(
     ) = None,
     vector_columns: VectorColumnMapping | None = None,
 ) -> BuildResult:
-    """Write a DataFrame into N independent sharded databases using CEL routing.
-
-    Args:
-        df: PySpark DataFrame containing at least the key column and value column(s).
-        config: CEL write configuration (cel_expr, cel_columns, etc.).
-        key_col: Name of the integer key column used for shard routing.
-        value_spec: Specifies how DataFrame rows are serialized to bytes
-            (binary_col, json_cols, or a callable encoder).
-        sort_within_partitions: If True, sort rows by key within each partition
-            before writing. Useful for range-scan workloads.
-        spark_conf_overrides: Optional Spark config overrides applied for the
-            duration of the write (restored after completion).
-        cache_input: If True, cache the input DataFrame before processing.
-        storage_level: Spark storage level for caching (default: MEMORY_AND_DISK).
-        max_writes_per_second: Optional rate limit (token-bucket) for write ops/sec.
-        max_write_bytes_per_second: Optional rate limit (token-bucket) for write bytes/sec.
-        verify_routing: If True (default), spot-check that Spark-assigned shard IDs
-            match Python routing on a sample of written rows.
-
-    Returns:
-        BuildResult with manifest reference, shard metadata, and build statistics.
-
-    Raises:
-        ConfigValidationError: If configuration is invalid.
-        ShardAssignmentError: If rows cannot be assigned to valid shard IDs.
-        ShardCoverageError: If partition results don't cover all expected shards.
-        PublishManifestError: If manifest upload to S3 fails.
-        PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
-    """
-    sharding: ShardingSpec = CelShardingSpec(
-        cel_expr=config.cel_expr,
-        cel_columns=config.cel_columns,
-        routing_values=config.routing_values,
-        infer_routing_values_from_data=config.infer_routing_values_from_data,
-    )
+    """Write a DataFrame into N independent sharded databases using CEL routing."""
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
     spark = df.sparkSession
@@ -259,11 +199,9 @@ def write_sharded_by_cel(
         with DataFrameCacheContext(
             df, storage_level=storage_level, enabled=cache_input
         ) as cached_df:
-            return _write_sharded_impl(
+            return _write_cel_sharded(
                 df=cached_df,
                 config=config,
-                sharding=sharding,
-                num_dbs=None,
                 run_id=run_id,
                 started=started,
                 key_col=key_col,
@@ -277,12 +215,10 @@ def write_sharded_by_cel(
             )
 
 
-def _write_sharded_impl(
+def _write_hash_sharded(
     *,
     df: DataFrame,
-    config: WriteConfig,
-    sharding: ShardingSpec,
-    num_dbs: int | None,
+    config: HashWriteConfig,
     run_id: str,
     started: float,
     key_col: str,
@@ -294,9 +230,9 @@ def _write_sharded_impl(
     vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
     vector_columns: VectorColumnMapping | None,
 ) -> BuildResult:
-    """Implementation assuming Spark conf already prepared."""
+    """Hash-specific sharded write pipeline."""
     mc = config.metrics_collector
-    _strategy_name = "hash" if isinstance(sharding, HashShardingSpec) else "cel"
+    num_dbs = resolve_num_dbs(config, df.count)
 
     with (
         LogContext(run_id=run_id),
@@ -311,23 +247,31 @@ def _write_sharded_impl(
             logger=_logger,
             num_dbs=num_dbs,
             s3_prefix=config.s3_prefix,
-            strategy=_strategy_name,
+            strategy="hash",
             key_encoding=config.key_encoding,
             writer_type="spark",
         )
         if mc is not None:
             mc.emit(MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
-
-        distributed_vector_fn = resolve_distributed_vector_fn(
-            config=config,
-            key_col=key_col,
-            vector_fn=vector_fn,
-            vector_columns=vector_columns,
+        has_vectors = (
+            vector_fn is not None
+            or vector_columns is not None
+            or config.vector_spec is not None
         )
-        prepared_rows = _prepare_partitioned_rows(
+        distributed_vector_fn = (
+            resolve_distributed_vector_fn(
+                config=config,
+                key_col=key_col,
+                vector_fn=vector_fn,
+                vector_columns=vector_columns,
+            )
+            if has_vectors
+            else None
+        )
+
+        prepared_rows = _prepare_hash_partitioned_rows(
             df=df,
             config=config,
-            sharding=sharding,
             num_dbs=num_dbs,
             key_col=key_col,
             sort_within_partitions=sort_within_partitions,
@@ -357,106 +301,261 @@ def _write_sharded_impl(
             started=started,
             vector_fn=distributed_vector_fn,
         )
-        num_dbs = prepared_rows.resolved_num_dbs
         write_outcome = _run_partition_writes(
             partitioned_rdd=prepared_rows.partitioned_rdd,
             runtime=runtime,
-            num_dbs=num_dbs,
+            num_dbs=prepared_rows.resolved_num_dbs,
         )
 
-        rows_written = sum(w.row_count for w in write_outcome.winners)
-        log_event(
-            "shard_writes_completed",
-            logger=_logger,
-            num_winners=len(write_outcome.winners),
-            rows_written=rows_written,
-            duration_ms=write_outcome.write_duration_ms,
-        )
-        if mc is not None:
-            mc.emit(
-                MetricEvent.SHARD_WRITES_COMPLETED,
-                {
-                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
-                    "duration_ms": write_outcome.write_duration_ms,
-                    "rows_written": rows_written,
-                },
-            )
-
-        if config.vector_spec is not None:
-            inject_vector_manifest_fields(config, runtime.adapter_factory)
-        manifest_started = time.perf_counter()
-        manifest_ref = publish_to_store(
+        return _finalize_sharded_write(
             config=config,
             run_id=run_id,
-            resolved_sharding=prepared_rows.resolved_sharding,
-            winners=write_outcome.winners,
-            key_col=key_col,
             started=started,
-            num_dbs=num_dbs,
-        )
-        run_record.set_manifest_ref(manifest_ref)
-        manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
-
-        cleanup_losers(
-            write_outcome.all_attempt_urls,
-            write_outcome.winners,
-            metrics_collector=mc,
+            prepared_rows=prepared_rows,
+            write_outcome=write_outcome,
+            runtime=runtime,
+            mc=mc,
+            run_record=run_record,
         )
 
-        result = assemble_build_result(
+
+def _write_cel_sharded(
+    *,
+    df: DataFrame,
+    config: CelWriteConfig,
+    run_id: str,
+    started: float,
+    key_col: str,
+    value_spec: ValueSpec,
+    sort_within_partitions: bool,
+    max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
+    verify_routing: bool,
+    vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
+    vector_columns: VectorColumnMapping | None,
+) -> BuildResult:
+    """CEL-specific sharded write pipeline."""
+    mc = config.metrics_collector
+
+    with (
+        LogContext(run_id=run_id),
+        RunRecordLifecycle.start(
+            config=config,
             run_id=run_id,
-            winners=write_outcome.winners,
-            manifest_ref=manifest_ref,
-            run_record_ref=run_record.run_record_ref,
-            num_attempts=write_outcome.num_attempts,
-            shard_duration_ms=prepared_rows.shard_duration_ms,
-            write_duration_ms=write_outcome.write_duration_ms,
-            manifest_duration_ms=manifest_duration_ms,
-            started=started,
+            writer_type="spark",
+        ) as run_record,
+    ):
+        log_event(
+            "write_started",
+            logger=_logger,
+            num_dbs=None,
+            s3_prefix=config.s3_prefix,
+            strategy="cel",
+            key_encoding=config.key_encoding,
+            writer_type="spark",
+        )
+        if mc is not None:
+            mc.emit(MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
+
+        has_vectors = (
+            vector_fn is not None
+            or vector_columns is not None
+            or config.vector_spec is not None
+        )
+        distributed_vector_fn = (
+            resolve_distributed_vector_fn(
+                config=config,
+                key_col=key_col,
+                vector_fn=vector_fn,
+                vector_columns=vector_columns,
+            )
+            if has_vectors
+            else None
         )
 
+        prepared_rows = _prepare_cel_partitioned_rows(
+            df=df,
+            config=config,
+            key_col=key_col,
+            sort_within_partitions=sort_within_partitions,
+            verify_routing=verify_routing,
+        )
         log_event(
-            "write_completed",
+            "sharding_completed",
             logger=_logger,
-            total_ms=result.stats.durations.total_ms,
-            rows_written=result.stats.rows_written,
+            duration_ms=prepared_rows.shard_duration_ms,
         )
         if mc is not None:
             mc.emit(
-                MetricEvent.WRITE_COMPLETED,
+                MetricEvent.SHARDING_COMPLETED,
                 {
                     "elapsed_ms": int((time.perf_counter() - started) * 1000),
-                    "rows_written": result.stats.rows_written,
+                    "duration_ms": prepared_rows.shard_duration_ms,
                 },
             )
 
-        run_record.mark_succeeded()
+        runtime = _build_partition_write_runtime(
+            config=config,
+            run_id=run_id,
+            key_col=key_col,
+            value_spec=value_spec,
+            max_writes_per_second=max_writes_per_second,
+            max_write_bytes_per_second=max_write_bytes_per_second,
+            started=started,
+            vector_fn=distributed_vector_fn,
+        )
+        write_outcome = _run_partition_writes(
+            partitioned_rdd=prepared_rows.partitioned_rdd,
+            runtime=runtime,
+            num_dbs=prepared_rows.resolved_num_dbs,
+        )
 
-        return result
+        return _finalize_sharded_write(
+            config=config,
+            run_id=run_id,
+            started=started,
+            prepared_rows=prepared_rows,
+            write_outcome=write_outcome,
+            runtime=runtime,
+            mc=mc,
+            run_record=run_record,
+        )
 
 
-def verify_routing_agreement(
+def _finalize_sharded_write(
+    *,
+    config: WriteConfig,
+    run_id: str,
+    started: float,
+    prepared_rows: _PreparedPartitionRows,
+    write_outcome: PartitionWriteOutcome,
+    runtime: PartitionWriteConfig,
+    mc: MetricsCollector | None,
+    run_record: Any,
+) -> BuildResult:
+    """Publish manifest, cleanup losers, and assemble BuildResult."""
+    rows_written = sum(w.row_count for w in write_outcome.winners)
+    log_event(
+        "shard_writes_completed",
+        logger=_logger,
+        num_winners=len(write_outcome.winners),
+        rows_written=rows_written,
+        duration_ms=write_outcome.write_duration_ms,
+    )
+    if mc is not None:
+        mc.emit(
+            MetricEvent.SHARD_WRITES_COMPLETED,
+            {
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                "duration_ms": write_outcome.write_duration_ms,
+                "rows_written": rows_written,
+            },
+        )
+
+    if config.vector_spec is not None:
+        inject_vector_manifest_fields(config, runtime.adapter_factory)
+    manifest_started = time.perf_counter()
+    manifest_ref = publish_to_store(
+        config=config,
+        run_id=run_id,
+        resolved_sharding=prepared_rows.resolved_sharding,
+        winners=write_outcome.winners,
+        key_col=runtime.key_col,
+        started=started,
+        num_dbs=prepared_rows.resolved_num_dbs,
+    )
+    run_record.set_manifest_ref(manifest_ref)
+    manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
+
+    cleanup_losers(
+        write_outcome.all_attempt_urls,
+        write_outcome.winners,
+        metrics_collector=mc,
+    )
+
+    result = assemble_build_result(
+        run_id=run_id,
+        winners=write_outcome.winners,
+        manifest_ref=manifest_ref,
+        run_record_ref=run_record.run_record_ref,
+        num_attempts=write_outcome.num_attempts,
+        shard_duration_ms=prepared_rows.shard_duration_ms,
+        write_duration_ms=write_outcome.write_duration_ms,
+        manifest_duration_ms=manifest_duration_ms,
+        started=started,
+    )
+
+    log_event(
+        "write_completed",
+        logger=_logger,
+        total_ms=result.stats.durations.total_ms,
+        rows_written=result.stats.rows_written,
+    )
+    if mc is not None:
+        mc.emit(
+            MetricEvent.WRITE_COMPLETED,
+            {
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                "rows_written": result.stats.rows_written,
+            },
+        )
+
+    run_record.mark_succeeded()
+    return result
+
+
+def _verify_hash_routing_agreement(
     df_with_db_id: DataFrame,
     *,
     key_col: str,
     num_dbs: int,
-    resolved_sharding: ShardingSpec,
+    hash_algorithm: ShardHashAlgorithm,
     key_encoding: KeyEncoding,
     sample_size: int = 20,
 ) -> None:
-    """Sample rows and verify Spark-computed db_id matches Python routing.
+    """Sample rows and verify Spark-computed db_id matches Python hash routing."""
 
-    Since all strategies now use Python-based mapInArrow, this is a
-    safety net verifying the mapInArrow output against the reader's
-    route_hash() / route_cel() functions.
-    """
+    sampled = df_with_db_id.select(key_col, DB_ID_COL).limit(sample_size).collect()
+    if not sampled:
+        return
 
-    # CEL multi-column: can't verify without routing_context
-    if (
-        isinstance(resolved_sharding, CelShardingSpec)
-        and resolved_sharding.cel_columns
-        and set(resolved_sharding.cel_columns.keys()) != {"key"}
-    ):
+    mismatches: list[tuple[object, int, int]] = []
+    for row in sampled:
+        key = row[key_col]
+        spark_db_id = int(row[DB_ID_COL])
+        python_db_id = route_hash(
+            key,
+            num_dbs=num_dbs,
+            hash_algorithm=hash_algorithm,
+        )
+        if python_db_id != spark_db_id:
+            mismatches.append((key, spark_db_id, python_db_id))
+
+    if mismatches:
+        details = "; ".join(
+            f"key={k}, spark={s}, python={p}" for k, s, p in mismatches[:5]
+        )
+        raise ShardAssignmentError(
+            f"Spark/Python routing mismatch in {len(mismatches)}/{len(sampled)} "
+            f"sampled rows. First mismatches: {details}"
+        )
+
+
+def _verify_cel_routing_agreement(
+    df_with_db_id: DataFrame,
+    *,
+    key_col: str,
+    num_dbs: int,
+    cel_expr: str,
+    cel_columns: dict[str, str],
+    routing_values: list[int | str | bytes] | None,
+    key_encoding: KeyEncoding,
+    sample_size: int = 20,
+) -> None:
+    """Sample rows and verify Spark-computed db_id matches Python CEL routing."""
+
+    # Multi-column CEL: can't verify without routing_context
+    if cel_columns and set(cel_columns.keys()) != {"key"}:
         return
 
     sampled = df_with_db_id.select(key_col, DB_ID_COL).limit(sample_size).collect()
@@ -467,23 +566,13 @@ def verify_routing_agreement(
     for row in sampled:
         key = row[key_col]
         spark_db_id = int(row[DB_ID_COL])
-
-        if isinstance(resolved_sharding, HashShardingSpec):
-            python_db_id = route_hash(
-                key,
-                num_dbs=num_dbs,
-                hash_algorithm=resolved_sharding.hash_algorithm,
-            )
-        else:
-            assert isinstance(resolved_sharding, CelShardingSpec)
-            python_db_id = route_cel(
-                key,
-                cel_expr=resolved_sharding.cel_expr,
-                cel_columns=resolved_sharding.cel_columns,
-                routing_values=resolved_sharding.routing_values,
-                routing_context=None,
-            )
-
+        python_db_id = route_cel(
+            key,
+            cel_expr=cel_expr,
+            cel_columns=cel_columns,
+            routing_values=routing_values,
+            routing_context=None,
+        )
         if python_db_id != spark_db_id:
             mismatches.append((key, spark_db_id, python_db_id))
 
@@ -502,7 +591,7 @@ def verify_vector_routing_agreement(
     *,
     id_col: str,
     vector_col: str,
-    routing: Any,
+    routing: ResolvedVectorRouting,
     shard_id_col: str | None = None,
     routing_context_cols: dict[str, str] | None = None,
     sample_size: int = 20,
@@ -540,7 +629,9 @@ def verify_vector_routing_agreement(
 
         routing_context: dict[str, Any] | None = None
         if routing.strategy == VectorShardingStrategy.CEL:
-            assert routing_context_cols is not None
+            assert routing_context_cols is not None, (
+                "routing_context_cols required for CEL"
+            )
             routing_context = {col: row[col] for col in routing_context_cols}
 
         expected_db_id = assign_vector_shard(
@@ -564,55 +655,203 @@ def verify_vector_routing_agreement(
         )
 
 
-def _prepare_partitioned_rows(
+def _add_db_id_column_hash(
+    df: DataFrame,
+    *,
+    key_col: str,
+    num_dbs: int,
+    hash_algorithm: ShardHashAlgorithm,
+) -> DataFrame:
+    """Add deterministic db id column for HASH routing via mapInArrow."""
+    from shardyfusion.sharding_types import DB_ID_COL
+
+    output_schema = StructType(
+        list(df.schema.fields) + [StructField(DB_ID_COL, IntegerType(), False)]
+    )
+
+    _key_col = key_col
+    _num_dbs = num_dbs
+    _hash_algorithm = hash_algorithm
+
+    def _hash_map_arrow(iterator):  # type: ignore[no-untyped-def]
+        import pyarrow as pa  # type: ignore[import-not-found]
+
+        for batch in iterator:
+            keys = batch.column(_key_col).to_pylist()
+            db_ids = [hash_db_id(k, _num_dbs, _hash_algorithm) for k in keys]
+            yield batch.append_column(DB_ID_COL, pa.array(db_ids, type=pa.int32()))
+
+    df_with_db_id = df.mapInArrow(_hash_map_arrow, output_schema)
+
+    invalid_count = (
+        df_with_db_id.where(
+            (F.col(DB_ID_COL).isNull())
+            | (F.col(DB_ID_COL) < 0)
+            | (F.col(DB_ID_COL) >= num_dbs)
+        )
+        .limit(1)
+        .count()
+    )
+    if invalid_count > 0:
+        raise ShardAssignmentError("Computed db_id out of range [0, num_dbs-1].")
+
+    return df_with_db_id
+
+
+def _add_db_id_column_cel(
+    df: DataFrame,
+    *,
+    key_col: str,
+    cel_expr: str,
+    cel_columns: dict[str, str],
+    routing_values: list[int | str | bytes] | None,
+    infer_routing_values_from_data: bool,
+) -> tuple[DataFrame, CelShardingSpec]:
+    """Add deterministic db id column for CEL routing via mapInArrow.
+
+    Returns the modified DataFrame and the resolved CelShardingSpec.
+    """
+    from shardyfusion.sharding_types import DB_ID_COL
+
+    output_schema = StructType(
+        list(df.schema.fields) + [StructField(DB_ID_COL, IntegerType(), False)]
+    )
+
+    resolved_routing_values = (
+        _discover_categorical_routing_values(
+            df,
+            cel_expr=cel_expr,
+            cel_columns=dict(cel_columns),
+        )
+        if infer_routing_values_from_data
+        else (list(routing_values) if routing_values is not None else None)
+    )
+    resolved = CelShardingSpec(
+        cel_expr=cel_expr,
+        cel_columns=dict(cel_columns),
+        routing_values=resolved_routing_values,
+        infer_routing_values_from_data=False,
+    )
+
+    _cel_expr = cel_expr
+    _cel_cols = dict(cel_columns)
+    _cel_routing_values = resolved_routing_values
+
+    compile_cel(_cel_expr, _cel_cols)  # validate eagerly on driver
+
+    def _cel_map_arrow(iterator):  # type: ignore[no-untyped-def]
+        import pyarrow as pa  # type: ignore[import-not-found]
+
+        from shardyfusion.cel import compile_cel as _compile
+        from shardyfusion.cel import route_cel_batch
+
+        _compiled = _compile(_cel_expr, _cel_cols)
+        for batch in iterator:
+            db_ids = route_cel_batch(
+                _compiled,
+                batch,
+                _cel_routing_values,
+            )
+            yield batch.append_column(DB_ID_COL, pa.array(db_ids, type=pa.int32()))
+
+    df_with_db_id = df.mapInArrow(_cel_map_arrow, output_schema)
+
+    return df_with_db_id, resolved
+
+
+def _prepare_hash_partitioned_rows(
     *,
     df: DataFrame,
-    config: WriteConfig,
-    sharding: ShardingSpec,
-    num_dbs: int | None,
+    config: HashWriteConfig,
+    num_dbs: int,
     key_col: str,
     sort_within_partitions: bool,
     verify_routing: bool = True,
 ) -> _PreparedPartitionRows:
-    """Assign shard ids and build the one-writer-per-db partitioned RDD."""
-
+    """Assign shard ids and build the partitioned RDD for HASH routing."""
     shard_started = time.perf_counter()
 
-    df_with_db_id, resolved_sharding = add_db_id_column(
+    sharding = HashShardingSpec(
+        hash_algorithm=ShardHashAlgorithm.XXH3_64,
+        max_keys_per_shard=config.max_keys_per_shard,
+    )
+    df_with_db_id = _add_db_id_column_hash(
         df,
         key_col=key_col,
         num_dbs=num_dbs,
-        sharding=sharding,
+        hash_algorithm=sharding.hash_algorithm,
     )
 
-    # CEL: discover num_dbs from data and validate consecutive IDs
-    if num_dbs is None:
-        assert isinstance(resolved_sharding, CelShardingSpec)
-        if resolved_sharding.routing_values is not None:
-            num_dbs = resolve_cel_num_dbs(resolved_sharding)
-        else:
-            agg_row = df_with_db_id.agg(
-                F.max(DB_ID_COL).alias("max_id"),
-                F.count_distinct(DB_ID_COL).alias("n_distinct"),
-            ).collect()[0]
-            max_id = agg_row["max_id"]
-            n_distinct = agg_row["n_distinct"]
-            distinct_ids = (
-                set(range(n_distinct))
-                if n_distinct == (max_id + 1 if max_id is not None else 0)
-                else {
-                    row[0]
-                    for row in df_with_db_id.select(DB_ID_COL).distinct().collect()
-                }
-            )
-            num_dbs = discover_cel_num_dbs(distinct_ids)
-
     if verify_routing and num_dbs > 0:
-        verify_routing_agreement(
+        _verify_hash_routing_agreement(
             df_with_db_id,
             key_col=key_col,
             num_dbs=num_dbs,
-            resolved_sharding=resolved_sharding,
+            hash_algorithm=sharding.hash_algorithm,
+            key_encoding=config.key_encoding,
+        )
+    partitioned_rdd = prepare_partitioned_rdd(
+        df_with_db_id,
+        num_dbs=num_dbs,
+        key_col=key_col,
+        sort_within_partitions=sort_within_partitions,
+    )
+    shard_duration_ms = int((time.perf_counter() - shard_started) * 1000)
+    return _PreparedPartitionRows(
+        partitioned_rdd=partitioned_rdd,
+        resolved_sharding=sharding,
+        resolved_num_dbs=num_dbs,
+        shard_duration_ms=shard_duration_ms,
+    )
+
+
+def _prepare_cel_partitioned_rows(
+    *,
+    df: DataFrame,
+    config: CelWriteConfig,
+    key_col: str,
+    sort_within_partitions: bool,
+    verify_routing: bool = True,
+) -> _PreparedPartitionRows:
+    """Assign shard ids and build the partitioned RDD for CEL routing."""
+    shard_started = time.perf_counter()
+
+    df_with_db_id, resolved_sharding = _add_db_id_column_cel(
+        df,
+        key_col=key_col,
+        cel_expr=config.cel_expr,
+        cel_columns=config.cel_columns,
+        routing_values=config.routing_values,
+        infer_routing_values_from_data=config.infer_routing_values_from_data,
+    )
+
+    # Discover num_dbs from data and validate consecutive IDs
+    if resolved_sharding.routing_values is not None:
+        num_dbs = resolve_cel_num_dbs(resolved_sharding)
+    else:
+        agg_row = df_with_db_id.agg(
+            F.max(DB_ID_COL).alias("max_id"),
+            F.count_distinct(DB_ID_COL).alias("n_distinct"),
+        ).collect()[0]
+        max_id = agg_row["max_id"]
+        n_distinct = agg_row["n_distinct"]
+        distinct_ids = (
+            set(range(n_distinct))
+            if n_distinct == (max_id + 1 if max_id is not None else 0)
+            else {
+                row[0] for row in df_with_db_id.select(DB_ID_COL).distinct().collect()
+            }
+        )
+        num_dbs = discover_cel_num_dbs(distinct_ids)
+
+    if verify_routing and num_dbs > 0:
+        _verify_cel_routing_agreement(
+            df_with_db_id,
+            key_col=key_col,
+            num_dbs=num_dbs,
+            cel_expr=resolved_sharding.cel_expr,
+            cel_columns=resolved_sharding.cel_columns,
+            routing_values=resolved_sharding.routing_values,
             key_encoding=config.key_encoding,
         )
     partitioned_rdd = prepare_partitioned_rdd(
@@ -767,43 +1006,43 @@ def write_one_shard_partition(
         started=runtime.started,
     )
 
-    def _iter_spark_rows() -> Iterable[tuple[object, bytes]]:
-        for _, row in rows_iter:
-            yield row[runtime.key_col], runtime.value_spec.encode(row)
+    accumulator_factory: type[ShardBatchAccumulator]
+    if runtime.vector_fn is not None:
+        accumulator_factory = UnifiedAccumulator
 
-    if runtime.vector_fn is None:
-        result = write_shard_core(
-            params,
-            _iter_spark_rows(),
-            writer_info_base=WriterInfo(
-                stage_id=stage_id,
-                task_attempt_id=task_attempt_id,
-                attempt=attempt,
-            ),
-        )
-    else:
-        vec_fn = runtime.vector_fn
-        assert vec_fn is not None
-
-        def _iter_spark_rows_with_vector() -> Iterable[
-            tuple[object, bytes, tuple[int | str, Any, dict[str, Any] | None]]
+        def _iter_spark_rows_with_vectors() -> Iterable[
+            tuple[object, bytes, tuple[int | str, Any, dict[str, Any] | None] | None]
         ]:
+            assert runtime.vector_fn is not None  # unnecessary but satisfies pyright
             for _, row in rows_iter:
                 yield (
                     row[runtime.key_col],
                     runtime.value_spec.encode(row),
-                    vec_fn(row),
+                    runtime.vector_fn(row),
                 )
 
-        result = write_shard_core_distributed(
-            params,
-            _iter_spark_rows_with_vector(),
-            writer_info_base=WriterInfo(
-                stage_id=stage_id,
-                task_attempt_id=task_attempt_id,
-                attempt=attempt,
-            ),
-        )
+        iter_spark_rows = _iter_spark_rows_with_vectors
+    else:
+        accumulator_factory = KvAccumulator
+
+        def _iter_spark_rows_without_vectors() -> Iterable[
+            tuple[object, bytes, tuple[int | str, Any, dict[str, Any] | None] | None]
+        ]:
+            for _, row in rows_iter:
+                yield row[runtime.key_col], runtime.value_spec.encode(row), None
+
+        iter_spark_rows = _iter_spark_rows_without_vectors
+
+    result = write_shard_core(
+        params,
+        iter_spark_rows(),
+        accumulator_factory=accumulator_factory,
+        writer_info_base=WriterInfo(
+            stage_id=stage_id,
+            task_attempt_id=task_attempt_id,
+            attempt=attempt,
+        ),
+    )
     yield result
 
 

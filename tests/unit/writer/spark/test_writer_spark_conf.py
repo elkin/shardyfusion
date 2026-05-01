@@ -112,8 +112,6 @@ def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> 
         *,
         df,
         config,
-        sharding,
-        num_dbs,
         run_id,
         started,
         key_col,
@@ -126,8 +124,6 @@ def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> 
         vector_columns,
     ):
         _ = (
-            sharding,
-            num_dbs,
             started,
             key_col,
             value_spec,
@@ -146,7 +142,7 @@ def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> 
         _RecordingCtx,
     )
     monkeypatch.setattr(
-        "shardyfusion.writer.spark.writer._write_sharded_impl",
+        "shardyfusion.writer.spark.writer._write_hash_sharded",
         _fake_impl,
     )
     monkeypatch.setattr(
@@ -196,8 +192,6 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
         *,
         df,
         config,
-        sharding,
-        num_dbs,
         run_id,
         started,
         key_col,
@@ -210,8 +204,6 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
         vector_columns,
     ):
         _ = (
-            sharding,
-            num_dbs,
             started,
             key_col,
             value_spec,
@@ -230,7 +222,7 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
         _RecordingCtx,
     )
     monkeypatch.setattr(
-        "shardyfusion.writer.spark.writer._write_sharded_impl",
+        "shardyfusion.writer.spark.writer._write_hash_sharded",
         _fake_impl,
     )
     monkeypatch.setattr(

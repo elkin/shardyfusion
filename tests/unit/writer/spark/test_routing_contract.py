@@ -3,7 +3,7 @@
 Since the sharding rework, ALL writers (including Spark) use Python-based
 ``mapInArrow`` for hashing via ``xxh3_db_id()``.  There is no longer a
 Spark SQL xxhash64 path to cross-check, but these tests verify that the
-full ``add_db_id_column()`` pipeline (Arrow serialisation round-trip,
+full ``_add_db_id_column_hash()`` pipeline (Arrow serialisation round-trip,
 partition assignment, etc.) produces db_ids identical to calling
 ``xxh3_db_id()`` directly.
 
@@ -18,12 +18,12 @@ import pytest
 from shardyfusion.routing import xxh3_db_id
 from shardyfusion.sharding_types import (
     DB_ID_COL,
-    HashShardingSpec,
+    ShardHashAlgorithm,
 )
-from shardyfusion.writer.spark.sharding import add_db_id_column
+from shardyfusion.writer.spark.writer import _add_db_id_column_hash
 from tests.unit.writer.core.test_routing_contract import EDGE_CASE_KEYS
 
-# String keys for cross-checking add_db_id_column with string columns.
+# String keys for cross-checking _add_db_id_column_hash with string columns.
 _STRING_EDGE_CASE_KEYS: list[str] = [
     "",
     "a",
@@ -48,16 +48,15 @@ _STRING_EDGE_CASE_KEYS: list[str] = [
 @pytest.mark.spark
 @pytest.mark.parametrize("num_dbs", [1, 2, 3, 5, 7, 8, 16, 64, 128])
 def test_spark_hash_agreement_int_keys(spark, num_dbs: int) -> None:
-    """Spark add_db_id_column matches xxh3_db_id for integer edge-case keys."""
+    """Spark _add_db_id_column_hash matches xxh3_db_id for integer edge-case keys."""
 
     df = spark.createDataFrame([(k,) for k in EDGE_CASE_KEYS], ["id"])
-    sharding = HashShardingSpec()
 
-    result_df, _ = add_db_id_column(
+    result_df = _add_db_id_column_hash(
         df,
         key_col="id",
         num_dbs=num_dbs,
-        sharding=sharding,
+        hash_algorithm=ShardHashAlgorithm.XXH3_64,
     )
 
     for row in result_df.collect():
@@ -72,16 +71,15 @@ def test_spark_hash_agreement_int_keys(spark, num_dbs: int) -> None:
 @pytest.mark.spark
 @pytest.mark.parametrize("num_dbs", [1, 2, 3, 5, 7, 8, 16, 64, 128])
 def test_spark_hash_agreement_string_keys(spark, num_dbs: int) -> None:
-    """Spark add_db_id_column matches xxh3_db_id for string edge-case keys."""
+    """Spark _add_db_id_column_hash matches xxh3_db_id for string edge-case keys."""
 
     df = spark.createDataFrame([(k,) for k in _STRING_EDGE_CASE_KEYS], ["id"])
-    sharding = HashShardingSpec()
 
-    result_df, _ = add_db_id_column(
+    result_df = _add_db_id_column_hash(
         df,
         key_col="id",
         num_dbs=num_dbs,
-        sharding=sharding,
+        hash_algorithm=ShardHashAlgorithm.XXH3_64,
     )
 
     for row in result_df.collect():
