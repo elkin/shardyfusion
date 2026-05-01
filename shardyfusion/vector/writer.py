@@ -276,6 +276,3 @@ def write_vector_sharded(
             stats=stats,
             run_record_ref=run_record.run_record_ref,
         )
-
-
-_publish_vector_manifest = publish_vector_manifest

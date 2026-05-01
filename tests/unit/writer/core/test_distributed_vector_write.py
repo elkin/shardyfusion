@@ -11,8 +11,8 @@ import pytest
 
 from shardyfusion._shard_writer import (
     ShardWriteParams,
-    write_shard_core_distributed,
-    write_shard_with_retry_distributed,
+    write_shard_core,
+    write_shard_with_retry,
 )
 from shardyfusion._writer_core import VectorColumnMapping, resolve_distributed_vector_fn
 from shardyfusion.config import CelWriteConfig, HashWriteConfig, VectorSpec
@@ -20,6 +20,7 @@ from shardyfusion.errors import ConfigValidationError, ShardWriteError
 from shardyfusion.serde import make_key_encoder
 from shardyfusion.sharding_types import KeyEncoding
 from shardyfusion.type_defs import RetryConfig
+from shardyfusion.writer._accumulators import UnifiedAccumulator
 
 
 class _VectorAdapter:
@@ -135,7 +136,7 @@ def test_resolve_distributed_vector_fn_requires_vector_source_when_missing() -> 
         )
 
 
-def test_write_shard_core_distributed_writes_vectors(tmp_path: Path) -> None:
+def test_write_shard_core_unified_writes_vectors(tmp_path: Path) -> None:
     adapter = _VectorAdapter()
     params = ShardWriteParams(
         db_id=0,
@@ -155,7 +156,11 @@ def test_write_shard_core_distributed_writes_vectors(tmp_path: Path) -> None:
         (1, b"v1", ("id-1", [0.1, 0.2], {"a": 1})),
         (2, b"v2", ("id-2", [0.3, 0.4], None)),
     ]
-    result = write_shard_core_distributed(params, rows)
+    result = write_shard_core(
+        params,
+        rows,
+        accumulator_factory=UnifiedAccumulator,
+    )
     assert result.row_count == 2
     assert len(adapter.kv_batches) == 1
     assert len(adapter.vector_batches) == 1
@@ -165,7 +170,7 @@ def test_write_shard_core_distributed_writes_vectors(tmp_path: Path) -> None:
     assert payloads[0] == {"a": 1}
 
 
-def test_write_shard_core_distributed_requires_vector_capable_adapter(
+def test_write_shard_core_unified_requires_vector_capable_adapter(
     tmp_path: Path,
 ) -> None:
     adapter = _NoVectorAdapter()
@@ -184,10 +189,14 @@ def test_write_shard_core_distributed_requires_vector_capable_adapter(
         started=0.0,
     )
     with pytest.raises(ShardWriteError, match="Adapter does not support vector writes"):
-        write_shard_core_distributed(params, [(1, b"v1", ("id-1", [1.0], None))])
+        write_shard_core(
+            params,
+            [(1, b"v1", ("id-1", [1.0], None))],
+            accumulator_factory=UnifiedAccumulator,
+        )
 
 
-def test_write_shard_core_distributed_ignores_rows_without_vectors(
+def test_write_shard_core_unified_ignores_rows_without_vectors(
     tmp_path: Path,
 ) -> None:
     adapter = _VectorAdapter()
@@ -210,7 +219,11 @@ def test_write_shard_core_distributed_ignores_rows_without_vectors(
         (1, b"v1", None),
         (2, b"v2", ("id-2", [0.2, 0.3], {"region": "us"})),
     ]
-    result = write_shard_core_distributed(params, rows)
+    result = write_shard_core(
+        params,
+        rows,
+        accumulator_factory=UnifiedAccumulator,
+    )
 
     assert result.row_count == 2
     assert len(adapter.kv_batches) == 1
@@ -222,7 +235,7 @@ def test_write_shard_core_distributed_ignores_rows_without_vectors(
 
 
 @patch("shardyfusion._shard_writer.time.sleep")
-def test_write_shard_with_retry_distributed_retries_and_tracks_attempt_urls(
+def test_write_shard_with_retry_unified_retries_and_tracks_attempt_urls(
     _mock_sleep: Any,
     tmp_path: Path,
 ) -> None:
@@ -241,7 +254,7 @@ def test_write_shard_with_retry_distributed_retries_and_tracks_attempt_urls(
                 adapter.write_batch = _fail_write_batch  # type: ignore[method-assign]
             return adapter
 
-    result = write_shard_with_retry_distributed(
+    result = write_shard_with_retry(
         db_id=0,
         rows_fn=lambda: iter([(1, b"v1", ("id-1", [0.1, 0.2], None))]),
         run_id="test-run",
@@ -259,6 +272,7 @@ def test_write_shard_with_retry_distributed_retries_and_tracks_attempt_urls(
         retry_config=RetryConfig(
             max_retries=2, initial_backoff=timedelta(milliseconds=1)
         ),
+        accumulator_factory=UnifiedAccumulator,
     )
 
     assert result.attempt == 1

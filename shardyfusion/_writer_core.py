@@ -170,7 +170,7 @@ def route_cel(
         raise
 
 
-def resolve_num_dbs(config: HashWriteConfig, count_fn: Callable[[], int]) -> int | None:
+def resolve_num_dbs(config: HashWriteConfig, count_fn: Callable[[], int]) -> int:
     """Resolve num_dbs from HashWriteConfig or max_keys_per_shard.
 
     Args:
@@ -185,7 +185,10 @@ def resolve_num_dbs(config: HashWriteConfig, count_fn: Callable[[], int]) -> int
         if count == 0:
             return 1
         return max(1, math.ceil(count / config.max_keys_per_shard))
-    return config.num_dbs
+
+    raise AssertionError(
+        "Either num_dbs or max_keys_per_shard must be set in HashWriteConfig"
+    )
 
 
 def resolve_distributed_vector_fn(

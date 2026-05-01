@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from ._rate_limiter import RateLimiter, TokenBucket
-from ._writer_core import ShardAttemptResult, update_min_max
+from ._writer_core import ShardAttemptResult
 from .errors import ShardWriteError, ShardyfusionError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
 from .manifest import WriterInfo
@@ -26,11 +26,14 @@ from .metrics import MetricEvent, MetricsCollector
 from .serde import KeyEncoder
 from .slatedb_adapter import DbAdapterFactory
 from .storage import join_s3
-from .type_defs import KeyInput, RetryConfig
+from .type_defs import RetryConfig
+from .writer._accumulators import (
+    KvAccumulator,
+    ShardBatchAccumulator,
+    VectorWriteTuple,
+)
 
 _logger = get_logger(__name__)
-
-VectorWriteTuple = tuple[int | str, Any, dict[str, Any] | None]
 
 
 class _PandasRowLike(Protocol):
@@ -149,8 +152,9 @@ def iter_pandas_rows(
 
 def write_shard_core(
     params: ShardWriteParams,
-    rows: Iterable[tuple[object, bytes]],
+    rows: Iterable[tuple[object, bytes, VectorWriteTuple | None]],
     *,
+    accumulator_factory: Callable[[], ShardBatchAccumulator] = KvAccumulator,
     writer_info_base: WriterInfo | None = None,
     prior_attempt_urls: tuple[str, ...] = (),
 ) -> ShardAttemptResult:
@@ -168,9 +172,11 @@ def write_shard_core(
 
     Args:
         params: Immutable parameters for this attempt.
-        rows: Iterable of ``(raw_key, encoded_value_bytes)`` pairs.
-            The raw key is passed through ``params.key_encoder`` and
-            used for min/max tracking.
+        rows: Iterable of ``(raw_key, encoded_value_bytes, vector_item)``
+            tuples.  ``vector_item`` is ``None`` for pure KV rows.
+        accumulator_factory: Factory for the batch accumulator.
+            ``KvAccumulator`` for pure KV writes, ``UnifiedAccumulator``
+            for unified KV+vector writes.
         writer_info_base: Optional ``WriterInfo`` with framework-specific
             fields pre-populated (e.g. Spark ``stage_id``, ``task_attempt_id``).
             Missing fields are filled in by this function.
@@ -194,28 +200,33 @@ def write_shard_core(
         )
 
     partition_started = time.perf_counter()
-    row_count = 0
-    min_key: KeyInput | None = None
-    max_key: KeyInput | None = None
     checkpoint_id: str | None = None
-    batch: list[tuple[bytes, bytes]] = []
+    acc: ShardBatchAccumulator | None = None
 
     try:
         with params.factory(
             db_url=params.db_url, local_dir=params.local_dir
         ) as adapter:
-            for key_value, value_bytes in rows:
+            acc = accumulator_factory()
+            for key_value, value_bytes, vector_item in rows:
                 key_bytes = params.key_encoder(key_value)
-                batch.append((key_bytes, value_bytes))
-                row_count += 1
-                min_key, max_key = update_min_max(min_key, max_key, key_value)  # type: ignore[arg-type]  # object is KeyInput at runtime
+                acc.add(key_value, key_bytes, value_bytes, vector_item)
+                acc.maybe_flush(
+                    adapter,
+                    batch_size=params.batch_size,
+                    ops_limiter=params.ops_limiter,
+                    bytes_limiter=params.bytes_limiter,
+                    metrics_collector=mc,
+                    started=params.started,
+                )
 
-                if len(batch) >= params.batch_size:
-                    _flush_batch(batch, adapter, params, mc)
-
-            if batch:
-                _flush_batch(batch, adapter, params, mc)
-
+            acc.flush_remaining(
+                adapter,
+                ops_limiter=params.ops_limiter,
+                bytes_limiter=params.bytes_limiter,
+                metrics_collector=mc,
+                started=params.started,
+            )
             adapter.flush()
             checkpoint_id = adapter.checkpoint()
             db_bytes = adapter.db_bytes()
@@ -231,7 +242,7 @@ def write_shard_core(
             db_id=params.db_id,
             attempt=params.attempt,
             db_url=params.db_url,
-            rows_written=row_count,
+            rows_written=acc.row_count if acc is not None else 0,
             include_traceback=True,
         )
         raise ShardWriteError(
@@ -246,7 +257,7 @@ def write_shard_core(
         run_id=params.run_id,
         db_id=params.db_id,
         attempt=params.attempt,
-        row_count=row_count,
+        row_count=acc.row_count if acc is not None else 0,
         duration_ms=duration_ms,
     )
     if mc is not None:
@@ -255,7 +266,7 @@ def write_shard_core(
             {
                 "elapsed_ms": int((time.perf_counter() - params.started) * 1000),
                 "duration_ms": duration_ms,
-                "row_count": row_count,
+                "row_count": acc.row_count if acc is not None else 0,
             },
         )
 
@@ -270,127 +281,9 @@ def write_shard_core(
         db_id=params.db_id,
         db_url=params.db_url,
         attempt=params.attempt,
-        row_count=row_count,
-        min_key=min_key,
-        max_key=max_key,
-        checkpoint_id=checkpoint_id,
-        writer_info=info,
-        db_bytes=db_bytes,
-        all_attempt_urls=(*prior_attempt_urls, params.db_url),
-    )
-
-
-def _flush_batch(
-    batch: list[tuple[bytes, bytes]],
-    adapter: object,
-    params: ShardWriteParams,
-    mc: MetricsCollector | None,
-) -> None:
-    """Flush one accumulated batch through rate limiters and adapter."""
-    if params.ops_limiter is not None:
-        params.ops_limiter.acquire(len(batch))
-    if params.bytes_limiter is not None:
-        params.bytes_limiter.acquire(sum(len(k) + len(v) for k, v in batch))
-    adapter.write_batch(batch)  # type: ignore[union-attr]
-    if mc is not None:
-        mc.emit(
-            MetricEvent.BATCH_WRITTEN,
-            {
-                "elapsed_ms": int((time.perf_counter() - params.started) * 1000),
-                "batch_size": len(batch),
-            },
-        )
-    batch.clear()
-
-
-def _flush_vector_batch(
-    vector_ids: list[int | str],
-    vector_data: list[Any],
-    vector_payloads: list[dict[str, Any] | None],
-    adapter: object,
-) -> None:
-    if not vector_ids:
-        return
-    vector_writer = getattr(adapter, "write_vector_batch", None)
-    if not callable(vector_writer):
-        raise ShardWriteError("Adapter does not support vector writes in unified mode")
-    import numpy as np
-
-    ids_arr = np.array(vector_ids)
-    vectors_arr = np.array(vector_data, dtype=np.float32)
-    vector_writer(ids_arr, vectors_arr, vector_payloads)
-    vector_ids.clear()
-    vector_data.clear()
-    vector_payloads.clear()
-
-
-def write_shard_core_distributed(
-    params: ShardWriteParams,
-    rows: Iterable[tuple[object, bytes, VectorWriteTuple | None]],
-    *,
-    writer_info_base: WriterInfo | None = None,
-    prior_attempt_urls: tuple[str, ...] = (),
-) -> ShardAttemptResult:
-    """Distributed shard writer supporting unified KV+vector batches."""
-    mc = params.metrics_collector
-    params.local_dir.mkdir(parents=True, exist_ok=True)
-    partition_started = time.perf_counter()
-    row_count = 0
-    min_key: KeyInput | None = None
-    max_key: KeyInput | None = None
-    checkpoint_id: str | None = None
-    batch: list[tuple[bytes, bytes]] = []
-    vector_ids: list[int | str] = []
-    vector_data: list[Any] = []
-    vector_payloads: list[dict[str, Any] | None] = []
-
-    try:
-        with params.factory(
-            db_url=params.db_url, local_dir=params.local_dir
-        ) as adapter:
-            for key_value, value_bytes, vector_item in rows:
-                key_bytes = params.key_encoder(key_value)
-                batch.append((key_bytes, value_bytes))
-                row_count += 1
-                min_key, max_key = update_min_max(min_key, max_key, key_value)  # type: ignore[arg-type]
-                if vector_item is not None:
-                    vec_id, vec_data, vec_payload = vector_item
-                    vector_ids.append(vec_id)
-                    vector_data.append(vec_data)
-                    vector_payloads.append(vec_payload)
-                if len(batch) >= params.batch_size:
-                    _flush_batch(batch, adapter, params, mc)
-                    _flush_vector_batch(
-                        vector_ids, vector_data, vector_payloads, adapter
-                    )
-
-            if batch:
-                _flush_batch(batch, adapter, params, mc)
-            _flush_vector_batch(vector_ids, vector_data, vector_payloads, adapter)
-            adapter.flush()
-            checkpoint_id = adapter.checkpoint()
-            db_bytes = adapter.db_bytes()
-    except ShardyfusionError:
-        raise
-    except Exception as exc:
-        raise ShardWriteError(
-            f"Shard write failed for db_id={params.db_id}, attempt={params.attempt}: {exc}"
-        ) from exc
-
-    duration_ms = int((time.perf_counter() - partition_started) * 1000)
-    info = WriterInfo(
-        attempt=params.attempt,
-        duration_ms=duration_ms,
-        stage_id=writer_info_base.stage_id if writer_info_base else None,
-        task_attempt_id=writer_info_base.task_attempt_id if writer_info_base else None,
-    )
-    return ShardAttemptResult(
-        db_id=params.db_id,
-        db_url=params.db_url,
-        attempt=params.attempt,
-        row_count=row_count,
-        min_key=min_key,
-        max_key=max_key,
+        row_count=acc.row_count if acc is not None else 0,
+        min_key=acc.min_key if acc is not None else None,
+        max_key=acc.max_key if acc is not None else None,
         checkpoint_id=checkpoint_id,
         writer_info=info,
         db_bytes=db_bytes,
@@ -489,7 +382,7 @@ def _run_attempts_with_retry(
 def write_shard_with_retry(
     *,
     db_id: int,
-    rows_fn: Callable[[], Iterable[tuple[object, bytes]]],
+    rows_fn: Callable[[], Iterable[tuple[object, bytes, VectorWriteTuple | None]]],
     run_id: str,
     s3_prefix: str,
     shard_prefix: str,
@@ -504,6 +397,7 @@ def write_shard_with_retry(
     started: float,
     retry_config: RetryConfig | None,
     writer_info_base: WriterInfo | None = None,
+    accumulator_factory: Callable[[], ShardBatchAccumulator] = KvAccumulator,
 ) -> ShardAttemptResult:
     """Write one shard with optional retry on transient failures.
 
@@ -511,10 +405,14 @@ def write_shard_with_retry(
     ``attempt=01``, ...) with a fresh adapter and rate limiters.
 
     Args:
-        rows_fn: Callable returning a fresh iterable of ``(key, value)``
-            pairs on each invocation.  Must be re-callable for retries.
+        rows_fn: Callable returning a fresh iterable of ``(key, value, vector)``
+            tuples on each invocation.  ``vector`` is ``None`` for pure KV rows.
+            Must be re-callable for retries.
         retry_config: Retry parameters.  ``None`` means single attempt
             (no retry), preserving current behavior.
+        accumulator_factory: Factory for the batch accumulator.
+            ``KvAccumulator`` for pure KV writes, ``UnifiedAccumulator``
+            for unified KV+vector writes.
 
     Returns:
         ``ShardAttemptResult`` from the first successful attempt.
@@ -557,75 +455,7 @@ def write_shard_with_retry(
         return write_shard_core(
             params,
             rows_fn(),
-            writer_info_base=writer_info_base,
-            prior_attempt_urls=ctx.prior_attempt_urls,
-        )
-
-    return _run_attempts_with_retry(
-        db_id=db_id,
-        run_id=run_id,
-        s3_prefix=s3_prefix,
-        shard_prefix=shard_prefix,
-        db_path_template=db_path_template,
-        local_root=local_root,
-        retry_config=retry_config,
-        metrics_collector=metrics_collector,
-        started=started,
-        attempt_fn=_attempt_once,
-    )
-
-
-def write_shard_with_retry_distributed(
-    *,
-    db_id: int,
-    rows_fn: Callable[[], Iterable[tuple[object, bytes, VectorWriteTuple | None]]],
-    run_id: str,
-    s3_prefix: str,
-    shard_prefix: str,
-    db_path_template: str,
-    local_root: str,
-    key_encoder: KeyEncoder,
-    batch_size: int,
-    factory: DbAdapterFactory,
-    max_writes_per_second: float | None,
-    max_write_bytes_per_second: float | None,
-    metrics_collector: MetricsCollector | None,
-    started: float,
-    retry_config: RetryConfig | None,
-    writer_info_base: WriterInfo | None = None,
-) -> ShardAttemptResult:
-    """Retry-enabled distributed shard write with optional vector tuples."""
-
-    def _attempt_once(ctx: _RetryAttemptContext) -> ShardAttemptResult:
-        ops_limiter: RateLimiter | None = None
-        if max_writes_per_second is not None:
-            ops_limiter = TokenBucket(
-                max_writes_per_second, metrics_collector=metrics_collector
-            )
-        bytes_limiter: RateLimiter | None = None
-        if max_write_bytes_per_second is not None:
-            bytes_limiter = TokenBucket(
-                max_write_bytes_per_second,
-                metrics_collector=metrics_collector,
-                limiter_type="bytes",
-            )
-        params = ShardWriteParams(
-            db_id=db_id,
-            attempt=ctx.attempt,
-            run_id=run_id,
-            db_url=ctx.db_url,
-            local_dir=ctx.local_dir,
-            factory=factory,
-            key_encoder=key_encoder,
-            batch_size=batch_size,
-            ops_limiter=ops_limiter,
-            bytes_limiter=bytes_limiter,
-            metrics_collector=metrics_collector,
-            started=started,
-        )
-        return write_shard_core_distributed(
-            params,
-            rows_fn(),
+            accumulator_factory=accumulator_factory,
             writer_info_base=writer_info_base,
             prior_attempt_urls=ctx.prior_attempt_urls,
         )

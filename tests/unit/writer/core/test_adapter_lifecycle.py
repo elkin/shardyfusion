@@ -19,8 +19,8 @@ from shardyfusion.serde import make_key_encoder
 from shardyfusion.sharding_types import KeyEncoding
 
 
-def _rows(n: int = 3) -> list[tuple[int, bytes]]:
-    return [(i, f"val-{i}".encode()) for i in range(n)]
+def _rows(n: int = 3) -> list[tuple[int, bytes, None]]:
+    return [(i, f"val-{i}".encode(), None) for i in range(n)]
 
 
 class _FlushFailAdapter:

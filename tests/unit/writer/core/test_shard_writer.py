@@ -18,7 +18,6 @@ from shardyfusion._shard_writer import (
     results_pdf_to_attempts,
     write_shard_core,
     write_shard_with_retry,
-    write_shard_with_retry_distributed,
 )
 from shardyfusion.errors import (
     ConfigValidationError,
@@ -29,6 +28,7 @@ from shardyfusion.metrics import MetricEvent
 from shardyfusion.serde import ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import KeyEncoding
 from shardyfusion.type_defs import RetryConfig
+from shardyfusion.writer._accumulators import UnifiedAccumulator
 from tests.helpers.tracking import TrackingFactory
 
 # ---------------------------------------------------------------------------
@@ -63,9 +63,9 @@ def _make_params(
     )
 
 
-def _simple_rows(n: int = 5) -> list[tuple[object, bytes]]:
-    """Create n simple (int_key, value_bytes) rows."""
-    return [(i, f"value-{i}".encode()) for i in range(n)]
+def _simple_rows(n: int = 5) -> list[tuple[object, bytes, None]]:
+    """Create n simple (int_key, value_bytes, vector_item) rows."""
+    return [(i, f"value-{i}".encode(), None) for i in range(n)]
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@ class TestWriteShardCore:
     def test_min_max_key_tracking(self, tmp_path: Path) -> None:
         factory = TrackingFactory()
         params = _make_params(tmp_path, factory=factory)
-        rows = [(10, b"a"), (3, b"b"), (99, b"c"), (7, b"d")]
+        rows = [(10, b"a", None), (3, b"b", None), (99, b"c", None), (7, b"d", None)]
 
         result = write_shard_core(params, iter(rows))
 
@@ -590,8 +590,8 @@ class TestPandasInteropHelpers:
         assert results_pdf_to_attempts(pd.DataFrame()) == []
 
 
-class TestWriteShardWithRetryDistributed:
-    def test_distributed_retry_creates_rate_limiters(self, tmp_path: Path) -> None:
+class TestWriteShardWithRetryUnified:
+    def test_unified_retry_creates_rate_limiters(self, tmp_path: Path) -> None:
         bucket_calls: list[tuple[float, str]] = []
 
         class _TokenBucketStub:
@@ -636,7 +636,7 @@ class TestWriteShardWithRetryDistributed:
                 return 0
 
         with patch("shardyfusion._shard_writer.TokenBucket", _TokenBucketStub):
-            result = write_shard_with_retry_distributed(
+            result = write_shard_with_retry(
                 db_id=0,
                 rows_fn=lambda: iter([(1, b"v1", ("id-1", [0.1, 0.2], None))]),
                 run_id="run-1",
@@ -652,6 +652,7 @@ class TestWriteShardWithRetryDistributed:
                 metrics_collector=None,
                 started=time.perf_counter(),
                 retry_config=None,
+                accumulator_factory=UnifiedAccumulator,
             )
 
         assert result.attempt == 0
