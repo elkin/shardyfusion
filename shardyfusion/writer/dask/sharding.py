@@ -43,7 +43,6 @@ def add_db_id_column_hash(
 def add_db_id_column_cel(
     ddf: dd.DataFrame,
     *,
-    key_col: str,
     cel_expr: str,
     cel_columns: dict[str, str],
     routing_values: list[int | str | bytes] | None,

@@ -300,12 +300,11 @@ def _write_hash_sharded(
         )
 
         if verify_routing and num_dbs > 0:
-            _verify_routing_agreement(
+            _verify_hash_routing_agreement(
                 ddf_with_id,
                 key_col=key_col,
                 num_dbs=num_dbs,
-                resolved_sharding=sharding,
-                key_encoding=config.key_encoding,
+                hash_algorithm=sharding.hash_algorithm,
             )
 
         shard_duration_ms = int((time.perf_counter() - shard_started) * 1000)
@@ -432,7 +431,6 @@ def _write_cel_sharded(
         shard_started = time.perf_counter()
         ddf_with_id, resolved_sharding = add_db_id_column_cel(
             ddf,
-            key_col=key_col,
             cel_expr=config.cel_expr,
             cel_columns=config.cel_columns,
             routing_values=config.routing_values,
@@ -446,12 +444,13 @@ def _write_cel_sharded(
             num_dbs = discover_cel_num_dbs(distinct_ids)
 
         if verify_routing and num_dbs is not None and num_dbs > 0:
-            _verify_routing_agreement(
+            _verify_cel_routing_agreement(
                 ddf_with_id,
                 key_col=key_col,
                 num_dbs=num_dbs,
-                resolved_sharding=resolved_sharding,
-                key_encoding=config.key_encoding,
+                cel_expr=resolved_sharding.cel_expr,
+                cel_columns=resolved_sharding.cel_columns,
+                routing_values=resolved_sharding.routing_values,
             )
 
         shard_duration_ms = int((time.perf_counter() - shard_started) * 1000)
@@ -608,25 +607,61 @@ def _finalize_sharded_write(
 # ---------------------------------------------------------------------------
 
 
-def _verify_routing_agreement(
+def _verify_hash_routing_agreement(
     ddf_with_id: dd.DataFrame,
     *,
     key_col: str,
     num_dbs: int,
-    resolved_sharding: ShardingSpec,
-    key_encoding: KeyEncoding,
+    hash_algorithm: ShardHashAlgorithm,
     sample_size: int = 20,
 ) -> None:
-    """Sample rows and verify db_id column matches Python routing."""
+    """Sample rows and verify db_id column matches Python hash routing."""
 
-    # For CEL with non-key columns, include those columns in the sample.
-    cel_columns = (
-        resolved_sharding.cel_columns
-        if isinstance(resolved_sharding, CelShardingSpec)
-        else None
+    sampled = ddf_with_id[[key_col, DB_ID_COL]].head(
+        sample_size, npartitions=-1
     )
+    if sampled.empty:
+        return
+
+    mismatches: list[tuple[object, int, int]] = []
+    for _, row in sampled.iterrows():
+        key = row[key_col]
+        if hasattr(key, "item"):
+            key = key.item()
+        computed_db_id = int(row[DB_ID_COL])
+        expected_db_id = route_hash(
+            key,
+            num_dbs=num_dbs,
+            hash_algorithm=hash_algorithm,
+        )
+        if expected_db_id != computed_db_id:
+            mismatches.append((key, computed_db_id, expected_db_id))
+
+    if mismatches:
+        details = "; ".join(
+            f"key={k}, dask={d}, python={p}" for k, d, p in mismatches[:5]
+        )
+        raise ShardAssignmentError(
+            f"Dask/Python routing mismatch in {len(mismatches)}/{len(sampled)} "
+            f"sampled rows. First mismatches: {details}"
+        )
+
+
+def _verify_cel_routing_agreement(
+    ddf_with_id: dd.DataFrame,
+    *,
+    key_col: str,
+    num_dbs: int,
+    cel_expr: str,
+    cel_columns: dict[str, str],
+    routing_values: list[int | str | bytes] | None,
+    sample_size: int = 20,
+) -> None:
+    """Sample rows and verify db_id column matches Python CEL routing."""
+
+    # Multi-column CEL: include context columns in sample
     sample_cols = [key_col, DB_ID_COL]
-    if cel_columns is not None:
+    if set(cel_columns.keys()) != {"key"}:
         sample_cols.extend(c for c in cel_columns if c not in (key_col, DB_ID_COL))
 
     sampled = ddf_with_id[sample_cols].head(sample_size, npartitions=-1)
@@ -636,34 +671,24 @@ def _verify_routing_agreement(
     mismatches: list[tuple[object, int, int]] = []
     for _, row in sampled.iterrows():
         key = row[key_col]
-        # Convert numpy scalars to Python types for routing compatibility
         if hasattr(key, "item"):
             key = key.item()
         computed_db_id = int(row[DB_ID_COL])
 
         routing_context: dict[str, object] | None = None
-        if cel_columns is not None:
+        if set(cel_columns.keys()) != {"key"}:
             routing_context = {
                 col: row[col].item() if hasattr(row[col], "item") else row[col]
                 for col in cel_columns
             }
 
-        if isinstance(resolved_sharding, HashShardingSpec):
-            expected_db_id = route_hash(
-                key,
-                num_dbs=num_dbs,
-                hash_algorithm=resolved_sharding.hash_algorithm,
-            )
-        else:
-            assert isinstance(resolved_sharding, CelShardingSpec)
-            expected_db_id = route_cel(
-                key,
-                cel_expr=resolved_sharding.cel_expr,
-                cel_columns=resolved_sharding.cel_columns,
-                routing_values=resolved_sharding.routing_values,
-                routing_context=routing_context,
-            )
-
+        expected_db_id = route_cel(
+            key,
+            cel_expr=cel_expr,
+            cel_columns=cel_columns,
+            routing_values=routing_values,
+            routing_context=routing_context,
+        )
         if expected_db_id != computed_db_id:
             mismatches.append((key, computed_db_id, expected_db_id))
 
