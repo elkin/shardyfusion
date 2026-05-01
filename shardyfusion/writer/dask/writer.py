@@ -61,7 +61,8 @@ from shardyfusion.writer._accumulators import KvAccumulator, UnifiedAccumulator
 from .sharding import (
     VECTOR_DB_ID_COL,
     _stack_vector_values,
-    add_db_id_column,
+    add_db_id_column_cel,
+    add_db_id_column_hash,
 )
 
 _logger = get_logger(__name__)
@@ -291,12 +292,11 @@ def _write_hash_sharded(
             hash_algorithm=ShardHashAlgorithm.XXH3_64,
             max_keys_per_shard=config.max_keys_per_shard,
         )
-        ddf_with_id, resolved_sharding = add_db_id_column(
+        ddf_with_id = add_db_id_column_hash(
             ddf,
             key_col=key_col,
             num_dbs=num_dbs,
-            sharding=sharding,
-            key_encoding=config.key_encoding,
+            hash_algorithm=sharding.hash_algorithm,
         )
 
         if verify_routing and num_dbs > 0:
@@ -304,7 +304,7 @@ def _write_hash_sharded(
                 ddf_with_id,
                 key_col=key_col,
                 num_dbs=num_dbs,
-                resolved_sharding=resolved_sharding,
+                resolved_sharding=sharding,
                 key_encoding=config.key_encoding,
             )
 
@@ -357,7 +357,7 @@ def _write_hash_sharded(
             config=config,
             run_id=run_id,
             started=started,
-            resolved_sharding=resolved_sharding,
+            resolved_sharding=sharding,
             winners=winners,
             num_attempts=num_attempts,
             all_attempt_urls=all_attempt_urls,
@@ -430,20 +430,14 @@ def _write_cel_sharded(
 
         # --- Phase 1: Sharding ---
         shard_started = time.perf_counter()
-        sharding = CelShardingSpec(
+        ddf_with_id, resolved_sharding = add_db_id_column_cel(
+            ddf,
+            key_col=key_col,
             cel_expr=config.cel_expr,
             cel_columns=config.cel_columns,
             routing_values=config.routing_values,
             infer_routing_values_from_data=config.infer_routing_values_from_data,
         )
-        ddf_with_id, resolved_sharding = add_db_id_column(
-            ddf,
-            key_col=key_col,
-            num_dbs=None,
-            sharding=sharding,
-            key_encoding=config.key_encoding,
-        )
-        assert isinstance(resolved_sharding, CelShardingSpec)
 
         if resolved_sharding.routing_values is not None:
             num_dbs = resolve_cel_num_dbs(resolved_sharding)
