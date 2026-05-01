@@ -14,8 +14,6 @@ import pytest
 from shardyfusion._writer_core import route_hash
 from shardyfusion.sharding_types import (
     DB_ID_COL,
-    HashShardingSpec,
-    KeyEncoding,
     ShardHashAlgorithm,
 )
 from shardyfusion.writer.dask.sharding import add_db_id_column_hash

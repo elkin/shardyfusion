@@ -45,7 +45,6 @@ from shardyfusion.run_registry import RunRecordLifecycle
 from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import (
     DB_ID_COL,
-    CelShardingSpec,
     HashShardingSpec,
     KeyEncoding,
     ShardHashAlgorithm,
@@ -617,9 +616,7 @@ def _verify_hash_routing_agreement(
 ) -> None:
     """Sample rows and verify db_id column matches Python hash routing."""
 
-    sampled = ddf_with_id[[key_col, DB_ID_COL]].head(
-        sample_size, npartitions=-1
-    )
+    sampled = ddf_with_id[[key_col, DB_ID_COL]].head(sample_size, npartitions=-1)
     if sampled.empty:
         return
 

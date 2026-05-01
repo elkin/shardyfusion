@@ -30,9 +30,7 @@ def add_db_id_column_hash(
 
     def _apply_routing(pdf: pd.DataFrame) -> pd.DataFrame:
         db_ids = pdf[key_col].apply(
-            lambda key: route_hash(
-                key, num_dbs=num_dbs, hash_algorithm=hash_algorithm
-            )
+            lambda key: route_hash(key, num_dbs=num_dbs, hash_algorithm=hash_algorithm)
         )
         return pdf.assign(**{DB_ID_COL: db_ids})
 
@@ -55,11 +53,7 @@ def add_db_id_column_cel(
     resolved = CelShardingSpec(
         cel_expr=cel_expr,
         cel_columns=dict(cel_columns),
-        routing_values=(
-            list(routing_values)
-            if routing_values is not None
-            else None
-        ),
+        routing_values=(list(routing_values) if routing_values is not None else None),
         infer_routing_values_from_data=False,
     )
     assert resolved.cel_expr is not None and resolved.cel_columns is not None
