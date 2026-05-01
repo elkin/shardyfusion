@@ -292,9 +292,7 @@ def test_write_partition_vector_fn_uses_distributed_writer(
             all_attempt_urls=(),
         )
 
-    monkeypatch.setattr(
-        dask_writer, "write_shard_with_retry_distributed", _fake_distributed
-    )
+    monkeypatch.setattr(dask_writer, "write_shard_with_retry", _fake_distributed)
 
     runtime = dask_writer._PartitionWriteRuntime(
         run_id="run-test",
