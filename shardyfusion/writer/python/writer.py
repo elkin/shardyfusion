@@ -1069,9 +1069,9 @@ def _write_single_process_hash(
     max_total_batched_items: int | None,
     max_total_batched_bytes: int | None,
 ) -> tuple[list[ShardAttemptResult], int]:
-    get_db_id = lambda key, record: route_hash(
-        key, num_dbs=num_dbs, hash_algorithm=hash_algorithm
-    )
+    def get_db_id(key: KeyInput, record: T) -> int:
+        return route_hash(key, num_dbs=num_dbs, hash_algorithm=hash_algorithm)
+
     return _write_single_process_impl(
         records=records,
         config=config,
@@ -1114,14 +1114,17 @@ def _write_single_process_cel(
     cel_lookup = None
     if routing_values is not None:
         cel_lookup = {value: idx for idx, value in enumerate(routing_values)}
-    get_db_id = lambda key, record: route_cel(
-        key,
-        cel_expr=cel_expr,
-        cel_columns=cel_columns,
-        routing_values=routing_values,
-        routing_context=(columns_fn(record) if columns_fn is not None else None),
-        cel_lookup=cel_lookup,
-    )
+
+    def get_db_id(key: KeyInput, record: T) -> int:
+        return route_cel(
+            key,
+            cel_expr=cel_expr,
+            cel_columns=cel_columns,
+            routing_values=routing_values,
+            routing_context=(columns_fn(record) if columns_fn is not None else None),
+            cel_lookup=cel_lookup,
+        )
+
     return _write_single_process_impl(
         records=records,
         config=config,

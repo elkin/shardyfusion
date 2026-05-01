@@ -1165,9 +1165,9 @@ def _route_records_to_workers_hash(
     max_parallel_shared_memory_bytes: int | None,
     max_parallel_shared_memory_bytes_per_worker: int | None,
 ) -> None:
-    get_db_id = lambda key, record: route_hash(
-        key, num_dbs=num_dbs, hash_algorithm=hash_algorithm
-    )
+    def get_db_id(key: KeyInput, record: T) -> int:
+        return route_hash(key, num_dbs=num_dbs, hash_algorithm=hash_algorithm)
+
     return _route_records_to_workers_impl(
         runtime,
         records=records,
@@ -1202,14 +1202,17 @@ def _route_records_to_workers_cel(
     cel_lookup = None
     if routing_values is not None:
         cel_lookup = {value: idx for idx, value in enumerate(routing_values)}
-    get_db_id = lambda key, record: route_cel(
-        key,
-        cel_expr=cel_expr,
-        cel_columns=cel_columns,
-        routing_values=routing_values,
-        routing_context=(columns_fn(record) if columns_fn is not None else None),
-        cel_lookup=cel_lookup,
-    )
+
+    def get_db_id(key: KeyInput, record: T) -> int:
+        return route_cel(
+            key,
+            cel_expr=cel_expr,
+            cel_columns=cel_columns,
+            routing_values=routing_values,
+            routing_context=(columns_fn(record) if columns_fn is not None else None),
+            cel_lookup=cel_lookup,
+        )
+
     return _route_records_to_workers_impl(
         runtime,
         records=records,
@@ -1281,9 +1284,9 @@ def _route_records_to_retry_workers_hash(
     hash_algorithm: ShardHashAlgorithm,
     chunk_size: int,
 ) -> None:
-    get_db_id = lambda key, record: route_hash(
-        key, num_dbs=num_dbs, hash_algorithm=hash_algorithm
-    )
+    def get_db_id(key: KeyInput, record: T) -> int:
+        return route_hash(key, num_dbs=num_dbs, hash_algorithm=hash_algorithm)
+
     return _route_records_to_retry_workers_impl(
         runtime,
         records=records,
@@ -1314,14 +1317,17 @@ def _route_records_to_retry_workers_cel(
     cel_lookup = None
     if routing_values is not None:
         cel_lookup = {value: idx for idx, value in enumerate(routing_values)}
-    get_db_id = lambda key, record: route_cel(
-        key,
-        cel_expr=cel_expr,
-        cel_columns=cel_columns,
-        routing_values=routing_values,
-        routing_context=(columns_fn(record) if columns_fn is not None else None),
-        cel_lookup=cel_lookup,
-    )
+
+    def get_db_id(key: KeyInput, record: T) -> int:
+        return route_cel(
+            key,
+            cel_expr=cel_expr,
+            cel_columns=cel_columns,
+            routing_values=routing_values,
+            routing_context=(columns_fn(record) if columns_fn is not None else None),
+            cel_lookup=cel_lookup,
+        )
+
     return _route_records_to_retry_workers_impl(
         runtime,
         records=records,
@@ -1628,9 +1634,9 @@ def _write_parallel_hash(
     max_writes_per_second: float | None,
     max_write_bytes_per_second: float | None,
 ) -> list[ShardAttemptResult]:
-    get_db_id = lambda key, record: route_hash(
-        key, num_dbs=num_dbs, hash_algorithm=hash_algorithm
-    )
+    def get_db_id(key: KeyInput, record: T) -> int:
+        return route_hash(key, num_dbs=num_dbs, hash_algorithm=hash_algorithm)
+
     return _write_parallel_impl(
         records=records,
         config=config,
@@ -1671,14 +1677,17 @@ def _write_parallel_cel(
     cel_lookup = None
     if routing_values is not None:
         cel_lookup = {value: idx for idx, value in enumerate(routing_values)}
-    get_db_id = lambda key, record: route_cel(
-        key,
-        cel_expr=cel_expr,
-        cel_columns=cel_columns,
-        routing_values=routing_values,
-        routing_context=(columns_fn(record) if columns_fn is not None else None),
-        cel_lookup=cel_lookup,
-    )
+
+    def get_db_id(key: KeyInput, record: T) -> int:
+        return route_cel(
+            key,
+            cel_expr=cel_expr,
+            cel_columns=cel_columns,
+            routing_values=routing_values,
+            routing_context=(columns_fn(record) if columns_fn is not None else None),
+            cel_lookup=cel_lookup,
+        )
+
     return _write_parallel_impl(
         records=records,
         config=config,
