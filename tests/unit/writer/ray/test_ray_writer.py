@@ -247,9 +247,7 @@ def test_write_partition_vector_fn_uses_distributed_writer(monkeypatch) -> None:
             all_attempt_urls=(),
         )
 
-    monkeypatch.setattr(
-        ray_writer, "write_shard_with_retry_distributed", _fake_distributed
-    )
+    monkeypatch.setattr(ray_writer, "write_shard_with_retry", _fake_distributed)
 
     runtime = ray_writer._PartitionWriteRuntime(
         run_id="run-test",

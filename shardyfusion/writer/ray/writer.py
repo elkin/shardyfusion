@@ -12,10 +12,8 @@ import ray.data
 from ray.data import DataContext
 
 from shardyfusion._shard_writer import (
-    iter_pandas_rows,
     results_pdf_to_attempts,
     write_shard_with_retry,
-    write_shard_with_retry_distributed,
 )
 from shardyfusion._writer_core import (
     VectorColumnMapping,
@@ -60,6 +58,7 @@ from shardyfusion.slatedb_adapter import (
     SlateDbFactory,
 )
 from shardyfusion.type_defs import RetryConfig
+from shardyfusion.writer._accumulators import KvAccumulator, UnifiedAccumulator
 
 from .sharding import (
     VECTOR_DB_ID_COL,
@@ -172,42 +171,14 @@ def write_sharded_by_hash(
     ) = None,
     vector_columns: VectorColumnMapping | None = None,
 ) -> BuildResult:
-    """Write a Ray Dataset into N independent sharded databases using HASH routing.
-
-    Args:
-        ds: Ray Dataset containing at least the key column and value column(s).
-        config: Hash write configuration (num_dbs, s3_prefix, etc.).
-        key_col: Name of the key column used for shard routing.
-        value_spec: Specifies how DataFrame rows are serialized to bytes
-            (binary_col, json_cols, or a callable encoder).
-        sort_within_partitions: If True, sort rows by key within each partition.
-        max_writes_per_second: Optional rate limit (token-bucket) for write ops/sec.
-        max_write_bytes_per_second: Optional rate limit (token-bucket) for write bytes/sec.
-        verify_routing: If True (default), spot-check that Ray-assigned shard IDs
-            match Python routing on a sample of written rows.
-
-    Returns:
-        BuildResult with manifest reference, shard metadata, and build statistics.
-
-    Raises:
-        ConfigValidationError: If configuration is invalid.
-        ShardAssignmentError: If rows cannot be assigned to valid shard IDs.
-        ShardCoverageError: If partition results don't cover all expected shards.
-        PublishManifestError: If manifest upload to S3 fails.
-        PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
-    """
-    hash_algorithm = ShardHashAlgorithm.XXH3_64
-    sharding = HashShardingSpec(
-        hash_algorithm=hash_algorithm,
-        max_keys_per_shard=config.max_keys_per_shard,
-    )
+    """Write a Ray Dataset into N independent sharded databases using HASH routing."""
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
     num_dbs = _resolve_num_dbs_before_sharding(ds, config)
-    return _write_sharded_impl(
+
+    return _write_hash_sharded(
         ds=ds,
         config=config,
-        sharding=sharding,
         num_dbs=num_dbs,
         run_id=run_id,
         started=started,
@@ -237,43 +208,13 @@ def write_sharded_by_cel(
     ) = None,
     vector_columns: VectorColumnMapping | None = None,
 ) -> BuildResult:
-    """Write a Ray Dataset into N independent sharded databases using CEL routing.
-
-    Args:
-        ds: Ray Dataset containing at least the key column and value column(s).
-        config: CEL write configuration (cel_expr, cel_columns, etc.).
-        key_col: Name of the key column used for shard routing.
-        value_spec: Specifies how DataFrame rows are serialized to bytes
-            (binary_col, json_cols, or a callable encoder).
-        sort_within_partitions: If True, sort rows by key within each partition.
-        max_writes_per_second: Optional rate limit (token-bucket) for write ops/sec.
-        max_write_bytes_per_second: Optional rate limit (token-bucket) for write bytes/sec.
-        verify_routing: If True (default), spot-check that Ray-assigned shard IDs
-            match Python routing on a sample of written rows.
-
-    Returns:
-        BuildResult with manifest reference, shard metadata, and build statistics.
-
-    Raises:
-        ConfigValidationError: If configuration is invalid.
-        ShardAssignmentError: If rows cannot be assigned to valid shard IDs.
-        ShardCoverageError: If partition results don't cover all expected shards.
-        PublishManifestError: If manifest upload to S3 fails.
-        PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
-    """
-    sharding: ShardingSpec = CelShardingSpec(
-        cel_expr=config.cel_expr,
-        cel_columns=config.cel_columns,
-        routing_values=config.routing_values,
-        infer_routing_values_from_data=config.infer_routing_values_from_data,
-    )
+    """Write a Ray Dataset into N independent sharded databases using CEL routing."""
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
-    return _write_sharded_impl(
+
+    return _write_cel_sharded(
         ds=ds,
         config=config,
-        sharding=sharding,
-        num_dbs=None,
         run_id=run_id,
         started=started,
         key_col=key_col,
@@ -287,12 +228,11 @@ def write_sharded_by_cel(
     )
 
 
-def _write_sharded_impl(
+def _write_hash_sharded(
     *,
     ds: ray.data.Dataset,
-    config: WriteConfig,
-    sharding: ShardingSpec,
-    num_dbs: int | None,
+    config: HashWriteConfig,
+    num_dbs: int,
     run_id: str,
     started: float,
     key_col: str,
@@ -304,11 +244,28 @@ def _write_sharded_impl(
     vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
     vector_columns: VectorColumnMapping | None,
 ) -> BuildResult:
-    """Internal implementation for writing a Ray Dataset into sharded databases."""
     from shardyfusion.logging import LogContext
 
+    resolved_sharding = HashShardingSpec(
+        hash_algorithm=ShardHashAlgorithm.XXH3_64,
+        max_keys_per_shard=config.max_keys_per_shard,
+    )
+
+    has_vectors = (
+        vector_fn is not None
+        or vector_columns is not None
+        or config.vector_spec is not None
+    )
+    distributed_vector_fn = None
+    if has_vectors:
+        distributed_vector_fn = resolve_distributed_vector_fn(
+            config=config,
+            key_col=key_col,
+            vector_fn=vector_fn,
+            vector_columns=vector_columns,
+        )
+
     mc = config.metrics_collector
-    _strategy_name = "hash" if isinstance(sharding, HashShardingSpec) else "cel"
 
     with (
         LogContext(run_id=run_id),
@@ -323,24 +280,15 @@ def _write_sharded_impl(
             logger=_logger,
             num_dbs=num_dbs,
             s3_prefix=config.s3_prefix,
-            strategy=_strategy_name,
+            strategy="hash",
             key_encoding=config.key_encoding,
             writer_type="ray",
         )
         if mc is not None:
             mc.emit(MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
 
-        distributed_vector_fn = resolve_distributed_vector_fn(
-            config=config,
-            key_col=key_col,
-            vector_fn=vector_fn,
-            vector_columns=vector_columns,
-        )
         # --- Phase 1: Sharding ---
         shard_started = time.perf_counter()
-        from shardyfusion._writer_core import discover_cel_num_dbs
-
-        resolved_sharding = sharding
 
         ds_with_id, resolved_sharding = add_db_id_column(
             ds,
@@ -349,15 +297,6 @@ def _write_sharded_impl(
             sharding=resolved_sharding,
             key_encoding=config.key_encoding,
         )
-
-        # CEL: discover num_dbs from data and validate consecutive IDs
-        if num_dbs is None:
-            assert isinstance(resolved_sharding, CelShardingSpec)
-            if resolved_sharding.routing_values is not None:
-                num_dbs = resolve_cel_num_dbs(resolved_sharding)
-            else:
-                distinct_ids = set(ds_with_id.unique(DB_ID_COL))
-                num_dbs = discover_cel_num_dbs(distinct_ids)
 
         if verify_routing and num_dbs > 0:
             _verify_routing_agreement(
@@ -369,7 +308,6 @@ def _write_sharded_impl(
             )
 
         shard_duration_ms = int((time.perf_counter() - shard_started) * 1000)
-
         log_event(
             "sharding_completed",
             logger=_logger,
@@ -399,12 +337,6 @@ def _write_sharded_impl(
 
         write_started = time.perf_counter()
 
-        # Use hash shuffle for efficient repartition by db_id.
-        # HASH_SHUFFLE is the default strategy in Ray Data, so we just need
-        # shuffle=True + keys=[DB_ID_COL] for key-based co-location.
-        # Save/restore the strategy in case the caller changed it.
-        # Lock protects against concurrent write_sharded() calls racing
-        # on the process-global DataContext.shuffle_strategy.
         with _SHUFFLE_STRATEGY_LOCK:
             ctx = DataContext.get_current()
             prev_strategy = ctx.shuffle_strategy
@@ -417,7 +349,7 @@ def _write_sharded_impl(
                 ctx.shuffle_strategy = prev_strategy
 
         ds_results = ds_shuffled.map_batches(
-            _write_partition,  # type: ignore[arg-type]  # Ray stubs don't account for fn_kwargs
+            _write_partition,  # type: ignore[arg-type]
             batch_format="pandas",
             fn_kwargs={"runtime": runtime},
             zero_copy_batch=False,
@@ -450,53 +382,268 @@ def _write_sharded_impl(
             attempts, num_dbs=num_dbs
         )
 
-        if config.vector_spec is not None:
-            inject_vector_manifest_fields(config, runtime.adapter_factory)
-        manifest_started = time.perf_counter()
-        manifest_ref = publish_to_store(
+        return _finalize_sharded_write(
             config=config,
             run_id=run_id,
+            started=started,
             resolved_sharding=resolved_sharding,
             winners=winners,
-            key_col=key_col,
-            started=started,
-            num_dbs=num_dbs,
-        )
-        run_record.set_manifest_ref(manifest_ref)
-        manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
-
-        cleanup_losers(all_attempt_urls, winners, metrics_collector=mc)
-
-        result = assemble_build_result(
-            run_id=run_id,
-            winners=winners,
-            manifest_ref=manifest_ref,
-            run_record_ref=run_record.run_record_ref,
             num_attempts=num_attempts,
+            all_attempt_urls=all_attempt_urls,
             shard_duration_ms=shard_duration_ms,
             write_duration_ms=write_duration_ms,
-            manifest_duration_ms=manifest_duration_ms,
-            started=started,
+            runtime=runtime,
+            key_col=key_col,
+            num_dbs=num_dbs,
+            mc=mc,
+            run_record=run_record,
         )
 
+
+def _write_cel_sharded(
+    *,
+    ds: ray.data.Dataset,
+    config: CelWriteConfig,
+    run_id: str,
+    started: float,
+    key_col: str,
+    value_spec: ValueSpec,
+    sort_within_partitions: bool,
+    max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
+    verify_routing: bool,
+    vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
+    vector_columns: VectorColumnMapping | None,
+) -> BuildResult:
+    from shardyfusion._writer_core import discover_cel_num_dbs
+    from shardyfusion.logging import LogContext
+
+    resolved_sharding = CelShardingSpec(
+        cel_expr=config.cel_expr,
+        cel_columns=config.cel_columns,
+        routing_values=config.routing_values,
+    )
+
+    has_vectors = (
+        vector_fn is not None
+        or vector_columns is not None
+        or config.vector_spec is not None
+    )
+    distributed_vector_fn = None
+    if has_vectors:
+        distributed_vector_fn = resolve_distributed_vector_fn(
+            config=config,
+            key_col=key_col,
+            vector_fn=vector_fn,
+            vector_columns=vector_columns,
+        )
+
+    mc = config.metrics_collector
+
+    with (
+        LogContext(run_id=run_id),
+        RunRecordLifecycle.start(
+            config=config,
+            run_id=run_id,
+            writer_type="ray",
+        ) as run_record,
+    ):
         log_event(
-            "write_completed",
+            "write_started",
             logger=_logger,
-            total_ms=result.stats.durations.total_ms,
-            rows_written=result.stats.rows_written,
+            num_dbs=None,
+            s3_prefix=config.s3_prefix,
+            strategy="cel",
+            key_encoding=config.key_encoding,
+            writer_type="ray",
+        )
+        if mc is not None:
+            mc.emit(MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
+
+        # --- Phase 1: Sharding ---
+        shard_started = time.perf_counter()
+
+        ds_with_id, resolved_sharding = add_db_id_column(
+            ds,
+            key_col=key_col,
+            num_dbs=None,
+            sharding=resolved_sharding,
+            key_encoding=config.key_encoding,
+        )
+        assert isinstance(resolved_sharding, CelShardingSpec)
+
+        if resolved_sharding.routing_values is not None:
+            num_dbs = resolve_cel_num_dbs(resolved_sharding)
+        else:
+            distinct_ids = set(ds_with_id.unique(DB_ID_COL))
+            num_dbs = discover_cel_num_dbs(distinct_ids)
+
+        if verify_routing and num_dbs > 0:
+            _verify_routing_agreement(
+                ds_with_id,
+                key_col=key_col,
+                num_dbs=num_dbs,
+                resolved_sharding=resolved_sharding,
+                key_encoding=config.key_encoding,
+            )
+
+        shard_duration_ms = int((time.perf_counter() - shard_started) * 1000)
+        log_event(
+            "sharding_completed",
+            logger=_logger,
+            duration_ms=shard_duration_ms,
         )
         if mc is not None:
             mc.emit(
-                MetricEvent.WRITE_COMPLETED,
+                MetricEvent.SHARDING_COMPLETED,
                 {
                     "elapsed_ms": int((time.perf_counter() - started) * 1000),
-                    "rows_written": result.stats.rows_written,
+                    "duration_ms": shard_duration_ms,
                 },
             )
 
-        run_record.mark_succeeded()
+        # --- Phase 2: Write ---
+        runtime = _build_partition_write_runtime(
+            config=config,
+            run_id=run_id,
+            key_col=key_col,
+            value_spec=value_spec,
+            max_writes_per_second=max_writes_per_second,
+            max_write_bytes_per_second=max_write_bytes_per_second,
+            sort_within_partitions=sort_within_partitions,
+            started=started,
+            vector_fn=distributed_vector_fn,
+        )
 
-        return result
+        write_started = time.perf_counter()
+
+        with _SHUFFLE_STRATEGY_LOCK:
+            ctx = DataContext.get_current()
+            prev_strategy = ctx.shuffle_strategy
+            try:
+                ctx.shuffle_strategy = _HASH_SHUFFLE_STRATEGY  # type: ignore[assignment]
+                ds_shuffled = ds_with_id.repartition(
+                    num_dbs, shuffle=True, keys=[DB_ID_COL]
+                )
+            finally:
+                ctx.shuffle_strategy = prev_strategy
+
+        ds_results = ds_shuffled.map_batches(
+            _write_partition,  # type: ignore[arg-type]
+            batch_format="pandas",
+            fn_kwargs={"runtime": runtime},
+            zero_copy_batch=False,
+        )
+        results_pdf = ds_results.to_pandas()
+
+        attempts = results_pdf_to_attempts(results_pdf)
+        write_duration_ms = int((time.perf_counter() - write_started) * 1000)
+
+        rows_written = sum(a.row_count for a in attempts)
+        log_event(
+            "shard_writes_completed",
+            logger=_logger,
+            num_winners=len(attempts),
+            rows_written=rows_written,
+            duration_ms=write_duration_ms,
+        )
+        if mc is not None:
+            mc.emit(
+                MetricEvent.SHARD_WRITES_COMPLETED,
+                {
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                    "duration_ms": write_duration_ms,
+                    "rows_written": rows_written,
+                },
+            )
+
+        # --- Phase 3: Publish ---
+        winners, num_attempts, all_attempt_urls = select_winners(
+            attempts, num_dbs=num_dbs
+        )
+
+        return _finalize_sharded_write(
+            config=config,
+            run_id=run_id,
+            started=started,
+            resolved_sharding=resolved_sharding,
+            winners=winners,
+            num_attempts=num_attempts,
+            all_attempt_urls=all_attempt_urls,
+            shard_duration_ms=shard_duration_ms,
+            write_duration_ms=write_duration_ms,
+            runtime=runtime,
+            key_col=key_col,
+            num_dbs=num_dbs,
+            mc=mc,
+            run_record=run_record,
+        )
+
+
+def _finalize_sharded_write(
+    *,
+    config: WriteConfig,
+    run_id: str,
+    started: float,
+    resolved_sharding: ShardingSpec,
+    winners: list[RequiredShardMeta],
+    num_attempts: int,
+    all_attempt_urls: list[str],
+    shard_duration_ms: int,
+    write_duration_ms: int,
+    runtime: _PartitionWriteRuntime,
+    key_col: str,
+    num_dbs: int,
+    mc: MetricsCollector | None,
+    run_record: Any,
+) -> BuildResult:
+    """Publish manifest, cleanup losers, and assemble BuildResult."""
+    if config.vector_spec is not None:
+        inject_vector_manifest_fields(config, runtime.adapter_factory)
+    manifest_started = time.perf_counter()
+    manifest_ref = publish_to_store(
+        config=config,
+        run_id=run_id,
+        resolved_sharding=resolved_sharding,
+        winners=winners,
+        key_col=key_col,
+        started=started,
+        num_dbs=num_dbs,
+    )
+    run_record.set_manifest_ref(manifest_ref)
+    manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
+
+    cleanup_losers(all_attempt_urls, winners, metrics_collector=mc)
+
+    result = assemble_build_result(
+        run_id=run_id,
+        winners=winners,
+        manifest_ref=manifest_ref,
+        run_record_ref=run_record.run_record_ref,
+        num_attempts=num_attempts,
+        shard_duration_ms=shard_duration_ms,
+        write_duration_ms=write_duration_ms,
+        manifest_duration_ms=manifest_duration_ms,
+        started=started,
+    )
+
+    log_event(
+        "write_completed",
+        logger=_logger,
+        total_ms=result.stats.durations.total_ms,
+        rows_written=result.stats.rows_written,
+    )
+    if mc is not None:
+        mc.emit(
+            MetricEvent.WRITE_COMPLETED,
+            {
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                "rows_written": result.stats.rows_written,
+            },
+        )
+
+    run_record.mark_succeeded()
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -506,7 +653,7 @@ def _write_sharded_impl(
 
 def _resolve_num_dbs_before_sharding(
     ds: ray.data.Dataset, config: HashWriteConfig
-) -> int | None:
+) -> int:
     """Resolve num_dbs that can be determined before add_db_id_column."""
     from shardyfusion._writer_core import resolve_num_dbs
 
@@ -697,60 +844,42 @@ def _write_partition(
     results: list[dict[str, object]] = []
 
     factory: DbAdapterFactory = runtime.adapter_factory
+    accumulator_factory = (
+        UnifiedAccumulator if runtime.vector_fn is not None else KvAccumulator
+    )
 
     for db_id, group_pdf in pdf.groupby(DB_ID_COL):
         if runtime.sort_within_partitions:
             group_pdf = group_pdf.sort_values(runtime.key_col)
 
-        if runtime.vector_fn is None:
-            attempt_result = write_shard_with_retry(
-                db_id=int(db_id),  # type: ignore[arg-type]
-                rows_fn=lambda pdf=group_pdf: iter_pandas_rows(
-                    pdf, runtime.key_col, runtime.value_spec
-                ),
-                run_id=runtime.run_id,
-                s3_prefix=runtime.s3_prefix,
-                shard_prefix=runtime.shard_prefix,
-                db_path_template=runtime.db_path_template,
-                local_root=runtime.local_root,
-                key_encoder=runtime.key_encoder,
-                batch_size=runtime.batch_size,
-                factory=factory,
-                max_writes_per_second=runtime.max_writes_per_second,
-                max_write_bytes_per_second=runtime.max_write_bytes_per_second,
-                metrics_collector=runtime.metrics_collector,
-                started=runtime.started,
-                retry_config=runtime.shard_retry,
-            )
-        else:
-            vec_fn = runtime.vector_fn
-            assert vec_fn is not None
-            attempt_result = write_shard_with_retry_distributed(
-                db_id=int(db_id),  # type: ignore[arg-type]
-                rows_fn=lambda pdf=group_pdf, vec_fn=vec_fn: (
-                    (
-                        row[runtime.key_col].item()
-                        if hasattr(row[runtime.key_col], "item")
-                        else row[runtime.key_col],
-                        runtime.value_spec.encode(row),
-                        vec_fn(row),
-                    )
-                    for _, row in pdf.iterrows()
-                ),
-                run_id=runtime.run_id,
-                s3_prefix=runtime.s3_prefix,
-                shard_prefix=runtime.shard_prefix,
-                db_path_template=runtime.db_path_template,
-                local_root=runtime.local_root,
-                key_encoder=runtime.key_encoder,
-                batch_size=runtime.batch_size,
-                factory=factory,
-                max_writes_per_second=runtime.max_writes_per_second,
-                max_write_bytes_per_second=runtime.max_write_bytes_per_second,
-                metrics_collector=runtime.metrics_collector,
-                started=runtime.started,
-                retry_config=runtime.shard_retry,
-            )
+        vec_fn = runtime.vector_fn
+        attempt_result = write_shard_with_retry(
+            db_id=int(db_id),  # type: ignore[arg-type]
+            rows_fn=lambda pdf=group_pdf, vec_fn=vec_fn: (
+                (
+                    row[runtime.key_col].item()
+                    if hasattr(row[runtime.key_col], "item")
+                    else row[runtime.key_col],
+                    runtime.value_spec.encode(row),
+                    vec_fn(row) if vec_fn is not None else None,
+                )
+                for _, row in pdf.iterrows()
+            ),
+            run_id=runtime.run_id,
+            s3_prefix=runtime.s3_prefix,
+            shard_prefix=runtime.shard_prefix,
+            db_path_template=runtime.db_path_template,
+            local_root=runtime.local_root,
+            key_encoder=runtime.key_encoder,
+            batch_size=runtime.batch_size,
+            factory=factory,
+            max_writes_per_second=runtime.max_writes_per_second,
+            max_write_bytes_per_second=runtime.max_write_bytes_per_second,
+            metrics_collector=runtime.metrics_collector,
+            started=runtime.started,
+            retry_config=runtime.shard_retry,
+            accumulator_factory=accumulator_factory,
+        )
         results.append(
             {
                 "db_id": attempt_result.db_id,
