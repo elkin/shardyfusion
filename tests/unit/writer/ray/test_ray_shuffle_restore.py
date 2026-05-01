@@ -41,11 +41,11 @@ def test_shuffle_strategy_restored_on_repartition_failure() -> None:
 
     with (
         patch(
-            "shardyfusion.writer.ray.writer.add_db_id_column",
-            return_value=(mock_ds, HashShardingSpec()),
+            "shardyfusion.writer.ray.writer.add_db_id_column_hash",
+            return_value=mock_ds,
         ),
         patch(
-            "shardyfusion.writer.ray.writer._verify_routing_agreement",
+            "shardyfusion.writer.ray.writer._verify_hash_routing_agreement",
         ),
     ):
         with pytest.raises(RuntimeError, match="simulated repartition failure"):

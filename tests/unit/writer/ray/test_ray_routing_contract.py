@@ -1,7 +1,7 @@
 """Contract tests verifying Ray-computed db_id matches Python routing.
 
 Since the Ray writer uses ``route_hash()`` directly (not Spark SQL),
-this verifies end-to-end correctness of the ``add_db_id_column()``
+this verifies end-to-end correctness of the ``add_db_id_column_hash()``
 function against the canonical routing function.
 """
 
@@ -14,10 +14,9 @@ import ray.data
 from shardyfusion._writer_core import route_hash
 from shardyfusion.sharding_types import (
     DB_ID_COL,
-    HashShardingSpec,
-    KeyEncoding,
+    ShardHashAlgorithm,
 )
-from shardyfusion.writer.ray.sharding import add_db_id_column
+from shardyfusion.writer.ray.sharding import add_db_id_column_hash
 
 # Reuse edge-case keys from the main routing contract test suite.
 from tests.unit.writer.core.test_routing_contract import (
@@ -28,17 +27,15 @@ from tests.unit.writer.core.test_routing_contract import (
 
 @pytest.mark.parametrize("num_dbs", [1, 2, 3, 5, 7, 8, 16, 64, 128])
 def test_ray_python_hash_agreement_u64be(num_dbs: int) -> None:
-    """Ray add_db_id_column matches route_hash for u64be hash sharding."""
+    """Ray add_db_id_column_hash matches route_hash for u64be hash sharding."""
 
     ds = ray.data.from_items([{"id": k} for k in EDGE_CASE_KEYS], override_num_blocks=4)
-    sharding = HashShardingSpec()
 
-    result_ds, _ = add_db_id_column(
+    result_ds = add_db_id_column_hash(
         ds,
         key_col="id",
         num_dbs=num_dbs,
-        sharding=sharding,
-        key_encoding=KeyEncoding.U64BE,
+        hash_algorithm=ShardHashAlgorithm.XXH3_64,
     )
 
     for row in result_ds.take_all():
@@ -55,19 +52,17 @@ def test_ray_python_hash_agreement_u64be(num_dbs: int) -> None:
 
 @pytest.mark.parametrize("num_dbs", [1, 2, 3, 5, 8, 16, 64])
 def test_ray_python_hash_agreement_u32be(num_dbs: int) -> None:
-    """Ray add_db_id_column matches route_hash for u32be hash sharding."""
+    """Ray add_db_id_column_hash matches route_hash for u32be hash sharding."""
 
     ds = ray.data.from_items(
         [{"id": k} for k in U32_EDGE_CASE_KEYS], override_num_blocks=4
     )
-    sharding = HashShardingSpec()
 
-    result_ds, _ = add_db_id_column(
+    result_ds = add_db_id_column_hash(
         ds,
         key_col="id",
         num_dbs=num_dbs,
-        sharding=sharding,
-        key_encoding=KeyEncoding.U32BE,
+        hash_algorithm=ShardHashAlgorithm.XXH3_64,
     )
 
     for row in result_ds.take_all():
