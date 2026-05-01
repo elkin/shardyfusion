@@ -186,7 +186,7 @@ integration n="4" p="2" path="": _check-venv _check-java
 [arg('n', short='n', help='pytest-xdist workers')]
 [arg('p', short='p', help='tox parallel envs')]
 ci n="4" p="2":
-    PYTEST_WORKERS={{n}} uv run tox p -m quality,unit,integration -p {{p}}
+    PYTEST_WORKERS={{n}} uv run tox p -m quality unit integration -p {{p}}
 
 # Run unit and integration tests with coverage and produce a report
 [group('test')]
