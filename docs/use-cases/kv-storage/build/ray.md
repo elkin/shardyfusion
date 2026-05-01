@@ -25,23 +25,23 @@ uv add 'shardyfusion[writer-ray-sqlite]'
 
 ## Minimal example
 
-### SlateDB backend (default)
+### HASH (default)
 
 ```python
 import ray
-from shardyfusion import WriteConfig
-from shardyfusion.writer.ray import write_sharded
+from shardyfusion import HashWriteConfig
+from shardyfusion.writer.ray import write_sharded_by_hash
 from shardyfusion.serde import ValueSpec
 
 ray.init()
 ds = ray.data.read_parquet("s3://lake/users/")
 
-config = WriteConfig(
+config = HashWriteConfig(
     num_dbs=16,
     s3_prefix="s3://my-bucket/snapshots/users",
 )
 
-result = write_sharded(
+result = write_sharded_by_hash(
     ds,
     config,
     key_col="id",
@@ -50,12 +50,35 @@ result = write_sharded(
 print(result.manifest_ref.ref)
 ```
 
+### CEL routing
+
+```python
+from shardyfusion import CelWriteConfig
+from shardyfusion.writer.ray import write_sharded_by_cel
+from shardyfusion.serde import ValueSpec
+
+config = CelWriteConfig(
+    cel_expr='key % 16u',
+    cel_columns={"key": "int"},
+    s3_prefix="s3://my-bucket/snapshots/users-cel",
+)
+
+result = write_sharded_by_cel(
+    ds,
+    config,
+    key_col="id",
+    value_spec=ValueSpec.binary_col("payload"),
+)
+```
+
 ### SQLite backend
+
+Swap `adapter_factory` on either config:
 
 ```python
 from shardyfusion.sqlite_adapter import SqliteFactory
 
-config = WriteConfig(
+config = HashWriteConfig(
     num_dbs=16,
     s3_prefix="s3://my-bucket/snapshots/users-sqlite",
     adapter_factory=SqliteFactory(),
@@ -66,7 +89,7 @@ config = WriteConfig(
 
 ```mermaid
 flowchart TD
-    A[Ray Dataset + WriteConfig] --> B["Assign shard IDs<br/>(Arrow-native, hash or CEL)"]
+    A[Ray Dataset + HashWriteConfig / CelWriteConfig] --> B["Assign shard IDs<br/>(Arrow-native, hash or CEL)"]
     B --> C{"verify_routing?"}
     C -->|yes| D["Verify routing<br/>(sample 20 rows)"]
     C -->|no| E[Skip verification]
@@ -83,7 +106,7 @@ flowchart TD
 
 ## Configuration
 
-Ray-specific knobs on `write_sharded` (`shardyfusion/writer/ray/writer.py:154`):
+Ray-specific knobs on `write_sharded_by_hash` and `write_sharded_by_cel` (`shardyfusion/writer/ray/writer.py`):
 
 | Param | Default | Purpose |
 |---|---|---|

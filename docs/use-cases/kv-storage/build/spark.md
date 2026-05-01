@@ -27,23 +27,23 @@ uv add 'shardyfusion[writer-spark-sqlite]'
 
 ## Minimal example
 
-### SlateDB backend (default)
+### HASH (default)
 
 ```python
 from pyspark.sql import SparkSession
-from shardyfusion import WriteConfig
-from shardyfusion.writer.spark import write_sharded
+from shardyfusion import HashWriteConfig
+from shardyfusion.writer.spark import write_sharded_by_hash
 from shardyfusion.serde import ValueSpec
 
 spark = SparkSession.builder.appName("sf-build").getOrCreate()
 df = spark.read.parquet("s3://lake/users/")
 
-config = WriteConfig(
+config = HashWriteConfig(
     num_dbs=16,
     s3_prefix="s3://my-bucket/snapshots/users",
 )
 
-result = write_sharded(
+result = write_sharded_by_hash(
     df,
     config,
     key_col="id",
@@ -52,14 +52,35 @@ result = write_sharded(
 print(result.manifest_ref.ref)
 ```
 
+### CEL routing
+
+```python
+from shardyfusion import CelWriteConfig
+from shardyfusion.writer.spark import write_sharded_by_cel
+from shardyfusion.serde import ValueSpec
+
+config = CelWriteConfig(
+    cel_expr='key % 16u',
+    cel_columns={"key": "int"},
+    s3_prefix="s3://my-bucket/snapshots/users-cel",
+)
+
+result = write_sharded_by_cel(
+    df,
+    config,
+    key_col="id",
+    value_spec=ValueSpec.binary_col("payload"),
+)
+```
+
 ### SQLite backend
 
-Swap `adapter_factory`:
+Swap `adapter_factory` on either config:
 
 ```python
 from shardyfusion.sqlite_adapter import SqliteFactory
 
-config = WriteConfig(
+config = HashWriteConfig(
     num_dbs=16,
     s3_prefix="s3://my-bucket/snapshots/users-sqlite",
     adapter_factory=SqliteFactory(),
@@ -70,7 +91,7 @@ config = WriteConfig(
 
 ```mermaid
 flowchart TD
-    A[DataFrame + WriteConfig] --> B["Apply Spark conf overrides<br/>(optional)"]
+    A[DataFrame + HashWriteConfig / CelWriteConfig] --> B["Apply Spark conf overrides<br/>(optional)"]
     B --> C{"cache_input?"}
     C -->|yes| D["Persist input DataFrame"]
     C -->|no| E[Use input DataFrame as-is]
@@ -91,7 +112,7 @@ flowchart TD
 
 ## Configuration
 
-Spark-specific knobs on `write_sharded` (`shardyfusion/writer/spark/writer.py:105`):
+Spark-specific knobs on `write_sharded_by_hash` and `write_sharded_by_cel` (`shardyfusion/writer/spark/writer.py`):
 
 | Param | Default | Purpose |
 |---|---|---|
@@ -104,7 +125,7 @@ Spark-specific knobs on `write_sharded` (`shardyfusion/writer/spark/writer.py:10
 | `verify_routing` | `True` | Re-verify writer-side routing matches reader-side router. |
 | `max_writes_per_second` / `max_write_bytes_per_second` | `None` | Rate limits across all executors. |
 
-`WriteConfig` fields are the same as for the Python writer; SlateDB is the default `adapter_factory`.
+`HashWriteConfig` and `CelWriteConfig` fields are the same as for the Python writer; SlateDB is the default `adapter_factory`.
 
 ## Backend-specific properties
 

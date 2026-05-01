@@ -25,20 +25,20 @@ uv add 'shardyfusion[writer-python-sqlite]'
 
 ## Minimal example
 
-### SlateDB backend (default)
+### HASH (default)
 
 ```python
-from shardyfusion import WriteConfig, ShardedReader
-from shardyfusion.writer.python import write_sharded
+from shardyfusion import HashWriteConfig, ShardedReader
+from shardyfusion.writer.python import write_sharded_by_hash
 
 records = [{"id": i, "payload": f"row-{i}".encode()} for i in range(10_000)]
 
-config = WriteConfig(
+config = HashWriteConfig(
     num_dbs=4,
     s3_prefix="s3://my-bucket/snapshots/users",
 )
 
-result = write_sharded(
+result = write_sharded_by_hash(
     records,
     config,
     key_fn=lambda r: r["id"],
@@ -49,14 +49,40 @@ print(result.manifest_ref.ref)
 print(result.run_id)
 ```
 
+### CEL routing
+
+```python
+from shardyfusion import CelWriteConfig
+from shardyfusion.writer.python import write_sharded_by_cel
+
+records = [
+    {"id": i, "region": "us-east" if i % 2 == 0 else "eu-west", "payload": f"row-{i}".encode()}
+    for i in range(10_000)
+]
+
+config = CelWriteConfig(
+    cel_expr='key % 4u',
+    cel_columns={"key": "int"},
+    s3_prefix="s3://my-bucket/snapshots/users-cel",
+)
+
+result = write_sharded_by_cel(
+    records,
+    config,
+    key_fn=lambda r: r["id"],
+    value_fn=lambda r: r["payload"],
+    columns_fn=lambda r: {"key": r["id"]},
+)
+```
+
 ### SQLite backend
 
-Swap `adapter_factory`:
+Swap `adapter_factory` on either config:
 
 ```python
 from shardyfusion.sqlite_adapter import SqliteFactory
 
-config = WriteConfig(
+config = HashWriteConfig(
     num_dbs=4,
     s3_prefix="s3://my-bucket/snapshots/users-sqlite",
     adapter_factory=SqliteFactory(),
@@ -71,7 +97,7 @@ Everything else is identical.
 
 ```mermaid
 flowchart TD
-    A["Iterable[T] + WriteConfig"] --> B["Manage adapter lifecycle"]
+    A["Iterable[T] + HashWriteConfig / CelWriteConfig"] --> B["Manage adapter lifecycle"]
     B --> C["Shared rate limiter<br/>ops + bytes"]
     C --> D["for record in records:"]
     D --> E["Route key -> shard ID"]
@@ -95,7 +121,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A["Iterable[T] + WriteConfig"] --> B["Spawn workers<br/>one per shard, with queues"]
+    A["Iterable[T] + HashWriteConfig / CelWriteConfig"] --> B["Spawn workers<br/>one per shard, with queues"]
     B --> C["Main: for record in records:"]
     C --> D["Route key -> shard ID"]
     D --> E["Encode -> chunk -> shared memory"]
@@ -115,16 +141,16 @@ flowchart TD
 
 ## Configuration
 
-Writer signature (`shardyfusion/writer/python/writer.py:77`):
+Writer signatures (`shardyfusion/writer/python/writer.py`):
 
 ```python
-write_sharded(
+write_sharded_by_hash(
     records,
-    config,
+    config: HashWriteConfig,
     *,
     key_fn,                                          # required
     value_fn,                                        # required
-    columns_fn=None,                                 # for CEL routing context
+    columns_fn=None,                                 # for CEL routing context / vector extraction
     vector_fn=None,                                  # for unified KV+vector mode
     parallel=False,                                  # one subprocess per shard
     max_queue_size=100,
@@ -135,20 +161,43 @@ write_sharded(
     max_total_batched_items=None,
     max_total_batched_bytes=None,
 )
+
+write_sharded_by_cel(
+    records,
+    config: CelWriteConfig,
+    *,
+    key_fn,                                          # required
+    value_fn,                                        # required
+    columns_fn=None,                                 # required for CEL routing context
+    vector_fn=None,                                  # for unified KV+vector mode
+    parallel=False,
+    ...                                              # same limits as above
+)
 ```
 
-Key `WriteConfig` fields:
+Key `HashWriteConfig` fields:
 
 | Field | Default | Purpose |
 |---|---|---|
-| `num_dbs` | `None` | Number of shards. Required (>0) for HASH without `max_keys_per_shard`. |
+| `num_dbs` | `None` | Number of shards. Required (>0) unless `max_keys_per_shard` is set. |
+| `max_keys_per_shard` | `None` | Alternative to `num_dbs`; computes shard count at write time. |
 | `s3_prefix` | `""` | `s3://bucket/prefix` — required, must include non-empty key prefix. |
 | `key_encoding` | `KeyEncoding.U64BE` | How `key_fn` return value is serialized. |
 | `batch_size` | `50_000` | Pairs per write batch into the adapter. |
 | `adapter_factory` | `None` | `None` -> `SlateDbFactory()`. Swap to `SqliteFactory()` for SQLite. |
-| `sharding` | `ShardingSpec()` | Default: HASH. Override for CEL or `max_keys_per_shard`. |
 | `output.local_root` | `$TMPDIR/shardyfusion` | Where shards are staged before upload. |
 | `shard_retry` | `None` | Required for shard retries in parallel mode (uses file-spool fallback). |
+
+Key `CelWriteConfig` fields (in addition to the common fields above):
+
+| Field | Default | Purpose |
+|---|---|---|
+| `cel_expr` | `""` | CEL expression that produces a shard ID or categorical token. Required. |
+| `cel_columns` | `{}` | Mapping of CEL variable names to their types (e.g. `{"key": "int"}`). Required. |
+| `routing_values` | `None` | Optional categorical values for token-based routing. |
+| `infer_routing_values_from_data` | `False` | Discover routing values from input at write time (single-process only). |
+
+`WriteConfig` is the common base class for `HashWriteConfig` and `CelWriteConfig`. You should not instantiate it directly.
 
 ## Backend-specific properties
 
@@ -185,7 +234,7 @@ Key `WriteConfig` fields:
 
 | Failure | Surface | Recovery |
 |---|---|---|
-| Bad `WriteConfig` | `ConfigValidationError` | Fix config; nothing was written. |
+| Bad `HashWriteConfig` / `CelWriteConfig` | `ConfigValidationError` | Fix config; nothing was written. |
 | Shard write fails (transient) | `ShardWriteError`; retried if `shard_retry` set | Set `config.shard_retry`. |
 | Some shards have zero successful attempts | `ShardCoverageError` | Investigate worker logs; rerun. |
 | Manifest object PUT fails | `PublishManifestError` | Transient — rerun. |

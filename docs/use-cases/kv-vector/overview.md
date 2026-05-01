@@ -62,7 +62,7 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    A[WriteConfig.vector_spec] --> B[Adapter factory]
+    A[HashWriteConfig.vector_spec / CelWriteConfig.vector_spec] --> B[Adapter factory]
     B --> C[Manifest.custom<br/>vector.backend<br/>vector.dim<br/>vector.metric<br/>vector.index_type]
     C --> D[UnifiedShardedReader]
     D --> E{Manifest.vector.backend}
@@ -70,7 +70,7 @@ flowchart LR
     E -->|sqlite-vec| G[SqliteVecVectorReader]
 ```
 
-1. **Write time**: `VectorSpec(dim, metric, index_type, ...)` is set on `WriteConfig`. The adapter factory (composite or unified) records `vector.backend` in the manifest.
+1. **Write time**: `VectorSpec(dim, metric, index_type, ...)` is set on `HashWriteConfig` or `CelWriteConfig`. The adapter factory (composite or unified) records `vector.backend` in the manifest.
 2. **Read time**: `UnifiedShardedReader` inspects `manifest.vector.backend` and instantiates the matching vector reader automatically.
 
 ---

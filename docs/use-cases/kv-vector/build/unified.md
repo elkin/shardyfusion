@@ -27,20 +27,20 @@ uv add 'shardyfusion[unified-vector-sqlite,writer-python]'
 === "Python"
 
     ```python
-    from shardyfusion import WriteConfig, VectorSpec
-    from shardyfusion.writer.python import write_sharded
+    from shardyfusion import HashWriteConfig, VectorSpec
+    from shardyfusion.writer.python import write_sharded_by_hash
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
 
     vector_spec = VectorSpec(dim=384, metric="cosine")
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=16,
         s3_prefix="s3://my-bucket/snapshots/items",
         adapter_factory=SqliteVecFactory(vector_spec=vector_spec),
         vector_spec=vector_spec,
     )
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         records,
         config,
         key_fn=lambda r: r["id"].encode(),
@@ -52,21 +52,21 @@ uv add 'shardyfusion[unified-vector-sqlite,writer-python]'
 === "Spark"
 
     ```python
-    from shardyfusion import WriteConfig, VectorSpec
-    from shardyfusion.writer.spark import write_sharded
+    from shardyfusion import HashWriteConfig, VectorSpec
+    from shardyfusion.writer.spark import write_sharded_by_hash
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
     from shardyfusion.serde import ValueSpec
 
     vector_spec = VectorSpec(dim=384, metric="cosine")
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=16,
         s3_prefix="s3://my-bucket/snapshots/items",
         adapter_factory=SqliteVecFactory(vector_spec=vector_spec),
         vector_spec=vector_spec,
     )
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         df,
         config,
         key_col="id",
@@ -106,21 +106,21 @@ uv add 'shardyfusion[unified-vector-sqlite,writer-python]'
 === "Ray"
 
     ```python
-    from shardyfusion import WriteConfig, VectorSpec
-    from shardyfusion.writer.ray import write_sharded
+    from shardyfusion import HashWriteConfig, VectorSpec
+    from shardyfusion.writer.ray import write_sharded_by_hash
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
     from shardyfusion.serde import ValueSpec
 
     vector_spec = VectorSpec(dim=384, metric="cosine")
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=16,
         s3_prefix="s3://my-bucket/snapshots/items",
         adapter_factory=SqliteVecFactory(vector_spec=vector_spec),
         vector_spec=vector_spec,
     )
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         ds,
         config,
         key_col="id",

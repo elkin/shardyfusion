@@ -18,11 +18,11 @@ pip install shardyfusion[writer-spark-slatedb]
 ```
 
 ```python
-from shardyfusion import WriteConfig, ValueSpec
-from shardyfusion.writer.spark import write_sharded
+from shardyfusion import HashWriteConfig, ValueSpec
+from shardyfusion.writer.spark import write_sharded_by_hash
 
-config = WriteConfig(num_dbs=8, s3_prefix="s3://my-org-shardyfusion-test/spark-test")
-result = write_sharded(df, config, key_col="id", value_spec=ValueSpec.binary_col("payload"))
+config = HashWriteConfig(num_dbs=8, s3_prefix="s3://my-org-shardyfusion-test/spark-test")
+result = write_sharded_by_hash(df, config, key_col="id", value_spec=ValueSpec.binary_col("payload"))
 
 # Verify
 assert result.stats.rows_written > 0
@@ -98,12 +98,12 @@ result = write_sharded_by_hash(ddf, config, key_col="id", value_spec=ValueSpec.b
 
 ```python
 import ray
-from shardyfusion import WriteConfig, ValueSpec
-from shardyfusion.writer.ray import write_sharded
+from shardyfusion import HashWriteConfig, ValueSpec
+from shardyfusion.writer.ray import write_sharded_by_hash
 
 ds = ray.data.from_items([{"id": i, "payload": b"data"} for i in range(10000)])
-config = WriteConfig(num_dbs=8, s3_prefix="s3://my-org-shardyfusion-test/ray-test")
-result = write_sharded(ds, config, key_col="id", value_spec=ValueSpec.binary_col("payload"))
+config = HashWriteConfig(num_dbs=8, s3_prefix="s3://my-org-shardyfusion-test/ray-test")
+result = write_sharded_by_hash(ds, config, key_col="id", value_spec=ValueSpec.binary_col("payload"))
 ```
 
 - [ ] Hash sharding completes
@@ -116,17 +116,17 @@ result = write_sharded(ds, config, key_col="id", value_spec=ValueSpec.binary_col
 ### Test
 
 ```python
-from shardyfusion import WriteConfig
-from shardyfusion.writer.python import write_sharded
+from shardyfusion import HashWriteConfig
+from shardyfusion.writer.python import write_sharded_by_hash
 
 records = [{"id": i, "payload": f"value-{i}".encode()} for i in range(10000)]
-config = WriteConfig(num_dbs=4, s3_prefix="s3://my-org-shardyfusion-test/python-test")
+config = HashWriteConfig(num_dbs=4, s3_prefix="s3://my-org-shardyfusion-test/python-test")
 
 # Single-process
-result = write_sharded(records, config, key_fn=lambda r: r["id"], value_fn=lambda r: r["payload"])
+result = write_sharded_by_hash(records, config, key_fn=lambda r: r["id"], value_fn=lambda r: r["payload"])
 
 # Multi-process
-result = write_sharded(records, config, key_fn=lambda r: r["id"], value_fn=lambda r: r["payload"], parallel=True)
+result = write_sharded_by_hash(records, config, key_fn=lambda r: r["id"], value_fn=lambda r: r["payload"], parallel=True)
 ```
 
 - [ ] Single-process mode completes
@@ -156,7 +156,7 @@ connection_options: S3ConnectionOptions = {
     "addressing_style": "path",
 }
 
-config = WriteConfig(
+config = HashWriteConfig(
     num_dbs=4,
     s3_prefix="s3://my-gcs-bucket/shardyfusion-test",
     credential_provider=credential_provider,

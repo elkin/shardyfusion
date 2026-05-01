@@ -26,15 +26,15 @@ uv add 'shardyfusion[unified-vector,writer-python]'
 === "Python"
 
     ```python
-    from shardyfusion import WriteConfig, VectorSpec
-    from shardyfusion.writer.python import write_sharded
+    from shardyfusion import HashWriteConfig, VectorSpec
+    from shardyfusion.writer.python import write_sharded_by_hash
     from shardyfusion.slatedb_adapter import SlateDbFactory
     from shardyfusion.vector.adapters.lancedb_adapter import LanceDbFactory
     from shardyfusion.composite_adapter import CompositeFactory
 
     vector_spec = VectorSpec(dim=384, metric="cosine")
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=16,
         s3_prefix="s3://my-bucket/snapshots/items",
         adapter_factory=CompositeFactory(
@@ -45,7 +45,7 @@ uv add 'shardyfusion[unified-vector,writer-python]'
         vector_spec=vector_spec,
     )
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         records,
         config,
         key_fn=lambda r: r["id"].encode(),
@@ -57,8 +57,8 @@ uv add 'shardyfusion[unified-vector,writer-python]'
 === "Spark"
 
     ```python
-    from shardyfusion import WriteConfig, VectorSpec
-    from shardyfusion.writer.spark import write_sharded
+    from shardyfusion import HashWriteConfig, VectorSpec
+    from shardyfusion.writer.spark import write_sharded_by_hash
     from shardyfusion.slatedb_adapter import SlateDbFactory
     from shardyfusion.vector.adapters.lancedb_adapter import LanceDbFactory
     from shardyfusion.composite_adapter import CompositeFactory
@@ -66,7 +66,7 @@ uv add 'shardyfusion[unified-vector,writer-python]'
 
     vector_spec = VectorSpec(dim=384, metric="cosine")
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=16,
         s3_prefix="s3://my-bucket/snapshots/items",
         adapter_factory=CompositeFactory(
@@ -77,7 +77,7 @@ uv add 'shardyfusion[unified-vector,writer-python]'
         vector_spec=vector_spec,
     )
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         df,
         config,
         key_col="id",
@@ -123,8 +123,8 @@ uv add 'shardyfusion[unified-vector,writer-python]'
 === "Ray"
 
     ```python
-    from shardyfusion import WriteConfig, VectorSpec
-    from shardyfusion.writer.ray import write_sharded
+    from shardyfusion import HashWriteConfig, VectorSpec
+    from shardyfusion.writer.ray import write_sharded_by_hash
     from shardyfusion.slatedb_adapter import SlateDbFactory
     from shardyfusion.vector.adapters.lancedb_adapter import LanceDbFactory
     from shardyfusion.composite_adapter import CompositeFactory
@@ -132,7 +132,7 @@ uv add 'shardyfusion[unified-vector,writer-python]'
 
     vector_spec = VectorSpec(dim=384, metric="cosine")
 
-    config = WriteConfig(
+    config = HashWriteConfig(
         num_dbs=16,
         s3_prefix="s3://my-bucket/snapshots/items",
         adapter_factory=CompositeFactory(
@@ -143,7 +143,7 @@ uv add 'shardyfusion[unified-vector,writer-python]'
         vector_spec=vector_spec,
     )
 
-    result = write_sharded(
+    result = write_sharded_by_hash(
         ds,
         config,
         key_col="id",
@@ -155,7 +155,7 @@ uv add 'shardyfusion[unified-vector,writer-python]'
 
 ## Configuration
 
-- `VectorSpec(dim, metric, index_type="hnsw", ...)` — set on `WriteConfig.vector_spec`.
+- `VectorSpec(dim, metric, index_type="hnsw", ...)` — set on `HashWriteConfig.vector_spec` or `CelWriteConfig.vector_spec`.
 - `metric` for LanceDB: `cosine`, `l2`, `dot_product` (mapped to `"dot"` internally at `vector/adapters/lancedb_adapter.py:142`).
 - The backend (`"lancedb"`) is determined by the adapter factory; the manifest's `vector.backend` field is filled from there and used by `UnifiedShardedReader` to dispatch.
 

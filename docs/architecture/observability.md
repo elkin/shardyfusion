@@ -63,10 +63,10 @@ For the canonical, current list, query the source — `validate-docs` checks tha
 
 ```python
 from shardyfusion.metrics import PrometheusCollector
-from shardyfusion.writer.python import write_sharded
+from shardyfusion.writer.python import write_sharded_by_hash
 
 collector = PrometheusCollector()  # uses global default registry
-write_sharded(records, config, key_fn=..., value_fn=..., metrics=collector)
+write_sharded_by_hash(records, config, key_fn=..., value_fn=..., metrics=collector)
 ```
 
 Or with OTel:

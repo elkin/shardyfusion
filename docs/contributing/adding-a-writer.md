@@ -26,7 +26,7 @@ Steps 2–6 are framework-agnostic and live in `_writer_core`. Step 1 is what ma
 ```
 shardyfusion/writer/<flavor>/
 ├── __init__.py
-├── writer.py          # public entry point: build() or write_sharded()
+├── writer.py          # public entry points: write_sharded_by_hash() / write_sharded_by_cel()
 ├── sharding.py        # framework-specific row distribution
 └── (helpers)
 ```
@@ -37,12 +37,24 @@ Read `shardyfusion/writer/python/writer.py` first — it's the simplest and uses
 
 ### 1. Public entry point
 
-The signature should be familiar to users of the framework. Keep `WriteConfig` as the canonical configuration container; framework-specific knobs live on the function signature.
+The signature should be familiar to users of the framework. Provide **split entry points** by sharding strategy — one for HASH and one for CEL — each accepting the corresponding concrete config type. Framework-specific knobs live on the function signature.
 
 ```python
-def write_sharded(
+def write_sharded_by_hash(
     records: <framework-native collection>,
-    config: WriteConfig,
+    config: HashWriteConfig,
+    *,
+    key_fn: Callable[[T], KeyInput],
+    value_fn: Callable[[T], bytes],
+    columns_fn: Callable[[T], dict[str, Any]] | None = None,
+    vector_fn: Callable[[T], tuple[int | str, Any, dict[str, Any] | None]] | None = None,
+    # framework-specific knobs ...
+) -> BuildResult: ...
+
+
+def write_sharded_by_cel(
+    records: <framework-native collection>,
+    config: CelWriteConfig,
     *,
     key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
@@ -141,7 +153,7 @@ Update [`architecture/writer-core.md`](../architecture/writer-core.md) if you in
 - **Forgetting `RunRecordLifecycle.start(...)`.** Run records won't be written; loser cleanup deferred from a previous run can't progress.
 - **Top-level framework import.** Breaks the base install.
 - **Accepting `key_col` instead of `key_fn`.** Spark is the exception (DataFrame-native); for everything else, use `key_fn`.
-- **Adding new `WriteConfig` fields for one framework.** Framework knobs go on the writer function signature.
+- **Adding new fields to `HashWriteConfig` or `CelWriteConfig` for one framework.** Framework knobs go on the writer function signature; shared fields go on the `WriteConfig` base class.
 
 ## See also
 

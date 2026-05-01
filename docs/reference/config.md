@@ -2,20 +2,42 @@
 
 This page enumerates the public configuration objects. Defaults and constraints come from source — links point at file:line.
 
-## `WriteConfig`
+## `HashWriteConfig`
 
-`shardyfusion/config.py:162`. Dataclass, `slots=True`. Top-level config for sharded snapshot writes.
+`shardyfusion/config.py:260`. Dataclass, `slots=True`. Primary config for **HASH** sharded snapshot writes.
 
-Framework-specific parameters (`key_col`, `value_spec`, `sort_within_partitions`) live on the writer function signature, not here.
+Inherits all common fields from `WriteConfig` (see below) and adds:
+
+| Field | Type | Default | Purpose |
+|---|---|---|---|
+| `num_dbs` | `int \| None` | `None` | Number of shards. Required (>0) unless `max_keys_per_shard` is set. |
+| `max_keys_per_shard` | `int \| None` | `None` | Alternative to `num_dbs` — computes shard count as `ceil(total_rows / max_keys_per_shard)` at write time. |
+
+## `CelWriteConfig`
+
+`shardyfusion/config.py:289`. Dataclass, `slots=True`. Primary config for **CEL** sharded snapshot writes.
+
+Inherits all common fields from `WriteConfig` (see below) and adds:
+
+| Field | Type | Default | Purpose |
+|---|---|---|---|
+| `cel_expr` | `str` | `""` | CEL expression that produces a shard ID or categorical token. Required. |
+| `cel_columns` | `dict[str, str]` | `{}` | Mapping of CEL variable names to their types (e.g. `{"key": "int"}`). Required. |
+| `routing_values` | `list[RoutingValue] \| None` | `None` | Optional categorical values for token-based routing. |
+| `infer_routing_values_from_data` | `bool` | `False` | Discover routing values from input at write time (single-process only). |
+
+## `WriteConfig` (base class)
+
+`shardyfusion/config.py:162`. Dataclass, `slots=True`. **Base class** for `HashWriteConfig` and `CelWriteConfig`. Do not instantiate directly.
+
+Common fields inherited by both concrete configs:
 
 | Field | Type | Default |
 |---|---|---|
-| `num_dbs` | `int \| None` | `None` (must be > 0 for HASH; required to be `None` for CEL or when `max_keys_per_shard` is set) |
 | `s3_prefix` | `str` | `""` |
 | `key_encoding` | `KeyEncoding` | `KeyEncoding.U64BE` |
 | `batch_size` | `int` | `50_000` |
 | `adapter_factory` | `DbAdapterFactory \| None` | `None` (treated as `SlateDbFactory()`) |
-| `sharding` | `ShardingSpec` | `ShardingSpec()` |
 | `output` | `OutputOptions` | `OutputOptions()` |
 | `manifest` | `ManifestOptions` | `ManifestOptions()` |
 | `metrics_collector` | `MetricsCollector \| None` | `None` |
@@ -27,19 +49,25 @@ Framework-specific parameters (`key_col`, `value_spec`, `sort_within_partitions`
 
 Manifest layout (path, naming, store) is configured via the nested `manifest: ManifestOptions` field — there is no top-level `manifest_store` or `manifest_name` on `WriteConfig`.
 
-## `ShardingSpec`
+## `HashShardingSpec`
 
-`shardyfusion/sharding_types.py`. See source for the full field list; key fields:
+`shardyfusion/sharding_types.py`. Strategy-specific parameters for HASH routing:
 
-- `strategy` — `ShardingStrategy` (HASH / CEL / ...).
-- `routing_values` — closed token set (CEL strategy).
+- `hash_algorithm` — `ShardHashAlgorithm`, currently `XXH3_64` with `seed=0`.
+- `max_keys_per_shard` — soft cap (writer-side); incompatible with explicit `num_dbs`.
+
+## `CelShardingSpec`
+
+`shardyfusion/sharding_types.py`. Strategy-specific parameters for CEL routing:
+
 - `cel_expr` — CEL expression returning routing token.
 - `cel_columns` — input columns for CEL.
-- `hash_algorithm` — `ShardHashAlgorithm`, currently `XXH3_64`; serialized into every manifest.
-- `max_keys_per_shard` — soft cap (writer-side); incompatible with explicit `num_dbs`.
+- `routing_values` — closed token set (categorical CEL).
 - `infer_routing_values_from_data` — derive `routing_values` from input.
 
-`num_dbs` lives on `WriteConfig`, not `ShardingSpec`. There is no `key_column` field — key extraction is via writer-specific `key_col` / `key_fn`.
+## `ShardingSpec`
+
+Base class for `HashShardingSpec` and `CelShardingSpec`.
 
 ## `KeyEncoding`
 

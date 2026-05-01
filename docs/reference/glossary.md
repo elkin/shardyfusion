@@ -32,7 +32,7 @@
 
 **`ShardHashAlgorithm`** — Manifest-required hash algorithm for HASH routing. Currently only `XXH3_64` is supported.
 
-**`VectorSpec`** — `(dim, metric, index_type, index_params, quantization, ...)`. Set on `WriteConfig.vector_spec` for unified KV+vector flows. Backend (`"lancedb"` / `"sqlite-vec"`) is determined by the adapter factory, not by `VectorSpec`. The chosen backend is recorded in the manifest's `vector.backend` field; readers dispatch on it.
+**`VectorSpec`** — `(dim, metric, index_type, index_params, quantization, ...)`. Set on `HashWriteConfig.vector_spec` or `CelWriteConfig.vector_spec` for unified KV+vector flows. Backend (`"lancedb"` / `"sqlite-vec"`) is determined by the adapter factory, not by `VectorSpec`. The chosen backend is recorded in the manifest's `vector.backend` field; readers dispatch on it.
 
 **Standalone vector** — Vector path with no KV side. Writer: `write_vector_sharded` from `shardyfusion.vector`. Reader: `ShardedVectorReader`.
 
@@ -46,7 +46,7 @@
 
 **Snapshot pinning** — Once a reader loads a manifest, all reads use that manifest until `refresh()` is called.
 
-**`shard_retry`** — Per-shard retry budget for transient adapter failures. Lives on `WriteConfig`. Independent of framework-level task retry.
+**`shard_retry`** — Per-shard retry budget for transient adapter failures. Lives on `HashWriteConfig` / `CelWriteConfig` (inherited from the `WriteConfig` base class). Independent of framework-level task retry.
 
 **`ShardCoverageError`** — Raised when one or more shards failed to produce a database after `shard_retry` is exhausted.
 
