@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from ..config import ManifestOptions, OutputOptions
+
+if TYPE_CHECKING:
+    from ..config import VectorSpec
 from ..credentials import CredentialProvider
 from ..errors import ConfigValidationError
 from ..metrics._protocol import MetricsCollector
@@ -99,3 +102,61 @@ class VectorWriteConfig:
                 "index_config.dim must be > 0; provide an explicit "
                 f"VectorIndexConfig (got {self.index_config.dim})"
             )
+        if self.num_dbs is not None and self.num_dbs <= 0:
+            raise ConfigValidationError(f"num_dbs must be > 0, got {self.num_dbs}")
+
+    @classmethod
+    def from_vector_spec(
+        cls,
+        *,
+        vector_spec: VectorSpec,
+        num_dbs: int,
+        s3_prefix: str,
+        output: OutputOptions | None = None,
+        manifest: ManifestOptions | None = None,
+        adapter_factory: VectorIndexWriterFactory | None = None,
+        batch_size: int = 10_000,
+        max_writes_per_second: float | None = None,
+        credential_provider: CredentialProvider | None = None,
+        s3_connection_options: S3ConnectionOptions | None = None,
+        metrics_collector: MetricsCollector | None = None,
+        run_registry: RunRegistry | None = None,
+    ) -> VectorWriteConfig:
+        """Build a ``VectorWriteConfig`` from a ``VectorSpec``.
+
+        This is a convenience factory for distributed writers (Spark/Dask/Ray)
+        that mirrors the old ``HashWriteConfig`` + ``vector_spec`` pattern.
+
+        Args:
+            vector_spec: The ``VectorSpec`` carrying dim, metric, index params,
+                and sharding strategy.
+            num_dbs: Number of shard databases.
+            s3_prefix: S3 location for shards and manifests.
+            output: Optional output path/layout overrides.
+            manifest: Optional manifest build/publish overrides.
+            adapter_factory: Optional vector adapter factory.
+            batch_size: Number of vectors per write batch (default 10,000).
+            max_writes_per_second: Optional rate limit.
+            credential_provider: Optional S3 credential provider.
+            s3_connection_options: Optional S3 transport overrides.
+            metrics_collector: Optional metrics observer.
+            run_registry: Optional run registry.
+
+        Returns:
+            A fully-built ``VectorWriteConfig``.
+        """
+        return cls(
+            num_dbs=num_dbs,
+            s3_prefix=s3_prefix,
+            index_config=vector_spec.to_vector_index_config(),
+            sharding=vector_spec.to_vector_sharding_spec(),
+            output=output or OutputOptions(),
+            manifest=manifest or ManifestOptions(),
+            adapter_factory=adapter_factory,
+            batch_size=batch_size,
+            max_writes_per_second=max_writes_per_second,
+            credential_provider=credential_provider,
+            s3_connection_options=s3_connection_options,
+            metrics_collector=metrics_collector,
+            run_registry=run_registry,
+        )

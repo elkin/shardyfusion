@@ -373,16 +373,15 @@ class TestResolveVectorRouting:
             resolve_vector_routing(cfg)
 
     def test_invalid_negative_num_dbs_raises(self) -> None:
-        cfg = VectorWriteConfig(
-            num_dbs=-1,
-            s3_prefix="s3://bucket/prefix",
-            index_config=VectorIndexConfig(dim=128),
-            sharding=VectorShardingSpec(
-                strategy=VectorShardingStrategy.EXPLICIT,
-            ),
-        )
         with pytest.raises(ConfigValidationError, match="num_dbs"):
-            resolve_vector_routing(cfg)
+            VectorWriteConfig(
+                num_dbs=-1,
+                s3_prefix="s3://bucket/prefix",
+                index_config=VectorIndexConfig(dim=128),
+                sharding=VectorShardingSpec(
+                    strategy=VectorShardingStrategy.EXPLICIT,
+                ),
+            )
 
 
 class TestAssignVectorShard:
