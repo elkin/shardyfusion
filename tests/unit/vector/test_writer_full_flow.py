@@ -477,14 +477,14 @@ class TestWriteVectorShardedNoNumDbs:
 
 
 # ---------------------------------------------------------------------------
-# _publish_vector_manifest
+# publish_vector_manifest
 # ---------------------------------------------------------------------------
 
 
 class TestPublishVectorManifest:
     def test_manifest_contains_vector_custom_fields(self, tmp_path: Path) -> None:
         from shardyfusion.manifest import RequiredShardMeta
-        from shardyfusion.vector.writer import _publish_vector_manifest
+        from shardyfusion.vector._distributed import publish_vector_manifest
 
         mock_store = MagicMock()
         mock_store.publish.return_value = "s3://bucket/manifests/test/manifest"
@@ -499,7 +499,7 @@ class TestPublishVectorManifest:
             ),
         ]
 
-        ref = _publish_vector_manifest(
+        ref = publish_vector_manifest(
             config=config,
             run_id="test-run",
             num_dbs=2,
@@ -519,7 +519,7 @@ class TestPublishVectorManifest:
         assert custom["vector"]["centroids_ref"] == centroids_ref
 
     def test_manifest_with_hyperplanes(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import _publish_vector_manifest
+        from shardyfusion.vector._distributed import publish_vector_manifest
 
         mock_store = MagicMock()
         mock_store.publish.return_value = "s3://manifest"
@@ -529,7 +529,7 @@ class TestPublishVectorManifest:
 
         hp_ref = "s3://bucket/vector_meta/hyperplanes.npy"
 
-        _publish_vector_manifest(
+        publish_vector_manifest(
             config=config,
             run_id="r1",
             num_dbs=4,
@@ -546,7 +546,7 @@ class TestPublishVectorManifest:
 
     def test_manifest_without_explicit_store_creates_s3(self, tmp_path: Path) -> None:
         """When no store is provided, an S3ManifestStore is created."""
-        from shardyfusion.vector.writer import _publish_vector_manifest
+        from shardyfusion.vector._distributed import publish_vector_manifest
 
         config = _explicit_config(tmp_path, num_dbs=1)
         config.manifest.store = None
@@ -558,7 +558,7 @@ class TestPublishVectorManifest:
             mock_instance.publish.return_value = "s3://manifest"
             mock_s3_store_cls.return_value = mock_instance
 
-            ref = _publish_vector_manifest(
+            ref = publish_vector_manifest(
                 config=config,
                 run_id="r1",
                 num_dbs=1,
