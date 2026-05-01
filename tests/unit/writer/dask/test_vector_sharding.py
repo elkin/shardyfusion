@@ -18,7 +18,7 @@ from shardyfusion.writer.dask.sharding import (  # noqa: E402
     VECTOR_DB_ID_COL,
     add_vector_db_id_column,
 )
-from shardyfusion.writer.dask.writer import (
+from shardyfusion.writer.dask.vector_writer import (
     _verify_vector_routing_agreement,  # noqa: E402
 )
 

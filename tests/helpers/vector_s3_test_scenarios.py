@@ -72,9 +72,9 @@ def run_vector_cluster_write_scenario(
     bucket = local_s3_service["bucket"]
     prefix = f"{bucket}/vector-cluster-e2e/{num_records}-{dim}d"
 
-    from shardyfusion.writer.dask.writer import write_vector_sharded as dask_write
-    from shardyfusion.writer.ray.writer import write_vector_sharded as ray_write
-    from shardyfusion.writer.spark.writer import write_vector_sharded as spark_write
+    from shardyfusion.writer.dask import write_vector_sharded as dask_write
+    from shardyfusion.writer.ray import write_vector_sharded as ray_write
+    from shardyfusion.writer.spark import write_vector_sharded as spark_write
 
     config = WriteConfig(
         num_dbs=num_dbs,

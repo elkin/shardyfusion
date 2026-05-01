@@ -17,7 +17,7 @@ from shardyfusion.writer.ray.sharding import (  # noqa: E402
     VECTOR_DB_ID_COL,
     add_vector_db_id_column,
 )
-from shardyfusion.writer.ray.writer import (
+from shardyfusion.writer.ray.vector_writer import (
     _verify_vector_routing_agreement,  # noqa: E402
 )
 

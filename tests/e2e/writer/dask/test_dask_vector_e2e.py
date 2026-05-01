@@ -21,14 +21,13 @@ def test_dask_vector_cluster_write_to_sqlite(garage_s3_service, tmp_path) -> Non
     import pandas as pd
 
     from shardyfusion.config import (
-        HashWriteConfig,
         ManifestOptions,
         OutputOptions,
         VectorSpec,
     )
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-    from shardyfusion.vector.config import VectorSpecSharding
-    from shardyfusion.writer.dask.writer import write_vector_sharded
+    from shardyfusion.vector.config import VectorSpecSharding, VectorWriteConfig
+    from shardyfusion.writer.dask import write_vector_sharded
     from tests.helpers.s3_test_scenarios import _make_s3_manifest_store
 
     bucket = garage_s3_service["bucket"]
@@ -59,10 +58,10 @@ def test_dask_vector_cluster_write_to_sqlite(garage_s3_service, tmp_path) -> Non
     )
     ddf = dd.from_pandas(pdf, npartitions=4)
 
-    config = HashWriteConfig(
+    config = VectorWriteConfig.from_vector_spec(
+        vector_spec=vector_spec,
         num_dbs=num_dbs,
         s3_prefix=f"s3://{prefix}",
-        vector_spec=vector_spec,
         output=OutputOptions(run_id=run_id, local_root=str(tmp_path)),
         adapter_factory=SqliteVecFactory(
             vector_spec=vector_spec,
@@ -102,14 +101,13 @@ def test_dask_vector_lsh_write_to_sqlite(garage_s3_service, tmp_path) -> None:
     import pandas as pd
 
     from shardyfusion.config import (
-        HashWriteConfig,
         ManifestOptions,
         OutputOptions,
         VectorSpec,
     )
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-    from shardyfusion.vector.config import VectorSpecSharding
-    from shardyfusion.writer.dask.writer import write_vector_sharded
+    from shardyfusion.vector.config import VectorSpecSharding, VectorWriteConfig
+    from shardyfusion.writer.dask import write_vector_sharded
     from tests.helpers.s3_test_scenarios import _make_s3_manifest_store
 
     bucket = garage_s3_service["bucket"]
@@ -140,10 +138,10 @@ def test_dask_vector_lsh_write_to_sqlite(garage_s3_service, tmp_path) -> None:
     )
     ddf = dd.from_pandas(pdf, npartitions=4)
 
-    config = HashWriteConfig(
+    config = VectorWriteConfig.from_vector_spec(
+        vector_spec=vector_spec,
         num_dbs=num_dbs,
         s3_prefix=f"s3://{prefix}",
-        vector_spec=vector_spec,
         output=OutputOptions(run_id=run_id, local_root=str(tmp_path)),
         adapter_factory=SqliteVecFactory(
             vector_spec=vector_spec,

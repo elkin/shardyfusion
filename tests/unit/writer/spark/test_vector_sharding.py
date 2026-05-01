@@ -16,7 +16,7 @@ from shardyfusion.writer.spark.sharding import (  # noqa: E402
     VECTOR_DB_ID_COL,
     add_vector_db_id_column,
 )
-from shardyfusion.writer.spark.writer import (
+from shardyfusion.writer.spark.vector_writer import (
     verify_vector_routing_agreement,  # noqa: E402
 )
 

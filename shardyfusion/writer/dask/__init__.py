@@ -1,5 +1,6 @@
 from .single_db_writer import DaskCacheContext, write_single_db
-from .writer import write_sharded_by_cel, write_sharded_by_hash, write_vector_sharded
+from .vector_writer import write_vector_sharded
+from .writer import write_sharded_by_cel, write_sharded_by_hash
 
 __all__ = [
     "DaskCacheContext",

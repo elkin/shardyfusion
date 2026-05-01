@@ -20,14 +20,13 @@ def test_spark_vector_cluster_write_to_sqlite(
 ) -> None:
     """Spark writes 1000 vectors with CLUSTER strategy to SQLite backend."""
     from shardyfusion.config import (
-        HashWriteConfig,
         ManifestOptions,
         OutputOptions,
         VectorSpec,
     )
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-    from shardyfusion.vector.config import VectorSpecSharding
-    from shardyfusion.writer.spark.writer import write_vector_sharded
+    from shardyfusion.vector.config import VectorSpecSharding, VectorWriteConfig
+    from shardyfusion.writer.spark import write_vector_sharded
     from tests.helpers.s3_test_scenarios import _make_s3_manifest_store
 
     bucket = garage_s3_service["bucket"]
@@ -53,10 +52,10 @@ def test_spark_vector_cluster_write_to_sqlite(
     rows = [(i, vectors[i].tolist()) for i in range(num_records)]
     df = spark.createDataFrame(rows, ["id", "embedding"])
 
-    config = HashWriteConfig(
+    config = VectorWriteConfig.from_vector_spec(
+        vector_spec=vector_spec,
         num_dbs=num_dbs,
         s3_prefix=f"s3://{prefix}",
-        vector_spec=vector_spec,
         output=OutputOptions(run_id=run_id, local_root=str(tmp_path)),
         adapter_factory=SqliteVecFactory(
             vector_spec=vector_spec,
@@ -124,14 +123,13 @@ def test_spark_vector_cluster_write_to_sqlite(
 def test_spark_vector_lsh_write_to_sqlite(spark, garage_s3_service, tmp_path) -> None:
     """Spark writes 1000 vectors with LSH strategy to SQLite backend."""
     from shardyfusion.config import (
-        HashWriteConfig,
         ManifestOptions,
         OutputOptions,
         VectorSpec,
     )
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-    from shardyfusion.vector.config import VectorSpecSharding
-    from shardyfusion.writer.spark.writer import write_vector_sharded
+    from shardyfusion.vector.config import VectorSpecSharding, VectorWriteConfig
+    from shardyfusion.writer.spark import write_vector_sharded
     from tests.helpers.s3_test_scenarios import _make_s3_manifest_store
 
     bucket = garage_s3_service["bucket"]
@@ -157,10 +155,10 @@ def test_spark_vector_lsh_write_to_sqlite(spark, garage_s3_service, tmp_path) ->
     rows = [(i, vectors[i].tolist()) for i in range(num_records)]
     df = spark.createDataFrame(rows, ["id", "embedding"])
 
-    config = HashWriteConfig(
+    config = VectorWriteConfig.from_vector_spec(
+        vector_spec=vector_spec,
         num_dbs=num_dbs,
         s3_prefix=f"s3://{prefix}",
-        vector_spec=vector_spec,
         output=OutputOptions(run_id=run_id, local_root=str(tmp_path)),
         adapter_factory=SqliteVecFactory(
             vector_spec=vector_spec,
@@ -230,7 +228,6 @@ def test_spark_vector_lancedb_write_and_read(
 ) -> None:
     """Spark writes 1000 vectors to LanceDB and reads back."""
     from shardyfusion.config import (
-        HashWriteConfig,
         ManifestOptions,
         OutputOptions,
         VectorSpec,
@@ -239,9 +236,9 @@ def test_spark_vector_lancedb_write_and_read(
         LanceDbReaderFactory,
         LanceDbWriterFactory,
     )
-    from shardyfusion.vector.config import VectorSpecSharding
+    from shardyfusion.vector.config import VectorSpecSharding, VectorWriteConfig
     from shardyfusion.vector.reader import ShardedVectorReader
-    from shardyfusion.writer.spark.writer import write_vector_sharded
+    from shardyfusion.writer.spark import write_vector_sharded
     from tests.helpers.s3_test_scenarios import _make_s3_manifest_store
 
     bucket = garage_s3_service["bucket"]
@@ -269,10 +266,10 @@ def test_spark_vector_lancedb_write_and_read(
     rows = [(i, vectors[i].tolist()) for i in range(num_records)]
     df = spark.createDataFrame(rows, ["id", "embedding"])
 
-    config = HashWriteConfig(
+    config = VectorWriteConfig.from_vector_spec(
+        vector_spec=vector_spec,
         num_dbs=num_dbs,
         s3_prefix=prefix,
-        vector_spec=vector_spec,
         output=OutputOptions(run_id=run_id, local_root=str(tmp_path)),
         adapter_factory=LanceDbWriterFactory(
             credential_provider=creds,
