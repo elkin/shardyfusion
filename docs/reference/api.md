@@ -69,14 +69,14 @@ Each framework has its own subpackage. Sharded writers are split by strategy:
 - `shardyfusion.writer.dask` — `write_sharded_by_hash`, `write_sharded_by_cel`, `write_single_db`, `DaskCacheContext`.
 - `shardyfusion.writer.ray` — `write_sharded_by_hash`, `write_sharded_by_cel`, `write_single_db`, `RayCacheContext`.
 
-`write_vector_sharded` exists on Spark/Dask/Ray writers but is **not re-exported** from their `__init__.py`. Import from the module file directly.
+`write_vector_sharded` is also re-exported from `shardyfusion.writer.spark`, `.dask`, and `.ray` for distributed DataFrame/Dataset input. Distributed variants accept `VectorWriteConfig` (see `vector/config.py`) rather than `HashWriteConfig`.
 
 ## Vector
 
 `shardyfusion.vector` (also lazy):
 
 - `VectorRecord(id, vector, payload=None, shard_id=None, routing_context=None)`.
-- `VectorWriteConfig` — `num_dbs, s3_prefix, index_config, sharding, adapter_factory, batch_size`.
+- `VectorWriteConfig` — `num_dbs, s3_prefix, index_config, sharding, adapter_factory, batch_size`. Also provides `from_vector_spec(vector_spec, num_dbs, s3_prefix, ...)` for distributed writers.
 - `VectorIndexConfig(dim, metric, ...)`.
 - `VectorShardingSpec` — strategies `CLUSTER`, `LSH`, `EXPLICIT`, `CEL`.
 - `DistanceMetric` — `COSINE`, `L2`, `DOT_PRODUCT`.

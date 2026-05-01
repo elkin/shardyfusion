@@ -77,6 +77,9 @@ nav:
       - Build:
         - LanceDB: use-cases/vector/build/lancedb.md
         - sqlite-vec: use-cases/vector/build/sqlite-vec.md
+        - Spark: use-cases/vector/build/spark.md
+        - Dask: use-cases/vector/build/dask.md
+        - Ray: use-cases/vector/build/ray.md
       - Read:
         - Sync: use-cases/vector/read/sync.md
         - Async: use-cases/vector/read/async.md

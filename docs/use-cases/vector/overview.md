@@ -101,7 +101,10 @@ The manifest carries vector-specific metadata in `custom["vector"]` (centroids, 
 
 ## Child pages
 
-- **[Build → LanceDB](build/lancedb.md)** — HNSW/IVF vector index
-- **[Build → sqlite-vec](build/sqlite-vec.md)** — single-file SQLite vector index
+- **[Build → LanceDB](build/lancedb.md)** — HNSW/IVF vector index (Python single-process)
+- **[Build → sqlite-vec](build/sqlite-vec.md)** — single-file SQLite vector index (Python single-process)
+- **[Build → Spark](build/spark.md)** — distributed vector writer for PySpark DataFrames
+- **[Build → Dask](build/dask.md)** — distributed vector writer for Dask DataFrames
+- **[Build → Ray](build/ray.md)** — distributed vector writer for Ray Datasets
 - **[Read → Sync](read/sync.md)** — `ShardedVectorReader`
 - **[Read → Async](read/async.md)** — `AsyncShardedVectorReader`

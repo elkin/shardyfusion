@@ -46,6 +46,9 @@ Vector-only: write embeddings into sharded indices, query by approximate nearest
 - **Build**
   - [LanceDB](vector/build/lancedb.md)
   - [sqlite-vec](vector/build/sqlite-vec.md)
+  - [Spark](vector/build/spark.md)
+  - [Dask](vector/build/dask.md)
+  - [Ray](vector/build/ray.md)
 - **Read**
   - [Sync](vector/read/sync.md) — `ShardedVectorReader`
   - [Async](vector/read/async.md) — `AsyncShardedVectorReader`

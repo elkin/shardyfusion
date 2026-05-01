@@ -104,12 +104,18 @@ flowchart TD
     VEC_RD_AS[Async]
     VEC_LN[LanceDB]
     VEC_SV[sqlite-vec]
+    VEC_SP[Spark]
+    VEC_DK[Dask]
+    VEC_RY[Ray]
 
     VEC_OV --> VEC_BUILD
     VEC_OV --> VEC_RD_SY
     VEC_OV --> VEC_RD_AS
     VEC_BUILD --> VEC_LN
     VEC_BUILD --> VEC_SV
+    VEC_BUILD --> VEC_SP
+    VEC_BUILD --> VEC_DK
+    VEC_BUILD --> VEC_RY
   end
 
   subgraph op[" "]
@@ -156,6 +162,9 @@ flowchart TD
   click VEC_OV href "use-cases/vector/overview/"
   click VEC_LN href "use-cases/vector/build/lancedb/"
   click VEC_SV href "use-cases/vector/build/sqlite-vec/"
+  click VEC_SP href "use-cases/vector/build/spark/"
+  click VEC_DK href "use-cases/vector/build/dask/"
+  click VEC_RY href "use-cases/vector/build/ray/"
   click VEC_RD_SY href "use-cases/vector/read/sync/"
   click VEC_RD_AS href "use-cases/vector/read/async/"
 

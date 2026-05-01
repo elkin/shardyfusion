@@ -64,6 +64,16 @@ result = write_vector_sharded(records, config)
 
 Same as [LanceDB](lancedb.md), minus IVF cluster-size errors.
 
+## Distributed engines
+
+If your vectors already live in a Spark, Dask, or Ray dataset, use the distributed vector writers instead of the Python iterator-based writer:
+
+- **[Spark → vector](spark.md)** — `write_vector_sharded(df, config, vector_col=..., id_col=...)`
+- **[Dask → vector](dask.md)** — `write_vector_sharded(ddf, config, vector_col=..., id_col=...)`
+- **[Ray → vector](ray.md)** — `write_vector_sharded(ds, config, vector_col=..., id_col=...)`
+
+Distributed writers accept `VectorWriteConfig` (or build one via `VectorWriteConfig.from_vector_spec()`) and shard directly from the dataframe/dataset without collecting everything into the driver first.
+
 ## See also
 
 - [Vector Overview](../overview.md) — routing strategies, scatter-gather flow
