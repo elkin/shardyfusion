@@ -51,14 +51,27 @@ flowchart LR
 
   subgraph kv_storage_write[KV Storage — Write]
     direction TB
+    n_writer_dask("writer-dask\nDask framework (no backend)")
     n_writer_dask_sqlite("writer-dask-sqlite\nDask writer (SQLite)")
     n_writer_dask_slatedb("writer-dask-slatedb\nDask writer (SlateDB)")
     n_writer_python_sqlite("writer-python-sqlite\nPython writer (SQLite)")
     n_writer_python_slatedb("writer-python-slatedb\nPython writer (SlateDB)")
+    n_writer_ray("writer-ray\nRay framework (no backend)")
     n_writer_ray_sqlite("writer-ray-sqlite\nRay writer (SQLite)")
     n_writer_ray_slatedb("writer-ray-slatedb\nRay writer (SlateDB)")
+    n_writer_spark("writer-spark\nSpark framework (no backend)")
     n_writer_spark_sqlite("writer-spark-sqlite\nSpark writer (SQLite)")
     n_writer_spark_slatedb("writer-spark-slatedb\nSpark writer (SlateDB)")
+  end
+
+  subgraph vector_search_distributed_write[Vector Search — Distributed Write]
+    direction TB
+    n_writer_dask_vector_lancedb("writer-dask-vector-lancedb\nDask vector writer (LanceDB)")
+    n_writer_dask_vector_sqlite("writer-dask-vector-sqlite\nDask vector writer (sqlite-vec)")
+    n_writer_ray_vector_lancedb("writer-ray-vector-lancedb\nRay vector writer (LanceDB)")
+    n_writer_ray_vector_sqlite("writer-ray-vector-sqlite\nRay vector writer (sqlite-vec)")
+    n_writer_spark_vector_lancedb("writer-spark-vector-lancedb\nSpark vector writer (LanceDB)")
+    n_writer_spark_vector_sqlite("writer-spark-vector-sqlite\nSpark vector writer (sqlite-vec)")
   end
 
   subgraph vector_search[Vector Search]
@@ -115,13 +128,31 @@ flowchart LR
   n_unified_sqlite_vec --> n_cel
   n_unified_sqlite_vec --> n_vector_sqlite
   n_writer_dask_slatedb --> n_slatedb
+  n_writer_dask_slatedb --> n_writer_dask
   n_writer_dask_sqlite --> n_sqlite
+  n_writer_dask_sqlite --> n_writer_dask
+  n_writer_dask_vector_lancedb --> n_vector_lancedb
+  n_writer_dask_vector_lancedb --> n_writer_dask
+  n_writer_dask_vector_sqlite --> n_vector_sqlite
+  n_writer_dask_vector_sqlite --> n_writer_dask
   n_writer_python_slatedb --> n_slatedb
   n_writer_python_sqlite --> n_sqlite
   n_writer_ray_slatedb --> n_slatedb
+  n_writer_ray_slatedb --> n_writer_ray
   n_writer_ray_sqlite --> n_sqlite
+  n_writer_ray_sqlite --> n_writer_ray
+  n_writer_ray_vector_lancedb --> n_vector_lancedb
+  n_writer_ray_vector_lancedb --> n_writer_ray
+  n_writer_ray_vector_sqlite --> n_vector_sqlite
+  n_writer_ray_vector_sqlite --> n_writer_ray
   n_writer_spark_slatedb --> n_slatedb
+  n_writer_spark_slatedb --> n_writer_spark
   n_writer_spark_sqlite --> n_sqlite
+  n_writer_spark_sqlite --> n_writer_spark
+  n_writer_spark_vector_lancedb --> n_vector_lancedb
+  n_writer_spark_vector_lancedb --> n_writer_spark
+  n_writer_spark_vector_sqlite --> n_vector_sqlite
+  n_writer_spark_vector_sqlite --> n_writer_spark
 ```
 
 ## Full table
@@ -151,14 +182,28 @@ flowchart LR
 
 | Extra | Task | Notes |
 |---|---|---|
+| `writer-dask` | Dask framework (no backend) | dask[dataframe]. Combine with `slatedb`, `sqlite`, `vector-lancedb`, or `vector-sqlite`. |
 | `writer-dask-sqlite` | Dask writer (SQLite) | Dask DataFrame input writing SQLite shards. |
 | `writer-dask-slatedb` | Dask writer (SlateDB) | Dask DataFrame input. |
 | `writer-python-sqlite` | Python writer (SQLite) | Pure Python writing SQLite shards. |
 | `writer-python-slatedb` | Python writer (SlateDB) | Pure Python, single-process or multiprocessing. |
+| `writer-ray` | Ray framework (no backend) | ray[data]. Combine with `slatedb`, `sqlite`, `vector-lancedb`, or `vector-sqlite`. |
 | `writer-ray-sqlite` | Ray writer (SQLite) | Ray Dataset input writing SQLite shards. |
 | `writer-ray-slatedb` | Ray writer (SlateDB) | Ray Dataset input. |
+| `writer-spark` | Spark framework (no backend) | PySpark + pandas + pyarrow. Combine with `slatedb`, `sqlite`, `vector-lancedb`, or `vector-sqlite`. |
 | `writer-spark-sqlite` | Spark writer (SQLite) | Requires Java 17. PySpark ≥3.3. |
 | `writer-spark-slatedb` | Spark writer (SlateDB) | Requires Java 17. PySpark ≥3.3. |
+
+### Vector Search — Distributed Write
+
+| Extra | Task | Notes |
+|---|---|---|
+| `writer-dask-vector-lancedb` | Dask vector writer (LanceDB) | Dask DataFrame → sharded LanceDB index. |
+| `writer-dask-vector-sqlite` | Dask vector writer (sqlite-vec) | Dask DataFrame → sharded sqlite-vec index. |
+| `writer-ray-vector-lancedb` | Ray vector writer (LanceDB) | Ray Dataset → sharded LanceDB index. |
+| `writer-ray-vector-sqlite` | Ray vector writer (sqlite-vec) | Ray Dataset → sharded sqlite-vec index. |
+| `writer-spark-vector-lancedb` | Spark vector writer (LanceDB) | PySpark DataFrame → sharded LanceDB index. Requires Java 17. |
+| `writer-spark-vector-sqlite` | Spark vector writer (sqlite-vec) | PySpark DataFrame → sharded sqlite-vec index. Requires Java 17. |
 
 ### Vector Search
 

@@ -44,35 +44,66 @@ sqlite-adaptive = ["shardyfusion[sqlite]", "shardyfusion[sqlite-range]"]
 read-sqlite-adaptive = ["shardyfusion[sqlite-adaptive]"]
 sqlite-async = ["shardyfusion[read-sqlite]"]
 sqlite-adaptive-async = ["shardyfusion[sqlite-adaptive]"]
-writer-spark-slatedb = [
-  "shardyfusion[slatedb]",
+writer-spark = [
   "pyspark>=3.3",
   "pandas>=2.2",
   "pyarrow>=15.0",
 ]
+writer-spark-slatedb = [
+  "shardyfusion[writer-spark]",
+  "shardyfusion[slatedb]",
+]
 writer-spark-sqlite = [
+  "shardyfusion[writer-spark]",
   "shardyfusion[sqlite]",
-  "pyspark>=3.3",
-  "pandas>=2.2",
-  "pyarrow>=15.0",
+]
+writer-spark-vector-lancedb = [
+  "shardyfusion[writer-spark]",
+  "shardyfusion[vector-lancedb]",
+]
+writer-spark-vector-sqlite = [
+  "shardyfusion[writer-spark]",
+  "shardyfusion[vector-sqlite]",
 ]
 writer-python-slatedb = ["shardyfusion[slatedb]"]
 writer-python-sqlite = ["shardyfusion[sqlite]"]
-writer-dask-slatedb = [
-  "shardyfusion[slatedb]",
+writer-dask = [
   "dask[dataframe]>=2024.1",
+]
+writer-dask-slatedb = [
+  "shardyfusion[writer-dask]",
+  "shardyfusion[slatedb]",
 ]
 writer-dask-sqlite = [
+  "shardyfusion[writer-dask]",
   "shardyfusion[sqlite]",
-  "dask[dataframe]>=2024.1",
+]
+writer-dask-vector-lancedb = [
+  "shardyfusion[writer-dask]",
+  "shardyfusion[vector-lancedb]",
+]
+writer-dask-vector-sqlite = [
+  "shardyfusion[writer-dask]",
+  "shardyfusion[vector-sqlite]",
+]
+writer-ray = [
+  "ray[data]>=2.20",
 ]
 writer-ray-slatedb = [
+  "shardyfusion[writer-ray]",
   "shardyfusion[slatedb]",
-  "ray[data]>=2.20",
 ]
 writer-ray-sqlite = [
+  "shardyfusion[writer-ray]",
   "shardyfusion[sqlite]",
-  "ray[data]>=2.20",
+]
+writer-ray-vector-lancedb = [
+  "shardyfusion[writer-ray]",
+  "shardyfusion[vector-lancedb]",
+]
+writer-ray-vector-sqlite = [
+  "shardyfusion[writer-ray]",
+  "shardyfusion[vector-sqlite]",
 ]
 cli-minimal = [
   "click>=8.0",
@@ -103,14 +134,23 @@ all = [
   "shardyfusion[sqlite-adaptive]",
   "shardyfusion[sqlite-async]",
   "shardyfusion[sqlite-adaptive-async]",
+  "shardyfusion[writer-spark]",
   "shardyfusion[writer-spark-slatedb]",
   "shardyfusion[writer-spark-sqlite]",
+  "shardyfusion[writer-spark-vector-lancedb]",
+  "shardyfusion[writer-spark-vector-sqlite]",
   "shardyfusion[writer-python-slatedb]",
   "shardyfusion[writer-python-sqlite]",
+  "shardyfusion[writer-dask]",
   "shardyfusion[writer-dask-slatedb]",
   "shardyfusion[writer-dask-sqlite]",
+  "shardyfusion[writer-dask-vector-lancedb]",
+  "shardyfusion[writer-dask-vector-sqlite]",
+  "shardyfusion[writer-ray]",
   "shardyfusion[writer-ray-slatedb]",
   "shardyfusion[writer-ray-sqlite]",
+  "shardyfusion[writer-ray-vector-lancedb]",
+  "shardyfusion[writer-ray-vector-sqlite]",
   "shardyfusion[cli-minimal]",
   "shardyfusion[cli]",
   "shardyfusion[cel]",

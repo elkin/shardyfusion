@@ -101,6 +101,11 @@ EXTRA_META: dict[str, _Meta] = {
         "task": "Python writer (SQLite)",
         "notes": "Pure Python writing SQLite shards.",
     },
+    "writer-spark": {
+        "section": "KV Storage — Write",
+        "task": "Spark framework (no backend)",
+        "notes": "PySpark + pandas + pyarrow. Combine with `slatedb`, `sqlite`, `vector-lancedb`, or `vector-sqlite`.",
+    },
     "writer-spark-slatedb": {
         "section": "KV Storage — Write",
         "task": "Spark writer (SlateDB)",
@@ -110,6 +115,11 @@ EXTRA_META: dict[str, _Meta] = {
         "section": "KV Storage — Write",
         "task": "Spark writer (SQLite)",
         "notes": "Requires Java 17. PySpark ≥3.3.",
+    },
+    "writer-dask": {
+        "section": "KV Storage — Write",
+        "task": "Dask framework (no backend)",
+        "notes": "dask[dataframe]. Combine with `slatedb`, `sqlite`, `vector-lancedb`, or `vector-sqlite`.",
     },
     "writer-dask-slatedb": {
         "section": "KV Storage — Write",
@@ -121,6 +131,11 @@ EXTRA_META: dict[str, _Meta] = {
         "task": "Dask writer (SQLite)",
         "notes": "Dask DataFrame input writing SQLite shards.",
     },
+    "writer-ray": {
+        "section": "KV Storage — Write",
+        "task": "Ray framework (no backend)",
+        "notes": "ray[data]. Combine with `slatedb`, `sqlite`, `vector-lancedb`, or `vector-sqlite`.",
+    },
     "writer-ray-slatedb": {
         "section": "KV Storage — Write",
         "task": "Ray writer (SlateDB)",
@@ -130,6 +145,38 @@ EXTRA_META: dict[str, _Meta] = {
         "section": "KV Storage — Write",
         "task": "Ray writer (SQLite)",
         "notes": "Ray Dataset input writing SQLite shards.",
+    },
+
+    # ---- Vector Search — Distributed Write ----
+    "writer-spark-vector-lancedb": {
+        "section": "Vector Search — Distributed Write",
+        "task": "Spark vector writer (LanceDB)",
+        "notes": "PySpark DataFrame → sharded LanceDB index. Requires Java 17.",
+    },
+    "writer-spark-vector-sqlite": {
+        "section": "Vector Search — Distributed Write",
+        "task": "Spark vector writer (sqlite-vec)",
+        "notes": "PySpark DataFrame → sharded sqlite-vec index. Requires Java 17.",
+    },
+    "writer-dask-vector-lancedb": {
+        "section": "Vector Search — Distributed Write",
+        "task": "Dask vector writer (LanceDB)",
+        "notes": "Dask DataFrame → sharded LanceDB index.",
+    },
+    "writer-dask-vector-sqlite": {
+        "section": "Vector Search — Distributed Write",
+        "task": "Dask vector writer (sqlite-vec)",
+        "notes": "Dask DataFrame → sharded sqlite-vec index.",
+    },
+    "writer-ray-vector-lancedb": {
+        "section": "Vector Search — Distributed Write",
+        "task": "Ray vector writer (LanceDB)",
+        "notes": "Ray Dataset → sharded LanceDB index.",
+    },
+    "writer-ray-vector-sqlite": {
+        "section": "Vector Search — Distributed Write",
+        "task": "Ray vector writer (sqlite-vec)",
+        "notes": "Ray Dataset → sharded sqlite-vec index.",
     },
 
     # ---- Vector Search ----
@@ -214,6 +261,7 @@ SECTION_ORDER = [
     "Backend building blocks",
     "KV Storage — Read",
     "KV Storage — Write",
+    "Vector Search — Distributed Write",
     "Vector Search",
     "KV + Vector",
     "Operations & Observability",
