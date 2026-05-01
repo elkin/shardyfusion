@@ -73,7 +73,7 @@ class TestAutoVectorFn:
                 "shardyfusion.writer.python.writer._wrap_factory_for_vector",
                 side_effect=lambda f, c: f,
             ),
-            patch("shardyfusion.writer.python.writer._inject_vector_manifest_fields"),
+            patch("shardyfusion.writer.python.writer.inject_vector_manifest_fields"),
             patch(
                 "shardyfusion.writer.python.writer.publish_to_store",
                 return_value="s3://manifest",
@@ -122,7 +122,7 @@ class TestAutoVectorFn:
                 "shardyfusion.writer.python.writer._wrap_factory_for_vector",
                 side_effect=lambda f, c: f,
             ),
-            patch("shardyfusion.writer.python.writer._inject_vector_manifest_fields"),
+            patch("shardyfusion.writer.python.writer.inject_vector_manifest_fields"),
             patch(
                 "shardyfusion.writer.python.writer.publish_to_store",
                 return_value="s3://manifest",

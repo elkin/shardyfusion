@@ -13,24 +13,16 @@ from shardyfusion._writer_core import (
     assemble_build_result,
     build_categorical_routing_values,
     cleanup_losers,
+    detect_kv_backend,
+    detect_vector_backend,
+    inject_vector_manifest_fields,
     publish_to_store,
     resolve_cel_num_dbs,
     route_cel,
     route_hash,
     select_winners,
     update_min_max,
-)
-from shardyfusion._writer_core import (
-    detect_kv_backend as _core_detect_kv_backend,
-)
-from shardyfusion._writer_core import (
-    detect_vector_backend as _core_detect_vector_backend,
-)
-from shardyfusion._writer_core import (
-    inject_vector_manifest_fields as _core_inject_vector_manifest_fields,
-)
-from shardyfusion._writer_core import (
-    wrap_factory_for_vector as _core_wrap_factory_for_vector,
+    wrap_factory_for_vector,
 )
 from shardyfusion.config import CelWriteConfig, HashWriteConfig, WriteConfig
 from shardyfusion.errors import ConfigValidationError
@@ -156,17 +148,9 @@ def write_sharded_by_hash(
         PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
         ShardyfusionError: If a worker process fails in parallel mode.
     """
-    hash_algorithm = ShardHashAlgorithm.XXH3_64
-    sharding = HashShardingSpec(
-        hash_algorithm=hash_algorithm,
-        max_keys_per_shard=config.max_keys_per_shard,
-    )
-    num_dbs = _resolve_num_dbs_before_sharding(records, config)
-    return _write_sharded_impl(
+    return _write_hash_sharded(
         records=records,
         config=config,
-        sharding=sharding,
-        num_dbs=num_dbs,
         key_fn=key_fn,
         value_fn=value_fn,
         columns_fn=columns_fn,
@@ -248,6 +232,170 @@ def write_sharded_by_cel(
         PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
         ShardyfusionError: If a worker process fails in parallel mode.
     """
+    return _write_cel_sharded(
+        records=records,
+        config=config,
+        key_fn=key_fn,
+        value_fn=value_fn,
+        columns_fn=columns_fn,
+        vector_fn=vector_fn,
+        parallel=parallel,
+        max_queue_size=max_queue_size,
+        max_parallel_shared_memory_bytes=max_parallel_shared_memory_bytes,
+        max_parallel_shared_memory_bytes_per_worker=max_parallel_shared_memory_bytes_per_worker,
+        max_writes_per_second=max_writes_per_second,
+        max_write_bytes_per_second=max_write_bytes_per_second,
+        max_total_batched_items=max_total_batched_items,
+        max_total_batched_bytes=max_total_batched_bytes,
+    )
+
+
+def _write_hash_sharded(
+    records: Iterable[T],
+    config: HashWriteConfig,
+    *,
+    key_fn: Callable[[T], KeyInput],
+    value_fn: Callable[[T], bytes],
+    columns_fn: Callable[[T], dict[str, Any]] | None = None,
+    vector_fn: Callable[[T], tuple[int | str, Any, dict[str, Any] | None]]
+    | None = None,
+    parallel: bool = False,
+    max_queue_size: int = 100,
+    max_parallel_shared_memory_bytes: int | None = (
+        _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES
+    ),
+    max_parallel_shared_memory_bytes_per_worker: int | None = (
+        _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER
+    ),
+    max_writes_per_second: float | None = None,
+    max_write_bytes_per_second: float | None = None,
+    max_total_batched_items: int | None = None,
+    max_total_batched_bytes: int | None = None,
+) -> BuildResult:
+    from shardyfusion.logging import LogContext
+
+    sharding = HashShardingSpec(
+        hash_algorithm=ShardHashAlgorithm.XXH3_64,
+        max_keys_per_shard=config.max_keys_per_shard,
+    )
+    num_dbs = _resolve_num_dbs_before_sharding(records, config)
+
+    _validate_parallel_shared_memory_limit(
+        max_parallel_shared_memory_bytes,
+        field_name="max_parallel_shared_memory_bytes",
+    )
+    _validate_parallel_shared_memory_limit(
+        max_parallel_shared_memory_bytes_per_worker,
+        field_name="max_parallel_shared_memory_bytes_per_worker",
+    )
+
+    has_vectors, vector_fn, factory = _resolve_vector_fn_and_factory(
+        config=config,
+        vector_fn=vector_fn,
+        columns_fn=columns_fn,
+        key_fn=key_fn,
+    )
+    if parallel and has_vectors:
+        raise ConfigValidationError(
+            "Parallel mode is not supported for unified KV+vector writes."
+        )
+
+    run_id = config.output.run_id or uuid4().hex
+    started = time.perf_counter()
+    mc = config.metrics_collector
+
+    with (
+        LogContext(run_id=run_id),
+        RunRecordLifecycle.start(
+            config=config,
+            run_id=run_id,
+            writer_type="python",
+        ) as run_record,
+    ):
+        log_event(
+            "write_started",
+            logger=_logger,
+            num_dbs=num_dbs,
+            s3_prefix=config.s3_prefix,
+            strategy="hash",
+            key_encoding=config.key_encoding,
+            writer_type="python",
+        )
+        if mc is not None:
+            mc.emit(MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
+
+        if parallel:
+            attempts = _write_parallel(
+                records=records,
+                config=config,
+                sharding=sharding,
+                num_dbs=num_dbs,
+                run_id=run_id,
+                factory=factory,
+                key_fn=key_fn,
+                value_fn=value_fn,
+                columns_fn=columns_fn,
+                max_queue_size=max_queue_size,
+                max_parallel_shared_memory_bytes=max_parallel_shared_memory_bytes,
+                max_parallel_shared_memory_bytes_per_worker=max_parallel_shared_memory_bytes_per_worker,
+                max_writes_per_second=max_writes_per_second,
+                max_write_bytes_per_second=max_write_bytes_per_second,
+            )
+        else:
+            attempts, num_dbs = _write_single_process(
+                records=records,
+                config=config,
+                sharding=sharding,
+                num_dbs=num_dbs,
+                run_id=run_id,
+                factory=factory,
+                key_fn=key_fn,
+                value_fn=value_fn,
+                columns_fn=columns_fn,
+                vector_fn=vector_fn,
+                max_writes_per_second=max_writes_per_second,
+                max_write_bytes_per_second=max_write_bytes_per_second,
+                max_total_batched_items=max_total_batched_items,
+                max_total_batched_bytes=max_total_batched_bytes,
+            )
+
+        return _finalize_python_write(
+            config=config,
+            run_id=run_id,
+            started=started,
+            sharding=sharding,
+            attempts=attempts,
+            num_dbs=num_dbs,
+            factory=factory,
+            mc=mc,
+            run_record=run_record,
+        )
+
+
+def _write_cel_sharded(
+    records: Iterable[T],
+    config: CelWriteConfig,
+    *,
+    key_fn: Callable[[T], KeyInput],
+    value_fn: Callable[[T], bytes],
+    columns_fn: Callable[[T], dict[str, Any]] | None = None,
+    vector_fn: Callable[[T], tuple[int | str, Any, dict[str, Any] | None]]
+    | None = None,
+    parallel: bool = False,
+    max_queue_size: int = 100,
+    max_parallel_shared_memory_bytes: int | None = (
+        _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES
+    ),
+    max_parallel_shared_memory_bytes_per_worker: int | None = (
+        _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER
+    ),
+    max_writes_per_second: float | None = None,
+    max_write_bytes_per_second: float | None = None,
+    max_total_batched_items: int | None = None,
+    max_total_batched_bytes: int | None = None,
+) -> BuildResult:
+    from shardyfusion.logging import LogContext
+
     sharding: ShardingSpec = CelShardingSpec(
         cel_expr=config.cel_expr,
         cel_columns=config.cel_columns,
@@ -273,86 +421,6 @@ def write_sharded_by_cel(
         resolve_cel_num_dbs(sharding) if sharding.routing_values is not None else None
     )
 
-    return _write_sharded_impl(
-        records=records,
-        config=config,
-        sharding=sharding,
-        num_dbs=num_dbs,
-        key_fn=key_fn,
-        value_fn=value_fn,
-        columns_fn=columns_fn,
-        vector_fn=vector_fn,
-        parallel=parallel,
-        max_queue_size=max_queue_size,
-        max_parallel_shared_memory_bytes=max_parallel_shared_memory_bytes,
-        max_parallel_shared_memory_bytes_per_worker=max_parallel_shared_memory_bytes_per_worker,
-        max_writes_per_second=max_writes_per_second,
-        max_write_bytes_per_second=max_write_bytes_per_second,
-        max_total_batched_items=max_total_batched_items,
-        max_total_batched_bytes=max_total_batched_bytes,
-    )
-
-
-def _write_sharded_impl(
-    records: Iterable[T],
-    config: WriteConfig,
-    sharding: ShardingSpec,
-    num_dbs: int | None,
-    *,
-    key_fn: Callable[[T], KeyInput],
-    value_fn: Callable[[T], bytes],
-    columns_fn: Callable[[T], dict[str, Any]] | None = None,
-    vector_fn: Callable[[T], tuple[int | str, Any, dict[str, Any] | None]]
-    | None = None,
-    parallel: bool = False,
-    max_queue_size: int = 100,
-    max_parallel_shared_memory_bytes: int | None = (
-        _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES
-    ),
-    max_parallel_shared_memory_bytes_per_worker: int | None = (
-        _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER
-    ),
-    max_writes_per_second: float | None = None,
-    max_write_bytes_per_second: float | None = None,
-    max_total_batched_items: int | None = None,
-    max_total_batched_bytes: int | None = None,
-) -> BuildResult:
-    """Internal implementation for writing an iterable of records into N sharded databases."""
-
-    from shardyfusion.logging import LogContext
-
-    if vector_fn is not None and config.vector_spec is None:
-        raise ConfigValidationError("vector_fn requires config.vector_spec to be set")
-    if config.vector_spec is not None and vector_fn is None:
-        if config.vector_spec.vector_col is None:
-            raise ConfigValidationError(
-                "config.vector_spec is set but no vector_fn was provided "
-                "and vector_spec.vector_col is None. Either provide vector_fn "
-                "or set vector_spec.vector_col for auto-extraction via columns_fn."
-            )
-        if columns_fn is None:
-            raise ConfigValidationError(
-                "config.vector_spec.vector_col is set but columns_fn is None. "
-                "Provide columns_fn so vectors can be extracted from "
-                f"the {config.vector_spec.vector_col!r} column."
-            )
-        # Auto-build vector_fn from vector_col + columns_fn
-        _vector_col = config.vector_spec.vector_col
-        _columns_fn = columns_fn
-        _key_fn = key_fn
-
-        def _auto_vector_fn(
-            record: T,
-        ) -> tuple[int | str, Any, dict[str, Any] | None]:
-            cols = _columns_fn(record)  # type: ignore[misc]
-            vec = cols[_vector_col]  # type: ignore[index]
-            key = _key_fn(record)
-            # Vector IDs must be int|str; convert bytes keys to hex string
-            vec_id: int | str = key if isinstance(key, (int, str)) else key.hex()
-            return (vec_id, vec, None)
-
-        vector_fn = _auto_vector_fn
-
     _validate_parallel_shared_memory_limit(
         max_parallel_shared_memory_bytes,
         field_name="max_parallel_shared_memory_bytes",
@@ -361,6 +429,17 @@ def _write_sharded_impl(
         max_parallel_shared_memory_bytes_per_worker,
         field_name="max_parallel_shared_memory_bytes_per_worker",
     )
+
+    has_vectors, vector_fn, factory = _resolve_vector_fn_and_factory(
+        config=config,
+        vector_fn=vector_fn,
+        columns_fn=columns_fn,
+        key_fn=key_fn,
+    )
+    if parallel and has_vectors:
+        raise ConfigValidationError(
+            "Parallel mode is not supported for unified KV+vector writes."
+        )
 
     run_id = config.output.run_id or uuid4().hex
     started = time.perf_counter()
@@ -379,26 +458,12 @@ def _write_sharded_impl(
             logger=_logger,
             num_dbs=num_dbs,
             s3_prefix=config.s3_prefix,
-            strategy=_sharding_strategy_name(sharding),
+            strategy="cel",
             key_encoding=config.key_encoding,
             writer_type="python",
         )
         if mc is not None:
             mc.emit(MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
-
-        factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory(
-            credential_provider=config.credential_provider
-        )
-
-        # Wrap factory for unified KV + vector mode
-        if config.vector_spec is not None:
-            if parallel:
-                raise ConfigValidationError(
-                    "Parallel mode is not supported with vector_spec. "
-                    "The parallel pipeline does not write vector batches. "
-                    "Use single-process mode (parallel=False) instead."
-                )
-            factory = _wrap_factory_for_vector(factory, config)
 
         if parallel:
             if num_dbs is None:
@@ -441,84 +506,166 @@ def _write_sharded_impl(
                 max_total_batched_bytes=max_total_batched_bytes,
             )
 
-        write_duration_ms = int((time.perf_counter() - started) * 1000)
-
-        rows_written = sum(a.row_count for a in attempts)
-        log_event(
-            "shard_writes_completed",
-            logger=_logger,
-            rows_written=rows_written,
-            duration_ms=write_duration_ms,
-        )
-        if mc is not None:
-            mc.emit(
-                MetricEvent.SHARD_WRITES_COMPLETED,
-                {
-                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
-                    "duration_ms": write_duration_ms,
-                    "rows_written": rows_written,
-                },
-            )
-
-        winners, num_attempts, all_attempt_urls = select_winners(
-            attempts, num_dbs=num_dbs
-        )
-
-        # Inject vector metadata into manifest custom fields
-        if config.vector_spec is not None:
-            _inject_vector_manifest_fields(config, factory)
-
-        manifest_started = time.perf_counter()
-        manifest_ref = publish_to_store(
+        assert num_dbs is not None
+        return _finalize_python_write(
             config=config,
             run_id=run_id,
-            resolved_sharding=sharding,
-            winners=winners,
-            key_col="_key",
             started=started,
+            sharding=sharding,
+            attempts=attempts,
             num_dbs=num_dbs,
-        )
-        run_record.set_manifest_ref(manifest_ref)
-        manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
-
-        cleanup_losers(all_attempt_urls, winners, metrics_collector=mc)
-
-        result = assemble_build_result(
-            run_id=run_id,
-            winners=winners,
-            manifest_ref=manifest_ref,
-            run_record_ref=run_record.run_record_ref,
-            num_attempts=num_attempts,
-            shard_duration_ms=0,
-            write_duration_ms=write_duration_ms,
-            manifest_duration_ms=manifest_duration_ms,
-            started=started,
+            factory=factory,
+            mc=mc,
+            run_record=run_record,
         )
 
-        log_event(
-            "write_completed",
-            logger=_logger,
-            total_ms=result.stats.durations.total_ms,
-            rows_written=result.stats.rows_written,
+
+def _finalize_python_write(
+    *,
+    config: WriteConfig,
+    run_id: str,
+    started: float,
+    sharding: ShardingSpec,
+    attempts: list[ShardAttemptResult],
+    num_dbs: int,
+    factory: DbAdapterFactory,
+    mc: Any | None,
+    run_record: Any,
+) -> BuildResult:
+    """Select winners, publish manifest, cleanup, and assemble BuildResult."""
+    write_duration_ms = int((time.perf_counter() - started) * 1000)
+
+    rows_written = sum(a.row_count for a in attempts)
+    log_event(
+        "shard_writes_completed",
+        logger=_logger,
+        rows_written=rows_written,
+        duration_ms=write_duration_ms,
+    )
+    if mc is not None:
+        mc.emit(
+            MetricEvent.SHARD_WRITES_COMPLETED,
+            {
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                "duration_ms": write_duration_ms,
+                "rows_written": rows_written,
+            },
         )
-        if mc is not None:
-            mc.emit(
-                MetricEvent.WRITE_COMPLETED,
-                {
-                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
-                    "rows_written": result.stats.rows_written,
-                },
-            )
 
-        run_record.mark_succeeded()
+    winners, num_attempts, all_attempt_urls = select_winners(attempts, num_dbs=num_dbs)
 
+    if config.vector_spec is not None:
+        inject_vector_manifest_fields(config, factory)
+
+    manifest_started = time.perf_counter()
+    manifest_ref = publish_to_store(
+        config=config,
+        run_id=run_id,
+        resolved_sharding=sharding,
+        winners=winners,
+        key_col="_key",
+        started=started,
+        num_dbs=num_dbs,
+    )
+    run_record.set_manifest_ref(manifest_ref)
+    manifest_duration_ms = int((time.perf_counter() - manifest_started) * 1000)
+
+    cleanup_losers(all_attempt_urls, winners, metrics_collector=mc)
+
+    result = assemble_build_result(
+        run_id=run_id,
+        winners=winners,
+        manifest_ref=manifest_ref,
+        run_record_ref=run_record.run_record_ref,
+        num_attempts=num_attempts,
+        shard_duration_ms=0,
+        write_duration_ms=write_duration_ms,
+        manifest_duration_ms=manifest_duration_ms,
+        started=started,
+    )
+
+    log_event(
+        "write_completed",
+        logger=_logger,
+        total_ms=result.stats.durations.total_ms,
+        rows_written=result.stats.rows_written,
+    )
+    if mc is not None:
+        mc.emit(
+            MetricEvent.WRITE_COMPLETED,
+            {
+                "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                "rows_written": result.stats.rows_written,
+            },
+        )
+
+    run_record.mark_succeeded()
     return result
+
+
+def _resolve_vector_fn_and_factory(
+    *,
+    config: WriteConfig,
+    vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
+    columns_fn: Callable[[Any], dict[str, Any]] | None,
+    key_fn: Callable[[Any], KeyInput] | None = None,
+) -> tuple[
+    bool,
+    Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
+    DbAdapterFactory,
+]:
+    """Validate vector config, auto-build vector_fn if needed, wrap factory.
+
+    Returns (has_vectors, resolved_vector_fn, factory).
+    Raises ConfigValidationError eagerly for invalid combinations.
+    """
+    has_vectors = vector_fn is not None or config.vector_spec is not None
+    if has_vectors:
+        if vector_fn is not None and config.vector_spec is None:
+            raise ConfigValidationError(
+                "vector_fn requires config.vector_spec to be set"
+            )
+        if config.vector_spec is not None and vector_fn is None:
+            if config.vector_spec.vector_col is None:
+                raise ConfigValidationError(
+                    "config.vector_spec is set but no vector_fn was provided "
+                    "and vector_spec.vector_col is None. Either provide vector_fn "
+                    "or set vector_spec.vector_col for auto-extraction via columns_fn."
+                )
+            if columns_fn is None:
+                raise ConfigValidationError(
+                    "config.vector_spec.vector_col is set but columns_fn is None. "
+                    "Provide columns_fn so vectors can be extracted from "
+                    f"the {config.vector_spec.vector_col!r} column."
+                )
+            _vector_col = config.vector_spec.vector_col
+            _columns_fn = columns_fn
+            _key_fn = key_fn
+
+            def _auto_vector_fn(
+                record: Any,
+            ) -> tuple[int | str, Any, dict[str, Any] | None]:
+                cols = _columns_fn(record)  # type: ignore[misc]
+                vec = cols[_vector_col]  # type: ignore[index]
+                key = _key_fn(record)  # type: ignore[misc]
+                vec_id: int | str = key if isinstance(key, (int, str)) else key.hex()
+                return (vec_id, vec, None)
+
+            vector_fn = _auto_vector_fn
+
+    factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory(
+        credential_provider=config.credential_provider
+    )
+    if has_vectors:
+        factory = wrap_factory_for_vector(factory, config)
+
+    return has_vectors, vector_fn, factory
 
 
 def _resolve_num_dbs_before_sharding(
     records: Iterable[Any],
     config: HashWriteConfig,
-) -> int | None:
+) -> int:
     """Resolve num_dbs that can be determined before writing.
 
     Returns ``None`` for CEL (discovered during iteration from data).
@@ -1003,26 +1150,24 @@ def _write_single_process(
     ), num_dbs
 
 
-# ---------------------------------------------------------------------------
-# Unified KV + vector helpers
-# ---------------------------------------------------------------------------
+# Backward-compatible aliases for tests and internal callers
 
 
 def _wrap_factory_for_vector(
     factory: DbAdapterFactory, config: WriteConfig
 ) -> DbAdapterFactory:
-    return _core_wrap_factory_for_vector(factory, config)
+    return wrap_factory_for_vector(factory, config)
 
 
 def _detect_vector_backend(factory: DbAdapterFactory) -> str:
-    return _core_detect_vector_backend(factory)
+    return detect_vector_backend(factory)
 
 
 def _detect_kv_backend(factory: DbAdapterFactory) -> str:
-    return _core_detect_kv_backend(factory)
+    return detect_kv_backend(factory)
 
 
 def _inject_vector_manifest_fields(
     config: WriteConfig, factory: DbAdapterFactory
 ) -> None:
-    _core_inject_vector_manifest_fields(config, factory)
+    inject_vector_manifest_fields(config, factory)
