@@ -32,9 +32,7 @@ def add_db_id_column_hash(
         ]
         return table.append_column(DB_ID_COL, pa.array(db_ids, type=pa.int64()))
 
-    return ds.map_batches(
-        _apply_routing, batch_format="pyarrow", zero_copy_batch=True
-    )
+    return ds.map_batches(_apply_routing, batch_format="pyarrow", zero_copy_batch=True)
 
 
 def add_db_id_column_cel(

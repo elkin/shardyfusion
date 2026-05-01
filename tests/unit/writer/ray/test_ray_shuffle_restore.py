@@ -14,7 +14,6 @@ from shardyfusion.config import (
     OutputOptions,
 )
 from shardyfusion.manifest_store import InMemoryManifestStore
-from shardyfusion.sharding_types import HashShardingSpec
 from shardyfusion.writer.ray import write_sharded_by_hash
 
 
