@@ -34,7 +34,7 @@ from shardyfusion.logging import FailureSeverity, get_logger, log_failure
 from shardyfusion.manifest import WriterInfo
 from shardyfusion.metrics import MetricEvent
 from shardyfusion.serde import make_key_encoder
-from shardyfusion.sharding_types import CelShardingSpec, HashShardingSpec, ShardingSpec
+from shardyfusion.sharding_types import ShardHashAlgorithm
 from shardyfusion.slatedb_adapter import DbAdapterFactory
 from shardyfusion.storage import join_s3
 from shardyfusion.type_defs import KeyInput, RetryConfig
@@ -1098,36 +1098,23 @@ def _send_chunk(
     runtime.chunk_byte_sizes[db_id] = 0
 
 
-def _route_records_to_workers(
+def _route_records_to_workers_impl(
     runtime: _ParallelRuntime,
     *,
     records: Iterable[T],
     config: WriteConfig,
-    sharding: ShardingSpec,
     num_dbs: int,
     key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
     columns_fn: Callable[[T], dict[str, Any]] | None,
+    get_db_id: Callable[[KeyInput, T], int],
     chunk_size: int,
     max_parallel_shared_memory_bytes: int | None,
     max_parallel_shared_memory_bytes_per_worker: int | None,
 ) -> None:
     for record in records:
         key = key_fn(record)
-        routing_context = columns_fn(record) if columns_fn is not None else None
-        if isinstance(sharding, HashShardingSpec):
-            db_id = route_hash(
-                key, num_dbs=num_dbs, hash_algorithm=sharding.hash_algorithm
-            )
-        else:
-            assert isinstance(sharding, CelShardingSpec)
-            db_id = route_cel(
-                key,
-                cel_expr=sharding.cel_expr,
-                cel_columns=sharding.cel_columns,
-                routing_values=sharding.routing_values,
-                routing_context=routing_context,
-            )
+        db_id = get_db_id(key, record)
         key_bytes = runtime.key_encoder(key)
         value_bytes = value_fn(record)
         pair_bytes = (
@@ -1164,16 +1151,90 @@ def _route_records_to_workers(
             )
 
 
-def _route_records_to_retry_workers(
-    runtime: _RetryParallelRuntime,
+def _route_records_to_workers_hash(
+    runtime: _ParallelRuntime,
     *,
     records: Iterable[T],
     config: WriteConfig,
-    sharding: ShardingSpec,
     num_dbs: int,
     key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
     columns_fn: Callable[[T], dict[str, Any]] | None,
+    hash_algorithm: ShardHashAlgorithm,
+    chunk_size: int,
+    max_parallel_shared_memory_bytes: int | None,
+    max_parallel_shared_memory_bytes_per_worker: int | None,
+) -> None:
+    get_db_id = lambda key, record: route_hash(
+        key, num_dbs=num_dbs, hash_algorithm=hash_algorithm
+    )
+    return _route_records_to_workers_impl(
+        runtime,
+        records=records,
+        config=config,
+        num_dbs=num_dbs,
+        key_fn=key_fn,
+        value_fn=value_fn,
+        columns_fn=columns_fn,
+        get_db_id=get_db_id,
+        chunk_size=chunk_size,
+        max_parallel_shared_memory_bytes=max_parallel_shared_memory_bytes,
+        max_parallel_shared_memory_bytes_per_worker=max_parallel_shared_memory_bytes_per_worker,
+    )
+
+
+def _route_records_to_workers_cel(
+    runtime: _ParallelRuntime,
+    *,
+    records: Iterable[T],
+    config: WriteConfig,
+    num_dbs: int,
+    key_fn: Callable[[T], KeyInput],
+    value_fn: Callable[[T], bytes],
+    columns_fn: Callable[[T], dict[str, Any]] | None,
+    cel_expr: str,
+    cel_columns: dict[str, str],
+    routing_values: list[int | str | bytes] | None,
+    chunk_size: int,
+    max_parallel_shared_memory_bytes: int | None,
+    max_parallel_shared_memory_bytes_per_worker: int | None,
+) -> None:
+    cel_lookup = None
+    if routing_values is not None:
+        cel_lookup = {value: idx for idx, value in enumerate(routing_values)}
+    get_db_id = lambda key, record: route_cel(
+        key,
+        cel_expr=cel_expr,
+        cel_columns=cel_columns,
+        routing_values=routing_values,
+        routing_context=(columns_fn(record) if columns_fn is not None else None),
+        cel_lookup=cel_lookup,
+    )
+    return _route_records_to_workers_impl(
+        runtime,
+        records=records,
+        config=config,
+        num_dbs=num_dbs,
+        key_fn=key_fn,
+        value_fn=value_fn,
+        columns_fn=columns_fn,
+        get_db_id=get_db_id,
+        chunk_size=chunk_size,
+        max_parallel_shared_memory_bytes=max_parallel_shared_memory_bytes,
+        max_parallel_shared_memory_bytes_per_worker=max_parallel_shared_memory_bytes_per_worker,
+    )
+
+
+def _route_records_to_retry_workers_impl(
+    runtime: _RetryParallelRuntime,
+    *,
+    records: Iterable[T],
+    config: WriteConfig,
+    num_dbs: int,
+    key_fn: Callable[[T], KeyInput],
+    value_fn: Callable[[T], bytes],
+    columns_fn: Callable[[T], dict[str, Any]] | None,
+    get_db_id: Callable[[KeyInput, T], int],
     chunk_size: int,
 ) -> None:
     for record in records:
@@ -1181,20 +1242,7 @@ def _route_records_to_retry_workers(
         _check_retry_worker_exits(runtime)
 
         key = key_fn(record)
-        routing_context = columns_fn(record) if columns_fn is not None else None
-        if isinstance(sharding, HashShardingSpec):
-            db_id = route_hash(
-                key, num_dbs=num_dbs, hash_algorithm=sharding.hash_algorithm
-            )
-        else:
-            assert isinstance(sharding, CelShardingSpec)
-            db_id = route_cel(
-                key,
-                cel_expr=sharding.cel_expr,
-                cel_columns=sharding.cel_columns,
-                routing_values=sharding.routing_values,
-                routing_context=routing_context,
-            )
+        db_id = get_db_id(key, record)
         key_bytes = runtime.key_encoder(key)
         value_bytes = value_fn(record)
         pair_bytes = (
@@ -1219,6 +1267,72 @@ def _route_records_to_retry_workers(
             or runtime.chunk_byte_sizes[db_id] >= _MAX_SHARED_MEMORY_CHUNK_BYTES
         ):
             _send_retry_chunk(runtime, db_id=db_id)
+
+
+def _route_records_to_retry_workers_hash(
+    runtime: _RetryParallelRuntime,
+    *,
+    records: Iterable[T],
+    config: WriteConfig,
+    num_dbs: int,
+    key_fn: Callable[[T], KeyInput],
+    value_fn: Callable[[T], bytes],
+    columns_fn: Callable[[T], dict[str, Any]] | None,
+    hash_algorithm: ShardHashAlgorithm,
+    chunk_size: int,
+) -> None:
+    get_db_id = lambda key, record: route_hash(
+        key, num_dbs=num_dbs, hash_algorithm=hash_algorithm
+    )
+    return _route_records_to_retry_workers_impl(
+        runtime,
+        records=records,
+        config=config,
+        num_dbs=num_dbs,
+        key_fn=key_fn,
+        value_fn=value_fn,
+        columns_fn=columns_fn,
+        get_db_id=get_db_id,
+        chunk_size=chunk_size,
+    )
+
+
+def _route_records_to_retry_workers_cel(
+    runtime: _RetryParallelRuntime,
+    *,
+    records: Iterable[T],
+    config: WriteConfig,
+    num_dbs: int,
+    key_fn: Callable[[T], KeyInput],
+    value_fn: Callable[[T], bytes],
+    columns_fn: Callable[[T], dict[str, Any]] | None,
+    cel_expr: str,
+    cel_columns: dict[str, str],
+    routing_values: list[int | str | bytes] | None,
+    chunk_size: int,
+) -> None:
+    cel_lookup = None
+    if routing_values is not None:
+        cel_lookup = {value: idx for idx, value in enumerate(routing_values)}
+    get_db_id = lambda key, record: route_cel(
+        key,
+        cel_expr=cel_expr,
+        cel_columns=cel_columns,
+        routing_values=routing_values,
+        routing_context=(columns_fn(record) if columns_fn is not None else None),
+        cel_lookup=cel_lookup,
+    )
+    return _route_records_to_retry_workers_impl(
+        runtime,
+        records=records,
+        config=config,
+        num_dbs=num_dbs,
+        key_fn=key_fn,
+        value_fn=value_fn,
+        columns_fn=columns_fn,
+        get_db_id=get_db_id,
+        chunk_size=chunk_size,
+    )
 
 
 def _finish_parallel_dispatch(
@@ -1367,17 +1481,17 @@ def _collect_parallel_results(
     return results
 
 
-def _write_parallel_retryable(
+def _write_parallel_retryable_impl(
     *,
     records: Iterable[T],
     config: WriteConfig,
-    sharding: ShardingSpec,
     num_dbs: int,
     run_id: str,
     factory: DbAdapterFactory,
     key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
     columns_fn: Callable[[T], dict[str, Any]] | None = None,
+    get_db_id: Callable[[KeyInput, T], int],
     max_queue_size: int,
     max_writes_per_second: float | None,
     max_write_bytes_per_second: float | None,
@@ -1397,15 +1511,15 @@ def _write_parallel_retryable(
     )
 
     try:
-        _route_records_to_retry_workers(
+        _route_records_to_retry_workers_impl(
             runtime,
             records=records,
             config=config,
-            sharding=sharding,
             num_dbs=num_dbs,
             key_fn=key_fn,
             value_fn=value_fn,
             columns_fn=columns_fn,
+            get_db_id=get_db_id,
             chunk_size=chunk_size,
         )
         _finish_retry_dispatch(runtime, num_dbs=num_dbs)
@@ -1417,17 +1531,17 @@ def _write_parallel_retryable(
         _cleanup_retry_parallel_runtime(runtime)
 
 
-def _write_parallel(
+def _write_parallel_impl(
     *,
     records: Iterable[T],
     config: WriteConfig,
-    sharding: ShardingSpec,
     num_dbs: int,
     run_id: str,
     factory: DbAdapterFactory,
     key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
     columns_fn: Callable[[T], dict[str, Any]] | None = None,
+    get_db_id: Callable[[KeyInput, T], int],
     max_queue_size: int,
     max_parallel_shared_memory_bytes: int | None,
     max_parallel_shared_memory_bytes_per_worker: int | None,
@@ -1435,16 +1549,16 @@ def _write_parallel(
     max_write_bytes_per_second: float | None,
 ) -> list[ShardAttemptResult]:
     if config.shard_retry is not None:
-        return _write_parallel_retryable(
+        return _write_parallel_retryable_impl(
             records=records,
             config=config,
-            sharding=sharding,
             num_dbs=num_dbs,
             run_id=run_id,
             factory=factory,
             key_fn=key_fn,
             value_fn=value_fn,
             columns_fn=columns_fn,
+            get_db_id=get_db_id,
             max_queue_size=max_queue_size,
             max_writes_per_second=max_writes_per_second,
             max_write_bytes_per_second=max_write_bytes_per_second,
@@ -1463,15 +1577,15 @@ def _write_parallel(
     )
 
     try:
-        _route_records_to_workers(
+        _route_records_to_workers_impl(
             runtime,
             records=records,
             config=config,
-            sharding=sharding,
             num_dbs=num_dbs,
             key_fn=key_fn,
             value_fn=value_fn,
             columns_fn=columns_fn,
+            get_db_id=get_db_id,
             chunk_size=chunk_size,
             max_parallel_shared_memory_bytes=max_parallel_shared_memory_bytes,
             max_parallel_shared_memory_bytes_per_worker=max_parallel_shared_memory_bytes_per_worker,
@@ -1495,6 +1609,92 @@ def _write_parallel(
             f"{sorted(unreclaimed_segment_names)}"
         )
     return _collect_parallel_results(runtime, num_dbs=num_dbs)
+
+
+def _write_parallel_hash(
+    *,
+    records: Iterable[T],
+    config: WriteConfig,
+    num_dbs: int,
+    run_id: str,
+    factory: DbAdapterFactory,
+    key_fn: Callable[[T], KeyInput],
+    value_fn: Callable[[T], bytes],
+    columns_fn: Callable[[T], dict[str, Any]] | None = None,
+    hash_algorithm: ShardHashAlgorithm,
+    max_queue_size: int,
+    max_parallel_shared_memory_bytes: int | None,
+    max_parallel_shared_memory_bytes_per_worker: int | None,
+    max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
+) -> list[ShardAttemptResult]:
+    get_db_id = lambda key, record: route_hash(
+        key, num_dbs=num_dbs, hash_algorithm=hash_algorithm
+    )
+    return _write_parallel_impl(
+        records=records,
+        config=config,
+        num_dbs=num_dbs,
+        run_id=run_id,
+        factory=factory,
+        key_fn=key_fn,
+        value_fn=value_fn,
+        columns_fn=columns_fn,
+        get_db_id=get_db_id,
+        max_queue_size=max_queue_size,
+        max_parallel_shared_memory_bytes=max_parallel_shared_memory_bytes,
+        max_parallel_shared_memory_bytes_per_worker=max_parallel_shared_memory_bytes_per_worker,
+        max_writes_per_second=max_writes_per_second,
+        max_write_bytes_per_second=max_write_bytes_per_second,
+    )
+
+
+def _write_parallel_cel(
+    *,
+    records: Iterable[T],
+    config: WriteConfig,
+    num_dbs: int,
+    run_id: str,
+    factory: DbAdapterFactory,
+    key_fn: Callable[[T], KeyInput],
+    value_fn: Callable[[T], bytes],
+    columns_fn: Callable[[T], dict[str, Any]] | None = None,
+    cel_expr: str,
+    cel_columns: dict[str, str],
+    routing_values: list[int | str | bytes] | None,
+    max_queue_size: int,
+    max_parallel_shared_memory_bytes: int | None,
+    max_parallel_shared_memory_bytes_per_worker: int | None,
+    max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
+) -> list[ShardAttemptResult]:
+    cel_lookup = None
+    if routing_values is not None:
+        cel_lookup = {value: idx for idx, value in enumerate(routing_values)}
+    get_db_id = lambda key, record: route_cel(
+        key,
+        cel_expr=cel_expr,
+        cel_columns=cel_columns,
+        routing_values=routing_values,
+        routing_context=(columns_fn(record) if columns_fn is not None else None),
+        cel_lookup=cel_lookup,
+    )
+    return _write_parallel_impl(
+        records=records,
+        config=config,
+        num_dbs=num_dbs,
+        run_id=run_id,
+        factory=factory,
+        key_fn=key_fn,
+        value_fn=value_fn,
+        columns_fn=columns_fn,
+        get_db_id=get_db_id,
+        max_queue_size=max_queue_size,
+        max_parallel_shared_memory_bytes=max_parallel_shared_memory_bytes,
+        max_parallel_shared_memory_bytes_per_worker=max_parallel_shared_memory_bytes_per_worker,
+        max_writes_per_second=max_writes_per_second,
+        max_write_bytes_per_second=max_write_bytes_per_second,
+    )
 
 
 def _join_and_terminate_workers(workers: list[multiprocessing.Process]) -> None:

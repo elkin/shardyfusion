@@ -45,7 +45,8 @@ from shardyfusion.writer.python._parallel_writer import (
     _make_db_url,
     _make_local_dir,
     _validate_parallel_shared_memory_limit,
-    _write_parallel,
+    _write_parallel_cel,
+    _write_parallel_hash,
 )
 
 _logger = get_logger(__name__)
@@ -148,22 +149,104 @@ def write_sharded_by_hash(
         PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
         ShardyfusionError: If a worker process fails in parallel mode.
     """
-    return _write_hash_sharded(
-        records=records,
-        config=config,
-        key_fn=key_fn,
-        value_fn=value_fn,
-        columns_fn=columns_fn,
-        vector_fn=vector_fn,
-        parallel=parallel,
-        max_queue_size=max_queue_size,
-        max_parallel_shared_memory_bytes=max_parallel_shared_memory_bytes,
-        max_parallel_shared_memory_bytes_per_worker=max_parallel_shared_memory_bytes_per_worker,
-        max_writes_per_second=max_writes_per_second,
-        max_write_bytes_per_second=max_write_bytes_per_second,
-        max_total_batched_items=max_total_batched_items,
-        max_total_batched_bytes=max_total_batched_bytes,
+    from shardyfusion.logging import LogContext
+
+    sharding = HashShardingSpec(
+        hash_algorithm=ShardHashAlgorithm.XXH3_64,
+        max_keys_per_shard=config.max_keys_per_shard,
     )
+    num_dbs = _resolve_num_dbs_before_sharding(records, config)
+
+    _validate_parallel_shared_memory_limit(
+        max_parallel_shared_memory_bytes,
+        field_name="max_parallel_shared_memory_bytes",
+    )
+    _validate_parallel_shared_memory_limit(
+        max_parallel_shared_memory_bytes_per_worker,
+        field_name="max_parallel_shared_memory_bytes_per_worker",
+    )
+
+    has_vectors, vector_fn, factory = _resolve_vector_fn_and_factory(
+        config=config,
+        vector_fn=vector_fn,
+        columns_fn=columns_fn,
+        key_fn=key_fn,
+    )
+    if parallel and has_vectors:
+        raise ConfigValidationError(
+            "Parallel mode is not supported for unified KV+vector writes."
+        )
+
+    run_id = config.output.run_id or uuid4().hex
+    started = time.perf_counter()
+    mc = config.metrics_collector
+
+    with (
+        LogContext(run_id=run_id),
+        RunRecordLifecycle.start(
+            config=config,
+            run_id=run_id,
+            writer_type="python",
+        ) as run_record,
+    ):
+        log_event(
+            "write_started",
+            logger=_logger,
+            num_dbs=num_dbs,
+            s3_prefix=config.s3_prefix,
+            strategy="hash",
+            key_encoding=config.key_encoding,
+            writer_type="python",
+        )
+        if mc is not None:
+            mc.emit(MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
+
+        if parallel:
+            attempts = _write_parallel_hash(
+                records=records,
+                config=config,
+                num_dbs=num_dbs,
+                run_id=run_id,
+                factory=factory,
+                key_fn=key_fn,
+                value_fn=value_fn,
+                columns_fn=columns_fn,
+                hash_algorithm=sharding.hash_algorithm,
+                max_queue_size=max_queue_size,
+                max_parallel_shared_memory_bytes=max_parallel_shared_memory_bytes,
+                max_parallel_shared_memory_bytes_per_worker=max_parallel_shared_memory_bytes_per_worker,
+                max_writes_per_second=max_writes_per_second,
+                max_write_bytes_per_second=max_write_bytes_per_second,
+            )
+        else:
+            attempts, num_dbs = _write_single_process_hash(
+                records=records,
+                config=config,
+                num_dbs=num_dbs,
+                hash_algorithm=sharding.hash_algorithm,
+                run_id=run_id,
+                factory=factory,
+                key_fn=key_fn,
+                value_fn=value_fn,
+                columns_fn=columns_fn,
+                vector_fn=vector_fn,
+                max_writes_per_second=max_writes_per_second,
+                max_write_bytes_per_second=max_write_bytes_per_second,
+                max_total_batched_items=max_total_batched_items,
+                max_total_batched_bytes=max_total_batched_bytes,
+            )
+
+        return _finalize_python_write(
+            config=config,
+            run_id=run_id,
+            started=started,
+            sharding=sharding,
+            attempts=attempts,
+            num_dbs=num_dbs,
+            factory=factory,
+            mc=mc,
+            run_record=run_record,
+        )
 
 
 def write_sharded_by_cel(
@@ -232,168 +315,6 @@ def write_sharded_by_cel(
         PublishCurrentError: If CURRENT pointer upload fails (manifest already published).
         ShardyfusionError: If a worker process fails in parallel mode.
     """
-    return _write_cel_sharded(
-        records=records,
-        config=config,
-        key_fn=key_fn,
-        value_fn=value_fn,
-        columns_fn=columns_fn,
-        vector_fn=vector_fn,
-        parallel=parallel,
-        max_queue_size=max_queue_size,
-        max_parallel_shared_memory_bytes=max_parallel_shared_memory_bytes,
-        max_parallel_shared_memory_bytes_per_worker=max_parallel_shared_memory_bytes_per_worker,
-        max_writes_per_second=max_writes_per_second,
-        max_write_bytes_per_second=max_write_bytes_per_second,
-        max_total_batched_items=max_total_batched_items,
-        max_total_batched_bytes=max_total_batched_bytes,
-    )
-
-
-def _write_hash_sharded(
-    records: Iterable[T],
-    config: HashWriteConfig,
-    *,
-    key_fn: Callable[[T], KeyInput],
-    value_fn: Callable[[T], bytes],
-    columns_fn: Callable[[T], dict[str, Any]] | None = None,
-    vector_fn: Callable[[T], tuple[int | str, Any, dict[str, Any] | None]]
-    | None = None,
-    parallel: bool = False,
-    max_queue_size: int = 100,
-    max_parallel_shared_memory_bytes: int | None = (
-        _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES
-    ),
-    max_parallel_shared_memory_bytes_per_worker: int | None = (
-        _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER
-    ),
-    max_writes_per_second: float | None = None,
-    max_write_bytes_per_second: float | None = None,
-    max_total_batched_items: int | None = None,
-    max_total_batched_bytes: int | None = None,
-) -> BuildResult:
-    from shardyfusion.logging import LogContext
-
-    sharding = HashShardingSpec(
-        hash_algorithm=ShardHashAlgorithm.XXH3_64,
-        max_keys_per_shard=config.max_keys_per_shard,
-    )
-    num_dbs = _resolve_num_dbs_before_sharding(records, config)
-
-    _validate_parallel_shared_memory_limit(
-        max_parallel_shared_memory_bytes,
-        field_name="max_parallel_shared_memory_bytes",
-    )
-    _validate_parallel_shared_memory_limit(
-        max_parallel_shared_memory_bytes_per_worker,
-        field_name="max_parallel_shared_memory_bytes_per_worker",
-    )
-
-    has_vectors, vector_fn, factory = _resolve_vector_fn_and_factory(
-        config=config,
-        vector_fn=vector_fn,
-        columns_fn=columns_fn,
-        key_fn=key_fn,
-    )
-    if parallel and has_vectors:
-        raise ConfigValidationError(
-            "Parallel mode is not supported for unified KV+vector writes."
-        )
-
-    run_id = config.output.run_id or uuid4().hex
-    started = time.perf_counter()
-    mc = config.metrics_collector
-
-    with (
-        LogContext(run_id=run_id),
-        RunRecordLifecycle.start(
-            config=config,
-            run_id=run_id,
-            writer_type="python",
-        ) as run_record,
-    ):
-        log_event(
-            "write_started",
-            logger=_logger,
-            num_dbs=num_dbs,
-            s3_prefix=config.s3_prefix,
-            strategy="hash",
-            key_encoding=config.key_encoding,
-            writer_type="python",
-        )
-        if mc is not None:
-            mc.emit(MetricEvent.WRITE_STARTED, {"elapsed_ms": 0})
-
-        if parallel:
-            attempts = _write_parallel(
-                records=records,
-                config=config,
-                sharding=sharding,
-                num_dbs=num_dbs,
-                run_id=run_id,
-                factory=factory,
-                key_fn=key_fn,
-                value_fn=value_fn,
-                columns_fn=columns_fn,
-                max_queue_size=max_queue_size,
-                max_parallel_shared_memory_bytes=max_parallel_shared_memory_bytes,
-                max_parallel_shared_memory_bytes_per_worker=max_parallel_shared_memory_bytes_per_worker,
-                max_writes_per_second=max_writes_per_second,
-                max_write_bytes_per_second=max_write_bytes_per_second,
-            )
-        else:
-            attempts, num_dbs = _write_single_process(
-                records=records,
-                config=config,
-                sharding=sharding,
-                num_dbs=num_dbs,
-                run_id=run_id,
-                factory=factory,
-                key_fn=key_fn,
-                value_fn=value_fn,
-                columns_fn=columns_fn,
-                vector_fn=vector_fn,
-                max_writes_per_second=max_writes_per_second,
-                max_write_bytes_per_second=max_write_bytes_per_second,
-                max_total_batched_items=max_total_batched_items,
-                max_total_batched_bytes=max_total_batched_bytes,
-            )
-
-        return _finalize_python_write(
-            config=config,
-            run_id=run_id,
-            started=started,
-            sharding=sharding,
-            attempts=attempts,
-            num_dbs=num_dbs,
-            factory=factory,
-            mc=mc,
-            run_record=run_record,
-        )
-
-
-def _write_cel_sharded(
-    records: Iterable[T],
-    config: CelWriteConfig,
-    *,
-    key_fn: Callable[[T], KeyInput],
-    value_fn: Callable[[T], bytes],
-    columns_fn: Callable[[T], dict[str, Any]] | None = None,
-    vector_fn: Callable[[T], tuple[int | str, Any, dict[str, Any] | None]]
-    | None = None,
-    parallel: bool = False,
-    max_queue_size: int = 100,
-    max_parallel_shared_memory_bytes: int | None = (
-        _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES
-    ),
-    max_parallel_shared_memory_bytes_per_worker: int | None = (
-        _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER
-    ),
-    max_writes_per_second: float | None = None,
-    max_write_bytes_per_second: float | None = None,
-    max_total_batched_items: int | None = None,
-    max_total_batched_bytes: int | None = None,
-) -> BuildResult:
     from shardyfusion.logging import LogContext
 
     sharding: ShardingSpec = CelShardingSpec(
@@ -472,16 +393,18 @@ def _write_cel_sharded(
                     "CEL direct mode (num_dbs discovered from data) "
                     "is only supported in single-process mode."
                 )
-            attempts = _write_parallel(
+            attempts = _write_parallel_cel(
                 records=records,
                 config=config,
-                sharding=sharding,
                 num_dbs=num_dbs,
                 run_id=run_id,
                 factory=factory,
                 key_fn=key_fn,
                 value_fn=value_fn,
                 columns_fn=columns_fn,
+                cel_expr=sharding.cel_expr,
+                cel_columns=sharding.cel_columns,
+                routing_values=sharding.routing_values,
                 max_queue_size=max_queue_size,
                 max_parallel_shared_memory_bytes=max_parallel_shared_memory_bytes,
                 max_parallel_shared_memory_bytes_per_worker=max_parallel_shared_memory_bytes_per_worker,
@@ -489,11 +412,13 @@ def _write_cel_sharded(
                 max_write_bytes_per_second=max_write_bytes_per_second,
             )
         else:
-            attempts, num_dbs = _write_single_process(
+            attempts, num_dbs = _write_single_process_cel(
                 records=records,
                 config=config,
-                sharding=sharding,
                 num_dbs=num_dbs,
+                cel_expr=sharding.cel_expr,
+                cel_columns=sharding.cel_columns,
+                routing_values=sharding.routing_values,
                 run_id=run_id,
                 factory=factory,
                 key_fn=key_fn,
@@ -1015,12 +940,13 @@ def _build_single_process_results(
     ]
 
 
-def _write_single_process(
+def _write_single_process_impl(
     *,
     records: Iterable[T],
     config: WriteConfig,
-    sharding: ShardingSpec,
     num_dbs: int | None,
+    get_db_id: Callable[[KeyInput, T], int],
+    routing_values: list[int | str | bytes] | None,
     run_id: str,
     factory: DbAdapterFactory,
     key_fn: Callable[[T], KeyInput],
@@ -1040,7 +966,6 @@ def _write_single_process(
     """
 
     attempt = 0
-    cel_mode = num_dbs is None
     bucket: RateLimiter | None = None
     if max_writes_per_second is not None:
         bucket = TokenBucket(
@@ -1058,33 +983,10 @@ def _write_single_process(
 
     with contextlib.ExitStack() as stack:
         key_encoder = make_key_encoder(config.key_encoding)
-        cel_lookup = None
-        if (
-            isinstance(sharding, CelShardingSpec)
-            and sharding.routing_values is not None
-        ):
-            cel_lookup = {
-                value: idx for idx, value in enumerate(sharding.routing_values)
-            }
 
         for record in records:
             key = key_fn(record)
-            routing_context = columns_fn(record) if columns_fn is not None else None
-            if isinstance(sharding, HashShardingSpec):
-                assert num_dbs is not None, "num_dbs required for HASH sharding"
-                db_id = route_hash(
-                    key, num_dbs=num_dbs, hash_algorithm=sharding.hash_algorithm
-                )
-            else:
-                assert isinstance(sharding, CelShardingSpec)
-                db_id = route_cel(
-                    key,
-                    cel_expr=sharding.cel_expr,
-                    cel_columns=sharding.cel_columns,
-                    routing_values=sharding.routing_values,
-                    routing_context=routing_context,
-                    cel_lookup=cel_lookup,
-                )
+            db_id = get_db_id(key, record)
             key_bytes = key_encoder(key)
             value_bytes = value_fn(record)
             _buffer_single_process_record(
@@ -1136,18 +1038,107 @@ def _write_single_process(
         )
         _finalize_single_process_adapters(state)
 
-    if cel_mode:
-        from shardyfusion._writer_core import discover_cel_num_dbs
-
-        assert isinstance(sharding, CelShardingSpec)
-        if sharding.routing_values is not None:
-            num_dbs = resolve_cel_num_dbs(sharding)
+    if num_dbs is None:
+        if routing_values is not None:
+            num_dbs = max(1, len(routing_values))
         else:
+            from shardyfusion._writer_core import discover_cel_num_dbs
+
             num_dbs = discover_cel_num_dbs(set(state.row_counts))
 
     return _build_single_process_results(
         state, attempt=attempt, num_dbs=num_dbs
     ), num_dbs
+
+
+def _write_single_process_hash(
+    *,
+    records: Iterable[T],
+    config: WriteConfig,
+    num_dbs: int,
+    hash_algorithm: ShardHashAlgorithm,
+    run_id: str,
+    factory: DbAdapterFactory,
+    key_fn: Callable[[T], KeyInput],
+    value_fn: Callable[[T], bytes],
+    columns_fn: Callable[[T], dict[str, Any]] | None = None,
+    vector_fn: Callable[[T], tuple[int | str, Any, dict[str, Any] | None]]
+    | None = None,
+    max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
+    max_total_batched_items: int | None,
+    max_total_batched_bytes: int | None,
+) -> tuple[list[ShardAttemptResult], int]:
+    get_db_id = lambda key, record: route_hash(
+        key, num_dbs=num_dbs, hash_algorithm=hash_algorithm
+    )
+    return _write_single_process_impl(
+        records=records,
+        config=config,
+        num_dbs=num_dbs,
+        get_db_id=get_db_id,
+        routing_values=None,
+        run_id=run_id,
+        factory=factory,
+        key_fn=key_fn,
+        value_fn=value_fn,
+        columns_fn=columns_fn,
+        vector_fn=vector_fn,
+        max_writes_per_second=max_writes_per_second,
+        max_write_bytes_per_second=max_write_bytes_per_second,
+        max_total_batched_items=max_total_batched_items,
+        max_total_batched_bytes=max_total_batched_bytes,
+    )
+
+
+def _write_single_process_cel(
+    *,
+    records: Iterable[T],
+    config: WriteConfig,
+    num_dbs: int | None,
+    cel_expr: str,
+    cel_columns: dict[str, str],
+    routing_values: list[int | str | bytes] | None,
+    run_id: str,
+    factory: DbAdapterFactory,
+    key_fn: Callable[[T], KeyInput],
+    value_fn: Callable[[T], bytes],
+    columns_fn: Callable[[T], dict[str, Any]] | None = None,
+    vector_fn: Callable[[T], tuple[int | str, Any, dict[str, Any] | None]]
+    | None = None,
+    max_writes_per_second: float | None,
+    max_write_bytes_per_second: float | None,
+    max_total_batched_items: int | None,
+    max_total_batched_bytes: int | None,
+) -> tuple[list[ShardAttemptResult], int]:
+    cel_lookup = None
+    if routing_values is not None:
+        cel_lookup = {value: idx for idx, value in enumerate(routing_values)}
+    get_db_id = lambda key, record: route_cel(
+        key,
+        cel_expr=cel_expr,
+        cel_columns=cel_columns,
+        routing_values=routing_values,
+        routing_context=(columns_fn(record) if columns_fn is not None else None),
+        cel_lookup=cel_lookup,
+    )
+    return _write_single_process_impl(
+        records=records,
+        config=config,
+        num_dbs=num_dbs,
+        get_db_id=get_db_id,
+        routing_values=routing_values,
+        run_id=run_id,
+        factory=factory,
+        key_fn=key_fn,
+        value_fn=value_fn,
+        columns_fn=columns_fn,
+        vector_fn=vector_fn,
+        max_writes_per_second=max_writes_per_second,
+        max_write_bytes_per_second=max_write_bytes_per_second,
+        max_total_batched_items=max_total_batched_items,
+        max_total_batched_bytes=max_total_batched_bytes,
+    )
 
 
 # Backward-compatible aliases for tests and internal callers

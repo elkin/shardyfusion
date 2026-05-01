@@ -67,7 +67,7 @@ class TestAutoVectorFn:
 
         with (
             patch(
-                "shardyfusion.writer.python.writer._write_single_process"
+                "shardyfusion.writer.python.writer._write_single_process_cel"
             ) as mock_write,
             patch(
                 "shardyfusion.writer.python.writer._wrap_factory_for_vector",
@@ -115,7 +115,7 @@ class TestAutoVectorFn:
 
         with (
             patch(
-                "shardyfusion.writer.python.writer._write_single_process",
+                "shardyfusion.writer.python.writer._write_single_process_cel",
                 side_effect=capture_write,
             ),
             patch(
@@ -317,8 +317,8 @@ class TestFlushSingleProcessShardVectorBatch:
         assert state.vector_payloads[0] == []
 
     def test_vector_buffer_in_write_loop(self) -> None:
-        """Exercises vector buffering via _write_single_process."""
-        from shardyfusion.writer.python.writer import _write_single_process
+        """Exercises vector buffering via _write_single_process_cel."""
+        from shardyfusion.writer.python.writer import _write_single_process_cel
 
         vector_batches: list[tuple] = []
 
@@ -369,11 +369,13 @@ class TestFlushSingleProcessShardVectorBatch:
 
         records = [Item(key=i, value=b"v") for i in range(3)]
 
-        attempts, num_dbs = _write_single_process(
+        attempts, num_dbs = _write_single_process_cel(
             records=records,
             config=config,
-            sharding=_cel_sharding_spec(),
             num_dbs=2,
+            cel_expr="shard_hash(key) % 2u",
+            cel_columns={"key": "int"},
+            routing_values=[0, 1],
             run_id="test-run",
             factory=factory,
             key_fn=lambda r: r.key,

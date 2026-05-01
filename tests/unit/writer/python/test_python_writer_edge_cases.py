@@ -12,8 +12,8 @@ from typing import Self
 
 from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
 from shardyfusion.manifest_store import InMemoryManifestStore
-from shardyfusion.sharding_types import HashShardingSpec
-from shardyfusion.writer.python._parallel_writer import _write_parallel
+from shardyfusion.sharding_types import ShardHashAlgorithm
+from shardyfusion.writer.python._parallel_writer import _write_parallel_hash
 
 _MAX_PARALLEL_SHARED_MEMORY_BYTES = 256 * 1024 * 1024
 _MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER = 32 * 1024 * 1024
@@ -89,15 +89,15 @@ def _config(num_dbs: int = 2) -> HashWriteConfig:
 class TestParallelEmptyInput:
     def test_empty_records_produces_empty_results(self) -> None:
         config = _config(num_dbs=2)
-        results = _write_parallel(
+        results = _write_parallel_hash(
             records=[],
             config=config,
-            sharding=HashShardingSpec(),
             num_dbs=2,
             run_id="empty-test",
             factory=_good_factory,
             key_fn=lambda r: r["id"],
             value_fn=lambda r: r["val"],
+            hash_algorithm=ShardHashAlgorithm.XXH3_64,
             max_queue_size=10,
             max_parallel_shared_memory_bytes=_MAX_PARALLEL_SHARED_MEMORY_BYTES,
             max_parallel_shared_memory_bytes_per_worker=_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER,
@@ -111,15 +111,15 @@ class TestParallelSingleShard:
     def test_single_shard_parallel(self) -> None:
         config = _config(num_dbs=1)
         records = [{"id": i, "val": b"x"} for i in range(10)]
-        results = _write_parallel(
+        results = _write_parallel_hash(
             records=records,
             config=config,
-            sharding=HashShardingSpec(),
             num_dbs=1,
             run_id="single-test",
             factory=_good_factory,
             key_fn=lambda r: r["id"],
             value_fn=lambda r: r["val"],
+            hash_algorithm=ShardHashAlgorithm.XXH3_64,
             max_queue_size=10,
             max_parallel_shared_memory_bytes=_MAX_PARALLEL_SHARED_MEMORY_BYTES,
             max_parallel_shared_memory_bytes_per_worker=_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER,
@@ -134,15 +134,15 @@ class TestParallelManyShards:
     def test_many_records_distributed(self) -> None:
         config = _config(num_dbs=4)
         records = [{"id": i, "val": b"x"} for i in range(100)]
-        results = _write_parallel(
+        results = _write_parallel_hash(
             records=records,
             config=config,
-            sharding=HashShardingSpec(),
             num_dbs=4,
             run_id="many-test",
             factory=_good_factory,
             key_fn=lambda r: r["id"],
             value_fn=lambda r: r["val"],
+            hash_algorithm=ShardHashAlgorithm.XXH3_64,
             max_queue_size=50,
             max_parallel_shared_memory_bytes=_MAX_PARALLEL_SHARED_MEMORY_BYTES,
             max_parallel_shared_memory_bytes_per_worker=_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER,

@@ -18,14 +18,14 @@ from shardyfusion.errors import ShardyfusionError
 from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.run_registry import InMemoryRunRegistry
 from shardyfusion.serde import make_key_encoder
-from shardyfusion.sharding_types import HashShardingSpec
+from shardyfusion.sharding_types import ShardHashAlgorithm
 from shardyfusion.testing import FileBackedSlateDbAdapter, file_backed_load_db
 from shardyfusion.type_defs import RetryConfig
 from shardyfusion.writer.python import write_sharded_by_hash
 from shardyfusion.writer.python._parallel_writer import (
     _file_shard_worker,
     _FileChunkRef,
-    _write_parallel,
+    _write_parallel_hash,
 )
 from tests.helpers.run_record_assertions import (
     assert_success_run_record,
@@ -244,15 +244,15 @@ def test_worker_crash_raises_error() -> None:
     records = [{"id": i, "val": b"x"} for i in range(100)]
 
     with pytest.raises(ShardyfusionError):
-        _write_parallel(
+        _write_parallel_hash(
             records=records,
             config=config,
-            sharding=HashShardingSpec(),
             num_dbs=config.num_dbs,
             run_id="crash-test",
             factory=_crashing_factory,
             key_fn=lambda r: r["id"],
             value_fn=lambda r: r["val"],
+            hash_algorithm=ShardHashAlgorithm.XXH3_64,
             max_queue_size=10,
             max_parallel_shared_memory_bytes=_MAX_PARALLEL_SHARED_MEMORY_BYTES,
             max_parallel_shared_memory_bytes_per_worker=_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER,
@@ -266,15 +266,15 @@ def test_parallel_succeeds_with_good_factory() -> None:
     config = _make_config(num_dbs=2)
     records = [{"id": i, "val": b"x"} for i in range(20)]
 
-    results = _write_parallel(
+    results = _write_parallel_hash(
         records=records,
         config=config,
-        sharding=HashShardingSpec(),
         num_dbs=config.num_dbs,
         run_id="good-test",
         factory=_good_factory,
         key_fn=lambda r: r["id"],
         value_fn=lambda r: r["val"],
+        hash_algorithm=ShardHashAlgorithm.XXH3_64,
         max_queue_size=10,
         max_parallel_shared_memory_bytes=_MAX_PARALLEL_SHARED_MEMORY_BYTES,
         max_parallel_shared_memory_bytes_per_worker=_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER,
@@ -388,15 +388,15 @@ def test_parallel_retry_replays_to_new_attempt_and_cleans_spool(
     )
     records = [{"id": i, "val": b"x"} for i in range(10)]
 
-    results = _write_parallel(
+    results = _write_parallel_hash(
         records=records,
         config=config,
-        sharding=HashShardingSpec(),
         num_dbs=1,
         run_id="retry-file-spool",
         factory=_FailOnceMarkerFactory(str(marker_path)),
         key_fn=lambda r: r["id"],
         value_fn=lambda r: r["val"],
+        hash_algorithm=ShardHashAlgorithm.XXH3_64,
         max_queue_size=10,
         max_parallel_shared_memory_bytes=_MAX_PARALLEL_SHARED_MEMORY_BYTES,
         max_parallel_shared_memory_bytes_per_worker=_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER,
@@ -467,15 +467,15 @@ def test_parallel_retry_replay_preserves_final_shard_contents(tmp_path: Path) ->
     )
     records = [{"id": i, "val": f"value-{i}".encode()} for i in range(12)]
 
-    results = _write_parallel(
+    results = _write_parallel_hash(
         records=records,
         config=config,
-        sharding=HashShardingSpec(),
         num_dbs=1,
         run_id="retry-contract",
         factory=_FailOnceFileBackedFactory(file_backed_root, str(marker_path)),
         key_fn=lambda r: r["id"],
         value_fn=lambda r: r["val"],
+        hash_algorithm=ShardHashAlgorithm.XXH3_64,
         max_queue_size=10,
         max_parallel_shared_memory_bytes=_MAX_PARALLEL_SHARED_MEMORY_BYTES,
         max_parallel_shared_memory_bytes_per_worker=_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER,
@@ -510,15 +510,15 @@ def test_parallel_retry_respawns_worker_on_unexpected_exit(tmp_path: Path) -> No
     )
     records = [{"id": i, "val": b"x"} for i in range(10)]
 
-    results = _write_parallel(
+    results = _write_parallel_hash(
         records=records,
         config=config,
-        sharding=HashShardingSpec(),
         num_dbs=1,
         run_id="retry-worker-exit",
         factory=_ExitOnceMarkerFactory(str(marker_path)),
         key_fn=lambda r: r["id"],
         value_fn=lambda r: r["val"],
+        hash_algorithm=ShardHashAlgorithm.XXH3_64,
         max_queue_size=10,
         max_parallel_shared_memory_bytes=_MAX_PARALLEL_SHARED_MEMORY_BYTES,
         max_parallel_shared_memory_bytes_per_worker=_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER,
