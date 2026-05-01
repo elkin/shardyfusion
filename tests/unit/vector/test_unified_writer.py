@@ -136,22 +136,22 @@ class TestWrapFactoryForVector:
 
 
 # ---------------------------------------------------------------------------
-# _detect_vector_backend
+#         detect_vector_backend
 # ---------------------------------------------------------------------------
 
 
 class TestDetectVectorBackend:
     def test_sqlite_vec_detected(self) -> None:
         from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-        from shardyfusion.writer.python.writer import _detect_vector_backend
+        from shardyfusion.writer.python.writer import detect_vector_backend
 
         factory = SqliteVecFactory(vector_spec=VectorSpec(dim=8))
-        assert _detect_vector_backend(factory) == "sqlite-vec"
+        assert detect_vector_backend(factory) == "sqlite-vec"
 
     def test_other_factory_is_lancedb_sidecar(self) -> None:
-        from shardyfusion.writer.python.writer import _detect_vector_backend
+        from shardyfusion.writer.python.writer import detect_vector_backend
 
-        assert _detect_vector_backend(MagicMock()) == "lancedb"
+        assert detect_vector_backend(MagicMock()) == "lancedb"
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +161,7 @@ class TestDetectVectorBackend:
 
 class TestInjectVectorManifestFields:
     def test_injects_all_fields(self) -> None:
-        from shardyfusion.writer.python.writer import _inject_vector_manifest_fields
+        from shardyfusion.writer.python.writer import inject_vector_manifest_fields
 
         config = _cel_config(
             vector_spec=VectorSpec(
@@ -173,7 +173,7 @@ class TestInjectVectorManifestFields:
             )
         )
         factory = MagicMock()
-        _inject_vector_manifest_fields(config, factory)
+        inject_vector_manifest_fields(config, factory)
 
         vec = config.manifest.custom_manifest_fields["vector"]
         assert vec["dim"] == 128
@@ -186,33 +186,33 @@ class TestInjectVectorManifestFields:
 
     def test_injects_sqlite_vec_backend(self) -> None:
         from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-        from shardyfusion.writer.python.writer import _inject_vector_manifest_fields
+        from shardyfusion.writer.python.writer import inject_vector_manifest_fields
 
         vs = VectorSpec(dim=64)
         config = _cel_config(vector_spec=vs)
         factory = SqliteVecFactory(vector_spec=vs)
-        _inject_vector_manifest_fields(config, factory)
+        inject_vector_manifest_fields(config, factory)
 
         vec = config.manifest.custom_manifest_fields["vector"]
         assert vec["backend"] == "sqlite-vec"
 
     def test_no_index_params_when_empty(self) -> None:
-        from shardyfusion.writer.python.writer import _inject_vector_manifest_fields
+        from shardyfusion.writer.python.writer import inject_vector_manifest_fields
 
         config = _cel_config(vector_spec=VectorSpec(dim=64))
-        _inject_vector_manifest_fields(config, MagicMock())
+        inject_vector_manifest_fields(config, MagicMock())
 
         vec = config.manifest.custom_manifest_fields["vector"]
         assert "index_params" not in vec
 
     def test_copies_custom_manifest_fields_before_injecting(self) -> None:
-        from shardyfusion.writer.python.writer import _inject_vector_manifest_fields
+        from shardyfusion.writer.python.writer import inject_vector_manifest_fields
 
         original_custom = {"existing": {"keep": True}}
         config = _cel_config(vector_spec=VectorSpec(dim=64))
         config.manifest.custom_manifest_fields = original_custom
 
-        _inject_vector_manifest_fields(config, MagicMock())
+        inject_vector_manifest_fields(config, MagicMock())
 
         assert config.manifest.custom_manifest_fields is not original_custom
         assert original_custom == {"existing": {"keep": True}}
