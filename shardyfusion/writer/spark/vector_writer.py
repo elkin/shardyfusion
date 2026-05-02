@@ -30,7 +30,7 @@ from .sharding import VECTOR_DB_ID_COL, add_vector_db_id_column
 _logger = get_logger(__name__)
 
 
-def verify_vector_routing_agreement(
+def _verify_vector_routing_agreement(
     df_with_db_id: DataFrame,
     *,
     id_col: str,
@@ -45,7 +45,6 @@ def verify_vector_routing_agreement(
         assign_vector_shard,
         coerce_vector_value,
     )
-    from shardyfusion.vector.types import VectorShardingStrategy
 
     sample_cols = [id_col, vector_col, VECTOR_DB_ID_COL]
     if (
@@ -178,7 +177,7 @@ def write_vector_sharded(
         )
 
         if verify_routing and num_dbs > 0:
-            verify_vector_routing_agreement(
+            _verify_vector_routing_agreement(
                 df_with_id,
                 id_col=id_col,
                 vector_col=vector_col,

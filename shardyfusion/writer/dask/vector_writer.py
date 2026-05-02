@@ -10,6 +10,7 @@ from uuid import uuid4
 import dask.dataframe as dd
 import pandas as pd
 
+from shardyfusion._rate_limiter import TokenBucket
 from shardyfusion._writer_core import _normalize_vector_id
 from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.logging import get_logger
@@ -42,6 +43,8 @@ class _VectorPartitionWriteRuntime:
     adapter_factory: Any
     batch_size: int
     payload_cols: list[str] | None = None
+    max_writes_per_second: float | None = None
+    metrics_collector: Any | None = None
 
 
 def _vector_result_row(result: RequiredShardMeta) -> dict[str, object]:
@@ -238,6 +241,8 @@ def write_vector_sharded(
             adapter_factory=adapter_factory,
             batch_size=config.batch_size,
             payload_cols=payload_cols,
+            max_writes_per_second=max_writes_per_second,
+            metrics_collector=config.metrics_collector,
         )
 
         def _write_partition_vector(
@@ -251,6 +256,14 @@ def write_vector_sharded(
 
             if pdf.empty:
                 return pd.DataFrame(columns=["db_id", "db_url", "attempt", "row_count"])
+
+            ops_limiter: TokenBucket | None = None
+            if runtime.max_writes_per_second is not None:
+                ops_limiter = TokenBucket(
+                    runtime.max_writes_per_second,
+                    metrics_collector=runtime.metrics_collector,
+                    limiter_type="ops",
+                )
 
             pdf_copy = pdf.copy()
             pdf_copy["_temp_vec_id"] = pdf_copy[VECTOR_DB_ID_COL].astype(int)
@@ -278,6 +291,8 @@ def write_vector_sharded(
                     index_config=runtime.index_config,
                     adapter_factory=runtime.adapter_factory,
                     batch_size=runtime.batch_size,
+                    ops_limiter=ops_limiter,
+                    metrics_collector=runtime.metrics_collector,
                 )
                 results.append(result)
 
