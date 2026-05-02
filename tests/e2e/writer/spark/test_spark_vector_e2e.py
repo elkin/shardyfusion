@@ -25,7 +25,13 @@ def test_spark_vector_cluster_write_to_sqlite(
         VectorSpec,
     )
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-    from shardyfusion.vector.config import VectorSpecSharding, VectorWriteConfig
+    from shardyfusion.vector.config import (
+        VectorIndexConfig,
+        VectorShardingSpec,
+        VectorShardingStrategy,
+        VectorSpecSharding,
+        VectorWriteConfig,
+    )
     from shardyfusion.writer.spark import write_vector_sharded
     from tests.helpers.s3_test_scenarios import _make_s3_manifest_store
 
@@ -39,26 +45,29 @@ def test_spark_vector_cluster_write_to_sqlite(
     num_records = 1000
     dim = 128
     num_dbs = 4
-    vector_spec = VectorSpec(
-        dim=dim,
-        vector_col="embedding",
-        sharding=VectorSpecSharding(
-            strategy="cluster",
-            train_centroids=True,
-        ),
-    )
 
     vectors = np.random.rand(num_records, dim).astype(np.float32)
     rows = [(i, vectors[i].tolist()) for i in range(num_records)]
     df = spark.createDataFrame(rows, ["id", "embedding"])
 
-    config = VectorWriteConfig.from_vector_spec(
-        vector_spec=vector_spec,
+    config = VectorWriteConfig(
         num_dbs=num_dbs,
         s3_prefix=f"s3://{prefix}",
+        index_config=VectorIndexConfig(dim=dim),
+        sharding=VectorShardingSpec(
+            strategy=VectorShardingStrategy.CLUSTER,
+            train_centroids=True,
+        ),
         output=OutputOptions(run_id=run_id, local_root=str(tmp_path)),
         adapter_factory=SqliteVecFactory(
-            vector_spec=vector_spec,
+            vector_spec=VectorSpec(
+                dim=dim,
+                vector_col="embedding",
+                sharding=VectorSpecSharding(
+                    strategy="cluster",
+                    train_centroids=True,
+                ),
+            ),
             s3_connection_options=opts,
             credential_provider=creds,
         ),
@@ -128,7 +137,13 @@ def test_spark_vector_lsh_write_to_sqlite(spark, garage_s3_service, tmp_path) ->
         VectorSpec,
     )
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-    from shardyfusion.vector.config import VectorSpecSharding, VectorWriteConfig
+    from shardyfusion.vector.config import (
+        VectorIndexConfig,
+        VectorShardingSpec,
+        VectorShardingStrategy,
+        VectorSpecSharding,
+        VectorWriteConfig,
+    )
     from shardyfusion.writer.spark import write_vector_sharded
     from tests.helpers.s3_test_scenarios import _make_s3_manifest_store
 
@@ -142,26 +157,29 @@ def test_spark_vector_lsh_write_to_sqlite(spark, garage_s3_service, tmp_path) ->
     num_records = 1000
     dim = 128
     num_dbs = 8
-    vector_spec = VectorSpec(
-        dim=dim,
-        vector_col="embedding",
-        sharding=VectorSpecSharding(
-            strategy="lsh",
-            num_hash_bits=4,
-        ),
-    )
 
     vectors = np.random.rand(num_records, dim).astype(np.float32)
     rows = [(i, vectors[i].tolist()) for i in range(num_records)]
     df = spark.createDataFrame(rows, ["id", "embedding"])
 
-    config = VectorWriteConfig.from_vector_spec(
-        vector_spec=vector_spec,
+    config = VectorWriteConfig(
         num_dbs=num_dbs,
         s3_prefix=f"s3://{prefix}",
+        index_config=VectorIndexConfig(dim=dim),
+        sharding=VectorShardingSpec(
+            strategy=VectorShardingStrategy.LSH,
+            num_hash_bits=4,
+        ),
         output=OutputOptions(run_id=run_id, local_root=str(tmp_path)),
         adapter_factory=SqliteVecFactory(
-            vector_spec=vector_spec,
+            vector_spec=VectorSpec(
+                dim=dim,
+                vector_col="embedding",
+                sharding=VectorSpecSharding(
+                    strategy="lsh",
+                    num_hash_bits=4,
+                ),
+            ),
             s3_connection_options=opts,
             credential_provider=creds,
         ),
@@ -236,7 +254,13 @@ def test_spark_vector_lancedb_write_and_read(
         LanceDbReaderFactory,
         LanceDbWriterFactory,
     )
-    from shardyfusion.vector.config import VectorSpecSharding, VectorWriteConfig
+    from shardyfusion.vector.config import (
+        VectorIndexConfig,
+        VectorShardingSpec,
+        VectorShardingStrategy,
+        VectorSpecSharding,
+        VectorWriteConfig,
+    )
     from shardyfusion.vector.reader import ShardedVectorReader
     from shardyfusion.writer.spark import write_vector_sharded
     from tests.helpers.s3_test_scenarios import _make_s3_manifest_store
@@ -252,24 +276,19 @@ def test_spark_vector_lancedb_write_and_read(
     dim = 128
     num_dbs = 4
 
-    vector_spec = VectorSpec(
-        dim=dim,
-        vector_col="embedding",
-        sharding=VectorSpecSharding(
-            strategy="lsh",
-            num_hash_bits=4,
-            num_probes=2,
-        ),
-    )
-
     vectors = np.random.rand(num_records, dim).astype(np.float32)
     rows = [(i, vectors[i].tolist()) for i in range(num_records)]
     df = spark.createDataFrame(rows, ["id", "embedding"])
 
-    config = VectorWriteConfig.from_vector_spec(
-        vector_spec=vector_spec,
+    config = VectorWriteConfig(
         num_dbs=num_dbs,
         s3_prefix=prefix,
+        index_config=VectorIndexConfig(dim=dim),
+        sharding=VectorShardingSpec(
+            strategy=VectorShardingStrategy.LSH,
+            num_hash_bits=4,
+            num_probes=2,
+        ),
         output=OutputOptions(run_id=run_id, local_root=str(tmp_path)),
         adapter_factory=LanceDbWriterFactory(
             credential_provider=creds,
