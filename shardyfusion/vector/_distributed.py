@@ -91,30 +91,30 @@ def validate_vector_config(config: VectorWriteConfig) -> None:
         raise ConfigValidationError(f"batch_size must be > 0, got {config.batch_size}")
 
     sharding = config.sharding
-    if sharding.strategy == VectorShardingStrategy.CLUSTER:
-        if sharding.centroids is None and not sharding.train_centroids:
+    match sharding.strategy:
+        case VectorShardingStrategy.CLUSTER:
+            if sharding.centroids is None and not sharding.train_centroids:
+                raise ConfigValidationError(
+                    "CLUSTER sharding requires either centroids or train_centroids=True"
+                )
+        case VectorShardingStrategy.CEL:
+            if not sharding.cel_expr:
+                raise ConfigValidationError("CEL sharding requires cel_expr to be set")
+            if not sharding.cel_columns:
+                raise ConfigValidationError(
+                    "CEL sharding requires cel_columns to be set"
+                )
+            if sharding.num_probes > 1:
+                raise ConfigValidationError(
+                    f"num_probes is only supported for CLUSTER and LSH sharding, got {sharding.num_probes} for {sharding.strategy.value}"
+                )
+        case VectorShardingStrategy.EXPLICIT if sharding.num_probes > 1:
             raise ConfigValidationError(
-                "CLUSTER sharding requires either centroids or train_centroids=True"
+                f"num_probes is only supported for CLUSTER and LSH sharding, got {sharding.num_probes} for {sharding.strategy.value}"
             )
-    if sharding.strategy == VectorShardingStrategy.CEL:
-        if not sharding.cel_expr:
-            raise ConfigValidationError("CEL sharding requires cel_expr to be set")
-        if not sharding.cel_columns:
-            raise ConfigValidationError("CEL sharding requires cel_columns to be set")
     if sharding.num_probes < 1:
         raise ConfigValidationError(
             f"num_probes must be >= 1, got {sharding.num_probes}"
-        )
-    if (
-        sharding.strategy
-        in {
-            VectorShardingStrategy.EXPLICIT,
-            VectorShardingStrategy.CEL,
-        }
-        and sharding.num_probes != 1
-    ):
-        raise ConfigValidationError(
-            f"num_probes is only supported for CLUSTER and LSH sharding, got {sharding.num_probes} for {sharding.strategy.value}"
         )
 
 
@@ -145,50 +145,46 @@ def resolve_vector_routing(
     compiled_cel: Any | None = None
     cel_lookup: dict[int | str | bytes, int] | None = None
 
-    # CLUSTER: train centroids from sample if needed
-    if sharding.strategy == VectorShardingStrategy.CLUSTER and sharding.train_centroids:
-        if num_dbs is None:
-            raise ConfigValidationError(
-                "num_dbs must be provided for CLUSTER sharding with train_centroids"
-            )
-        if sample_vectors is None or len(sample_vectors) == 0:
-            raise ConfigValidationError("sample_vectors required for CLUSTER training")
-        centroids = train_centroids_kmeans(sample_vectors, num_dbs, seed=42)
-        log_event(
-            "centroids_trained",
-            logger=_logger,
-            num_clusters=num_dbs,
-            sample_size=len(sample_vectors),
-        )
-
-    # LSH: generate hyperplanes
-    if sharding.strategy == VectorShardingStrategy.LSH and hyperplanes is None:
-        if num_dbs is None:
-            raise ConfigValidationError("num_dbs must be provided for LSH sharding")
-        hyperplanes = lsh_generate_hyperplanes(
-            sharding.num_hash_bits, config.index_config.dim, seed=42
-        )
-
-    # CLUSTER: infer or validate num_dbs from centroids
-    if sharding.strategy == VectorShardingStrategy.CLUSTER and centroids is not None:
-        if num_dbs is None:
-            num_dbs = len(centroids)
-        elif len(centroids) != num_dbs:
-            raise ConfigValidationError(
-                f"centroids count ({len(centroids)}) != num_dbs ({num_dbs})"
-            )
-
-    # CEL: compile expression
-    if sharding.strategy == VectorShardingStrategy.CEL:
-        from ..cel import build_categorical_routing_lookup, compile_cel
-
-        assert sharding.cel_expr is not None
-        assert sharding.cel_columns is not None
-        compiled_cel = compile_cel(sharding.cel_expr, sharding.cel_columns)
-        if sharding.routing_values is not None:
-            cel_lookup = build_categorical_routing_lookup(sharding.routing_values)
+    match sharding.strategy:
+        case VectorShardingStrategy.CLUSTER if sharding.train_centroids:
             if num_dbs is None:
-                num_dbs = len(sharding.routing_values)
+                raise ConfigValidationError(
+                    "num_dbs must be provided for CLUSTER sharding with train_centroids"
+                )
+            if sample_vectors is None or len(sample_vectors) == 0:
+                raise ConfigValidationError(
+                    "sample_vectors required for CLUSTER training"
+                )
+            centroids = train_centroids_kmeans(sample_vectors, num_dbs, seed=42)
+            log_event(
+                "centroids_trained",
+                logger=_logger,
+                num_clusters=num_dbs,
+                sample_size=len(sample_vectors),
+            )
+        case VectorShardingStrategy.CLUSTER if centroids is not None:
+            if num_dbs is None:
+                num_dbs = len(centroids)
+            elif len(centroids) != num_dbs:
+                raise ConfigValidationError(
+                    f"centroids count ({len(centroids)}) != num_dbs ({num_dbs})"
+                )
+        case VectorShardingStrategy.LSH if hyperplanes is None:
+            if num_dbs is None:
+                raise ConfigValidationError("num_dbs must be provided for LSH sharding")
+            hyperplanes = lsh_generate_hyperplanes(
+                sharding.num_hash_bits, config.index_config.dim, seed=42
+            )
+        case VectorShardingStrategy.CEL:
+            from ..cel import build_categorical_routing_lookup, compile_cel
+
+            assert sharding.cel_expr is not None
+            assert sharding.cel_columns is not None
+            compiled_cel = compile_cel(sharding.cel_expr, sharding.cel_columns)
+            if sharding.routing_values is not None:
+                cel_lookup = build_categorical_routing_lookup(sharding.routing_values)
+                if num_dbs is None:
+                    num_dbs = len(sharding.routing_values)
 
     if num_dbs is None:
         raise ConfigValidationError(
@@ -240,56 +236,58 @@ def assign_vector_shard(
         shard_id: Explicit shard ID (EXPLICIT strategy only).
         routing_context: CEL evaluation context (CEL strategy only).
     """
-    strategy = routing.strategy
 
-    if strategy == VectorShardingStrategy.EXPLICIT:
-        if shard_id is None:
-            raise ConfigValidationError("EXPLICIT sharding requires shard_id")
-        if shard_id < 0 or shard_id >= routing.num_dbs:
-            raise ConfigValidationError(
-                f"shard_id {shard_id} out of range [0, {routing.num_dbs})"
+    match routing.strategy:
+        case VectorShardingStrategy.EXPLICIT:
+            if shard_id is None:
+                raise ConfigValidationError("EXPLICIT sharding requires shard_id")
+            if shard_id < 0 or shard_id >= routing.num_dbs:
+                raise ConfigValidationError(
+                    f"shard_id {shard_id} out of range [0, {routing.num_dbs})"
+                )
+            return shard_id
+
+        case VectorShardingStrategy.CLUSTER:
+            if routing.centroids is None:
+                raise ConfigValidationError("CLUSTER sharding requires centroids")
+            return _validate_routed_shard_id(
+                cluster_assign(
+                    vector, routing.centroids, routing.metric or DistanceMetric.COSINE
+                ),
+                num_dbs=routing.num_dbs,
+                strategy="CLUSTER",
             )
-        return shard_id
 
-    if strategy == VectorShardingStrategy.CLUSTER:
-        if routing.centroids is None:
-            raise ConfigValidationError("CLUSTER sharding requires centroids")
-        return _validate_routed_shard_id(
-            cluster_assign(
-                vector, routing.centroids, routing.metric or DistanceMetric.COSINE
-            ),
-            num_dbs=routing.num_dbs,
-            strategy="CLUSTER",
-        )
+        case VectorShardingStrategy.LSH:
+            if routing.hyperplanes is None:
+                raise ConfigValidationError("LSH sharding requires hyperplanes")
+            return _validate_routed_shard_id(
+                lsh_assign(vector, routing.hyperplanes, routing.num_dbs),
+                num_dbs=routing.num_dbs,
+                strategy="LSH",
+            )
 
-    if strategy == VectorShardingStrategy.LSH:
-        if routing.hyperplanes is None:
-            raise ConfigValidationError("LSH sharding requires hyperplanes")
-        return _validate_routed_shard_id(
-            lsh_assign(vector, routing.hyperplanes, routing.num_dbs),
-            num_dbs=routing.num_dbs,
-            strategy="LSH",
-        )
+        case VectorShardingStrategy.CEL:
+            if routing.compiled_cel is None:
+                raise ConfigValidationError(
+                    "CEL sharding requires a compiled expression"
+                )
+            if routing_context is None:
+                raise ConfigValidationError("CEL sharding requires routing_context")
+            from ..cel import route_cel
 
-    if strategy == VectorShardingStrategy.CEL:
-        if routing.compiled_cel is None:
-            raise ConfigValidationError("CEL sharding requires a compiled expression")
-        if routing_context is None:
-            raise ConfigValidationError("CEL sharding requires routing_context")
-        from ..cel import route_cel
+            return _validate_routed_shard_id(
+                route_cel(
+                    routing.compiled_cel,
+                    routing_context,
+                    routing_values=routing.routing_values,
+                    lookup=routing.cel_lookup,
+                ),
+                num_dbs=routing.num_dbs,
+                strategy="CEL",
+            )
 
-        return _validate_routed_shard_id(
-            route_cel(
-                routing.compiled_cel,
-                routing_context,
-                routing_values=routing.routing_values,
-                lookup=routing.cel_lookup,
-            ),
-            num_dbs=routing.num_dbs,
-            strategy="CEL",
-        )
-
-    raise ConfigValidationError(f"Unknown sharding strategy: {strategy}")
+    raise ConfigValidationError(f"Unknown sharding strategy: {routing.strategy}")
 
 
 # ---------------------------------------------------------------------------
