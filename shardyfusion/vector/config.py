@@ -101,5 +101,3 @@ class VectorWriteConfig:
             )
         if self.num_dbs is not None and self.num_dbs <= 0:
             raise ConfigValidationError(f"num_dbs must be > 0, got {self.num_dbs}")
-
-

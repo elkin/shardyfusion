@@ -248,7 +248,6 @@ def test_spark_vector_lancedb_write_and_read(
     from shardyfusion.config import (
         ManifestOptions,
         OutputOptions,
-        VectorSpec,
     )
     from shardyfusion.vector.adapters.lancedb_adapter import (
         LanceDbReaderFactory,
@@ -258,7 +257,6 @@ def test_spark_vector_lancedb_write_and_read(
         VectorIndexConfig,
         VectorShardingSpec,
         VectorShardingStrategy,
-        VectorSpecSharding,
         VectorWriteConfig,
     )
     from shardyfusion.vector.reader import ShardedVectorReader
