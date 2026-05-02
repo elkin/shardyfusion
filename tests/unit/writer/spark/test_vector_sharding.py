@@ -17,7 +17,7 @@ from shardyfusion.writer.spark.sharding import (  # noqa: E402
     add_vector_db_id_column,
 )
 from shardyfusion.writer.spark.vector_writer import (
-    verify_vector_routing_agreement,  # noqa: E402
+    _verify_vector_routing_agreement,  # noqa: E402
 )
 
 
@@ -271,7 +271,7 @@ class TestVerifyVectorRoutingAgreement:
             shard_id_col="shard_id",
         )
 
-        verify_vector_routing_agreement(
+        _verify_vector_routing_agreement(
             df_with_id,
             id_col="id",
             vector_col="embedding",
@@ -302,7 +302,7 @@ class TestVerifyVectorRoutingAgreement:
             routing=routing,
         )
 
-        verify_vector_routing_agreement(
+        _verify_vector_routing_agreement(
             df_with_id,
             id_col="id",
             vector_col="embedding",
@@ -335,7 +335,7 @@ class TestVerifyVectorRoutingAgreement:
             routing=routing,
         )
 
-        verify_vector_routing_agreement(
+        _verify_vector_routing_agreement(
             df_with_id,
             id_col="id",
             vector_col="embedding",
@@ -370,7 +370,7 @@ class TestVerifyVectorRoutingAgreement:
             routing_context_cols=cel_cols,
         )
 
-        verify_vector_routing_agreement(
+        _verify_vector_routing_agreement(
             df_with_id,
             id_col="id",
             vector_col="embedding",
@@ -408,7 +408,7 @@ class TestVerifyVectorRoutingAgreement:
             ShardAssignmentError,
             match="Spark/Python vector routing mismatch",
         ):
-            verify_vector_routing_agreement(
+            _verify_vector_routing_agreement(
                 wrong_df,
                 id_col="id",
                 vector_col="embedding",
