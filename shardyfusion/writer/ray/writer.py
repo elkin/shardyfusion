@@ -119,8 +119,6 @@ def write_hash_sharded(
         key_col=input.key_col,
         value_spec=input.value_spec,
         sort_within_partitions=options.sort_within_partitions,
-        max_writes_per_second=config.rate_limits.max_writes_per_second,
-        max_write_bytes_per_second=config.rate_limits.max_write_bytes_per_second,
         verify_routing=options.verify_routing,
         vector_fn=input.vector_fn,
         vector_columns=input.vector,
@@ -149,8 +147,6 @@ def write_cel_sharded(
         key_col=input.key_col,
         value_spec=input.value_spec,
         sort_within_partitions=options.sort_within_partitions,
-        max_writes_per_second=config.rate_limits.max_writes_per_second,
-        max_write_bytes_per_second=config.rate_limits.max_write_bytes_per_second,
         verify_routing=options.verify_routing,
         vector_fn=input.vector_fn,
         vector_columns=input.vector,
@@ -167,8 +163,6 @@ def _write_hash_sharded(
     key_col: str,
     value_spec: ValueSpec,
     sort_within_partitions: bool,
-    max_writes_per_second: float | None,
-    max_write_bytes_per_second: float | None,
     verify_routing: bool,
     vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
     vector_columns: VectorColumnMapping | None,
@@ -255,8 +249,6 @@ def _write_hash_sharded(
             run_id=run_id,
             key_col=key_col,
             value_spec=value_spec,
-            max_writes_per_second=max_writes_per_second,
-            max_write_bytes_per_second=max_write_bytes_per_second,
             sort_within_partitions=sort_within_partitions,
             started=started,
             vector_fn=distributed_vector_fn,
@@ -336,8 +328,6 @@ def _write_cel_sharded(
     key_col: str,
     value_spec: ValueSpec,
     sort_within_partitions: bool,
-    max_writes_per_second: float | None,
-    max_write_bytes_per_second: float | None,
     verify_routing: bool,
     vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
     vector_columns: VectorColumnMapping | None,
@@ -436,8 +426,6 @@ def _write_cel_sharded(
             run_id=run_id,
             key_col=key_col,
             value_spec=value_spec,
-            max_writes_per_second=max_writes_per_second,
-            max_write_bytes_per_second=max_write_bytes_per_second,
             sort_within_partitions=sort_within_partitions,
             started=started,
             vector_fn=distributed_vector_fn,
@@ -680,8 +668,6 @@ def _build_partition_write_runtime(
     run_id: str,
     key_col: str,
     value_spec: ValueSpec,
-    max_writes_per_second: float | None,
-    max_write_bytes_per_second: float | None,
     sort_within_partitions: bool,
     started: float,
     vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
@@ -698,8 +684,6 @@ def _build_partition_write_runtime(
         sort_within_partitions=sort_within_partitions,
         vector_fn=vector_fn,
     )
-    runtime.max_writes_per_second = max_writes_per_second
-    runtime.max_write_bytes_per_second = max_write_bytes_per_second
     return runtime
 
 

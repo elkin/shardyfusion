@@ -499,9 +499,6 @@ class BaseShardedWriteConfig:
         self.vector = vector if vector is not None else vector_spec
         self.validate()
 
-    def __post_init__(self) -> None:
-        self.validate()
-
     def validate(self) -> None:
         if not isinstance(self.storage, WriterStorageConfig):
             raise ConfigValidationError("storage must be WriterStorageConfig")

@@ -369,7 +369,7 @@ Writer functions are imported from subpackages (not re-exported at top level):
 - **Ray:** `from shardyfusion.writer.ray import write_hash_sharded, write_cel_sharded, write_single_db, RayCacheContext`
 - **Python:** `from shardyfusion.writer.python import write_hash_sharded, write_cel_sharded` (KV + unified KV+vector via `VectorSpec` on `HashShardedWriteConfig` / `CelShardedWriteConfig`)
 
-> **Hard break note:** KV writers now expose per-strategy functions (`write_hash_sharded` / `write_cel_sharded`) with four-argument public signatures: `(data, config, input, options=None)`. Use `HashShardedWriteConfig` / `CelShardedWriteConfig` plus `PythonRecordInput` or `ColumnWriteInput`. Standalone vector writers use `write_sharded(records, config, input=None, options=None)` from `shardyfusion.vector`; distributed vector writers use `write_sharded(data, config, input, options=None)` from `shardyfusion.writer.{spark,dask,ray}.vector_writer`.
+> **Hard break note:** KV writers now expose per-strategy functions (`write_hash_sharded` / `write_cel_sharded`) with four-argument public signatures: `(data, config, input, options=None)`. Use `HashShardedWriteConfig` / `CelShardedWriteConfig` plus `PythonRecordInput` or `ColumnWriteInput`. Standalone vector writers use `write_sharded(records, config, input=None, options=None)` from `shardyfusion.vector`; distributed vector writers use `write_sharded(data, config, input, options=None)` from `shardyfusion.writer.{spark,dask,ray}.vector_writer` or from the framework package. The package-level `write_vector_sharded` name remains as a compatibility alias to the refactored vector writer.
 
 SQLite backend adapters are imported from their module (not re-exported at top level):
 - `from shardyfusion.sqlite_adapter import SqliteFactory, SqliteReaderFactory, SqliteRangeReaderFactory, AdaptiveSqliteReaderFactory`
@@ -381,9 +381,9 @@ Vector types and functions are imported from subpackages (not re-exported at top
 - `from shardyfusion.vector.async_reader import AsyncShardedVectorReader`
 - `from shardyfusion.vector.types import VectorRecord, SearchResult, VectorSearchResponse, DistanceMetric, VectorShardingStrategy`
 - `from shardyfusion.vector.config import VectorIndexConfig, VectorShardingConfig, VectorShardingSpec, VectorShardedWriteConfig, VectorRecordInput, VectorWriteOptions`
-- `from shardyfusion.writer.spark.vector_writer import write_sharded` for Spark vector writes
-- `from shardyfusion.writer.dask.vector_writer import write_sharded` for Dask vector writes
-- `from shardyfusion.writer.ray.vector_writer import write_sharded` for Ray vector writes
+- `from shardyfusion.writer.spark import write_sharded` or `from shardyfusion.writer.spark.vector_writer import write_sharded` for Spark vector writes
+- `from shardyfusion.writer.dask import write_sharded` or `from shardyfusion.writer.dask.vector_writer import write_sharded` for Dask vector writes
+- `from shardyfusion.writer.ray import write_sharded` or `from shardyfusion.writer.ray.vector_writer import write_sharded` for Ray vector writes
 
 ## Testing Guidelines
 

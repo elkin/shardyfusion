@@ -77,48 +77,6 @@ class ResolvedVectorRouting:
 
 
 # ---------------------------------------------------------------------------
-# Config validation
-# ---------------------------------------------------------------------------
-
-
-def validate_vector_config(config: VectorShardedWriteConfig) -> None:
-    """Validate VectorShardedWriteConfig before writing."""
-    if config.index_config.dim <= 0:
-        raise ConfigValidationError(f"dim must be > 0, got {config.index_config.dim}")
-    if not config.s3_prefix:
-        raise ConfigValidationError("s3_prefix is required")
-    if config.batch_size <= 0:
-        raise ConfigValidationError(f"batch_size must be > 0, got {config.batch_size}")
-
-    sharding = config.sharding
-    match sharding.strategy:
-        case VectorShardingStrategy.CLUSTER:
-            if sharding.centroids is None and not sharding.train_centroids:
-                raise ConfigValidationError(
-                    "CLUSTER sharding requires either centroids or train_centroids=True"
-                )
-        case VectorShardingStrategy.CEL:
-            if not sharding.cel_expr:
-                raise ConfigValidationError("CEL sharding requires cel_expr to be set")
-            if not sharding.cel_columns:
-                raise ConfigValidationError(
-                    "CEL sharding requires cel_columns to be set"
-                )
-            if sharding.num_probes > 1:
-                raise ConfigValidationError(
-                    f"num_probes is only supported for CLUSTER and LSH sharding, got {sharding.num_probes} for {sharding.strategy.value}"
-                )
-        case VectorShardingStrategy.EXPLICIT if sharding.num_probes > 1:
-            raise ConfigValidationError(
-                f"num_probes is only supported for CLUSTER and LSH sharding, got {sharding.num_probes} for {sharding.strategy.value}"
-            )
-    if sharding.num_probes < 1:
-        raise ConfigValidationError(
-            f"num_probes must be >= 1, got {sharding.num_probes}"
-        )
-
-
-# ---------------------------------------------------------------------------
 # Routing resolution
 # ---------------------------------------------------------------------------
 

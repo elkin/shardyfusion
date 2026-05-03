@@ -21,7 +21,6 @@ from shardyfusion.vector.types import (
     VectorRecord,
     VectorShardingStrategy,
 )
-from shardyfusion.vector.writer import _validate_config
 
 # ---------------------------------------------------------------------------
 # Mock CEL helpers — avoids hard dependency on cel-expr-python for unit tests
@@ -39,7 +38,7 @@ class FakeCompiledCel:
 
 
 # ---------------------------------------------------------------------------
-# Writer: _validate_config with CEL
+# Writer config validation with CEL
 # ---------------------------------------------------------------------------
 
 
@@ -56,7 +55,7 @@ class TestValidateConfigCel:
                 routing_values=["us", "eu", "asia"],
             ),
         )
-        _validate_config(cfg)  # should not raise
+        cfg.validate()  # should not raise
 
     def test_cel_missing_expr_raises(self):
         with pytest.raises(ConfigValidationError, match="cel_expr"):

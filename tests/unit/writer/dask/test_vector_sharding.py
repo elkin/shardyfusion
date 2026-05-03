@@ -21,6 +21,16 @@ from shardyfusion.writer.dask.sharding import (  # noqa: E402
 from shardyfusion.writer.dask.vector_writer import (
     _verify_vector_routing_agreement,  # noqa: E402
 )
+from shardyfusion.writer.dask.vector_writer import (  # noqa: E402
+    write_sharded as module_write_sharded,
+)
+
+
+def test_package_exports_vector_writer_entry_points() -> None:
+    from shardyfusion.writer.dask import write_sharded, write_vector_sharded
+
+    assert write_sharded is module_write_sharded
+    assert write_vector_sharded is module_write_sharded
 
 
 class TestAddVectorDbIdColumnDask:

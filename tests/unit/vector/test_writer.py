@@ -20,7 +20,6 @@ from shardyfusion.vector.types import VectorRecord, VectorShardingStrategy
 from shardyfusion.vector.writer import (
     _flush_shard_batch,
     _ShardState,
-    _validate_config,
 )
 
 # ---------------------------------------------------------------------------
@@ -92,7 +91,7 @@ class TestValidateConfig:
                 train_centroids=True,
             ),
         )
-        _validate_config(cfg)  # should not raise
+        cfg.validate()  # should not raise
 
     def test_zero_dim_raises(self):
         with pytest.raises(ConfigValidationError, match=r"index_config\.dim"):
@@ -491,7 +490,7 @@ class TestWriteSingleProcess:
 
 
 # ---------------------------------------------------------------------------
-# _validate_config — additional cases
+# VectorShardedWriteConfig validation — additional cases
 # ---------------------------------------------------------------------------
 
 

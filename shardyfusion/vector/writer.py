@@ -32,7 +32,6 @@ from ._distributed import (
     resolve_adapter_factory,
     resolve_vector_routing,
     upload_routing_metadata,
-    validate_vector_config,
 )
 from .config import VectorRecordInput, VectorShardedWriteConfig, VectorWriteOptions
 from .types import (
@@ -44,7 +43,6 @@ from .types import (
 _logger = get_logger(__name__)
 
 
-_validate_config = validate_vector_config
 _flush_shard_batch = flush_vector_shard_batch
 _ShardState = VectorShardState
 

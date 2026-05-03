@@ -14,7 +14,6 @@ from shardyfusion.vector._distributed import (
     assign_vector_shard,
     flush_vector_shard_batch,
     resolve_vector_routing,
-    validate_vector_config,
 )
 from shardyfusion.vector.config import (
     VectorIndexConfig,
@@ -46,7 +45,7 @@ class MockVectorWriter:
         self.flushed = True
 
 
-class TestValidateVectorConfig:
+class TestVectorShardedWriteConfigValidation:
     def test_valid_cluster_config(self) -> None:
         cfg = VectorShardedWriteConfig(
             num_dbs=4,
@@ -57,7 +56,7 @@ class TestValidateVectorConfig:
                 centroids=np.random.rand(4, 128).astype(np.float32),
             ),
         )
-        validate_vector_config(cfg)
+        cfg.validate()
 
     def test_valid_cluster_with_training(self) -> None:
         cfg = VectorShardedWriteConfig(
@@ -69,7 +68,7 @@ class TestValidateVectorConfig:
                 train_centroids=True,
             ),
         )
-        validate_vector_config(cfg)
+        cfg.validate()
 
     def test_valid_lsh_config(self) -> None:
         cfg = VectorShardedWriteConfig(
@@ -81,7 +80,7 @@ class TestValidateVectorConfig:
                 num_hash_bits=8,
             ),
         )
-        validate_vector_config(cfg)
+        cfg.validate()
 
     def test_valid_explicit_config(self) -> None:
         cfg = VectorShardedWriteConfig(
@@ -92,7 +91,7 @@ class TestValidateVectorConfig:
                 strategy=VectorShardingStrategy.EXPLICIT,
             ),
         )
-        validate_vector_config(cfg)
+        cfg.validate()
 
     def test_invalid_zero_dim(self) -> None:
         with pytest.raises(ConfigValidationError, match=r"index_config\.dim"):

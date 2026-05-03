@@ -228,9 +228,6 @@ class VectorShardedWriteConfig:
         self.lifecycle = lifecycle or WriterLifecycleConfig(run_registry=run_registry)
         self.validate()
 
-    def __post_init__(self) -> None:
-        self.validate()
-
     def validate(self) -> None:
         if self.index_config.dim <= 0:
             raise ConfigValidationError(
