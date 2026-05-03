@@ -24,17 +24,18 @@ def add_db_id_column_hash(
     key_col: str,
     num_dbs: int,
     hash_algorithm: ShardHashAlgorithm,
+    shard_id_col: str = DB_ID_COL,
 ) -> dd.DataFrame:
-    """Add deterministic ``_shard_id`` column for HASH routing."""
+    """Add deterministic ``shard_id_col`` column for HASH routing."""
     from shardyfusion._writer_core import route_hash
 
     def _apply_routing(pdf: pd.DataFrame) -> pd.DataFrame:
         db_ids = pdf[key_col].apply(
             lambda key: route_hash(key, num_dbs=num_dbs, hash_algorithm=hash_algorithm)
         )
-        return pdf.assign(**{DB_ID_COL: db_ids})
+        return pdf.assign(**{shard_id_col: db_ids})
 
-    meta = ddf._meta.assign(**{DB_ID_COL: 0})
+    meta = ddf._meta.assign(**{shard_id_col: 0})
     return ddf.map_partitions(_apply_routing, meta=meta)
 
 
@@ -45,8 +46,9 @@ def add_db_id_column_cel(
     cel_columns: dict[str, str],
     routing_values: list[int | str | bytes] | None,
     infer_routing_values_from_data: bool,
+    shard_id_col: str = DB_ID_COL,
 ) -> tuple[dd.DataFrame, CelShardingSpec]:
-    """Add deterministic ``_shard_id`` column for CEL routing.
+    """Add deterministic ``shard_id_col`` column for CEL routing.
 
     Returns the modified DataFrame and the resolved CelShardingSpec.
     """
@@ -94,9 +96,9 @@ def add_db_id_column_cel(
             )
             for ctx in contexts
         ]
-        return pdf.assign(**{DB_ID_COL: db_ids})
+        return pdf.assign(**{shard_id_col: db_ids})
 
-    meta = ddf._meta.assign(**{DB_ID_COL: 0})
+    meta = ddf._meta.assign(**{shard_id_col: 0})
     return ddf.map_partitions(_apply_cel_routing, meta=meta), resolved
 
 
@@ -139,8 +141,9 @@ def add_vector_db_id_column(
     routing: ResolvedVectorRouting,
     shard_id_col: str | None = None,
     routing_context_cols: dict[str, str] | None = None,
+    output_col: str = VECTOR_DB_ID_COL,
 ) -> tuple[dd.DataFrame, int]:
-    """Add deterministic _vector_db_id column based on vector routing.
+    """Add deterministic output_col column based on vector routing.
 
     Uses map_partitions with pandas apply to match the Python writer's
     assign_vector_shard() behavior.
@@ -155,9 +158,9 @@ def add_vector_db_id_column(
         assert shard_id_col is not None, "shard_id_col required for EXPLICIT"
 
         def _apply_explicit(pdf: pd.DataFrame) -> pd.DataFrame:
-            return pdf.assign(**{VECTOR_DB_ID_COL: pdf[shard_id_col]})
+            return pdf.assign(**{output_col: pdf[shard_id_col]})
 
-        meta = ddf._meta.assign(**{VECTOR_DB_ID_COL: 0})
+        meta = ddf._meta.assign(**{output_col: 0})
         return ddf.map_partitions(_apply_explicit, meta=meta), num_dbs
 
     elif strategy == VecStrategy.CLUSTER:
@@ -173,9 +176,9 @@ def add_vector_db_id_column(
                 metric = DistanceMetric(metric)
             vectors = _stack_vector_values(pdf[vector_col].tolist())
             db_ids = [cluster_assign(v, _centroids, metric) for v in vectors]
-            return pdf.assign(**{VECTOR_DB_ID_COL: db_ids})
+            return pdf.assign(**{output_col: db_ids})
 
-        meta = ddf._meta.assign(**{VECTOR_DB_ID_COL: 0})
+        meta = ddf._meta.assign(**{output_col: 0})
         return ddf.map_partitions(_apply_cluster, meta=meta), num_dbs
 
     elif strategy == VecStrategy.LSH:
@@ -185,9 +188,9 @@ def add_vector_db_id_column(
         def _apply_lsh(pdf: pd.DataFrame) -> pd.DataFrame:
             vectors = _stack_vector_values(pdf[vector_col].tolist())
             db_ids = [lsh_assign(v, _hyperplanes, num_dbs) for v in vectors]
-            return pdf.assign(**{VECTOR_DB_ID_COL: db_ids})
+            return pdf.assign(**{output_col: db_ids})
 
-        meta = ddf._meta.assign(**{VECTOR_DB_ID_COL: 0})
+        meta = ddf._meta.assign(**{output_col: 0})
         return ddf.map_partitions(_apply_lsh, meta=meta), num_dbs
 
     elif strategy == VecStrategy.CEL:
@@ -223,9 +226,9 @@ def add_vector_db_id_column(
                 )
                 for ctx in contexts
             ]
-            return pdf.assign(**{VECTOR_DB_ID_COL: db_ids})
+            return pdf.assign(**{output_col: db_ids})
 
-        meta = ddf._meta.assign(**{VECTOR_DB_ID_COL: 0})
+        meta = ddf._meta.assign(**{output_col: 0})
         return ddf.map_partitions(_apply_cel, meta=meta), num_dbs
 
     else:

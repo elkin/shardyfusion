@@ -207,6 +207,7 @@ def _write_hash_sharded(
 
         # --- Phase 1: Sharding ---
         shard_started = time.perf_counter()
+        shard_id_col = config.shard_id_col
         sharding = HashShardingSpec(
             hash_algorithm=ShardHashAlgorithm.XXH3_64,
             max_keys_per_shard=config.max_keys_per_shard,
@@ -216,6 +217,7 @@ def _write_hash_sharded(
             key_col=key_col,
             num_dbs=num_dbs,
             hash_algorithm=sharding.hash_algorithm,
+            shard_id_col=shard_id_col,
         )
 
         if verify_routing and num_dbs > 0:
@@ -224,6 +226,7 @@ def _write_hash_sharded(
                 key_col=key_col,
                 num_dbs=num_dbs,
                 hash_algorithm=sharding.hash_algorithm,
+                shard_id_col=shard_id_col,
             )
 
         shard_duration_ms = int((time.perf_counter() - shard_started) * 1000)
@@ -255,7 +258,7 @@ def _write_hash_sharded(
         )
 
         write_started = time.perf_counter()
-        ddf_shuffled = ddf_with_id.shuffle(on=DB_ID_COL, npartitions=num_dbs)
+        ddf_shuffled = ddf_with_id.shuffle(on=shard_id_col, npartitions=num_dbs)
         ddf_results = ddf_shuffled.map_partitions(
             _write_partition,
             runtime=runtime,
@@ -346,18 +349,20 @@ def _write_cel_sharded(
 
         # --- Phase 1: Sharding ---
         shard_started = time.perf_counter()
+        shard_id_col = config.shard_id_col
         ddf_with_id, resolved_sharding = add_db_id_column_cel(
             ddf,
             cel_expr=config.cel_expr,
             cel_columns=config.cel_columns,
             routing_values=config.routing_values,
             infer_routing_values_from_data=config.infer_routing_values_from_data,
+            shard_id_col=shard_id_col,
         )
 
         if resolved_sharding.routing_values is not None:
             num_dbs = resolve_cel_num_dbs(resolved_sharding)
         else:
-            distinct_ids = set(ddf_with_id[DB_ID_COL].unique().compute().tolist())
+            distinct_ids = set(ddf_with_id[shard_id_col].unique().compute().tolist())
             num_dbs = discover_cel_num_dbs(distinct_ids)
 
         if verify_routing and num_dbs is not None and num_dbs > 0:
@@ -368,6 +373,7 @@ def _write_cel_sharded(
                 cel_expr=resolved_sharding.cel_expr,
                 cel_columns=resolved_sharding.cel_columns,
                 routing_values=resolved_sharding.routing_values,
+                shard_id_col=shard_id_col,
             )
 
         shard_duration_ms = int((time.perf_counter() - shard_started) * 1000)
@@ -400,7 +406,7 @@ def _write_cel_sharded(
 
         write_started = time.perf_counter()
         assert num_dbs is not None, "num_dbs must be resolved before shuffle"
-        ddf_shuffled = ddf_with_id.shuffle(on=DB_ID_COL, npartitions=num_dbs)
+        ddf_shuffled = ddf_with_id.shuffle(on=shard_id_col, npartitions=num_dbs)
         ddf_results = ddf_shuffled.map_partitions(
             _write_partition,
             runtime=runtime,
@@ -530,11 +536,12 @@ def _verify_hash_routing_agreement(
     key_col: str,
     num_dbs: int,
     hash_algorithm: ShardHashAlgorithm,
+    shard_id_col: str = DB_ID_COL,
     sample_size: int = 20,
 ) -> None:
     """Sample rows and verify db_id column matches Python hash routing."""
 
-    sampled = ddf_with_id[[key_col, DB_ID_COL]].head(sample_size, npartitions=-1)
+    sampled = ddf_with_id[[key_col, shard_id_col]].head(sample_size, npartitions=-1)
     if sampled.empty:
         return
 
@@ -543,7 +550,7 @@ def _verify_hash_routing_agreement(
         key = row[key_col]
         if hasattr(key, "item"):
             key = key.item()
-        computed_db_id = int(row[DB_ID_COL])
+        computed_db_id = int(row[shard_id_col])
         expected_db_id = route_hash(
             key,
             num_dbs=num_dbs,
@@ -570,14 +577,15 @@ def _verify_cel_routing_agreement(
     cel_expr: str,
     cel_columns: dict[str, str],
     routing_values: list[int | str | bytes] | None,
+    shard_id_col: str = DB_ID_COL,
     sample_size: int = 20,
 ) -> None:
     """Sample rows and verify db_id column matches Python CEL routing."""
 
     # Multi-column CEL: include context columns in sample
-    sample_cols = [key_col, DB_ID_COL]
+    sample_cols = [key_col, shard_id_col]
     if set(cel_columns.keys()) != {"key"}:
-        sample_cols.extend(c for c in cel_columns if c not in (key_col, DB_ID_COL))
+        sample_cols.extend(c for c in cel_columns if c not in (key_col, shard_id_col))
 
     sampled = ddf_with_id[sample_cols].head(sample_size, npartitions=-1)
     if sampled.empty:
@@ -588,7 +596,7 @@ def _verify_cel_routing_agreement(
         key = row[key_col]
         if hasattr(key, "item"):
             key = key.item()
-        computed_db_id = int(row[DB_ID_COL])
+        computed_db_id = int(row[shard_id_col])
 
         routing_context: dict[str, object] | None = None
         if set(cel_columns.keys()) != {"key"}:
@@ -633,9 +641,14 @@ def _write_partition(
         UnifiedAccumulator if runtime.vector_fn is not None else KvAccumulator
     )
 
-    for db_id, group_pdf in pdf.groupby(DB_ID_COL):
+    shard_id_col = runtime.shard_id_col
+    for db_id, group_pdf in pdf.groupby(shard_id_col):
         if runtime.sort_within_partitions:
             group_pdf = group_pdf.sort_values(runtime.key_col)
+
+        # Drop the internal shard_id column so it doesn't leak into stored data
+        if shard_id_col in group_pdf.columns:
+            group_pdf = group_pdf.drop(columns=[shard_id_col])
 
         vec_fn = runtime.vector_fn
         attempt_result = write_shard_with_retry(
