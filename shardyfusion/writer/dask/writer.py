@@ -31,6 +31,7 @@ from shardyfusion.config import (
     DaskWriteOptions,
     HashShardedWriteConfig,
     validate_configs,
+    validate_shard_id_col_no_collision,
 )
 from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.logging import (
@@ -105,6 +106,7 @@ def write_hash_sharded(
 
     options = options or DaskWriteOptions()
     validate_configs(config, input, options)
+    validate_shard_id_col_no_collision(config, set(ddf.columns))
     num_dbs = resolve_num_dbs(config, lambda: len(ddf))
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
@@ -133,6 +135,7 @@ def write_cel_sharded(
     """Write a Dask DataFrame into N independent sharded databases using CEL routing."""
     options = options or DaskWriteOptions()
     validate_configs(config, input, options)
+    validate_shard_id_col_no_collision(config, set(ddf.columns))
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
 

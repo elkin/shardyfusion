@@ -144,3 +144,18 @@ class ValueSpec:
         """Use a custom callable encoder."""
 
         return cls(encoder=fn, description=getattr(fn, "__name__", "callable_encoder"))
+
+    def referenced_columns(self) -> list[str] | None:
+        """Return column names referenced by this value spec.
+
+        Returns ``None`` when the spec references all columns dynamically
+        (e.g. ``json_cols()`` with no explicit columns, or a callable encoder).
+        """
+        if self.description.startswith("binary_col:"):
+            return [self.description.split(":", 1)[1]]
+        if self.description.startswith("json_cols:"):
+            detail = self.description.split(":", 1)[1]
+            if detail == "all":
+                return None
+            return detail.split(",")
+        return None

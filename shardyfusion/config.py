@@ -951,3 +951,24 @@ def _validate_segment(value: str, *, field_name: str) -> None:
 def _validate_positive_optional(value: float | int | None, *, field_name: str) -> None:
     if value is not None and value <= 0:
         raise ConfigValidationError(f"{field_name} must be > 0 when set")
+
+
+class _HasShardIdCol(Protocol):
+    shard_id_col: str
+
+
+def validate_shard_id_col_no_collision(
+    config: _HasShardIdCol,
+    user_columns: set[str],
+) -> None:
+    """Ensure shard_id_col does not collide with user data columns.
+
+    Raises ConfigValidationError when the internal shard ID column name
+    matches a column present in the user's data, which would cause that
+    column's data to be silently dropped before writing.
+    """
+    if config.shard_id_col in user_columns:
+        raise ConfigValidationError(
+            f"shard_id_col '{config.shard_id_col}' conflicts with user data column. "
+            "Choose a different shard_id_col or rename the user column."
+        )

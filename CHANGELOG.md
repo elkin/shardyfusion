@@ -97,3 +97,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 - **`route_key()` from `_writer_core.py`** — writer-side routing now uses `route_hash()` or `route_cel()` directly. Reader `route_key()` methods remain unchanged.
+
+### Changed
+- **Internal sharding column is dropped before value encoding** in DataFrame-based writers (Spark, Dask, Ray). When using `json_cols(None)` (or `json_cols()` with no explicit columns), the internal `_shard_id` / `_vector_db_id` column is no longer included in the serialized stored value. The column name is configurable via `BaseShardedWriteConfig.shard_id_col` (KV writers, default `_shard_id`) and `VectorShardedWriteConfig.shard_id_col` (vector writers, default `_vector_db_id`).

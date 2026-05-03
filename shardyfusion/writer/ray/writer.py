@@ -33,6 +33,7 @@ from shardyfusion.config import (
     HashShardedWriteConfig,
     RayWriteOptions,
     validate_configs,
+    validate_shard_id_col_no_collision,
 )
 from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.logging import (
@@ -105,6 +106,9 @@ def write_hash_sharded(
     """Write a Ray Dataset into N independent sharded databases using HASH routing."""
     options = options or RayWriteOptions()
     validate_configs(config, input, options)
+    cols = ds.columns()
+    if cols is not None:
+        validate_shard_id_col_no_collision(config, set(cols))
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
     num_dbs = _resolve_num_dbs_before_sharding(ds, config)
@@ -133,6 +137,9 @@ def write_cel_sharded(
     """Write a Ray Dataset into N independent sharded databases using CEL routing."""
     options = options or RayWriteOptions()
     validate_configs(config, input, options)
+    cols = ds.columns()
+    if cols is not None:
+        validate_shard_id_col_no_collision(config, set(cols))
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
 

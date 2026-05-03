@@ -33,6 +33,7 @@ class _FakeDataFrame:
         self.sparkSession = spark_session
         self.persist_calls: list[object | None] = []
         self.unpersist_calls: list[bool] = []
+        self.columns = ["id", "payload"]
 
     def persist(self, storage_level=None):
         self.persist_calls.append(storage_level)
@@ -88,11 +89,14 @@ def test_dataframe_cache_context_caches_and_unpersists() -> None:
 def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> None:
     calls: list[tuple[str, object]] = []
     fake_spark = _FakeSparkSession()
-    fake_df = SimpleNamespace(sparkSession=fake_spark, count=lambda: 10)
+    fake_df = SimpleNamespace(
+        sparkSession=fake_spark, count=lambda: 10, columns=["id", "payload"]
+    )
     fake_config = SimpleNamespace(
         output=SimpleNamespace(run_id=None),
         num_dbs=4,
         max_keys_per_shard=None,
+        shard_id_col="_shard_id",
         rate_limits=SimpleNamespace(
             max_writes_per_second=None,
             max_write_bytes_per_second=None,
@@ -174,6 +178,7 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
         output=SimpleNamespace(run_id=None),
         num_dbs=4,
         max_keys_per_shard=None,
+        shard_id_col="_shard_id",
         rate_limits=SimpleNamespace(
             max_writes_per_second=None,
             max_write_bytes_per_second=None,

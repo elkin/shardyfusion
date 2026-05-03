@@ -11,7 +11,11 @@ from uuid import uuid4
 from pyspark.sql import DataFrame
 
 from shardyfusion._rate_limiter import TokenBucket
-from shardyfusion.config import VectorColumnInput, validate_configs
+from shardyfusion.config import (
+    VectorColumnInput,
+    validate_configs,
+    validate_shard_id_col_no_collision,
+)
 from shardyfusion.errors import ConfigValidationError, ShardAssignmentError
 from shardyfusion.logging import get_logger
 from shardyfusion.manifest import (
@@ -128,6 +132,7 @@ def write_sharded(
 
     options = options or VectorWriteOptions()
     validate_configs(config, input, options)
+    validate_shard_id_col_no_collision(config, set(df.columns))
     if input.id_col is None:
         raise ConfigValidationError("input.id_col is required for vector writes")
     vector_col = input.vector_col

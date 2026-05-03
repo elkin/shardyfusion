@@ -46,6 +46,7 @@ from shardyfusion.config import (
     HashShardedWriteConfig,
     SparkWriteOptions,
     validate_configs,
+    validate_shard_id_col_no_collision,
 )
 from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.logging import (
@@ -108,6 +109,7 @@ def write_hash_sharded(
     """Write a DataFrame into N independent sharded databases using HASH routing."""
     options = options or SparkWriteOptions()
     validate_configs(config, input, options)
+    validate_shard_id_col_no_collision(config, set(df.columns))
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
     spark = df.sparkSession
@@ -138,6 +140,7 @@ def write_cel_sharded(
     """Write a DataFrame into N independent sharded databases using CEL routing."""
     options = options or SparkWriteOptions()
     validate_configs(config, input, options)
+    validate_shard_id_col_no_collision(config, set(df.columns))
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
     spark = df.sparkSession
