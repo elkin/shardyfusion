@@ -14,6 +14,7 @@ from shardyfusion.config import (
 )
 from shardyfusion.metrics import MetricsCollector
 from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
+from shardyfusion.sharding_types import DB_ID_COL
 from shardyfusion.slatedb_adapter import DbAdapterFactory, SlateDbFactory
 from shardyfusion.type_defs import RetryConfig
 
@@ -39,6 +40,7 @@ class PartitionWriteRuntime:
     metrics_collector: MetricsCollector | None = None
     started: float = 0.0
     vector_fn: _VectorFn | None = None
+    shard_id_col: str = DB_ID_COL
 
     def __post_init__(self) -> None:
         assert self.run_id
@@ -54,6 +56,7 @@ class PartitionWriteRuntime:
             self.max_write_bytes_per_second is None
             or self.max_write_bytes_per_second > 0
         )
+        assert self.shard_id_col
 
     @staticmethod
     def from_public_config(
@@ -142,4 +145,5 @@ def _common_runtime_kwargs(
         "metrics_collector": config.metrics_collector,
         "started": started,
         "vector_fn": vector_fn,
+        "shard_id_col": config.shard_id_col,
     }

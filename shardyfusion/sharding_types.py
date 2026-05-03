@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Self, get_args
 
 DB_ID_COL = "_shard_id"
+VECTOR_DB_ID_COL = "_vector_db_id"
 
 RoutingValue = int | str | bytes
 

@@ -20,6 +20,7 @@ from ..credentials import CredentialProvider
 from ..errors import ConfigValidationError
 from ..metrics._protocol import MetricsCollector
 from ..run_registry import RunRegistry
+from ..sharding_types import VECTOR_DB_ID_COL
 from ..type_defs import S3ConnectionOptions
 from .types import (
     DistanceMetric,
@@ -139,6 +140,7 @@ class VectorShardedWriteConfig:
         default_factory=WriterObservabilityConfig
     )
     lifecycle: WriterLifecycleConfig = field(default_factory=WriterLifecycleConfig)
+    shard_id_col: str = VECTOR_DB_ID_COL
 
     def __init__(
         self,
@@ -152,6 +154,7 @@ class VectorShardedWriteConfig:
         rate_limits: VectorWriteRateLimitConfig | None = None,
         observability: WriterObservabilityConfig | None = None,
         lifecycle: WriterLifecycleConfig | None = None,
+        shard_id_col: str = VECTOR_DB_ID_COL,
         num_dbs: int | None = None,
         s3_prefix: str | None = None,
         adapter_factory: VectorIndexWriterFactory | None = None,
@@ -227,6 +230,7 @@ class VectorShardedWriteConfig:
             metrics_collector=metrics_collector
         )
         self.lifecycle = lifecycle or WriterLifecycleConfig(run_registry=run_registry)
+        self.shard_id_col = shard_id_col
         self.validate()
 
     def validate(self) -> None:
@@ -237,6 +241,8 @@ class VectorShardedWriteConfig:
             )
         if self.num_dbs is not None and self.num_dbs <= 0:
             raise ConfigValidationError(f"num_dbs must be > 0, got {self.num_dbs}")
+        if not self.shard_id_col or not isinstance(self.shard_id_col, str):
+            raise ConfigValidationError("shard_id_col must be a non-empty string")
         validate_configs(
             self.storage,
             self.output,

@@ -13,6 +13,7 @@ from .credentials import CredentialProvider
 from .errors import ConfigValidationError
 from .metrics import MetricsCollector
 from .sharding_types import (
+    DB_ID_COL,
     KeyEncoding,
     RoutingValue,
     validate_routing_values,
@@ -376,6 +377,7 @@ class BaseShardedWriteConfig:
     )
     lifecycle: WriterLifecycleConfig = field(default_factory=WriterLifecycleConfig)
     vector: VectorSpec | None = None
+    shard_id_col: str = DB_ID_COL
 
     def __init__(
         self,
@@ -389,6 +391,7 @@ class BaseShardedWriteConfig:
         observability: WriterObservabilityConfig | None = None,
         lifecycle: WriterLifecycleConfig | None = None,
         vector: VectorSpec | None = None,
+        shard_id_col: str = DB_ID_COL,
         s3_prefix: str | None = None,
         key_encoding: KeyEncoding | None = None,
         batch_size: int | None = None,
@@ -412,6 +415,7 @@ class BaseShardedWriteConfig:
             observability=observability,
             lifecycle=lifecycle,
             vector=vector,
+            shard_id_col=shard_id_col,
             s3_prefix=s3_prefix,
             key_encoding=key_encoding,
             batch_size=batch_size,
@@ -438,6 +442,7 @@ class BaseShardedWriteConfig:
         observability: WriterObservabilityConfig | None,
         lifecycle: WriterLifecycleConfig | None,
         vector: VectorSpec | None,
+        shard_id_col: str,
         s3_prefix: str | None,
         key_encoding: KeyEncoding | None,
         batch_size: int | None,
@@ -511,6 +516,7 @@ class BaseShardedWriteConfig:
         )
         self.lifecycle = lifecycle or WriterLifecycleConfig(run_registry=run_registry)
         self.vector = vector if vector is not None else vector_spec
+        self.shard_id_col = shard_id_col
         self.validate()
 
     def validate(self) -> None:
@@ -543,6 +549,9 @@ class BaseShardedWriteConfig:
             self.observability,
             self.lifecycle,
         )
+
+        if not self.shard_id_col or not isinstance(self.shard_id_col, str):
+            raise ConfigValidationError("shard_id_col must be a non-empty string")
 
         if self.vector is not None:
             vs = self.vector
