@@ -388,4 +388,22 @@ def test_compiled_cel_columns_list_is_cached() -> None:
     a = compiled.columns_list
     b = compiled.columns_list
     assert a is b
-    assert a == ["key"]
+    assert a == ("key",)
+    assert isinstance(a, tuple)
+
+
+def test_compiled_cel_columns_is_read_only() -> None:
+    """Cached CompiledCel must not expose mutable internal state."""
+    import pytest
+
+    from shardyfusion.cel import compile_cel
+
+    compiled = compile_cel("key % 4u", {"key": "uint"})
+    # MappingProxyType raises TypeError on mutation attempts.
+    with pytest.raises(TypeError):
+        compiled.columns["key"] = "int"  # type: ignore[index]
+    # Mutating the original dict passed in must not affect the cached view.
+    original = {"key": "uint"}
+    compiled2 = compile_cel("key % 4u", original)
+    original["key"] = "int"
+    assert compiled2.columns["key"] == "uint"

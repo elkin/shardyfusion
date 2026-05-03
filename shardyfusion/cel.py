@@ -21,9 +21,10 @@ from __future__ import annotations
 
 import functools
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
+from types import MappingProxyType
 from typing import Any
 
 from .errors import ConfigValidationError
@@ -146,18 +147,22 @@ class CompiledCel:
     def __init__(self, env: Any, expr: Any, columns: dict[str, str]) -> None:
         self._env = env
         self._expr = expr
-        self._columns = columns
-        # Pre-built list of column names — reused by per-batch hot paths
+        # Defensive copies wrapped in read-only views so the cached
+        # CompiledCel cannot be mutated by callers (compile_cel_cached
+        # reuses the same instance across calls).
+        self._columns: Mapping[str, str] = MappingProxyType(dict(columns))
+        # Pre-built tuple of column names — reused by per-batch hot paths
         # (e.g. evaluate_cel_arrow_batch) so they don't rebuild it per call.
-        self._columns_list: list[str] = list(columns)
+        self._columns_list: tuple[str, ...] = tuple(columns)
 
     @property
-    def columns(self) -> dict[str, str]:
+    def columns(self) -> Mapping[str, str]:
+        """Read-only view of the declared column types."""
         return self._columns
 
     @property
-    def columns_list(self) -> list[str]:
-        """Cached column-name list. Do not mutate."""
+    def columns_list(self) -> tuple[str, ...]:
+        """Cached column-name tuple (immutable)."""
         return self._columns_list
 
     def evaluate(self, context: dict[str, Any]) -> int | str | bytes:
@@ -233,7 +238,7 @@ def compile_cel_cached(
     Use this on hot paths (per-batch or per-partition) instead of
     :func:`compile_cel`. The cache is process-local; on a 64-entry LRU it
     safely accommodates many concurrent (expr, columns) combinations within
-    a single worker without bounded growth.
+    a single worker without unbounded growth.
 
     Args:
         expr: CEL expression string (used as part of the cache key).
