@@ -451,18 +451,19 @@ def _verify_hash_routing_agreement(
     num_dbs: int,
     hash_algorithm: ShardHashAlgorithm,
     key_encoding: KeyEncoding,
+    shard_id_col: str = DB_ID_COL,
     sample_size: int = 20,
 ) -> None:
     """Sample rows and verify Spark-computed db_id matches Python hash routing."""
 
-    sampled = df_with_db_id.select(key_col, DB_ID_COL).limit(sample_size).collect()
+    sampled = df_with_db_id.select(key_col, shard_id_col).limit(sample_size).collect()
     if not sampled:
         return
 
     mismatches: list[tuple[object, int, int]] = []
     for row in sampled:
         key = row[key_col]
-        spark_db_id = int(row[DB_ID_COL])
+        spark_db_id = int(row[shard_id_col])
         python_db_id = route_hash(
             key,
             num_dbs=num_dbs,
@@ -490,6 +491,7 @@ def _verify_cel_routing_agreement(
     cel_columns: dict[str, str],
     routing_values: list[int | str | bytes] | None,
     key_encoding: KeyEncoding,
+    shard_id_col: str = DB_ID_COL,
     sample_size: int = 20,
 ) -> None:
     """Sample rows and verify Spark-computed db_id matches Python CEL routing."""
@@ -498,14 +500,14 @@ def _verify_cel_routing_agreement(
     if cel_columns and set(cel_columns.keys()) != {"key"}:
         return
 
-    sampled = df_with_db_id.select(key_col, DB_ID_COL).limit(sample_size).collect()
+    sampled = df_with_db_id.select(key_col, shard_id_col).limit(sample_size).collect()
     if not sampled:
         return
 
     mismatches: list[tuple[object, int, int]] = []
     for row in sampled:
         key = row[key_col]
-        spark_db_id = int(row[DB_ID_COL])
+        spark_db_id = int(row[shard_id_col])
         python_db_id = route_cel(
             key,
             cel_expr=cel_expr,
@@ -532,17 +534,18 @@ def _add_db_id_column_hash(
     key_col: str,
     num_dbs: int,
     hash_algorithm: ShardHashAlgorithm,
+    shard_id_col: str = DB_ID_COL,
 ) -> DataFrame:
     """Add deterministic db id column for HASH routing via mapInArrow."""
-    from shardyfusion.sharding_types import DB_ID_COL
 
     output_schema = StructType(
-        list(df.schema.fields) + [StructField(DB_ID_COL, IntegerType(), False)]
+        list(df.schema.fields) + [StructField(shard_id_col, IntegerType(), False)]
     )
 
     _key_col = key_col
     _num_dbs = num_dbs
     _hash_algorithm = hash_algorithm
+    _shard_id_col = shard_id_col
 
     def _hash_map_arrow(iterator):  # type: ignore[no-untyped-def]
         import pyarrow as pa  # type: ignore[import-not-found]
@@ -550,15 +553,15 @@ def _add_db_id_column_hash(
         for batch in iterator:
             keys = batch.column(_key_col).to_pylist()
             db_ids = [hash_db_id(k, _num_dbs, _hash_algorithm) for k in keys]
-            yield batch.append_column(DB_ID_COL, pa.array(db_ids, type=pa.int32()))
+            yield batch.append_column(_shard_id_col, pa.array(db_ids, type=pa.int32()))
 
     df_with_db_id = df.mapInArrow(_hash_map_arrow, output_schema)
 
     invalid_count = (
         df_with_db_id.where(
-            (F.col(DB_ID_COL).isNull())
-            | (F.col(DB_ID_COL) < 0)
-            | (F.col(DB_ID_COL) >= num_dbs)
+            (F.col(shard_id_col).isNull())
+            | (F.col(shard_id_col) < 0)
+            | (F.col(shard_id_col) >= num_dbs)
         )
         .limit(1)
         .count()
@@ -577,15 +580,15 @@ def _add_db_id_column_cel(
     cel_columns: dict[str, str],
     routing_values: list[int | str | bytes] | None,
     infer_routing_values_from_data: bool,
+    shard_id_col: str = DB_ID_COL,
 ) -> tuple[DataFrame, CelShardingSpec]:
     """Add deterministic db id column for CEL routing via mapInArrow.
 
     Returns the modified DataFrame and the resolved CelShardingSpec.
     """
-    from shardyfusion.sharding_types import DB_ID_COL
 
     output_schema = StructType(
-        list(df.schema.fields) + [StructField(DB_ID_COL, IntegerType(), False)]
+        list(df.schema.fields) + [StructField(shard_id_col, IntegerType(), False)]
     )
 
     resolved_routing_values = (
@@ -607,6 +610,7 @@ def _add_db_id_column_cel(
     _cel_expr = cel_expr
     _cel_cols = dict(cel_columns)
     _cel_routing_values = resolved_routing_values
+    _shard_id_col = shard_id_col
 
     compile_cel(_cel_expr, _cel_cols)  # validate eagerly on driver
 
@@ -623,7 +627,7 @@ def _add_db_id_column_cel(
                 batch,
                 _cel_routing_values,
             )
-            yield batch.append_column(DB_ID_COL, pa.array(db_ids, type=pa.int32()))
+            yield batch.append_column(_shard_id_col, pa.array(db_ids, type=pa.int32()))
 
     df_with_db_id = df.mapInArrow(_cel_map_arrow, output_schema)
 
@@ -641,6 +645,7 @@ def _prepare_hash_partitioned_rows(
 ) -> _PreparedPartitionRows:
     """Assign shard ids and build the partitioned RDD for HASH routing."""
     shard_started = time.perf_counter()
+    shard_id_col = config.shard_id_col
 
     sharding = HashShardingSpec(
         hash_algorithm=ShardHashAlgorithm.XXH3_64,
@@ -651,6 +656,7 @@ def _prepare_hash_partitioned_rows(
         key_col=key_col,
         num_dbs=num_dbs,
         hash_algorithm=sharding.hash_algorithm,
+        shard_id_col=shard_id_col,
     )
 
     if verify_routing and num_dbs > 0:
@@ -660,12 +666,14 @@ def _prepare_hash_partitioned_rows(
             num_dbs=num_dbs,
             hash_algorithm=sharding.hash_algorithm,
             key_encoding=config.key_encoding,
+            shard_id_col=shard_id_col,
         )
     partitioned_rdd = prepare_partitioned_rdd(
         df_with_db_id,
         num_dbs=num_dbs,
         key_col=key_col,
         sort_within_partitions=sort_within_partitions,
+        shard_id_col=shard_id_col,
     )
     shard_duration_ms = int((time.perf_counter() - shard_started) * 1000)
     return _PreparedPartitionRows(
@@ -686,6 +694,7 @@ def _prepare_cel_partitioned_rows(
 ) -> _PreparedPartitionRows:
     """Assign shard ids and build the partitioned RDD for CEL routing."""
     shard_started = time.perf_counter()
+    shard_id_col = config.shard_id_col
 
     df_with_db_id, resolved_sharding = _add_db_id_column_cel(
         df,
@@ -694,6 +703,7 @@ def _prepare_cel_partitioned_rows(
         cel_columns=config.cel_columns,
         routing_values=config.routing_values,
         infer_routing_values_from_data=config.infer_routing_values_from_data,
+        shard_id_col=shard_id_col,
     )
 
     # Discover num_dbs from data and validate consecutive IDs
@@ -701,8 +711,8 @@ def _prepare_cel_partitioned_rows(
         num_dbs = resolve_cel_num_dbs(resolved_sharding)
     else:
         agg_row = df_with_db_id.agg(
-            F.max(DB_ID_COL).alias("max_id"),
-            F.count_distinct(DB_ID_COL).alias("n_distinct"),
+            F.max(shard_id_col).alias("max_id"),
+            F.count_distinct(shard_id_col).alias("n_distinct"),
         ).collect()[0]
         max_id = agg_row["max_id"]
         n_distinct = agg_row["n_distinct"]
@@ -710,7 +720,8 @@ def _prepare_cel_partitioned_rows(
             set(range(n_distinct))
             if n_distinct == (max_id + 1 if max_id is not None else 0)
             else {
-                row[0] for row in df_with_db_id.select(DB_ID_COL).distinct().collect()
+                row[0]
+                for row in df_with_db_id.select(shard_id_col).distinct().collect()
             }
         )
         num_dbs = discover_cel_num_dbs(distinct_ids)
@@ -724,12 +735,14 @@ def _prepare_cel_partitioned_rows(
             cel_columns=resolved_sharding.cel_columns,
             routing_values=resolved_sharding.routing_values,
             key_encoding=config.key_encoding,
+            shard_id_col=shard_id_col,
         )
     partitioned_rdd = prepare_partitioned_rdd(
         df_with_db_id,
         num_dbs=num_dbs,
         key_col=key_col,
         sort_within_partitions=sort_within_partitions,
+        shard_id_col=shard_id_col,
     )
     shard_duration_ms = int((time.perf_counter() - shard_started) * 1000)
     return _PreparedPartitionRows(
@@ -762,6 +775,13 @@ def _run_partition_writes(
         all_attempt_urls=all_attempt_urls,
         write_duration_ms=write_duration_ms,
     )
+
+
+def _drop_shard_id_col(row: Row, shard_id_col: str) -> Row:
+    """Return a new Row without the internal shard_id column."""
+    d = row.asDict()
+    d.pop(shard_id_col, None)
+    return Row(**d)
 
 
 def write_one_shard_partition(
@@ -836,6 +856,7 @@ def write_one_shard_partition(
         started=runtime.started,
     )
 
+    shard_id_col = runtime.shard_id_col
     accumulator_factory: type[ShardBatchAccumulator]
     if runtime.vector_fn is not None:
         accumulator_factory = UnifiedAccumulator
@@ -845,10 +866,11 @@ def write_one_shard_partition(
         ]:
             assert runtime.vector_fn is not None  # unnecessary but satisfies pyright
             for _, row in rows_iter:
+                clean_row = _drop_shard_id_col(row, shard_id_col)
                 yield (
-                    row[runtime.key_col],
-                    runtime.value_spec.encode(row),
-                    runtime.vector_fn(row),
+                    clean_row[runtime.key_col],
+                    runtime.value_spec.encode(clean_row),
+                    runtime.vector_fn(clean_row),
                 )
 
         iter_spark_rows = _iter_spark_rows_with_vectors
@@ -859,7 +881,12 @@ def write_one_shard_partition(
             tuple[object, bytes, tuple[int | str, Any, dict[str, Any] | None] | None]
         ]:
             for _, row in rows_iter:
-                yield row[runtime.key_col], runtime.value_spec.encode(row), None
+                clean_row = _drop_shard_id_col(row, shard_id_col)
+                yield (
+                    clean_row[runtime.key_col],
+                    runtime.value_spec.encode(clean_row),
+                    None,
+                )
 
         iter_spark_rows = _iter_spark_rows_without_vectors
 

@@ -21,12 +21,13 @@ from shardyfusion.manifest import (
     RequiredShardMeta,
 )
 from shardyfusion.run_registry import RunRecordLifecycle
+from shardyfusion.sharding_types import VECTOR_DB_ID_COL
 from shardyfusion.storage import ObstoreBackend, create_s3_store, parse_s3_url
 from shardyfusion.vector._distributed import ResolvedVectorRouting
 from shardyfusion.vector.config import VectorShardedWriteConfig, VectorWriteOptions
 from shardyfusion.vector.types import VectorIndexWriterFactory, VectorShardingStrategy
 
-from .sharding import VECTOR_DB_ID_COL, add_vector_db_id_column
+from .sharding import add_vector_db_id_column
 
 _logger = get_logger(__name__)
 
@@ -39,6 +40,7 @@ def _verify_vector_routing_agreement(
     routing: ResolvedVectorRouting,
     shard_id_col: str | None = None,
     routing_context_cols: dict[str, str] | None = None,
+    internal_col: str = VECTOR_DB_ID_COL,
     sample_size: int = 20,
 ) -> None:
     """Sample rows and verify Spark-computed vector db ids match Python routing."""
@@ -47,7 +49,7 @@ def _verify_vector_routing_agreement(
         coerce_vector_value,
     )
 
-    sample_cols = [id_col, vector_col, VECTOR_DB_ID_COL]
+    sample_cols = [id_col, vector_col, internal_col]
     if (
         routing.strategy == VectorShardingStrategy.EXPLICIT
         and shard_id_col is not None
@@ -84,7 +86,7 @@ def _verify_vector_routing_agreement(
             shard_id=shard_id,
             routing_context=routing_context,
         )
-        spark_db_id = int(row[VECTOR_DB_ID_COL])
+        spark_db_id = int(row[internal_col])
         if expected_db_id != spark_db_id:
             mismatches.append((row[id_col], spark_db_id, expected_db_id))
 
@@ -169,6 +171,7 @@ def write_sharded(
         routing = resolve_vector_routing(config, sample_vectors=sample_vectors)
 
         adapter_factory = resolve_adapter_factory(config)
+        internal_col = config.shard_id_col
 
         df_with_id, num_dbs = add_vector_db_id_column(
             df,
@@ -176,6 +179,7 @@ def write_sharded(
             routing=routing,
             shard_id_col=shard_id_col,
             routing_context_cols=routing_context_cols,
+            output_col=internal_col,
         )
 
         if options.verify_routing and num_dbs > 0:
@@ -186,6 +190,7 @@ def write_sharded(
                 routing=routing,
                 shard_id_col=shard_id_col,
                 routing_context_cols=routing_context_cols,
+                internal_col=internal_col,
             )
 
         _id_col = id_col
@@ -200,7 +205,7 @@ def write_sharded(
         _index_config = config.index_config
         _batch_size = config.batch_size
 
-        df_shuffled = df_with_id.repartition(num_dbs, VECTOR_DB_ID_COL)
+        df_shuffled = df_with_id.repartition(num_dbs, config.shard_id_col)
 
         results_rdd = df_shuffled.rdd.mapPartitionsWithIndex(
             lambda db_id, rows: _write_vector_partition(
@@ -212,6 +217,7 @@ def write_sharded(
                 _id_col,
                 _vector_col,
                 _payload_cols,
+                config.shard_id_col,
                 write_vector_shard_core,
                 _metrics_collector,
                 _s3_prefix,
@@ -293,6 +299,7 @@ def _write_vector_partition(
     id_col: str,
     vector_col: str,
     payload_cols: list[str] | None,
+    shard_id_col: str,
     write_vector_shard_core: Callable[..., RequiredShardMeta],
     metrics_collector: Any | None,
     s3_prefix: str,
@@ -319,7 +326,7 @@ def _write_vector_partition(
 
     groups: dict = defaultdict(list)
     for row in rows_list:
-        vector_db_id = row[VECTOR_DB_ID_COL]
+        vector_db_id = row[shard_id_col]
         groups[vector_db_id].append(row)
 
     results = []

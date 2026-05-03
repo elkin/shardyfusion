@@ -21,6 +21,7 @@ def prepare_partitioned_rdd(
     num_dbs: int,
     key_col: str,
     sort_within_partitions: bool,
+    shard_id_col: str = DB_ID_COL,
 ) -> RDD[tuple[int, Row]]:
     """Return pair RDD partitioned so partition index matches db id."""
 
@@ -28,7 +29,9 @@ def prepare_partitioned_rdd(
     if sort_within_partitions:
         prepared = prepared.sortWithinPartitions(key_col)
 
-    pair_rdd = cast(RDD[Row], prepared.rdd).map(lambda row: (int(row[DB_ID_COL]), row))
+    pair_rdd = cast(RDD[Row], prepared.rdd).map(
+        lambda row: (int(row[shard_id_col]), row)
+    )
     return pair_rdd.partitionBy(num_dbs, lambda key: int(key))
 
 
@@ -63,8 +66,9 @@ def add_vector_db_id_column(
     routing: ResolvedVectorRouting,
     shard_id_col: str | None = None,
     routing_context_cols: dict[str, str] | None = None,
+    output_col: str = VECTOR_DB_ID_COL,
 ) -> tuple[DataFrame, int]:
-    """Add deterministic _vector_db_id column based on vector routing.
+    """Add deterministic output_col column based on vector routing.
 
     Uses mapInArrow with per-row Python routing to match the Python writer's
     assign_vector_shard() behavior.
@@ -76,7 +80,7 @@ def add_vector_db_id_column(
     num_dbs = routing.num_dbs
 
     output_schema = StructType(
-        list(df.schema.fields) + [StructField(VECTOR_DB_ID_COL, IntegerType(), False)]
+        list(df.schema.fields) + [StructField(output_col, IntegerType(), False)]
     )
 
     if strategy == VecStrategy.EXPLICIT:
@@ -88,7 +92,7 @@ def add_vector_db_id_column(
             for batch in iterator:
                 shard_ids = batch.column(shard_id_col).to_pylist()
                 yield batch.append_column(
-                    VECTOR_DB_ID_COL, pa.array(shard_ids, type=pa.int32())
+                    output_col, pa.array(shard_ids, type=pa.int32())
                 )
 
         df_with_id = df.mapInArrow(_explicit_map_arrow, output_schema)
@@ -113,9 +117,7 @@ def add_vector_db_id_column(
                     cluster_assign(np.asarray(v, dtype=np.float32), _centroids, metric)
                     for v in vectors
                 ]
-                yield batch.append_column(
-                    VECTOR_DB_ID_COL, pa.array(db_ids, type=pa.int32())
-                )
+                yield batch.append_column(output_col, pa.array(db_ids, type=pa.int32()))
 
         df_with_id = df.mapInArrow(_cluster_map_arrow, output_schema)
 
@@ -132,9 +134,7 @@ def add_vector_db_id_column(
                     lsh_assign(np.asarray(v, dtype=np.float32), _hyperplanes, num_dbs)
                     for v in vectors
                 ]
-                yield batch.append_column(
-                    VECTOR_DB_ID_COL, pa.array(db_ids, type=pa.int32())
-                )
+                yield batch.append_column(output_col, pa.array(db_ids, type=pa.int32()))
 
         df_with_id = df.mapInArrow(_lsh_map_arrow, output_schema)
 
@@ -164,9 +164,7 @@ def add_vector_db_id_column(
                     batch,
                     _routing_values,
                 )
-                yield batch.append_column(
-                    VECTOR_DB_ID_COL, pa.array(db_ids, type=pa.int32())
-                )
+                yield batch.append_column(output_col, pa.array(db_ids, type=pa.int32()))
 
         df_with_id = df.mapInArrow(_cel_map_arrow, output_schema)
 
