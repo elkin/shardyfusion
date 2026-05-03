@@ -18,9 +18,12 @@ from shardyfusion._writer_core import (
     select_winners,
     update_min_max,
 )
-from shardyfusion.config import HashWriteConfig
+from shardyfusion.config import (
+    ColumnWriteInput,
+    SingleDbWriteConfig,
+    SingleDbWriteOptions,
+)
 from shardyfusion.errors import (
-    ConfigValidationError,
     ShardWriteError,
     ShardyfusionError,
 )
@@ -67,13 +70,9 @@ class RayCacheContext:
 
 def write_single_db(
     ds: ray.data.Dataset,
-    config: HashWriteConfig,
-    *,
-    key_col: str,
-    value_spec: ValueSpec,
-    sort_keys: bool = True,
-    max_writes_per_second: float | None = None,
-    max_write_bytes_per_second: float | None = None,
+    config: SingleDbWriteConfig,
+    input: ColumnWriteInput,
+    options: SingleDbWriteOptions | None = None,
 ) -> BuildResult:
     """Write a Ray Dataset into a single shard database, optionally sorting by key first.
 
@@ -81,10 +80,10 @@ def write_single_db(
     local process where they are written into one database instance.
     """
 
-    if config.num_dbs != 1:
-        raise ConfigValidationError(
-            f"write_single_db requires num_dbs=1, got {config.num_dbs}"
-        )
+    options = options or SingleDbWriteOptions()
+    config.validate()
+    input.validate()
+    options.validate()
 
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
@@ -94,18 +93,18 @@ def write_single_db(
         config=config,
         run_id=run_id,
         started=started,
-        key_col=key_col,
-        value_spec=value_spec,
-        sort_keys=sort_keys,
-        max_writes_per_second=max_writes_per_second,
-        max_write_bytes_per_second=max_write_bytes_per_second,
+        key_col=input.key_col,
+        value_spec=input.value_spec,
+        sort_keys=options.sort_keys,
+        max_writes_per_second=config.rate_limits.max_writes_per_second,
+        max_write_bytes_per_second=config.rate_limits.max_write_bytes_per_second,
     )
 
 
 def _write_single_db_impl(
     *,
     ds: ray.data.Dataset,
-    config: HashWriteConfig,
+    config: SingleDbWriteConfig,
     run_id: str,
     started: float,
     key_col: str,
@@ -197,7 +196,7 @@ def _write_single_db_impl(
 def _stream_to_single_db(
     *,
     ds: ray.data.Dataset,
-    config: HashWriteConfig,
+    config: SingleDbWriteConfig,
     run_id: str,
     key_col: str,
     value_spec: ValueSpec,

@@ -24,7 +24,7 @@ from shardyfusion._writer_core import (
     route_hash,
     update_min_max,
 )
-from shardyfusion.config import WriteConfig
+from shardyfusion.config import BaseShardedWriteConfig
 from shardyfusion.errors import (
     ConfigValidationError,
     ShardWriteError,
@@ -125,7 +125,7 @@ class _RetryParallelRuntime:
     dispatch_finished: list[bool]
     completed_results: dict[int, ShardAttemptResult]
     max_attempts: int
-    config: WriteConfig
+    config: BaseShardedWriteConfig
     run_id: str
     factory: DbAdapterFactory
     max_queue_size: int
@@ -154,7 +154,9 @@ def _batch_bytes(batch: list[tuple[bytes, bytes]]) -> int:
     return sum(len(key) + len(value) for key, value in batch)
 
 
-def _make_db_url(config: WriteConfig, run_id: str, db_id: int, attempt: int) -> str:
+def _make_db_url(
+    config: BaseShardedWriteConfig, run_id: str, db_id: int, attempt: int
+) -> str:
     db_rel_path = config.output.db_path_template.format(db_id=db_id)
     return join_s3(
         config.s3_prefix,
@@ -165,7 +167,9 @@ def _make_db_url(config: WriteConfig, run_id: str, db_id: int, attempt: int) -> 
     )
 
 
-def _make_local_dir(config: WriteConfig, run_id: str, db_id: int, attempt: int) -> Path:
+def _make_local_dir(
+    config: BaseShardedWriteConfig, run_id: str, db_id: int, attempt: int
+) -> Path:
     return (
         Path(config.output.local_root)
         / f"run_id={run_id}"
@@ -493,7 +497,7 @@ def _shard_worker(
     queue: multiprocessing.Queue[_SharedMemoryChunkRef | None],
     reclaim_queue: multiprocessing.Queue[_SharedMemoryReclaim],
     result_queue: multiprocessing.Queue[ShardAttemptResult],
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     run_id: str,
     factory: DbAdapterFactory,
     max_writes_per_second: float | None,
@@ -585,7 +589,7 @@ def _file_shard_worker(
     queue: multiprocessing.Queue[_FileChunkRef | None],
     result_queue: multiprocessing.Queue[ShardAttemptResult],
     failure_queue: multiprocessing.Queue[_WorkerFailure],
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     run_id: str,
     factory: DbAdapterFactory,
     attempt: int,
@@ -715,7 +719,7 @@ def _file_shard_worker(
 
 def _start_parallel_runtime(
     *,
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     num_dbs: int,
     run_id: str,
     factory: DbAdapterFactory,
@@ -768,7 +772,7 @@ def _start_parallel_runtime(
     )
 
 
-def _make_spool_path(config: WriteConfig, run_id: str, db_id: int) -> Path:
+def _make_spool_path(config: BaseShardedWriteConfig, run_id: str, db_id: int) -> Path:
     return (
         Path(config.output.local_root)
         / f"run_id={run_id}"
@@ -834,7 +838,7 @@ def _spawn_retry_worker(runtime: _RetryParallelRuntime, *, db_id: int) -> None:
 
 def _start_retry_parallel_runtime(
     *,
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     num_dbs: int,
     run_id: str,
     factory: DbAdapterFactory,
@@ -1102,7 +1106,7 @@ def _route_records_to_workers_impl(
     runtime: _ParallelRuntime,
     *,
     records: Iterable[T],
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     num_dbs: int,
     key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
@@ -1155,7 +1159,7 @@ def _route_records_to_workers_hash(
     runtime: _ParallelRuntime,
     *,
     records: Iterable[T],
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     num_dbs: int,
     key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
@@ -1187,7 +1191,7 @@ def _route_records_to_workers_cel(
     runtime: _ParallelRuntime,
     *,
     records: Iterable[T],
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     num_dbs: int,
     key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
@@ -1232,7 +1236,7 @@ def _route_records_to_retry_workers_impl(
     runtime: _RetryParallelRuntime,
     *,
     records: Iterable[T],
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     num_dbs: int,
     key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
@@ -1276,7 +1280,7 @@ def _route_records_to_retry_workers_hash(
     runtime: _RetryParallelRuntime,
     *,
     records: Iterable[T],
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     num_dbs: int,
     key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
@@ -1304,7 +1308,7 @@ def _route_records_to_retry_workers_cel(
     runtime: _RetryParallelRuntime,
     *,
     records: Iterable[T],
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     num_dbs: int,
     key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
@@ -1490,7 +1494,7 @@ def _collect_parallel_results(
 def _write_parallel_retryable_impl(
     *,
     records: Iterable[T],
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     num_dbs: int,
     run_id: str,
     factory: DbAdapterFactory,
@@ -1540,7 +1544,7 @@ def _write_parallel_retryable_impl(
 def _write_parallel_impl(
     *,
     records: Iterable[T],
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     num_dbs: int,
     run_id: str,
     factory: DbAdapterFactory,
@@ -1620,7 +1624,7 @@ def _write_parallel_impl(
 def _write_parallel_hash(
     *,
     records: Iterable[T],
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     num_dbs: int,
     run_id: str,
     factory: DbAdapterFactory,
@@ -1658,7 +1662,7 @@ def _write_parallel_hash(
 def _write_parallel_cel(
     *,
     records: Iterable[T],
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     num_dbs: int,
     run_id: str,
     factory: DbAdapterFactory,

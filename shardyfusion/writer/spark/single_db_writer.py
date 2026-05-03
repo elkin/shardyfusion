@@ -4,7 +4,6 @@ import math
 import time
 from uuid import uuid4
 
-from pyspark import StorageLevel
 from pyspark.sql import DataFrame
 
 from shardyfusion._rate_limiter import RateLimiter, TokenBucket
@@ -17,9 +16,12 @@ from shardyfusion._writer_core import (
     select_winners,
     update_min_max,
 )
-from shardyfusion.config import HashWriteConfig
+from shardyfusion.config import (
+    ColumnWriteInput,
+    SingleDbWriteConfig,
+    SingleDbWriteOptions,
+)
 from shardyfusion.errors import (
-    ConfigValidationError,
     ShardWriteError,
     ShardyfusionError,
 )
@@ -39,18 +41,9 @@ from .util import DataFrameCacheContext, SparkConfOverrideContext
 
 def write_single_db(
     df: DataFrame,
-    config: HashWriteConfig,
-    *,
-    key_col: str,
-    value_spec: ValueSpec,
-    sort_keys: bool = True,
-    num_partitions: int | None = None,
-    prefetch_partitions: bool = True,
-    cache_input: bool = True,
-    storage_level: StorageLevel | None = None,
-    spark_conf_overrides: dict[str, str] | None = None,
-    max_writes_per_second: float | None = None,
-    max_write_bytes_per_second: float | None = None,
+    config: SingleDbWriteConfig,
+    input: ColumnWriteInput,
+    options: SingleDbWriteOptions | None = None,
 ) -> BuildResult:
     """Write a DataFrame into a single shard database, optionally sorting by key first.
 
@@ -66,38 +59,38 @@ def write_single_db(
     large and not cached.
     """
 
-    if config.num_dbs != 1:
-        raise ConfigValidationError(
-            f"write_single_db requires num_dbs=1, got {config.num_dbs}"
-        )
+    options = options or SingleDbWriteOptions()
+    config.validate()
+    input.validate()
+    options.validate()
 
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
     spark = df.sparkSession
 
-    with SparkConfOverrideContext(spark, spark_conf_overrides):
+    with SparkConfOverrideContext(spark, options.spark_conf_overrides):
         with DataFrameCacheContext(
-            df, storage_level=storage_level, enabled=cache_input
+            df, storage_level=options.storage_level, enabled=options.cache_input
         ) as cached_df:
             return _write_single_db_impl(
                 df=cached_df,
                 config=config,
                 run_id=run_id,
                 started=started,
-                key_col=key_col,
-                value_spec=value_spec,
-                sort_keys=sort_keys,
-                num_partitions=num_partitions,
-                prefetch_partitions=prefetch_partitions,
-                max_writes_per_second=max_writes_per_second,
-                max_write_bytes_per_second=max_write_bytes_per_second,
+                key_col=input.key_col,
+                value_spec=input.value_spec,
+                sort_keys=options.sort_keys,
+                num_partitions=options.num_partitions,
+                prefetch_partitions=options.prefetch_partitions,
+                max_writes_per_second=config.rate_limits.max_writes_per_second,
+                max_write_bytes_per_second=config.rate_limits.max_write_bytes_per_second,
             )
 
 
 def _write_single_db_impl(
     *,
     df: DataFrame,
-    config: HashWriteConfig,
+    config: SingleDbWriteConfig,
     run_id: str,
     started: float,
     key_col: str,
@@ -201,7 +194,7 @@ def _write_single_db_impl(
 def _stream_to_single_db(
     *,
     df: DataFrame,
-    config: HashWriteConfig,
+    config: SingleDbWriteConfig,
     run_id: str,
     key_col: str,
     value_spec: ValueSpec,

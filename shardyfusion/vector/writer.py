@@ -34,7 +34,7 @@ from ._distributed import (
     upload_routing_metadata,
     validate_vector_config,
 )
-from .config import VectorWriteConfig
+from .config import VectorRecordInput, VectorShardedWriteConfig, VectorWriteOptions
 from .types import (
     VectorIndexWriterFactory,
     VectorRecord,
@@ -52,7 +52,7 @@ _ShardState = VectorShardState
 def _write_single_process(
     *,
     records: Iterable[VectorRecord],
-    config: VectorWriteConfig,
+    config: VectorShardedWriteConfig,
     routing: ResolvedVectorRouting,
     run_id: str,
     adapter_factory: VectorIndexWriterFactory,
@@ -107,9 +107,11 @@ def _write_single_process(
     return shard_states
 
 
-def write_vector_sharded(
+def write_sharded(
     records: Iterable[VectorRecord],
-    config: VectorWriteConfig,
+    config: VectorShardedWriteConfig,
+    input: VectorRecordInput | None = None,
+    options: VectorWriteOptions | None = None,
 ) -> BuildResult:
     """Write vectors into N sharded indices on S3.
 
@@ -120,14 +122,17 @@ def write_vector_sharded(
     Returns:
         BuildResult with manifest reference and stats.
     """
+    input = input or VectorRecordInput()
+    options = options or VectorWriteOptions()
+    config.validate()
+    input.validate()
+    options.validate()
     started = time.perf_counter()
     run_id = config.output.run_id or str(uuid.uuid4())
     mc = config.metrics_collector
 
     if mc is not None:
         mc.emit(MetricEvent.VECTOR_WRITE_STARTED, {"run_id": run_id})
-
-    validate_vector_config(config)
 
     with RunRecordLifecycle.start(
         config=config,
@@ -160,9 +165,9 @@ def write_vector_sharded(
         adapter_factory = resolve_adapter_factory(config)
 
         ops_limiter: TokenBucket | None = None
-        if config.max_writes_per_second is not None:
+        if config.rate_limits.max_writes_per_second is not None:
             ops_limiter = TokenBucket(
-                config.max_writes_per_second,
+                config.rate_limits.max_writes_per_second,
                 metrics_collector=mc,
                 limiter_type="ops",
             )

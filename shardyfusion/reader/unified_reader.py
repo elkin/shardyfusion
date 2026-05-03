@@ -6,7 +6,7 @@ LanceDB sidecar).  Uses the same manifest, routing, and shard lifecycle as
 the underlying KV reader.
 
 Requires that the snapshot was built with ``vector_spec`` set on
-``WriteConfig`` (unified KV+vector mode, CEL sharding only).
+KV writer configs with ``VectorSpec`` enabled.
 """
 
 from __future__ import annotations

@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 from .async_reader import AsyncShardedVectorReader
-from .config import VectorIndexConfig, VectorShardingSpec, VectorWriteConfig
+from .config import (
+    VectorIndexConfig,
+    VectorRecordInput,
+    VectorShardedWriteConfig,
+    VectorShardingConfig,
+    VectorShardingSpec,
+    VectorWriteOptions,
+)
 from .reader import ShardedVectorReader, VectorReaderHealth
 from .types import (
     AsyncVectorShardReader,
@@ -20,7 +27,7 @@ from .types import (
     VectorShardReaderFactory,
     VectorSnapshotInfo,
 )
-from .writer import write_vector_sharded
+from .writer import write_sharded
 
 __all__ = [
     "AsyncShardedVectorReader",
@@ -33,14 +40,17 @@ __all__ = [
     "VectorIndexWriter",
     "VectorIndexWriterFactory",
     "VectorReaderHealth",
+    "VectorRecordInput",
     "VectorRecord",
     "VectorSearchResponse",
     "VectorShardDetail",
     "VectorShardReader",
     "VectorShardReaderFactory",
+    "VectorShardingConfig",
     "VectorShardingSpec",
     "VectorShardingStrategy",
     "VectorSnapshotInfo",
-    "VectorWriteConfig",
-    "write_vector_sharded",
+    "VectorShardedWriteConfig",
+    "VectorWriteOptions",
+    "write_sharded",
 ]

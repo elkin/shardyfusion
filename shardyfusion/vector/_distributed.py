@@ -26,7 +26,7 @@ from ..metrics._events import MetricEvent
 from ..metrics._protocol import MetricsCollector
 from ..sharding_types import KeyEncoding, ShardHashAlgorithm, ShardingStrategy
 from ..storage import ObstoreBackend, StorageBackend, create_s3_store, parse_s3_url
-from .config import VectorIndexConfig, VectorWriteConfig
+from .config import VectorIndexConfig, VectorShardedWriteConfig
 from .sharding import (
     cluster_assign,
     lsh_assign,
@@ -81,8 +81,8 @@ class ResolvedVectorRouting:
 # ---------------------------------------------------------------------------
 
 
-def validate_vector_config(config: VectorWriteConfig) -> None:
-    """Validate VectorWriteConfig before writing."""
+def validate_vector_config(config: VectorShardedWriteConfig) -> None:
+    """Validate VectorShardedWriteConfig before writing."""
     if config.index_config.dim <= 0:
         raise ConfigValidationError(f"dim must be > 0, got {config.index_config.dim}")
     if not config.s3_prefix:
@@ -124,7 +124,7 @@ def validate_vector_config(config: VectorWriteConfig) -> None:
 
 
 def resolve_vector_routing(
-    config: VectorWriteConfig,
+    config: VectorShardedWriteConfig,
     *,
     sample_vectors: np.ndarray | None = None,
 ) -> ResolvedVectorRouting:
@@ -460,7 +460,7 @@ def upload_routing_metadata(
 
 def publish_vector_manifest(
     *,
-    config: VectorWriteConfig,
+    config: VectorShardedWriteConfig,
     run_id: str,
     num_dbs: int,
     winners: list[RequiredShardMeta],
@@ -555,7 +555,7 @@ def publish_vector_manifest(
 
 
 def resolve_adapter_factory(
-    config: VectorWriteConfig,
+    config: VectorShardedWriteConfig,
 ) -> VectorIndexWriterFactory:
     """Return the user-provided factory or the default LanceDB factory."""
     if config.adapter_factory is not None:

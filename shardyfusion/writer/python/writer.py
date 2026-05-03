@@ -24,7 +24,13 @@ from shardyfusion._writer_core import (
     update_min_max,
     wrap_factory_for_vector,
 )
-from shardyfusion.config import CelWriteConfig, HashWriteConfig, WriteConfig
+from shardyfusion.config import (
+    BaseShardedWriteConfig,
+    CelShardedWriteConfig,
+    HashShardedWriteConfig,
+    PythonRecordInput,
+    PythonWriteOptions,
+)
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.logging import get_logger, log_event
 from shardyfusion.manifest import BuildResult, WriterInfo
@@ -40,8 +46,6 @@ from shardyfusion.sharding_types import (
 from shardyfusion.slatedb_adapter import DbAdapterFactory, SlateDbFactory
 from shardyfusion.type_defs import KeyInput
 from shardyfusion.writer.python._parallel_writer import (
-    _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES,
-    _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER,
     _make_db_url,
     _make_local_dir,
     _validate_parallel_shared_memory_limit,
@@ -83,61 +87,21 @@ def _sharding_strategy_name(sharding: ShardingSpec) -> str:
     return "unknown"
 
 
-def write_sharded_by_hash(
+def write_hash_sharded(
     records: Iterable[T],
-    config: HashWriteConfig,
-    *,
-    key_fn: Callable[[T], KeyInput],
-    value_fn: Callable[[T], bytes],
-    columns_fn: Callable[[T], dict[str, Any]] | None = None,
-    vector_fn: Callable[[T], tuple[int | str, Any, dict[str, Any] | None]]
-    | None = None,
-    parallel: bool = False,
-    max_queue_size: int = 100,
-    max_parallel_shared_memory_bytes: int | None = (
-        _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES
-    ),
-    max_parallel_shared_memory_bytes_per_worker: int | None = (
-        _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER
-    ),
-    max_writes_per_second: float | None = None,
-    max_write_bytes_per_second: float | None = None,
-    max_total_batched_items: int | None = None,
-    max_total_batched_bytes: int | None = None,
+    config: HashShardedWriteConfig,
+    input: PythonRecordInput[T],
+    options: PythonWriteOptions | None = None,
 ) -> BuildResult:
     """Write an iterable of records into N sharded databases using HASH routing.
 
     Args:
         records: Iterable of records to write. Each record is passed to
-            ``key_fn`` and ``value_fn`` to extract the key and value bytes.
-        config: Hash write configuration (num_dbs, s3_prefix, etc.).
-        key_fn: Callable that extracts the routing key from each record.
-        value_fn: Callable that serializes each record to value bytes.
-        vector_fn: Optional callable that extracts ``(id, vector, payload)``
-            from each record for unified KV + vector mode.  Requires
-            ``config.vector_spec`` to be set.  The vector should be an
-            array-like of floats with shape ``(dim,)``.
-        parallel: If True, use one subprocess per shard (``multiprocessing.spawn``).
-            If False (default), all shard adapters are open simultaneously in
-            a single process.
-        max_queue_size: Maximum per-shard queue depth in parallel mode.
-            In shared-memory parallel mode this bounds control messages,
-            not payload bytes.
-        max_parallel_shared_memory_bytes: Global cap on outstanding shared-memory
-            payload bytes in parallel mode. When exceeded, the parent blocks until
-            workers reclaim segments. ``None`` disables the global cap.
-        max_parallel_shared_memory_bytes_per_worker: Per-worker cap on outstanding
-            shared-memory payload bytes in parallel mode. When exceeded, the parent
-            blocks until that worker reclaims segments. ``None`` disables the
-            per-worker cap.
-        max_writes_per_second: Optional rate limit (token-bucket) for write ops/sec.
-        max_write_bytes_per_second: Optional rate limit (token-bucket) for write bytes/sec.
-        max_total_batched_items: Global cap on total buffered items across all shard
-            batches (single-process mode only). When exceeded, the shard with the
-            largest batch is flushed. Prevents OOM with many shards.
-        max_total_batched_bytes: Global cap on total buffered bytes across all shard
-            batches (single-process mode only). When exceeded, the shard with the
-            largest byte footprint is flushed.
+            ``input.key_fn`` and ``input.value_fn`` to extract the key and value
+            bytes.
+        config: Hash write configuration.
+        input: Record extraction callbacks.
+        options: Per-call execution options for multiprocessing and buffering.
 
     Returns:
         BuildResult with manifest reference, shard metadata, and build statistics.
@@ -150,6 +114,25 @@ def write_sharded_by_hash(
         ShardyfusionError: If a worker process fails in parallel mode.
     """
     from shardyfusion.logging import LogContext
+
+    options = options or PythonWriteOptions()
+    config.validate()
+    input.validate()
+    options.validate()
+    key_fn = input.key_fn
+    value_fn = input.value_fn
+    columns_fn = input.columns_fn
+    vector_fn = input.vector_fn
+    parallel = options.parallel
+    max_queue_size = options.max_queue_size
+    max_parallel_shared_memory_bytes = options.shared_memory.max_total_bytes
+    max_parallel_shared_memory_bytes_per_worker = (
+        options.shared_memory.max_bytes_per_worker
+    )
+    max_writes_per_second = config.rate_limits.max_writes_per_second
+    max_write_bytes_per_second = config.rate_limits.max_write_bytes_per_second
+    max_total_batched_items = options.buffering.max_total_batched_items
+    max_total_batched_bytes = options.buffering.max_total_batched_bytes
 
     sharding = HashShardingSpec(
         hash_algorithm=ShardHashAlgorithm.XXH3_64,
@@ -249,61 +232,22 @@ def write_sharded_by_hash(
         )
 
 
-def write_sharded_by_cel(
+def write_cel_sharded(
     records: Iterable[T],
-    config: CelWriteConfig,
-    *,
-    key_fn: Callable[[T], KeyInput],
-    value_fn: Callable[[T], bytes],
-    columns_fn: Callable[[T], dict[str, Any]] | None = None,
-    vector_fn: Callable[[T], tuple[int | str, Any, dict[str, Any] | None]]
-    | None = None,
-    parallel: bool = False,
-    max_queue_size: int = 100,
-    max_parallel_shared_memory_bytes: int | None = (
-        _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES
-    ),
-    max_parallel_shared_memory_bytes_per_worker: int | None = (
-        _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER
-    ),
-    max_writes_per_second: float | None = None,
-    max_write_bytes_per_second: float | None = None,
-    max_total_batched_items: int | None = None,
-    max_total_batched_bytes: int | None = None,
+    config: CelShardedWriteConfig,
+    input: PythonRecordInput[T],
+    options: PythonWriteOptions | None = None,
 ) -> BuildResult:
     """Write an iterable of records into N sharded databases using CEL routing.
 
     Args:
         records: Iterable of records to write. Each record is passed to
-            ``key_fn`` and ``value_fn`` to extract the key and value bytes.
-        config: CEL write configuration (cel_expr, cel_columns, etc.).
-        key_fn: Callable that extracts the routing key from each record.
-        value_fn: Callable that serializes each record to value bytes.
-        vector_fn: Optional callable that extracts ``(id, vector, payload)``
-            from each record for unified KV + vector mode.  Requires
-            ``config.vector_spec`` to be set.  The vector should be an
-            array-like of floats with shape ``(dim,)``.
-        parallel: If True, use one subprocess per shard (``multiprocessing.spawn``).
-            If False (default), all shard adapters are open simultaneously in
-            a single process.
-        max_queue_size: Maximum per-shard queue depth in parallel mode.
-            In shared-memory parallel mode this bounds control messages,
-            not payload bytes.
-        max_parallel_shared_memory_bytes: Global cap on outstanding shared-memory
-            payload bytes in parallel mode. When exceeded, the parent blocks until
-            workers reclaim segments. ``None`` disables the global cap.
-        max_parallel_shared_memory_bytes_per_worker: Per-worker cap on outstanding
-            shared-memory payload bytes in parallel mode. When exceeded, the parent
-            blocks until that worker reclaims segments. ``None`` disables the
-            per-worker cap.
-        max_writes_per_second: Optional rate limit (token-bucket) for write ops/sec.
-        max_write_bytes_per_second: Optional rate limit (token-bucket) for write bytes/sec.
-        max_total_batched_items: Global cap on total buffered items across all shard
-            batches (single-process mode only). When exceeded, the shard with the
-            largest batch is flushed. Prevents OOM with many shards.
-        max_total_batched_bytes: Global cap on total buffered bytes across all shard
-            batches (single-process mode only). When exceeded, the shard with the
-            largest byte footprint is flushed.
+            ``input.key_fn`` and ``input.value_fn`` to extract the key and value
+            bytes.
+        config: CEL write configuration.
+        input: Record extraction callbacks, including ``columns_fn`` for CEL row
+            context when needed.
+        options: Per-call execution options for multiprocessing and buffering.
 
     Returns:
         BuildResult with manifest reference, shard metadata, and build statistics.
@@ -316,6 +260,25 @@ def write_sharded_by_cel(
         ShardyfusionError: If a worker process fails in parallel mode.
     """
     from shardyfusion.logging import LogContext
+
+    options = options or PythonWriteOptions()
+    config.validate()
+    input.validate()
+    options.validate()
+    key_fn = input.key_fn
+    value_fn = input.value_fn
+    columns_fn = input.columns_fn
+    vector_fn = input.vector_fn
+    parallel = options.parallel
+    max_queue_size = options.max_queue_size
+    max_parallel_shared_memory_bytes = options.shared_memory.max_total_bytes
+    max_parallel_shared_memory_bytes_per_worker = (
+        options.shared_memory.max_bytes_per_worker
+    )
+    max_writes_per_second = config.rate_limits.max_writes_per_second
+    max_write_bytes_per_second = config.rate_limits.max_write_bytes_per_second
+    max_total_batched_items = options.buffering.max_total_batched_items
+    max_total_batched_bytes = options.buffering.max_total_batched_bytes
 
     sharding: ShardingSpec = CelShardingSpec(
         cel_expr=config.cel_expr,
@@ -447,7 +410,7 @@ def write_sharded_by_cel(
 
 def _finalize_python_write(
     *,
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     run_id: str,
     started: float,
     sharding: ShardingSpec,
@@ -530,7 +493,7 @@ def _finalize_python_write(
 
 def _resolve_vector_fn_and_factory(
     *,
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
     columns_fn: Callable[[Any], dict[str, Any]] | None,
     key_fn: Callable[[Any], KeyInput] | None = None,
@@ -589,7 +552,7 @@ def _resolve_vector_fn_and_factory(
 
 def _resolve_num_dbs_before_sharding(
     records: Iterable[Any],
-    config: HashWriteConfig,
+    config: HashShardedWriteConfig,
 ) -> int:
     """Resolve num_dbs that can be determined before writing.
 
@@ -680,7 +643,7 @@ def _ensure_single_process_adapter(
     *,
     db_id: int,
     stack: contextlib.ExitStack,
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     run_id: str,
     attempt: int,
     factory: DbAdapterFactory,
@@ -701,7 +664,7 @@ def _flush_single_process_shard(
     *,
     db_id: int,
     stack: contextlib.ExitStack,
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     run_id: str,
     attempt: int,
     factory: DbAdapterFactory,
@@ -760,7 +723,7 @@ def _flush_single_process_shard_with_limits(
     *,
     db_id: int,
     stack: contextlib.ExitStack,
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     run_id: str,
     attempt: int,
     factory: DbAdapterFactory,
@@ -787,7 +750,7 @@ def _maybe_flush_single_process_batch(
     *,
     db_id: int,
     stack: contextlib.ExitStack,
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     run_id: str,
     attempt: int,
     factory: DbAdapterFactory,
@@ -853,7 +816,7 @@ def _enforce_single_process_memory_ceiling(
     state: _SingleProcessState,
     *,
     stack: contextlib.ExitStack,
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     run_id: str,
     attempt: int,
     factory: DbAdapterFactory,
@@ -887,7 +850,7 @@ def _flush_remaining_single_process_batches(
     state: _SingleProcessState,
     *,
     stack: contextlib.ExitStack,
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     run_id: str,
     attempt: int,
     factory: DbAdapterFactory,
@@ -943,7 +906,7 @@ def _build_single_process_results(
 def _write_single_process_impl(
     *,
     records: Iterable[T],
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     num_dbs: int | None,
     get_db_id: Callable[[KeyInput, T], int],
     routing_values: list[int | str | bytes] | None,
@@ -1054,7 +1017,7 @@ def _write_single_process_impl(
 def _write_single_process_hash(
     *,
     records: Iterable[T],
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     num_dbs: int,
     hash_algorithm: ShardHashAlgorithm,
     run_id: str,
@@ -1094,7 +1057,7 @@ def _write_single_process_hash(
 def _write_single_process_cel(
     *,
     records: Iterable[T],
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     num_dbs: int | None,
     cel_expr: str,
     cel_columns: dict[str, str],
@@ -1148,7 +1111,7 @@ def _write_single_process_cel(
 
 
 def _wrap_factory_for_vector(
-    factory: DbAdapterFactory, config: WriteConfig
+    factory: DbAdapterFactory, config: BaseShardedWriteConfig
 ) -> DbAdapterFactory:
     return wrap_factory_for_vector(factory, config)
 
@@ -1162,6 +1125,6 @@ def _detect_kv_backend(factory: DbAdapterFactory) -> str:
 
 
 def _inject_vector_manifest_fields(
-    config: WriteConfig, factory: DbAdapterFactory
+    config: BaseShardedWriteConfig, factory: DbAdapterFactory
 ) -> None:
     inject_vector_manifest_fields(config, factory)

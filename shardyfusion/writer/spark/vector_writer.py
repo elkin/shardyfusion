@@ -11,7 +11,8 @@ from uuid import uuid4
 from pyspark.sql import DataFrame
 
 from shardyfusion._rate_limiter import TokenBucket
-from shardyfusion.errors import ShardAssignmentError
+from shardyfusion.config import VectorColumnInput
+from shardyfusion.errors import ConfigValidationError, ShardAssignmentError
 from shardyfusion.logging import get_logger
 from shardyfusion.manifest import (
     BuildDurations,
@@ -22,7 +23,7 @@ from shardyfusion.manifest import (
 from shardyfusion.run_registry import RunRecordLifecycle
 from shardyfusion.storage import ObstoreBackend, create_s3_store, parse_s3_url
 from shardyfusion.vector._distributed import ResolvedVectorRouting
-from shardyfusion.vector.config import VectorWriteConfig
+from shardyfusion.vector.config import VectorShardedWriteConfig, VectorWriteOptions
 from shardyfusion.vector.types import VectorIndexWriterFactory, VectorShardingStrategy
 
 from .sharding import VECTOR_DB_ID_COL, add_vector_db_id_column
@@ -98,31 +99,21 @@ def _verify_vector_routing_agreement(
         )
 
 
-def write_vector_sharded(
+def write_sharded(
     df: DataFrame,
-    config: VectorWriteConfig,
-    *,
-    vector_col: str,
-    id_col: str,
-    payload_cols: list[str] | None = None,
-    shard_id_col: str | None = None,
-    routing_context_cols: dict[str, str] | None = None,
-    max_writes_per_second: float | None = None,
-    verify_routing: bool = True,
+    config: VectorShardedWriteConfig,
+    input: VectorColumnInput,
+    options: VectorWriteOptions | None = None,
 ) -> BuildResult:
     """Write vectors from a DataFrame into N sharded vector indices and publish manifest.
 
     Args:
         df: PySpark DataFrame with vector and ID columns.
-        config: Write configuration (num_dbs, s3_prefix, sharding strategy, etc.).
-        vector_col: Name of the vector column (list[float] or array[float]).
-        id_col: Name of the ID column.
-        payload_cols: Optional payload columns to include as metadata.
-        shard_id_col: Column with explicit shard IDs (EXPLICIT strategy only).
-        routing_context_cols: Columns for CEL expression evaluation (CEL strategy only).
-        max_writes_per_second: Optional rate limit.
-        verify_routing: If True (default), spot-check that Spark-assigned vector
-            shard IDs match ``assign_vector_shard()``.
+        config: Vector write configuration.
+        input: Vector column mapping.
+        options: Per-call execution options. ``verify_routing`` controls whether
+            Spark-assigned vector shard IDs are checked against
+            ``assign_vector_shard()``.
 
     Returns:
         BuildResult with manifest reference and stats.
@@ -132,6 +123,19 @@ def write_vector_sharded(
     from shardyfusion.vector._distributed import (
         write_vector_shard as write_vector_shard_core,
     )
+
+    options = options or VectorWriteOptions()
+    config.validate()
+    input.validate()
+    options.validate()
+    if input.id_col is None:
+        raise ConfigValidationError("input.id_col is required for vector writes")
+    vector_col = input.vector_col
+    id_col = input.id_col
+    payload_cols = input.payload_cols
+    shard_id_col = input.shard_id_col
+    routing_context_cols = input.routing_context_cols
+    max_writes_per_second = config.rate_limits.max_writes_per_second
 
     started = time.perf_counter()
     mc = config.metrics_collector
@@ -176,7 +180,7 @@ def write_vector_sharded(
             routing_context_cols=routing_context_cols,
         )
 
-        if verify_routing and num_dbs > 0:
+        if options.verify_routing and num_dbs > 0:
             _verify_vector_routing_agreement(
                 df_with_id,
                 id_col=id_col,
