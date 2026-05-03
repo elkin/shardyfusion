@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Performance & Public API
+- **`shardyfusion.routing.make_hash_router(num_dbs, algorithm, *, key_type=None)`**: factory that returns a `(key) -> db_id` closure with hash-algorithm and (optionally) key-type dispatch resolved once. The optional `key_type` (`"int"`, `"str"`, `"bytes"`) selects a type-specialised digest path that skips per-call `isinstance` branching in `canonical_bytes`. Wired into all writer paths (Spark/Dask/Ray/Python single + parallel) and the reader's `SnapshotRouter._build_route_one`.
+- **`shardyfusion.cel.compile_cel_cached`** is now a public name (previously `_compile_cel_cached`); the LRU cache size has been bumped from 16 to 64. The old private name remains as a back-compat alias.
+- **`CompiledCel.columns_list`** property: cached column-name list, used by `evaluate_cel_arrow_batch` to avoid rebuilding the list per batch.
+
+### Changed
+- **Hash routing hot path**: writers and the reader now build a single resolved closure via `make_hash_router(...)` instead of dispatching on the algorithm enum and key type per call. The `xxh3_64` digest is bound once per partition/batch.
+- **`canonical_bytes(key)`**: uses `type(key) is bytes` fast-path (no copy) and avoids redundant isinstance checks.
+- **CEL compile sites** in per-batch / per-partition writer closures now go through `compile_cel_cached` instead of raw `compile_cel`, ensuring at most one compile per `(expr, columns)` per worker process.
+- **Python writer CEL routing** (`_write_single_process_cel` and the three `_parallel_writer.py` CEL paths): hoisted CEL compile + categorical-routing-values lookup out of the per-row loop. Per record now does only `columns_fn(record)` (when present) + a direct CEL evaluate; no per-row tuple sort or LRU lookup.
+- **`SnapshotRouter` (CEL)**: eager-compiles the CEL expression in `__init__` and reuses the compiled instance from both `_build_route_one` and `route_with_context`, removing the per-call `if compiled is None` check and lazy-import.
+- **`route_cel_batch`**: builds the categorical routing-values lookup once per batch instead of per row.
+
 #### Writers
 - **Spark writer** (`writer-spark`): PySpark DataFrame-based sharded writer with hash, range, and custom expression sharding strategies.
 - **Dask writer** (`writer-dask`): Dask DataFrame-based sharded writer (hash and range sharding, no Java required).
