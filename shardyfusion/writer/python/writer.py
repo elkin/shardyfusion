@@ -30,6 +30,7 @@ from shardyfusion.config import (
     HashShardedWriteConfig,
     PythonRecordInput,
     PythonWriteOptions,
+    validate_configs,
 )
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.logging import get_logger, log_event
@@ -116,9 +117,7 @@ def write_hash_sharded(
     from shardyfusion.logging import LogContext
 
     options = options or PythonWriteOptions()
-    config.validate()
-    input.validate()
-    options.validate()
+    validate_configs(config, input, options)
     key_fn = input.key_fn
     value_fn = input.value_fn
     columns_fn = input.columns_fn
@@ -262,9 +261,7 @@ def write_cel_sharded(
     from shardyfusion.logging import LogContext
 
     options = options or PythonWriteOptions()
-    config.validate()
-    input.validate()
-    options.validate()
+    validate_configs(config, input, options)
     key_fn = input.key_fn
     value_fn = input.value_fn
     columns_fn = input.columns_fn

@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from shardyfusion._writer_core import wrap_factory_for_vector
-from shardyfusion.config import BaseShardedWriteConfig, ColumnWriteInput
+from shardyfusion.config import (
+    BaseShardedWriteConfig,
+    ColumnWriteInput,
+    validate_configs,
+)
 from shardyfusion.metrics import MetricsCollector
 from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
 from shardyfusion.slatedb_adapter import DbAdapterFactory, SlateDbFactory
@@ -115,8 +119,7 @@ def _common_runtime_kwargs(
 ) -> dict[str, Any]:
     """Resolve common runtime constructor kwargs from public config/input."""
 
-    config.validate()
-    input.validate()
+    validate_configs(config, input)
     factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory(
         credential_provider=config.credential_provider
     )

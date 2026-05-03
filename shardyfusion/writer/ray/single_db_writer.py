@@ -22,6 +22,7 @@ from shardyfusion.config import (
     ColumnWriteInput,
     SingleDbWriteConfig,
     SingleDbWriteOptions,
+    validate_configs,
 )
 from shardyfusion.errors import (
     ShardWriteError,
@@ -81,9 +82,7 @@ def write_single_db(
     """
 
     options = options or SingleDbWriteOptions()
-    config.validate()
-    input.validate()
-    options.validate()
+    validate_configs(config, input, options)
 
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex

@@ -6,7 +6,7 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeAlias, TypeVar
 from urllib.parse import urlparse
 
 from .credentials import CredentialProvider
@@ -32,6 +32,20 @@ _SAFE_SEGMENT_CHARS = frozenset(
 
 T = TypeVar("T")
 VectorWriteTuple: TypeAlias = tuple[int | str, Any, dict[str, Any] | None]
+
+
+class ValidatableConfig(Protocol):
+    """Configuration object that can validate its own invariants."""
+
+    def validate(self) -> None:
+        """Raise ConfigValidationError when the configuration is invalid."""
+
+
+def validate_configs(*configs: ValidatableConfig) -> None:
+    """Validate multiple config-like objects in order."""
+
+    for config in configs:
+        config.validate()
 
 
 @dataclass(slots=True)
@@ -519,14 +533,16 @@ class BaseShardedWriteConfig:
         if not isinstance(self.lifecycle, WriterLifecycleConfig):
             raise ConfigValidationError("lifecycle must be WriterLifecycleConfig")
 
-        self.storage.validate()
-        self.output.validate()
-        self.manifest.validate()
-        self.kv.validate()
-        self.retry.validate()
-        self.rate_limits.validate()
-        self.observability.validate()
-        self.lifecycle.validate()
+        validate_configs(
+            self.storage,
+            self.output,
+            self.manifest,
+            self.kv,
+            self.retry,
+            self.rate_limits,
+            self.observability,
+            self.lifecycle,
+        )
 
         if self.vector is not None:
             vs = self.vector
@@ -838,8 +854,7 @@ class PythonWriteOptions:
     def validate(self) -> None:
         if self.max_queue_size <= 0:
             raise ConfigValidationError("options.max_queue_size must be > 0")
-        self.shared_memory.validate()
-        self.buffering.validate()
+        validate_configs(self.shared_memory, self.buffering)
 
 
 @dataclass(slots=True)

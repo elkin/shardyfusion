@@ -14,6 +14,7 @@ from ..config import (
     WriterObservabilityConfig,
     WriterOutputConfig,
     WriterStorageConfig,
+    validate_configs,
 )
 from ..credentials import CredentialProvider
 from ..errors import ConfigValidationError
@@ -236,13 +237,15 @@ class VectorShardedWriteConfig:
             )
         if self.num_dbs is not None and self.num_dbs <= 0:
             raise ConfigValidationError(f"num_dbs must be > 0, got {self.num_dbs}")
-        self.storage.validate()
-        self.output.validate()
-        self.manifest.validate()
-        self.adapter.validate()
-        self.rate_limits.validate()
-        self.observability.validate()
-        self.lifecycle.validate()
+        validate_configs(
+            self.storage,
+            self.output,
+            self.manifest,
+            self.adapter,
+            self.rate_limits,
+            self.observability,
+            self.lifecycle,
+        )
 
         match self.sharding.strategy:
             case VectorShardingStrategy.CLUSTER:

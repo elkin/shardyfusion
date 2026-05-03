@@ -24,6 +24,7 @@ from shardyfusion.config import (
     ColumnWriteInput,
     SingleDbWriteConfig,
     SingleDbWriteOptions,
+    validate_configs,
 )
 from shardyfusion.errors import (
     ConfigValidationError,
@@ -87,9 +88,7 @@ def write_single_db(
     """
 
     options = options or SingleDbWriteOptions()
-    config.validate()
-    input.validate()
-    options.validate()
+    validate_configs(config, input, options)
 
     if input.key_col not in ddf.columns:
         raise ConfigValidationError(

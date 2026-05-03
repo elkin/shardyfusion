@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from .._rate_limiter import TokenBucket
+from ..config import validate_configs
 from ..errors import ConfigValidationError
 from ..logging import get_logger, log_event
 from ..manifest import (
@@ -122,9 +123,7 @@ def write_sharded(
     """
     input = input or VectorRecordInput()
     options = options or VectorWriteOptions()
-    config.validate()
-    input.validate()
-    options.validate()
+    validate_configs(config, input, options)
     started = time.perf_counter()
     run_id = config.output.run_id or str(uuid.uuid4())
     mc = config.metrics_collector

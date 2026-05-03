@@ -9,14 +9,37 @@ from shardyfusion.config import (
     VectorSpec,
     WriterOutputConfig,
     _validate_segment,
+    validate_configs,
     vector_metric_to_str,
 )
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.sharding_types import KeyEncoding
 
+
+class _RecordingConfig:
+    def __init__(self, name: str, calls: list[str]) -> None:
+        self.name = name
+        self.calls = calls
+
+    def validate(self) -> None:
+        self.calls.append(self.name)
+
+
 # ---------------------------------------------------------------------------
 # vector_metric_to_str
 # ---------------------------------------------------------------------------
+
+
+def test_validate_configs_validates_all_in_order() -> None:
+    calls: list[str] = []
+
+    validate_configs(
+        _RecordingConfig("storage", calls),
+        _RecordingConfig("input", calls),
+        _RecordingConfig("options", calls),
+    )
+
+    assert calls == ["storage", "input", "options"]
 
 
 def test_vector_metric_to_str_accepts_valid() -> None:
