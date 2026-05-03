@@ -137,6 +137,8 @@ Internally the writer:
 - Repartitions via `ds.repartition(num_dbs, shuffle=True, keys=[DB_ID_COL])`.
 - Writes per-partition via `map_batches(..., batch_format="pandas")`.
 
+The writer also adds a temporary `_shard_id` column for shard routing. It is dropped before encoding and never stored. If this name collides with a column in your data, the writer raises `ConfigValidationError`; override it with `config.shard_id_col`.
+
 ## Backend-specific properties
 
 ### SlateDB
@@ -169,6 +171,7 @@ Internally the writer:
 
 | Failure | Surface | Recovery |
 |---|---|---|
+| `shard_id_col` collides with a data column | `ConfigValidationError` | Rename your column or set `config.shard_id_col`. |
 | Routing mismatch | `ShardAssignmentError` | Bug in routing change. Don't disable `verify_routing`. |
 | Task failure | Ray retries per its own policy; then `ShardCoverageError` | Configure Ray retries + `config.shard_retry`. |
 | Manifest / `_CURRENT` publish | `PublishManifestError` / `PublishCurrentError` | Transient; rerun. |

@@ -108,6 +108,8 @@ write_cel_sharded(ddf, config, input: ColumnWriteInput, options: DaskWriteOption
 
 The writer repartitions internally via `ddf.shuffle(on=DB_ID_COL, npartitions=num_dbs)` so the per-shard task layout matches `num_dbs`.
 
+The writer also adds a temporary `_shard_id` column for shard routing. It is dropped before encoding and never stored. If this name collides with a column in your data, the writer raises `ConfigValidationError`; override it with `config.shard_id_col`.
+
 ## Backend-specific properties
 
 ### SlateDB
@@ -147,6 +149,7 @@ Empty partitions are handled at two levels:
 
 | Failure | Surface | Recovery |
 |---|---|---|
+| `shard_id_col` collides with a data column | `ConfigValidationError` | Rename your column or set `config.shard_id_col`. |
 | Routing mismatch | `ShardAssignmentError` | Bug in routing change. Don't silence by disabling `verify_routing`. |
 | Worker death | Dask retries; if exhausted, `ShardCoverageError` | Configure Dask retries + `config.shard_retry`. |
 | Manifest / `_CURRENT` publish | `PublishManifestError` / `PublishCurrentError` | Transient; rerun. |

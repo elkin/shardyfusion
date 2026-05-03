@@ -130,6 +130,7 @@ Public writer functions take `(data, config, input, options=None)` except standa
 - `PythonRecordInput(key_fn, value_fn, columns_fn=None, vector_fn=None)` for Python KV writes.
 - `ColumnWriteInput(key_col, value_spec, vector=None, vector_fn=None)` for Spark/Dask/Ray KV writes.
 - `VectorColumnInput(vector_col, id_col=None, payload_cols=None, shard_id_col=None, routing_context_cols=None)` for distributed vector writes.
+  - `shard_id_col` here is the user **input** column carrying explicit shard IDs (EXPLICIT strategy only). It is distinct from `config.shard_id_col` on `VectorShardedWriteConfig`, which names the internal routing column added by the writer.
 - `PythonWriteOptions`, `SparkWriteOptions`, `DaskWriteOptions`, `RayWriteOptions`, `SingleDbWriteOptions`, and `VectorWriteOptions` carry per-call execution behavior.
 
 ## `VectorShardingConfig` / `VectorShardingSpec`

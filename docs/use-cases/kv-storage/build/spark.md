@@ -142,6 +142,8 @@ write_cel_sharded(df, config, input: ColumnWriteInput, options: SparkWriteOption
 
 KV rate limits live on `config.rate_limits`. `HashShardedWriteConfig` and `CelShardedWriteConfig` fields are the same as for the Python writer; SlateDB is the default `kv.adapter_factory`.
 
+The writer also adds a temporary `_shard_id` column for shard routing. It is dropped before encoding and never stored. If this name collides with a column in your data, the writer raises `ConfigValidationError`; override it with `config.shard_id_col`.
+
 ## Backend-specific properties
 
 ### SlateDB
@@ -184,6 +186,7 @@ Spark may launch duplicate tasks for slow partitions. This is safe because:
 | Failure | Surface | Recovery |
 |---|---|---|
 | Bad config | `ConfigValidationError` | Fix config; nothing was written. |
+| `shard_id_col` collides with a data column | `ConfigValidationError` | Rename your column or set `config.shard_id_col`. |
 | Routing mismatch | `ShardAssignmentError` (when `verify_routing=True`) | Bug in routing change; do not silence by disabling verification. |
 | Spark task fails | Task retried by Spark; if `config.shard_retry` set, additional shard-level retry | Tune Spark retries + `config.shard_retry`. |
 | All attempts of a shard fail | `ShardCoverageError` | Investigate executor logs. |

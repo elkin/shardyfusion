@@ -162,8 +162,10 @@ write_sharded(df, config, input: VectorColumnInput, options: VectorWriteOptions 
 | `vector_col` | required | DataFrame column containing the vector (`list[float]` or `array<float>`). |
 | `id_col` | required | DataFrame column used as the vector ID. |
 | `payload_cols` | `None` | Optional metadata columns to store alongside each vector. |
-| `shard_id_col` | `None` | Column with explicit shard IDs (EXPLICIT strategy only). |
+| `shard_id_col` | `None` | User **input** column with explicit shard IDs (EXPLICIT strategy only). |
 | `routing_context_cols` | `None` | Column mapping for CEL expression evaluation (CEL strategy only). |
+
+The writer also uses a temporary `_vector_db_id` column internally for shard routing. It is dropped before write and never stored. If this name collides with a column in your data, the writer raises `ConfigValidationError`; override it with `config.shard_id_col`.
 
 `VectorWriteOptions` fields:
 
@@ -228,6 +230,7 @@ Spark may launch duplicate tasks. This is safe because:
 | Failure | Surface | Recovery |
 |---|---|---|
 | `num_dbs` missing or ≤ 0 | `ConfigValidationError` | Provide a positive `num_dbs`. |
+| `shard_id_col` collides with a data column | `ConfigValidationError` | Rename your column or set `config.shard_id_col`. |
 | Dim mismatch | `ConfigValidationError` | Ensure all vectors match `VectorSpec.dim`. |
 | Routing mismatch | `ShardAssignmentError` (when `verify_routing=True`) | Bug in routing change; do not silence. |
 | Spark task fails | Task retried by Spark; then `ShardCoverageError` if exhausted | Tune Spark retries. |
