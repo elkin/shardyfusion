@@ -111,12 +111,10 @@ def _make_runtime(
         db_path_template="db={db_id:05d}",
         local_root=str(tmp_path),
         key_col="key",
-        key_encoding=key_encoding,
         key_encoder=make_key_encoder(key_encoding),
         value_spec=ValueSpec.binary_col("val"),
         batch_size=batch_size,
         adapter_factory=_make_factory(adapter),
-        credential_provider=None,
         max_writes_per_second=None,
     )
 
@@ -299,12 +297,10 @@ def _make_rate_limited_runtime(
         db_path_template="db={db_id:05d}",
         local_root=str(tmp_path),
         key_col="key",
-        key_encoding=KeyEncoding.U64BE,
         key_encoder=make_key_encoder(KeyEncoding.U64BE),
         value_spec=ValueSpec.binary_col("val"),
         batch_size=batch_size,
         adapter_factory=_make_factory(adapter),
-        credential_provider=None,
         max_writes_per_second=max_writes_per_second,
     )
 

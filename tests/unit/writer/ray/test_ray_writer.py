@@ -249,19 +249,17 @@ def test_write_partition_vector_fn_uses_distributed_writer(monkeypatch) -> None:
 
     monkeypatch.setattr(ray_writer, "write_shard_with_retry", _fake_distributed)
 
-    runtime = ray_writer.PartitionWriteRuntime(
+    runtime = ray_writer.RetryingPartitionWriteRuntime(
         run_id="run-test",
         s3_prefix="s3://bucket/prefix",
         shard_prefix="shards",
         db_path_template="db={db_id:05d}",
         local_root="/tmp/shardyfusion",
         key_col="id",
-        key_encoding=KeyEncoding.U64BE,
         key_encoder=make_key_encoder(KeyEncoding.U64BE),
         value_spec=ValueSpec.callable_encoder(lambda row: f"v{row['id']}".encode()),
         batch_size=2,
         adapter_factory=_TrackingFactory(),  # type: ignore[arg-type]
-        credential_provider=None,
         max_writes_per_second=None,
         vector_fn=lambda row: (int(row["id"]), [0.1, 0.2], {"src": "ray"}),
     )

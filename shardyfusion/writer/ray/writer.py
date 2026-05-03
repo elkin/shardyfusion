@@ -56,7 +56,7 @@ from shardyfusion.slatedb_adapter import (
     DbAdapterFactory,
 )
 from shardyfusion.writer._accumulators import KvAccumulator, UnifiedAccumulator
-from shardyfusion.writer._runtime import PartitionWriteRuntime
+from shardyfusion.writer._runtime import RetryingPartitionWriteRuntime
 
 from .sharding import (
     add_db_id_column_cel,
@@ -507,7 +507,7 @@ def _finalize_sharded_write(
     all_attempt_urls: list[str],
     shard_duration_ms: int,
     write_duration_ms: int,
-    runtime: PartitionWriteRuntime,
+    runtime: RetryingPartitionWriteRuntime,
     key_col: str,
     num_dbs: int,
     mc: MetricsCollector | None,
@@ -671,9 +671,9 @@ def _build_partition_write_runtime(
     sort_within_partitions: bool,
     started: float,
     vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
-) -> PartitionWriteRuntime:
+) -> RetryingPartitionWriteRuntime:
     """Construct picklable runtime config for Ray partition writers."""
-    runtime = PartitionWriteRuntime.from_public_config(
+    runtime = RetryingPartitionWriteRuntime.from_public_config(
         config=config,
         input=ColumnWriteInput(
             key_col=key_col,
@@ -689,7 +689,7 @@ def _build_partition_write_runtime(
 
 def _write_partition(
     pdf: pd.DataFrame,
-    runtime: PartitionWriteRuntime,
+    runtime: RetryingPartitionWriteRuntime,
 ) -> pd.DataFrame:
     """Write all db_id groups within one Ray partition."""
 
