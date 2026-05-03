@@ -7,7 +7,7 @@ from shardyfusion._writer_core import (
     discover_cel_num_dbs,
     resolve_num_dbs,
 )
-from shardyfusion.config import HashWriteConfig
+from shardyfusion.config import HashShardedWriteConfig
 from shardyfusion.errors import ConfigValidationError, ShardAssignmentError
 
 # ---------------------------------------------------------------------------
@@ -17,12 +17,12 @@ from shardyfusion.errors import ConfigValidationError, ShardAssignmentError
 
 class TestResolveNumDbs:
     def test_explicit_num_dbs_returned_directly(self) -> None:
-        cfg = HashWriteConfig(num_dbs=4, s3_prefix="s3://b/p")
+        cfg = HashShardedWriteConfig(num_dbs=4, s3_prefix="s3://b/p")
         result = resolve_num_dbs(cfg, count_fn=lambda: 999)
         assert result == 4
 
     def test_explicit_num_dbs_does_not_call_count_fn(self) -> None:
-        cfg = HashWriteConfig(num_dbs=4, s3_prefix="s3://b/p")
+        cfg = HashShardedWriteConfig(num_dbs=4, s3_prefix="s3://b/p")
         called = False
 
         def boom() -> int:
@@ -34,7 +34,7 @@ class TestResolveNumDbs:
         assert not called
 
     def test_max_keys_per_shard_basic(self) -> None:
-        cfg = HashWriteConfig(
+        cfg = HashShardedWriteConfig(
             s3_prefix="s3://b/p",
             max_keys_per_shard=100,
         )
@@ -42,7 +42,7 @@ class TestResolveNumDbs:
         assert result == 5
 
     def test_max_keys_per_shard_rounds_up(self) -> None:
-        cfg = HashWriteConfig(
+        cfg = HashShardedWriteConfig(
             s3_prefix="s3://b/p",
             max_keys_per_shard=3,
         )
@@ -50,7 +50,7 @@ class TestResolveNumDbs:
         assert result == 4  # ceil(10/3)
 
     def test_max_keys_per_shard_zero_count_returns_one(self) -> None:
-        cfg = HashWriteConfig(
+        cfg = HashShardedWriteConfig(
             s3_prefix="s3://b/p",
             max_keys_per_shard=100,
         )

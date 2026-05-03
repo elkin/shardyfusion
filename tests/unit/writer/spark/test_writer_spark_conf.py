@@ -6,9 +6,7 @@ from shardyfusion.writer.spark.util import (
     DataFrameCacheContext,
     SparkConfOverrideContext,
 )
-from shardyfusion.writer.spark.writer import (
-    write_sharded_by_hash,
-)
+from tests.helpers.writer_api import write_spark_hash_sharded as write_hash_sharded
 
 
 class _FakeSparkConf:
@@ -95,6 +93,11 @@ def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> 
         output=SimpleNamespace(run_id=None),
         num_dbs=4,
         max_keys_per_shard=None,
+        rate_limits=SimpleNamespace(
+            max_writes_per_second=None,
+            max_write_bytes_per_second=None,
+        ),
+        validate=lambda: None,
     )
 
     class _RecordingCtx:
@@ -152,7 +155,7 @@ def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> 
 
     from shardyfusion.serde import ValueSpec
 
-    result = write_sharded_by_hash(
+    result = write_hash_sharded(
         fake_df,  # type: ignore[arg-type]
         fake_config,  # type: ignore[arg-type]
         key_col="id",
@@ -175,6 +178,11 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
         output=SimpleNamespace(run_id=None),
         num_dbs=4,
         max_keys_per_shard=None,
+        rate_limits=SimpleNamespace(
+            max_writes_per_second=None,
+            max_write_bytes_per_second=None,
+        ),
+        validate=lambda: None,
     )
 
     class _RecordingCtx:
@@ -232,7 +240,7 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
 
     from shardyfusion.serde import ValueSpec
 
-    result1 = write_sharded_by_hash(
+    result1 = write_hash_sharded(
         fake_df,  # type: ignore[arg-type]
         fake_config,  # type: ignore[arg-type]
         key_col="id",
@@ -240,7 +248,7 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
         cache_input=True,
         storage_level="test-level",  # type: ignore[arg-type]
     )
-    result2 = write_sharded_by_hash(
+    result2 = write_hash_sharded(
         fake_df,  # type: ignore[arg-type]
         fake_config,  # type: ignore[arg-type]
         key_col="id",

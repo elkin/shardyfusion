@@ -3,11 +3,11 @@ from __future__ import annotations
 import pytest
 
 from shardyfusion.config import (
-    CelWriteConfig,
-    HashWriteConfig,
-    OutputOptions,
+    BaseShardedWriteConfig,
+    CelShardedWriteConfig,
+    HashShardedWriteConfig,
     VectorSpec,
-    WriteConfig,
+    WriterOutputConfig,
     _validate_segment,
     vector_metric_to_str,
 )
@@ -62,12 +62,12 @@ def test_vector_spec_to_vector_sharding_spec() -> None:
 
 
 # ---------------------------------------------------------------------------
-# WriteConfig (base) tests
+# BaseShardedWriteConfig tests
 # ---------------------------------------------------------------------------
 
 
 def test_write_config_accepts_valid_values() -> None:
-    config = WriteConfig(
+    config = BaseShardedWriteConfig(
         s3_prefix="s3://bucket/prefix",
     )
     assert config.key_encoding == KeyEncoding.U64BE
@@ -80,7 +80,6 @@ def test_write_config_accepts_valid_values() -> None:
         {"batch_size": 0},
         {"s3_prefix": "not-s3"},
         {"key_encoding": "u16be"},
-        {"output": OutputOptions(run_registry_prefix="bad/path")},
     ],
 )
 def test_write_config_rejects_invalid_values(kwargs: dict[str, object]) -> None:
@@ -89,28 +88,44 @@ def test_write_config_rejects_invalid_values(kwargs: dict[str, object]) -> None:
     }
     base.update(kwargs)
     with pytest.raises(ConfigValidationError):
-        WriteConfig(**base)
+        BaseShardedWriteConfig(**base)
+
+
+def test_write_config_rejects_invalid_output() -> None:
+    with pytest.raises(ConfigValidationError):
+        WriterOutputConfig(run_registry_prefix="bad/path")
 
 
 def test_write_config_accepts_string_key_encoding() -> None:
-    config = WriteConfig(
+    config = BaseShardedWriteConfig(
         s3_prefix="s3://bucket/prefix",
         key_encoding="u32be",
     )
     assert config.key_encoding == KeyEncoding.U32BE
 
 
+@pytest.mark.parametrize("key_encoding", ["", 0])
+def test_write_config_rejects_falsy_invalid_key_encoding(
+    key_encoding: object,
+) -> None:
+    with pytest.raises(ConfigValidationError):
+        BaseShardedWriteConfig(
+            s3_prefix="s3://bucket/prefix",
+            key_encoding=key_encoding,
+        )
+
+
 def test_write_config_accepts_custom_run_registry_prefix() -> None:
-    config = WriteConfig(
+    config = BaseShardedWriteConfig(
         s3_prefix="s3://bucket/prefix",
-        output=OutputOptions(run_registry_prefix="writer-runs"),
+        output=WriterOutputConfig(run_registry_prefix="writer-runs"),
     )
     assert config.output.run_registry_prefix == "writer-runs"
 
 
 def test_write_config_vector_spec_dim_must_be_positive() -> None:
-    with pytest.raises(ConfigValidationError, match="vector_spec.dim must be > 0"):
-        WriteConfig(
+    with pytest.raises(ConfigValidationError, match="vector.dim must be > 0"):
+        BaseShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             vector_spec=VectorSpec(dim=0, metric="cosine"),
         )
@@ -118,14 +133,14 @@ def test_write_config_vector_spec_dim_must_be_positive() -> None:
 
 def test_write_config_vector_spec_invalid_metric() -> None:
     with pytest.raises(ConfigValidationError, match="vector_spec.metric"):
-        WriteConfig(
+        BaseShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             vector_spec=VectorSpec(dim=4, metric="bad"),
         )
 
 
 def test_write_config_vector_spec_valid() -> None:
-    config = WriteConfig(
+    config = BaseShardedWriteConfig(
         s3_prefix="s3://bucket/prefix",
         vector_spec=VectorSpec(dim=8, metric="dot_product"),
     )
@@ -135,12 +150,12 @@ def test_write_config_vector_spec_valid() -> None:
 
 
 # ---------------------------------------------------------------------------
-# HashWriteConfig tests
+# HashShardedWriteConfig tests
 # ---------------------------------------------------------------------------
 
 
 def test_hash_write_config_accepts_valid_values() -> None:
-    config = HashWriteConfig(
+    config = HashShardedWriteConfig(
         num_dbs=4,
         s3_prefix="s3://bucket/prefix",
     )
@@ -151,16 +166,16 @@ def test_hash_write_config_accepts_valid_values() -> None:
 
 def test_hash_write_config_rejects_zero_num_dbs() -> None:
     with pytest.raises(ConfigValidationError, match="num_dbs must be > 0"):
-        HashWriteConfig(num_dbs=0, s3_prefix="s3://bucket/prefix")
+        HashShardedWriteConfig(num_dbs=0, s3_prefix="s3://bucket/prefix")
 
 
 def test_hash_write_config_rejects_none_num_dbs() -> None:
     with pytest.raises(ConfigValidationError, match="num_dbs must be > 0"):
-        HashWriteConfig(s3_prefix="s3://bucket/prefix")
+        HashShardedWriteConfig(s3_prefix="s3://bucket/prefix")
 
 
 def test_hash_write_config_max_keys_per_shard_computes_num_dbs() -> None:
-    config = HashWriteConfig(
+    config = HashShardedWriteConfig(
         s3_prefix="s3://bucket/prefix",
         max_keys_per_shard=1000,
     )
@@ -170,9 +185,10 @@ def test_hash_write_config_max_keys_per_shard_computes_num_dbs() -> None:
 
 def test_hash_write_config_max_keys_per_shard_rejects_num_dbs() -> None:
     with pytest.raises(
-        ConfigValidationError, match="num_dbs must be None when max_keys_per_shard"
+        ConfigValidationError,
+        match=r"sharding\.num_dbs must be None when sharding\.max_keys_per_shard",
     ):
-        HashWriteConfig(
+        HashShardedWriteConfig(
             num_dbs=4,
             s3_prefix="s3://bucket/prefix",
             max_keys_per_shard=1000,
@@ -181,20 +197,20 @@ def test_hash_write_config_max_keys_per_shard_rejects_num_dbs() -> None:
 
 def test_hash_write_config_rejects_non_positive_max_keys() -> None:
     with pytest.raises(ConfigValidationError, match="max_keys_per_shard must be > 0"):
-        HashWriteConfig(
+        HashShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             max_keys_per_shard=0,
         )
 
 
 # ---------------------------------------------------------------------------
-# CelWriteConfig tests
+# CelShardedWriteConfig tests
 # ---------------------------------------------------------------------------
 
 
 def test_cel_write_config_requires_cel_expr() -> None:
     with pytest.raises(ConfigValidationError, match="CEL strategy requires cel_expr"):
-        CelWriteConfig(
+        CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             cel_columns={"key": "int"},
         )
@@ -204,14 +220,14 @@ def test_cel_write_config_requires_cel_columns() -> None:
     with pytest.raises(
         ConfigValidationError, match="CEL strategy requires cel_columns"
     ):
-        CelWriteConfig(
+        CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             cel_expr="key % 10",
         )
 
 
 def test_cel_write_config_accepts_valid() -> None:
-    config = CelWriteConfig(
+    config = CelShardedWriteConfig(
         s3_prefix="s3://bucket/prefix",
         cel_expr="key % 10",
         cel_columns={"key": "int"},
@@ -221,7 +237,7 @@ def test_cel_write_config_accepts_valid() -> None:
 
 
 def test_cel_write_config_accepts_routing_values() -> None:
-    config = CelWriteConfig(
+    config = CelShardedWriteConfig(
         s3_prefix="s3://bucket/prefix",
         cel_expr="region",
         cel_columns={"region": "string"},
@@ -232,7 +248,7 @@ def test_cel_write_config_accepts_routing_values() -> None:
 
 def test_cel_write_config_rejects_infer_with_routing_values() -> None:
     with pytest.raises(ConfigValidationError, match="cannot be combined"):
-        CelWriteConfig(
+        CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             cel_expr="region",
             cel_columns={"region": "string"},

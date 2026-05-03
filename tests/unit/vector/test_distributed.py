@@ -18,8 +18,8 @@ from shardyfusion.vector._distributed import (
 )
 from shardyfusion.vector.config import (
     VectorIndexConfig,
+    VectorShardedWriteConfig,
     VectorShardingSpec,
-    VectorWriteConfig,
 )
 from shardyfusion.vector.types import (
     DistanceMetric,
@@ -48,7 +48,7 @@ class MockVectorWriter:
 
 class TestValidateVectorConfig:
     def test_valid_cluster_config(self) -> None:
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             num_dbs=4,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=128),
@@ -60,7 +60,7 @@ class TestValidateVectorConfig:
         validate_vector_config(cfg)
 
     def test_valid_cluster_with_training(self) -> None:
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             num_dbs=4,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=128),
@@ -72,7 +72,7 @@ class TestValidateVectorConfig:
         validate_vector_config(cfg)
 
     def test_valid_lsh_config(self) -> None:
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             num_dbs=8,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=128),
@@ -84,7 +84,7 @@ class TestValidateVectorConfig:
         validate_vector_config(cfg)
 
     def test_valid_explicit_config(self) -> None:
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             num_dbs=4,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=128),
@@ -96,94 +96,88 @@ class TestValidateVectorConfig:
 
     def test_invalid_zero_dim(self) -> None:
         with pytest.raises(ConfigValidationError, match=r"index_config\.dim"):
-            VectorWriteConfig(
+            VectorShardedWriteConfig(
                 s3_prefix="s3://bucket/prefix",
                 index_config=VectorIndexConfig(dim=0),
             )
 
     def test_invalid_negative_dim(self) -> None:
         with pytest.raises(ConfigValidationError, match=r"index_config\.dim"):
-            VectorWriteConfig(
+            VectorShardedWriteConfig(
                 s3_prefix="s3://bucket/prefix",
                 index_config=VectorIndexConfig(dim=-1),
             )
 
     def test_invalid_empty_prefix(self) -> None:
-        cfg = VectorWriteConfig(
-            s3_prefix="",
-            index_config=VectorIndexConfig(dim=128),
-        )
         with pytest.raises(ConfigValidationError, match="s3_prefix"):
-            validate_vector_config(cfg)
+            VectorShardedWriteConfig(
+                s3_prefix="",
+                index_config=VectorIndexConfig(dim=128),
+            )
 
     def test_invalid_cluster_without_centroids(self) -> None:
-        cfg = VectorWriteConfig(
-            s3_prefix="s3://bucket/prefix",
-            index_config=VectorIndexConfig(dim=128),
-            sharding=VectorShardingSpec(
-                strategy=VectorShardingStrategy.CLUSTER,
-                centroids=None,
-                train_centroids=False,
-            ),
-        )
         with pytest.raises(ConfigValidationError, match="centroids"):
-            validate_vector_config(cfg)
+            VectorShardedWriteConfig(
+                s3_prefix="s3://bucket/prefix",
+                index_config=VectorIndexConfig(dim=128),
+                sharding=VectorShardingSpec(
+                    strategy=VectorShardingStrategy.CLUSTER,
+                    centroids=None,
+                    train_centroids=False,
+                ),
+            )
 
     def test_invalid_num_probes(self) -> None:
-        cfg = VectorWriteConfig(
-            s3_prefix="s3://bucket/prefix",
-            index_config=VectorIndexConfig(dim=128),
-            sharding=VectorShardingSpec(
-                strategy=VectorShardingStrategy.CLUSTER,
-                train_centroids=True,
-                num_probes=0,
-            ),
-        )
         with pytest.raises(ConfigValidationError, match="num_probes"):
-            validate_vector_config(cfg)
+            VectorShardedWriteConfig(
+                s3_prefix="s3://bucket/prefix",
+                index_config=VectorIndexConfig(dim=128),
+                sharding=VectorShardingSpec(
+                    strategy=VectorShardingStrategy.CLUSTER,
+                    train_centroids=True,
+                    num_probes=0,
+                ),
+            )
 
     def test_explicit_num_probes_must_be_one(self) -> None:
-        cfg = VectorWriteConfig(
-            num_dbs=4,
-            s3_prefix="s3://bucket/prefix",
-            index_config=VectorIndexConfig(dim=128),
-            sharding=VectorShardingSpec(
-                strategy=VectorShardingStrategy.EXPLICIT,
-                num_probes=2,
-            ),
-        )
         with pytest.raises(ConfigValidationError, match="only supported"):
-            validate_vector_config(cfg)
+            VectorShardedWriteConfig(
+                num_dbs=4,
+                s3_prefix="s3://bucket/prefix",
+                index_config=VectorIndexConfig(dim=128),
+                sharding=VectorShardingSpec(
+                    strategy=VectorShardingStrategy.EXPLICIT,
+                    num_probes=2,
+                ),
+            )
 
     def test_cel_num_probes_must_be_one(self) -> None:
-        cfg = VectorWriteConfig(
-            s3_prefix="s3://bucket/prefix",
-            index_config=VectorIndexConfig(dim=128),
-            sharding=VectorShardingSpec(
-                strategy=VectorShardingStrategy.CEL,
-                num_probes=2,
-                cel_expr="shard_hash(region) % 2u",
-                cel_columns={"region": "string"},
-                routing_values=[0, 1],
-            ),
-        )
         with pytest.raises(ConfigValidationError, match="only supported"):
-            validate_vector_config(cfg)
+            VectorShardedWriteConfig(
+                s3_prefix="s3://bucket/prefix",
+                index_config=VectorIndexConfig(dim=128),
+                sharding=VectorShardingSpec(
+                    strategy=VectorShardingStrategy.CEL,
+                    num_probes=2,
+                    cel_expr="shard_hash(region) % 2u",
+                    cel_columns={"region": "string"},
+                    routing_values=[0, 1],
+                ),
+            )
 
     def test_invalid_batch_size(self) -> None:
-        cfg = VectorWriteConfig(
-            s3_prefix="s3://bucket/prefix",
-            index_config=VectorIndexConfig(dim=128),
-            batch_size=0,
-        )
         with pytest.raises(ConfigValidationError, match="batch_size"):
-            validate_vector_config(cfg)
+            VectorShardedWriteConfig(
+                s3_prefix="s3://bucket/prefix",
+                index_config=VectorIndexConfig(dim=128),
+                batch_size=0,
+            )
 
 
 class TestResolveVectorRouting:
     def test_cluster_resolve_with_provided_centroids(self) -> None:
         centroids = np.array([[1, 0], [0, 1], [1, 1], [0, 0]], dtype=np.float32)
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=2),
             sharding=VectorShardingSpec(
@@ -200,7 +194,7 @@ class TestResolveVectorRouting:
 
     def test_cluster_resolve_with_training(self) -> None:
         sample_vectors = np.random.rand(100, 8).astype(np.float32)
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             num_dbs=4,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=8),
@@ -219,7 +213,7 @@ class TestResolveVectorRouting:
 
     def test_cluster_num_dbs_inferred_from_centroids(self) -> None:
         centroids = np.array([[1, 0], [0, 1], [1, 1]], dtype=np.float32)
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=2),
             sharding=VectorShardingSpec(
@@ -234,7 +228,7 @@ class TestResolveVectorRouting:
 
     def test_cluster_centroids_count_mismatch(self) -> None:
         centroids = np.array([[1, 0], [0, 1]], dtype=np.float32)
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             num_dbs=4,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=2),
@@ -247,7 +241,7 @@ class TestResolveVectorRouting:
             resolve_vector_routing(cfg)
 
     def test_cluster_missing_sample_vectors_raises(self) -> None:
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             num_dbs=4,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=8),
@@ -260,7 +254,7 @@ class TestResolveVectorRouting:
             resolve_vector_routing(cfg)
 
     def test_lsh_resolve_generates_hyperplanes(self) -> None:
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             num_dbs=8,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=128),
@@ -279,7 +273,7 @@ class TestResolveVectorRouting:
 
     def test_lsh_with_provided_hyperplanes(self) -> None:
         hyperplanes = np.random.rand(8, 128).astype(np.float32)
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             num_dbs=8,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=128),
@@ -294,7 +288,7 @@ class TestResolveVectorRouting:
         assert np.array_equal(routing.hyperplanes, hyperplanes)
 
     def test_explicit_resolve(self) -> None:
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             num_dbs=4,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=128),
@@ -309,7 +303,7 @@ class TestResolveVectorRouting:
         assert routing.num_dbs == 4
 
     def test_cel_resolve_compiles_expression(self) -> None:
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             num_dbs=3,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=128),
@@ -329,7 +323,7 @@ class TestResolveVectorRouting:
 
     def test_cel_includes_cel_expr_in_routing(self) -> None:
         """Bug fix verification: cel_expr is stored in resolved routing."""
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             num_dbs=3,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=128),
@@ -346,7 +340,7 @@ class TestResolveVectorRouting:
         assert routing.cel_expr == "region"
 
     def test_cel_num_dbs_inferred_from_routing_values(self) -> None:
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=128),
             sharding=VectorShardingSpec(
@@ -362,7 +356,7 @@ class TestResolveVectorRouting:
         assert routing.num_dbs == 3
 
     def test_invalid_num_dbs_raises(self) -> None:
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=128),
             sharding=VectorShardingSpec(
@@ -374,7 +368,7 @@ class TestResolveVectorRouting:
 
     def test_invalid_negative_num_dbs_raises(self) -> None:
         with pytest.raises(ConfigValidationError, match="num_dbs"):
-            VectorWriteConfig(
+            VectorShardedWriteConfig(
                 num_dbs=-1,
                 s3_prefix="s3://bucket/prefix",
                 index_config=VectorIndexConfig(dim=128),

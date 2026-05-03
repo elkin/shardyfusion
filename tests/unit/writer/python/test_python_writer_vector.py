@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from shardyfusion.config import CelWriteConfig, ManifestOptions, VectorSpec
+from shardyfusion.config import CelShardedWriteConfig, VectorSpec, WriterManifestConfig
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.sharding_types import CelShardingSpec
 
@@ -22,7 +22,7 @@ def _cel_sharding_spec() -> CelShardingSpec:
 
 
 # ---------------------------------------------------------------------------
-# _auto_vector_fn — exercised via write_sharded_by_cel
+# _auto_vector_fn — exercised via write_cel_sharded
 # ---------------------------------------------------------------------------
 
 
@@ -35,9 +35,11 @@ class _Record:
 
 class TestAutoVectorFn:
     def test_vector_col_without_columns_fn_raises(self) -> None:
-        from shardyfusion.writer.python.writer import write_sharded_by_cel
+        from tests.helpers.writer_api import (
+            write_python_cel_sharded as write_cel_sharded,
+        )
 
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             cel_expr="shard_hash(key) % 2u",
             cel_columns={"key": "int"},
@@ -45,7 +47,7 @@ class TestAutoVectorFn:
             vector_spec=VectorSpec(dim=3, vector_col="embedding"),
         )
         with pytest.raises(ConfigValidationError, match="columns_fn is None"):
-            write_sharded_by_cel(
+            write_cel_sharded(
                 records=[],
                 config=config,
                 key_fn=lambda r: r.key,
@@ -54,15 +56,17 @@ class TestAutoVectorFn:
 
     def test_auto_vector_fn_builds_and_runs(self) -> None:
         """When vector_col + columns_fn provided, auto vector_fn is built and used."""
-        from shardyfusion.writer.python.writer import write_sharded_by_cel
+        from tests.helpers.writer_api import (
+            write_python_cel_sharded as write_cel_sharded,
+        )
 
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             cel_expr="shard_hash(key) % 2u",
             cel_columns={"key": "int"},
             routing_values=[0, 1],
             vector_spec=VectorSpec(dim=3, vector_col="embedding"),
-            manifest=ManifestOptions(custom_manifest_fields={}),
+            manifest=WriterManifestConfig(custom_manifest_fields={}),
         )
 
         with (
@@ -80,7 +84,7 @@ class TestAutoVectorFn:
             ),
         ):
             mock_write.return_value = ([], 0)
-            write_sharded_by_cel(
+            write_cel_sharded(
                 records=[],
                 config=config,
                 key_fn=lambda r: r.key,
@@ -95,15 +99,17 @@ class TestAutoVectorFn:
 
     def test_auto_vector_fn_converts_bytes_key(self) -> None:
         """auto_vector_fn converts bytes keys to hex strings for vector IDs."""
-        from shardyfusion.writer.python.writer import write_sharded_by_cel
+        from tests.helpers.writer_api import (
+            write_python_cel_sharded as write_cel_sharded,
+        )
 
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             cel_expr="shard_hash(key) % 2u",
             cel_columns={"key": "int"},
             routing_values=[0, 1],
             vector_spec=VectorSpec(dim=3, vector_col="emb"),
-            manifest=ManifestOptions(custom_manifest_fields={}),
+            manifest=WriterManifestConfig(custom_manifest_fields={}),
         )
 
         captured_fn = None
@@ -128,7 +134,7 @@ class TestAutoVectorFn:
                 return_value="s3://manifest",
             ),
         ):
-            write_sharded_by_cel(
+            write_cel_sharded(
                 records=[],
                 config=config,
                 key_fn=lambda r: b"\xde\xad",
@@ -171,7 +177,7 @@ class TestWrapFactoryImportFallback:
                 raise ImportError("no lancedb")
             return original_import(name, *args, **kwargs)
 
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             cel_expr="shard_hash(key) % 2u",
             cel_columns={"key": "int"},
@@ -288,7 +294,7 @@ class TestFlushSingleProcessShardVectorBatch:
         state.vector_vecs[0] = [[0.1, 0.2], [0.3, 0.4]]
         state.vector_payloads[0] = [None, {"label": "a"}]
 
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             cel_expr="shard_hash(key) % 2u",
             cel_columns={"key": "int"},
@@ -355,7 +361,7 @@ class TestFlushSingleProcessShardVectorBatch:
         ) -> VectorAdapter:
             return VectorAdapter()
 
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             cel_expr="shard_hash(key) % 2u",
             cel_columns={"key": "int"},
@@ -420,7 +426,7 @@ class TestFlushSingleProcessShardVectorBatch:
         state.vector_vecs[0] = []
         state.vector_payloads[0] = []
 
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             cel_expr="shard_hash(key) % 2u",
             cel_columns={"key": "int"},

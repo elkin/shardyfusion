@@ -7,14 +7,18 @@ import pytest
 cel_expr_python = pytest.importorskip("cel_expr_python")  # noqa: F841
 
 from shardyfusion.cel import compile_cel, route_cel
-from shardyfusion.config import CelWriteConfig, ManifestOptions, OutputOptions
+from shardyfusion.config import (
+    CelShardedWriteConfig,
+    WriterManifestConfig,
+    WriterOutputConfig,
+)
 from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.manifest_store import parse_manifest_payload
 from shardyfusion.routing import SnapshotRouter
 from shardyfusion.sharding_types import KeyEncoding
 from shardyfusion.testing import file_backed_adapter_factory, file_backed_load_db
 from shardyfusion.type_defs import S3ConnectionOptions
-from shardyfusion.writer.python import write_sharded_by_cel
+from tests.helpers.writer_api import write_python_cel_sharded as write_cel_sharded
 
 pytestmark = pytest.mark.cel
 
@@ -29,8 +33,8 @@ def _cel_config(local_s3_service, tmp_path, *, run_id, s3_subpath, **overrides):
         adapter_factory=file_backed_adapter_factory(root),
         cel_expr="key % 4",
         cel_columns={"key": "int"},
-        output=OutputOptions(run_id=run_id, local_root=str(tmp_path / "local")),
-        manifest=ManifestOptions(
+        output=WriterOutputConfig(run_id=run_id, local_root=str(tmp_path / "local")),
+        manifest=WriterManifestConfig(
             credential_provider=StaticCredentialProvider(
                 access_key_id=local_s3_service["access_key_id"],
                 secret_access_key=local_s3_service["secret_access_key"],
@@ -42,7 +46,7 @@ def _cel_config(local_s3_service, tmp_path, *, run_id, s3_subpath, **overrides):
         ),
     )
     defaults.update(overrides)
-    return CelWriteConfig(**defaults), root
+    return CelShardedWriteConfig(**defaults), root
 
 
 def test_cel_unified_publishes_manifest_to_s3(local_s3_service, tmp_path):
@@ -51,7 +55,7 @@ def test_cel_unified_publishes_manifest_to_s3(local_s3_service, tmp_path):
         local_s3_service, tmp_path, run_id="cel-unified", s3_subpath="cel-uni"
     )
 
-    result = write_sharded_by_cel(
+    result = write_cel_sharded(
         list(range(100)),
         config,
         key_fn=lambda r: r,
@@ -80,7 +84,7 @@ def test_cel_unified_router_round_trip(local_s3_service, tmp_path):
         local_s3_service, tmp_path, run_id="cel-rt", s3_subpath="cel-rt"
     )
 
-    result = write_sharded_by_cel(
+    result = write_cel_sharded(
         list(range(40)),
         config,
         key_fn=lambda r: r,
@@ -109,15 +113,17 @@ def test_cel_split_mode_routes_by_context(local_s3_service, tmp_path):
     s3_prefix = f"s3://{bucket}/cel-split"
     root = str(tmp_path / "file-backed")
 
-    config = CelWriteConfig(
+    config = CelShardedWriteConfig(
         s3_prefix=s3_prefix,
         key_encoding=KeyEncoding.UTF8,
         adapter_factory=file_backed_adapter_factory(root),
         cel_expr="region",
         cel_columns={"region": "string"},
         routing_values=["ap", "eu", "us"],
-        output=OutputOptions(run_id="cel-split", local_root=str(tmp_path / "local")),
-        manifest=ManifestOptions(
+        output=WriterOutputConfig(
+            run_id="cel-split", local_root=str(tmp_path / "local")
+        ),
+        manifest=WriterManifestConfig(
             credential_provider=StaticCredentialProvider(
                 access_key_id=local_s3_service["access_key_id"],
                 secret_access_key=local_s3_service["secret_access_key"],
@@ -138,7 +144,7 @@ def test_cel_split_mode_routes_by_context(local_s3_service, tmp_path):
         ("frank", "us"),
     ]
 
-    result = write_sharded_by_cel(
+    result = write_cel_sharded(
         records,
         config,
         key_fn=lambda r: r[0],
@@ -171,7 +177,7 @@ def test_cel_data_integrity(local_s3_service, tmp_path):
     )
 
     records = list(range(200))
-    result = write_sharded_by_cel(
+    result = write_cel_sharded(
         records,
         config,
         key_fn=lambda r: r,

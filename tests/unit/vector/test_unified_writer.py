@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from shardyfusion.config import CelWriteConfig, VectorSpec
+from shardyfusion.config import CelShardedWriteConfig, VectorSpec
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.sharding_types import CelShardingSpec
 
@@ -22,7 +22,7 @@ def _cel_sharding() -> CelShardingSpec:
     )
 
 
-def _cel_config(**kwargs: Any) -> CelWriteConfig:
+def _cel_config(**kwargs: Any) -> CelShardedWriteConfig:
     defaults: dict[str, Any] = {
         "s3_prefix": "s3://bucket/prefix",
         "cel_expr": "shard_hash(key) % 4u",
@@ -30,11 +30,11 @@ def _cel_config(**kwargs: Any) -> CelWriteConfig:
         "routing_values": [0, 1, 2, 3],
     }
     defaults.update(kwargs)
-    return CelWriteConfig(**defaults)
+    return CelShardedWriteConfig(**defaults)
 
 
 # ---------------------------------------------------------------------------
-# vector_fn / vector_col validation in write_sharded_by_cel
+# vector_fn / vector_col validation in write_cel_sharded
 # ---------------------------------------------------------------------------
 
 
@@ -42,16 +42,18 @@ class TestWriteShardedVectorValidation:
     """Tests that run before any actual writing — validation only."""
 
     def test_vector_fn_without_vector_spec_raises(self) -> None:
-        from shardyfusion.writer.python.writer import write_sharded_by_cel
+        from tests.helpers.writer_api import (
+            write_python_cel_sharded as write_cel_sharded,
+        )
 
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             cel_expr="shard_hash(key) % 4u",
             cel_columns={"key": "int"},
             routing_values=[0, 1, 2, 3],
         )
         with pytest.raises(ConfigValidationError, match="vector_fn requires"):
-            write_sharded_by_cel(
+            write_cel_sharded(
                 [],
                 config,
                 key_fn=lambda r: r,
@@ -60,11 +62,13 @@ class TestWriteShardedVectorValidation:
             )
 
     def test_vector_spec_without_vector_fn_or_col_raises(self) -> None:
-        from shardyfusion.writer.python.writer import write_sharded_by_cel
+        from tests.helpers.writer_api import (
+            write_python_cel_sharded as write_cel_sharded,
+        )
 
         config = _cel_config(vector_spec=VectorSpec(dim=8))
         with pytest.raises(ConfigValidationError, match="vector_fn.*vector_col"):
-            write_sharded_by_cel(
+            write_cel_sharded(
                 [],
                 config,
                 key_fn=lambda r: r,
@@ -72,11 +76,13 @@ class TestWriteShardedVectorValidation:
             )
 
     def test_vector_col_without_columns_fn_raises(self) -> None:
-        from shardyfusion.writer.python.writer import write_sharded_by_cel
+        from tests.helpers.writer_api import (
+            write_python_cel_sharded as write_cel_sharded,
+        )
 
         config = _cel_config(vector_spec=VectorSpec(dim=8, vector_col="embedding"))
         with pytest.raises(ConfigValidationError, match="columns_fn is None"):
-            write_sharded_by_cel(
+            write_cel_sharded(
                 [],
                 config,
                 key_fn=lambda r: r,

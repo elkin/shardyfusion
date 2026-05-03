@@ -14,7 +14,7 @@ from shardyfusion.sharding_types import KeyEncoding
 from shardyfusion.slatedb_adapter import DbAdapterFactory
 from shardyfusion.testing import ListMetricsCollector
 from shardyfusion.writer.spark.writer import (
-    PartitionWriteConfig,
+    PartitionWriteRuntime,
     write_one_shard_partition,
 )
 from tests.helpers.tracking import (
@@ -101,10 +101,10 @@ def _make_runtime(
     adapter: _FakeAdapter | None = None,
     batch_size: int = 100,
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
-) -> PartitionWriteConfig:
+) -> PartitionWriteRuntime:
     if adapter is None:
         adapter = _FakeAdapter()
-    return PartitionWriteConfig(
+    return PartitionWriteRuntime(
         run_id="run-test",
         s3_prefix="s3://bucket/prefix",
         shard_prefix="shards",
@@ -127,7 +127,7 @@ def _rows(*keys: int) -> list[tuple[int, Row]]:
 
 
 def _run(
-    db_id: int, rows: list[tuple[int, Row]], runtime: PartitionWriteConfig
+    db_id: int, rows: list[tuple[int, Row]], runtime: PartitionWriteRuntime
 ) -> ShardAttemptResult:
     """Consume the generator and return the single yielded result."""
     with patch("shardyfusion.writer.spark.writer.TaskContext") as mock_tc:
@@ -289,10 +289,10 @@ def _make_rate_limited_runtime(
     adapter: _FakeAdapter | None = None,
     batch_size: int = 100,
     max_writes_per_second: float | None = 100.0,
-) -> PartitionWriteConfig:
+) -> PartitionWriteRuntime:
     if adapter is None:
         adapter = _FakeAdapter()
-    return PartitionWriteConfig(
+    return PartitionWriteRuntime(
         run_id="run-test",
         s3_prefix="s3://bucket/prefix",
         shard_prefix="shards",

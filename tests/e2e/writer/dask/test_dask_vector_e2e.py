@@ -21,20 +21,20 @@ def test_dask_vector_cluster_write_to_sqlite(garage_s3_service, tmp_path) -> Non
     import pandas as pd
 
     from shardyfusion.config import (
-        ManifestOptions,
-        OutputOptions,
         VectorSpec,
+        WriterManifestConfig,
+        WriterOutputConfig,
     )
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
     from shardyfusion.vector.config import (
         VectorIndexConfig,
+        VectorShardedWriteConfig,
         VectorShardingSpec,
         VectorShardingStrategy,
         VectorSpecSharding,
-        VectorWriteConfig,
     )
-    from shardyfusion.writer.dask import write_vector_sharded
     from tests.helpers.s3_test_scenarios import _make_s3_manifest_store
+    from tests.helpers.writer_api import write_dask_vector_sharded as write_sharded
 
     bucket = garage_s3_service["bucket"]
     prefix = f"{bucket}/dask-vector-cluster-e2e"
@@ -56,7 +56,7 @@ def test_dask_vector_cluster_write_to_sqlite(garage_s3_service, tmp_path) -> Non
     )
     ddf = dd.from_pandas(pdf, npartitions=4)
 
-    config = VectorWriteConfig(
+    config = VectorShardedWriteConfig(
         num_dbs=num_dbs,
         s3_prefix=f"s3://{prefix}",
         index_config=VectorIndexConfig(dim=dim),
@@ -64,7 +64,7 @@ def test_dask_vector_cluster_write_to_sqlite(garage_s3_service, tmp_path) -> Non
             strategy=VectorShardingStrategy.CLUSTER,
             train_centroids=True,
         ),
-        output=OutputOptions(run_id=run_id, local_root=str(tmp_path)),
+        output=WriterOutputConfig(run_id=run_id, local_root=str(tmp_path)),
         adapter_factory=SqliteVecFactory(
             vector_spec=VectorSpec(
                 dim=dim,
@@ -79,7 +79,7 @@ def test_dask_vector_cluster_write_to_sqlite(garage_s3_service, tmp_path) -> Non
         ),
         credential_provider=creds,
         s3_connection_options=opts,
-        manifest=ManifestOptions(
+        manifest=WriterManifestConfig(
             store=_make_s3_manifest_store(
                 f"s3://{prefix}",
                 credential_provider=creds,
@@ -89,7 +89,7 @@ def test_dask_vector_cluster_write_to_sqlite(garage_s3_service, tmp_path) -> Non
         batch_size=100,
     )
 
-    result = write_vector_sharded(
+    result = write_sharded(
         ddf,
         config,
         vector_col="embedding",
@@ -110,20 +110,20 @@ def test_dask_vector_lsh_write_to_sqlite(garage_s3_service, tmp_path) -> None:
     import pandas as pd
 
     from shardyfusion.config import (
-        ManifestOptions,
-        OutputOptions,
         VectorSpec,
+        WriterManifestConfig,
+        WriterOutputConfig,
     )
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
     from shardyfusion.vector.config import (
         VectorIndexConfig,
+        VectorShardedWriteConfig,
         VectorShardingSpec,
         VectorShardingStrategy,
         VectorSpecSharding,
-        VectorWriteConfig,
     )
-    from shardyfusion.writer.dask import write_vector_sharded
     from tests.helpers.s3_test_scenarios import _make_s3_manifest_store
+    from tests.helpers.writer_api import write_dask_vector_sharded as write_sharded
 
     bucket = garage_s3_service["bucket"]
     prefix = f"{bucket}/dask-vector-lsh-e2e"
@@ -145,7 +145,7 @@ def test_dask_vector_lsh_write_to_sqlite(garage_s3_service, tmp_path) -> None:
     )
     ddf = dd.from_pandas(pdf, npartitions=4)
 
-    config = VectorWriteConfig(
+    config = VectorShardedWriteConfig(
         num_dbs=num_dbs,
         s3_prefix=f"s3://{prefix}",
         index_config=VectorIndexConfig(dim=dim),
@@ -153,7 +153,7 @@ def test_dask_vector_lsh_write_to_sqlite(garage_s3_service, tmp_path) -> None:
             strategy=VectorShardingStrategy.LSH,
             num_hash_bits=4,
         ),
-        output=OutputOptions(run_id=run_id, local_root=str(tmp_path)),
+        output=WriterOutputConfig(run_id=run_id, local_root=str(tmp_path)),
         adapter_factory=SqliteVecFactory(
             vector_spec=VectorSpec(
                 dim=dim,
@@ -168,7 +168,7 @@ def test_dask_vector_lsh_write_to_sqlite(garage_s3_service, tmp_path) -> None:
         ),
         credential_provider=creds,
         s3_connection_options=opts,
-        manifest=ManifestOptions(
+        manifest=WriterManifestConfig(
             store=_make_s3_manifest_store(
                 f"s3://{prefix}",
                 credential_provider=creds,
@@ -178,7 +178,7 @@ def test_dask_vector_lsh_write_to_sqlite(garage_s3_service, tmp_path) -> None:
         batch_size=100,
     )
 
-    result = write_vector_sharded(
+    result = write_sharded(
         ddf,
         config,
         vector_col="embedding",

@@ -9,19 +9,19 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 
-from shardyfusion import HashWriteConfig, OutputOptions, VectorSpec
+from shardyfusion import HashShardedWriteConfig, VectorSpec, WriterOutputConfig
 from shardyfusion.vector.adapters.lancedb_adapter import LanceDbWriterFactory
 from shardyfusion.vector.config import (
     VectorIndexConfig,
+    VectorShardedWriteConfig,
     VectorShardingSpec,
-    VectorWriteConfig,
 )
 from shardyfusion.vector.types import (
     DistanceMetric,
     VectorRecord,
     VectorShardingStrategy,
 )
-from shardyfusion.vector.writer import write_vector_sharded
+from shardyfusion.vector.writer import write_sharded
 from tests.e2e.cli.conftest import (
     _invoke_cli_with_retry,
     _write_cli_configs,
@@ -64,12 +64,12 @@ def _write_lancedb_vector_data(s3_service: LocalS3Service, tmp_path: Path) -> st
         s3_connection_options=s3_conn_opts,
     )
 
-    config = VectorWriteConfig(
+    config = VectorShardedWriteConfig(
         num_dbs=2,
         s3_prefix=s3_prefix,
         index_config=VectorIndexConfig(dim=2, metric=DistanceMetric.L2),
         sharding=VectorShardingSpec(strategy=VectorShardingStrategy.EXPLICIT),
-        output=OutputOptions(
+        output=WriterOutputConfig(
             run_id="cli-e2e-vector-run", local_root=str(tmp_path / "writer")
         ),
         adapter_factory=writer_factory,
@@ -77,7 +77,7 @@ def _write_lancedb_vector_data(s3_service: LocalS3Service, tmp_path: Path) -> st
         s3_connection_options=s3_conn_opts,
     )
 
-    write_vector_sharded(records, config)
+    write_sharded(records, config)
     return s3_prefix
 
 
@@ -169,7 +169,7 @@ def _write_sqlite_vec_data(s3_service: LocalS3Service, tmp_path: Path) -> str:
 
     from shardyfusion.sharding_types import KeyEncoding
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-    from shardyfusion.writer.python.writer import write_sharded_by_hash
+    from tests.helpers.writer_api import write_python_hash_sharded as write_hash_sharded
 
     rng = np.random.default_rng(42)
     num_records = 10
@@ -186,7 +186,7 @@ def _write_sqlite_vec_data(s3_service: LocalS3Service, tmp_path: Path) -> str:
 
     vector_spec = VectorSpec(dim=dim, metric="cosine")
 
-    config = HashWriteConfig(
+    config = HashShardedWriteConfig(
         num_dbs=2,
         s3_prefix=s3_prefix,
         adapter_factory=SqliteVecFactory(
@@ -198,12 +198,12 @@ def _write_sqlite_vec_data(s3_service: LocalS3Service, tmp_path: Path) -> str:
         credential_provider=cred_provider,
         s3_connection_options=s3_conn_opts,
         key_encoding=KeyEncoding.RAW,
-        output=OutputOptions(
+        output=WriterOutputConfig(
             run_id="cli-e2e-vector-sqlite", local_root=str(tmp_path / "writer")
         ),
     )
 
-    write_sharded_by_hash(
+    write_hash_sharded(
         records,
         config,
         key_fn=lambda r: r["id"].encode(),

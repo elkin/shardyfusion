@@ -9,9 +9,9 @@ import pytest
 from pyspark.sql import SparkSession
 
 from shardyfusion.config import (
-    HashWriteConfig,
-    ManifestOptions,
-    OutputOptions,
+    HashShardedWriteConfig,
+    WriterManifestConfig,
+    WriterOutputConfig,
 )
 from shardyfusion.errors import ConfigValidationError, ShardyfusionError
 from shardyfusion.manifest import BuildResult
@@ -20,7 +20,6 @@ from shardyfusion.run_registry import InMemoryRunRegistry
 from shardyfusion.serde import ValueSpec
 from shardyfusion.sharding_types import KeyEncoding
 from shardyfusion.type_defs import RetryConfig
-from shardyfusion.writer.spark.single_db_writer import write_single_db
 from shardyfusion.writer.spark.writer import DataFrameCacheContext
 from tests.helpers.run_record_assertions import (
     assert_success_run_record,
@@ -32,6 +31,7 @@ from tests.helpers.tracking import (
     TrackingFactory,
     patch_token_bucket_fixture,
 )
+from tests.helpers.writer_api import write_spark_single_db as write_single_db
 
 _patch_token_bucket = patch_token_bucket_fixture(
     "shardyfusion.writer.spark.single_db_writer"
@@ -49,15 +49,15 @@ def _make_config(
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
     num_dbs: int = 1,
     run_registry: InMemoryRunRegistry | None = None,
-) -> HashWriteConfig:
-    return HashWriteConfig(
+) -> HashShardedWriteConfig:
+    return HashShardedWriteConfig(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/prefix",
         key_encoding=key_encoding,
         batch_size=batch_size,
         adapter_factory=factory or TrackingFactory(),
-        output=OutputOptions(run_id="test-run"),
-        manifest=ManifestOptions(store=InMemoryManifestStore()),
+        output=WriterOutputConfig(run_id="test-run"),
+        manifest=WriterManifestConfig(store=InMemoryManifestStore()),
         run_registry=run_registry,
     )
 
@@ -476,12 +476,12 @@ def test_min_max_keys(spark: SparkSession) -> None:
 @pytest.mark.spark
 def test_manifest_structure(spark: SparkSession) -> None:
     store = InMemoryManifestStore()
-    config = HashWriteConfig(
+    config = HashShardedWriteConfig(
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
         adapter_factory=TrackingFactory(),
-        output=OutputOptions(run_id="test-manifest"),
-        manifest=ManifestOptions(store=store),
+        output=WriterOutputConfig(run_id="test-manifest"),
+        manifest=WriterManifestConfig(store=store),
     )
 
     df = spark.createDataFrame([(k,) for k in range(5)], ["key"])

@@ -15,8 +15,8 @@ import pytest
 from shardyfusion.vector._distributed import resolve_vector_routing
 from shardyfusion.vector.config import (
     VectorIndexConfig,
+    VectorShardedWriteConfig,
     VectorShardingSpec,
-    VectorWriteConfig,
 )
 
 
@@ -40,7 +40,7 @@ def test_spark_write_cluster_sharded(
 
     # Resolve routing with CLUSTER strategy
     centroids = np.random.rand(4, 128).astype(np.float32)
-    vec_config = VectorWriteConfig(
+    vec_config = VectorShardedWriteConfig(
         num_dbs=4,
         s3_prefix=s3_prefix,
         index_config=VectorIndexConfig(dim=128),
@@ -89,7 +89,7 @@ def test_dask_write_cluster_sharded(
 
         # Resolve routing with CLUSTER strategy
         centroids = np.random.rand(4, 128).astype(np.float32)
-        vec_config = VectorWriteConfig(
+        vec_config = VectorShardedWriteConfig(
             num_dbs=4,
             s3_prefix=s3_prefix,
             index_config=VectorIndexConfig(dim=128),
@@ -129,7 +129,7 @@ def test_spark_write_lsh_sharded(
     df = spark.createDataFrame(rows, ["id", "embedding"])
 
     hyperplanes = np.random.rand(8, 128).astype(np.float32)
-    vec_config = VectorWriteConfig(
+    vec_config = VectorShardedWriteConfig(
         num_dbs=8,
         s3_prefix=s3_prefix,
         index_config=VectorIndexConfig(dim=128),

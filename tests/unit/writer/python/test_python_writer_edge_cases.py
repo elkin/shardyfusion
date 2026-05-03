@@ -10,7 +10,11 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Self
 
-from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
+from shardyfusion.config import (
+    HashShardedWriteConfig,
+    WriterManifestConfig,
+    WriterOutputConfig,
+)
 from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.sharding_types import ShardHashAlgorithm
 from shardyfusion.writer.python._parallel_writer import _write_parallel_hash
@@ -76,13 +80,13 @@ def _close_fail_factory(*, db_url: str, local_dir: Path) -> _CloseFailAdapter:
     return _CloseFailAdapter()
 
 
-def _config(num_dbs: int = 2) -> HashWriteConfig:
-    return HashWriteConfig(
+def _config(num_dbs: int = 2) -> HashShardedWriteConfig:
+    return HashShardedWriteConfig(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/test",
         adapter_factory=_good_factory,
-        manifest=ManifestOptions(store=InMemoryManifestStore()),
-        output=OutputOptions(run_id="edge-test"),
+        manifest=WriterManifestConfig(store=InMemoryManifestStore()),
+        output=WriterOutputConfig(run_id="edge-test"),
     )
 
 

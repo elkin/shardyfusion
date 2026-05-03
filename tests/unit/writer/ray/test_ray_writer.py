@@ -12,9 +12,9 @@ import ray.data
 from shardyfusion._shard_writer import results_pdf_to_attempts
 from shardyfusion._writer_core import ShardAttemptResult, route_hash
 from shardyfusion.config import (
-    HashWriteConfig,
-    ManifestOptions,
-    OutputOptions,
+    HashShardedWriteConfig,
+    WriterManifestConfig,
+    WriterOutputConfig,
 )
 from shardyfusion.manifest import BuildResult, WriterInfo
 from shardyfusion.manifest_store import InMemoryManifestStore
@@ -30,11 +30,11 @@ from shardyfusion.testing import (
     file_backed_adapter_factory,
     file_backed_load_db,
 )
-from shardyfusion.writer.ray import write_sharded_by_hash
 from tests.helpers.run_record_assertions import (
     assert_success_run_record,
     load_in_memory_run_record,
 )
+from tests.helpers.writer_api import write_ray_hash_sharded as write_hash_sharded
 
 # ---------------------------------------------------------------------------
 # Test infrastructure
@@ -92,15 +92,15 @@ def _make_config(
     run_registry: InMemoryRunRegistry | None = None,
     batch_size: int = 50_000,
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
-) -> HashWriteConfig:
-    return HashWriteConfig(
+) -> HashShardedWriteConfig:
+    return HashShardedWriteConfig(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/prefix",
         key_encoding=key_encoding,
         batch_size=batch_size,
         adapter_factory=factory or _TrackingFactory(),
-        output=OutputOptions(run_id="test-run"),
-        manifest=ManifestOptions(store=InMemoryManifestStore()),
+        output=WriterOutputConfig(run_id="test-run"),
+        manifest=WriterManifestConfig(store=InMemoryManifestStore()),
         run_registry=run_registry,
     )
 
@@ -111,19 +111,19 @@ def _make_file_backed_config(
     num_dbs: int = 4,
     batch_size: int = 50_000,
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
-) -> tuple[HashWriteConfig, str]:
+) -> tuple[HashShardedWriteConfig, str]:
     root_dir = str(tmp_path / "file_backed")
-    config = HashWriteConfig(
+    config = HashShardedWriteConfig(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/prefix",
         key_encoding=key_encoding,
         batch_size=batch_size,
         adapter_factory=file_backed_adapter_factory(root_dir),
-        output=OutputOptions(
+        output=WriterOutputConfig(
             run_id="test-run",
             local_root=str(tmp_path / "local"),
         ),
-        manifest=ManifestOptions(store=InMemoryManifestStore()),
+        manifest=WriterManifestConfig(store=InMemoryManifestStore()),
     )
     return config, root_dir
 
@@ -148,7 +148,7 @@ def test_hash_routing_round_trip() -> None:
     records = [{"id": i} for i in range(40)]
     ds = _make_ray_ds(records, parallelism=2)
 
-    result = write_sharded_by_hash(
+    result = write_hash_sharded(
         ds,
         config,
         key_col="id",
@@ -167,7 +167,7 @@ def test_hash_routing_round_trip_records_succeeded_run_record() -> None:
     config = _make_config(num_dbs=4, run_registry=registry)
     ds = _make_ray_ds([{"id": i} for i in range(12)], parallelism=2)
 
-    result = write_sharded_by_hash(
+    result = write_hash_sharded(
         ds,
         config,
         key_col="id",
@@ -189,7 +189,7 @@ def test_empty_input() -> None:
 
     ds = _make_ray_ds([], parallelism=1)
 
-    result = write_sharded_by_hash(
+    result = write_hash_sharded(
         ds,
         config,
         key_col="id",
@@ -211,7 +211,7 @@ def test_batch_flushing(tmp_path: pathlib.Path) -> None:
     records = [{"id": i} for i in range(7)]
     ds = _make_ray_ds(records, parallelism=1)
 
-    result = write_sharded_by_hash(
+    result = write_hash_sharded(
         ds,
         config,
         key_col="id",
@@ -249,7 +249,7 @@ def test_write_partition_vector_fn_uses_distributed_writer(monkeypatch) -> None:
 
     monkeypatch.setattr(ray_writer, "write_shard_with_retry", _fake_distributed)
 
-    runtime = ray_writer._PartitionWriteRuntime(
+    runtime = ray_writer.PartitionWriteRuntime(
         run_id="run-test",
         s3_prefix="s3://bucket/prefix",
         shard_prefix="shards",
@@ -284,7 +284,7 @@ def test_min_max_key_tracking() -> None:
     records = [{"id": k} for k in [10, 20, 30, 60, 70, 80]]
     ds = _make_ray_ds(records, parallelism=1)
 
-    result = write_sharded_by_hash(
+    result = write_hash_sharded(
         ds,
         config,
         key_col="id",
@@ -305,7 +305,7 @@ def test_rate_limited_write() -> None:
     records = [{"id": i} for i in range(5)]
     ds = _make_ray_ds(records, parallelism=1)
 
-    result = write_sharded_by_hash(
+    result = write_hash_sharded(
         ds,
         config,
         key_col="id",
@@ -361,7 +361,7 @@ def test_rate_limited_write_succeeds(tmp_path: pathlib.Path) -> None:
     records = [{"id": i} for i in range(5)]
     ds = _make_ray_ds(records, parallelism=1)
 
-    result = write_sharded_by_hash(
+    result = write_hash_sharded(
         ds,
         config,
         key_col="id",
@@ -380,7 +380,7 @@ def test_write_without_rate_limiter(tmp_path: pathlib.Path) -> None:
     records = [{"id": i} for i in range(5)]
     ds = _make_ray_ds(records, parallelism=1)
 
-    result = write_sharded_by_hash(
+    result = write_hash_sharded(
         ds,
         config,
         key_col="id",
@@ -396,7 +396,7 @@ def test_value_spec_binary_col(tmp_path: pathlib.Path) -> None:
     records = [{"id": i, "payload": f"data-{i}".encode()} for i in range(10)]
     ds = _make_ray_ds(records, parallelism=1)
 
-    result = write_sharded_by_hash(
+    result = write_hash_sharded(
         ds,
         config,
         key_col="id",
@@ -421,7 +421,7 @@ def test_value_spec_json_cols(tmp_path: pathlib.Path) -> None:
     records = [{"id": i, "name": f"user{i}"} for i in range(10)]
     ds = _make_ray_ds(records, parallelism=1)
 
-    result = write_sharded_by_hash(
+    result = write_hash_sharded(
         ds,
         config,
         key_col="id",
@@ -451,7 +451,7 @@ def test_sort_within_partitions(tmp_path: pathlib.Path) -> None:
     records = [{"id": k} for k in [30, 10, 20, 80, 60, 70]]
     ds = _make_ray_ds(records, parallelism=1)
 
-    result = write_sharded_by_hash(
+    result = write_hash_sharded(
         ds,
         config,
         key_col="id",
@@ -476,7 +476,7 @@ def test_u32be_key_encoding(tmp_path: pathlib.Path) -> None:
     records = [{"id": i} for i in range(20)]
     ds = _make_ray_ds(records, parallelism=1)
 
-    result = write_sharded_by_hash(
+    result = write_hash_sharded(
         ds,
         config,
         key_col="id",
@@ -501,7 +501,7 @@ def test_verify_routing_enabled() -> None:
     ds = _make_ray_ds(records, parallelism=2)
 
     # Should not raise — verification passes when routing is correct
-    result = write_sharded_by_hash(
+    result = write_hash_sharded(
         ds,
         config,
         key_col="id",
@@ -518,7 +518,7 @@ def test_data_integrity(tmp_path: pathlib.Path) -> None:
     records = [{"id": i} for i in range(100)]
     ds = _make_ray_ds(records, parallelism=4)
 
-    result = write_sharded_by_hash(
+    result = write_hash_sharded(
         ds,
         config,
         key_col="id",
@@ -567,7 +567,7 @@ def test_metrics_emitted_on_write() -> None:
         [{"key": i, "val": b"v"} for i in range(10)], override_num_blocks=2
     )
 
-    write_sharded_by_hash(
+    write_hash_sharded(
         ds, config, key_col="key", value_spec=ValueSpec.binary_col("val")
     )
 

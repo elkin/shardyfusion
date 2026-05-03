@@ -11,11 +11,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from shardyfusion.config import (
-    ManifestOptions,
-    OutputOptions,
     VectorSpec,
     VectorSpecSharding,
     WriteConfig,
+    WriterManifestConfig,
+    WriterOutputConfig,
 )
 from shardyfusion.credentials import CredentialProvider, StaticCredentialProvider
 from shardyfusion.sharding_types import ShardingSpec, ShardingStrategy
@@ -72,9 +72,9 @@ def run_vector_cluster_write_scenario(
     bucket = local_s3_service["bucket"]
     prefix = f"{bucket}/vector-cluster-e2e/{num_records}-{dim}d"
 
-    from shardyfusion.writer.dask import write_vector_sharded as dask_write
-    from shardyfusion.writer.ray import write_vector_sharded as ray_write
-    from shardyfusion.writer.spark import write_vector_sharded as spark_write
+    from tests.helpers.writer_api import write_dask_vector_sharded as dask_write
+    from tests.helpers.writer_api import write_ray_vector_sharded as ray_write
+    from tests.helpers.writer_api import write_spark_vector_sharded as spark_write
 
     config = WriteConfig(
         num_dbs=num_dbs,
@@ -91,11 +91,13 @@ def run_vector_cluster_write_scenario(
             strategy=ShardingStrategy.HASH,
             key_columns=["_vector_id"],
         ),
-        output=OutputOptions(run_id=f"cluster-{num_records}", local_root=str(tmp_path)),
+        output=WriterOutputConfig(
+            run_id=f"cluster-{num_records}", local_root=str(tmp_path)
+        ),
         adapter_factory=adapter_factory,
         credential_provider=creds,
         s3_connection_options=conn_opts,
-        manifest=ManifestOptions(
+        manifest=WriterManifestConfig(
             store=_make_s3_manifest_store(
                 f"s3://{prefix}",
                 credential_provider=creds,
@@ -153,11 +155,13 @@ def run_vector_lsh_write_scenario(
             strategy=ShardingStrategy.HASH,
             key_columns=["_vector_id"],
         ),
-        output=OutputOptions(run_id=f"lsh-{num_records}", local_root=str(tmp_path)),
+        output=WriterOutputConfig(
+            run_id=f"lsh-{num_records}", local_root=str(tmp_path)
+        ),
         adapter_factory=adapter_factory,
         credential_provider=creds,
         s3_connection_options=conn_opts,
-        manifest=ManifestOptions(
+        manifest=WriterManifestConfig(
             store=_make_s3_manifest_store(
                 f"s3://{prefix}",
                 credential_provider=creds,

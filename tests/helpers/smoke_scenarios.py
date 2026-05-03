@@ -233,7 +233,11 @@ def run_smoke_write_then_read_scenario(
         reader_factory: Backend-specific factory for opening shard readers.
     """
 
-    from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
+    from shardyfusion.config import (
+        HashShardedWriteConfig,
+        WriterManifestConfig,
+        WriterOutputConfig,
+    )
 
     bucket = s3_service["bucket"]
     s3_prefix = f"s3://{bucket}/smoke-hash-{tmp_path.name}"
@@ -242,18 +246,18 @@ def run_smoke_write_then_read_scenario(
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
 
-    config = HashWriteConfig(
+    config = HashShardedWriteConfig(
         num_dbs=num_dbs,
         s3_prefix=s3_prefix,
         credential_provider=cred_provider,
         s3_connection_options=conn_options,
         max_keys_per_shard=max_keys_per_shard,
         adapter_factory=adapter_factory,
-        manifest=ManifestOptions(
+        manifest=WriterManifestConfig(
             credential_provider=cred_provider,
             s3_connection_options=conn_options,
         ),
-        output=OutputOptions(run_id="smoke-hash", local_root=local_root),
+        output=WriterOutputConfig(run_id="smoke-hash", local_root=local_root),
     )
 
     # ---- Write ----
@@ -335,7 +339,11 @@ def run_smoke_cel_scenario(
             how to route each key.
     """
 
-    from shardyfusion.config import CelWriteConfig, ManifestOptions, OutputOptions
+    from shardyfusion.config import (
+        CelShardedWriteConfig,
+        WriterManifestConfig,
+        WriterOutputConfig,
+    )
 
     bucket = s3_service["bucket"]
     # Include a short hash of the expression in the prefix to avoid collisions.
@@ -351,7 +359,7 @@ def run_smoke_cel_scenario(
     cred_provider = _default_credential_provider(s3_service, credential_provider)
     conn_options = _default_connection_options(s3_service, s3_connection_options)
 
-    config = CelWriteConfig(
+    config = CelShardedWriteConfig(
         s3_prefix=s3_prefix,
         credential_provider=cred_provider,
         s3_connection_options=conn_options,
@@ -359,11 +367,11 @@ def run_smoke_cel_scenario(
         cel_columns=cel_columns,
         routing_values=routing_values,
         adapter_factory=adapter_factory,
-        manifest=ManifestOptions(
+        manifest=WriterManifestConfig(
             credential_provider=cred_provider,
             s3_connection_options=conn_options,
         ),
-        output=OutputOptions(run_id="smoke-cel", local_root=local_root),
+        output=WriterOutputConfig(run_id="smoke-cel", local_root=local_root),
     )
 
     # ---- Write ----

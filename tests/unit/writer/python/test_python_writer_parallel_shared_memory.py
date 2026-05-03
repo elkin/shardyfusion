@@ -11,11 +11,14 @@ import pytest
 
 import shardyfusion.writer.python._parallel_writer as parallel_writer_mod
 from shardyfusion._writer_core import ShardAttemptResult
-from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
+from shardyfusion.config import (
+    HashShardedWriteConfig,
+    WriterManifestConfig,
+    WriterOutputConfig,
+)
 from shardyfusion.errors import ShardyfusionError
 from shardyfusion.manifest import WriterInfo
 from shardyfusion.manifest_store import InMemoryManifestStore
-from shardyfusion.writer.python import write_sharded_by_hash
 from shardyfusion.writer.python._parallel_writer import (
     _cleanup_parallel_runtime,
     _collect_parallel_results,
@@ -34,6 +37,7 @@ from shardyfusion.writer.python._parallel_writer import (
     _wait_for_shared_memory_budget,
 )
 from tests.helpers.tracking import TrackingFactory
+from tests.helpers.writer_api import write_python_hash_sharded as write_hash_sharded
 
 
 class _FakeSegmentHandle:
@@ -68,18 +72,18 @@ class _DeadWorker:
         self.sentinel = object()
 
 
-def _make_parallel_config(tmp_path: Path) -> HashWriteConfig:
+def _make_parallel_config(tmp_path: Path) -> HashShardedWriteConfig:
     from shardyfusion.testing import fake_adapter_factory
 
-    return HashWriteConfig(
+    return HashShardedWriteConfig(
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
         adapter_factory=fake_adapter_factory,
-        output=OutputOptions(
+        output=WriterOutputConfig(
             run_id="shared-memory-test",
             local_root=str(tmp_path / "local"),
         ),
-        manifest=ManifestOptions(store=InMemoryManifestStore()),
+        manifest=WriterManifestConfig(store=InMemoryManifestStore()),
     )
 
 
@@ -445,7 +449,7 @@ def test_parallel_shared_memory_limit_rejects_large_record(tmp_path: Path) -> No
         ShardyfusionError,
         match="max_parallel_shared_memory_bytes_per_worker",
     ):
-        write_sharded_by_hash(
+        write_hash_sharded(
             [0],
             config,
             key_fn=lambda r: r,
@@ -460,16 +464,16 @@ def test_shard_worker_consumes_shared_memory_chunks_and_reports_result(
     tmp_path: Path,
 ) -> None:
     factory = TrackingFactory()
-    config = HashWriteConfig(
+    config = HashShardedWriteConfig(
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
         batch_size=2,
         adapter_factory=factory,
-        output=OutputOptions(
+        output=WriterOutputConfig(
             run_id="shared-memory-worker",
             local_root=str(tmp_path / "local"),
         ),
-        manifest=ManifestOptions(store=InMemoryManifestStore()),
+        manifest=WriterManifestConfig(store=InMemoryManifestStore()),
     )
     batch = [
         (b"k1", b"v1"),

@@ -8,22 +8,20 @@ import ray
 import ray.data
 
 from shardyfusion.config import (
-    HashWriteConfig,
-    ManifestOptions,
-    OutputOptions,
+    HashShardedWriteConfig,
+    WriterManifestConfig,
+    WriterOutputConfig,
 )
 from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.manifest_store import parse_manifest_payload
 from shardyfusion.serde import ValueSpec
 from shardyfusion.testing import file_backed_adapter_factory
 from shardyfusion.type_defs import S3ConnectionOptions
-from shardyfusion.writer.ray.single_db_writer import (
-    write_single_db,
-)
 from tests.helpers.run_record_assertions import (
     assert_success_run_record,
     load_s3_run_record,
 )
+from tests.helpers.writer_api import write_ray_single_db as write_single_db
 
 
 def test_single_db_ray_publishes_manifest_and_current(
@@ -42,17 +40,17 @@ def test_single_db_ray_publishes_manifest_and_current(
         region_name=local_s3_service["region_name"],
     )
 
-    config = HashWriteConfig(
+    config = HashShardedWriteConfig(
         num_dbs=1,
         s3_prefix=s3_prefix,
         credential_provider=credential_provider,
         s3_connection_options=connection_options,
         adapter_factory=file_backed_adapter_factory(file_backed_root),
-        output=OutputOptions(
+        output=WriterOutputConfig(
             run_id="single-db-ray-test",
             local_root=str(tmp_path / "local"),
         ),
-        manifest=ManifestOptions(
+        manifest=WriterManifestConfig(
             credential_provider=credential_provider,
             s3_connection_options=connection_options,
         ),
