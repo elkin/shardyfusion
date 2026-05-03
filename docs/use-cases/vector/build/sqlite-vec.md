@@ -27,13 +27,17 @@ from shardyfusion.vector import (
 )
 from shardyfusion.vector.config import VectorIndexConfig, VectorShardingConfig
 from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-from shardyfusion.vector.types import DistanceMetric
+from shardyfusion.vector.types import DistanceMetric, VectorShardingStrategy
 from shardyfusion import VectorSpec
 
 vector_spec = VectorSpec(dim=384, metric="cosine")
 
 config = VectorShardedWriteConfig(
-    sharding=VectorShardingConfig(num_dbs=16),
+    sharding=VectorShardingConfig(
+        num_dbs=16,
+        strategy=VectorShardingStrategy.CLUSTER,
+        train_centroids=True,
+    ),
     s3_prefix="s3://my-bucket/snapshots/embeddings",
     index_config=VectorIndexConfig(dim=384, metric=DistanceMetric.COSINE),
     adapter_factory=SqliteVecFactory(vector_spec=vector_spec),

@@ -66,14 +66,22 @@ print(result.manifest_ref.ref)
 ```python
 from shardyfusion import UnifiedVectorWriteConfig, VectorColumnInput
 from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-from shardyfusion.vector.config import VectorIndexConfig, VectorShardedWriteConfig
-from shardyfusion.vector.types import DistanceMetric
+from shardyfusion.vector.config import (
+    VectorIndexConfig,
+    VectorShardedWriteConfig,
+    VectorShardingConfig,
+)
+from shardyfusion.vector.types import DistanceMetric, VectorShardingStrategy
 
 vector_spec = UnifiedVectorWriteConfig(dim=384, metric="cosine")
 
 config = VectorShardedWriteConfig(
     index_config=VectorIndexConfig(dim=384, metric=DistanceMetric.COSINE),
-    num_dbs=16,
+    sharding=VectorShardingConfig(
+        num_dbs=16,
+        strategy=VectorShardingStrategy.CLUSTER,
+        train_centroids=True,
+    ),
     s3_prefix="s3://my-bucket/vectors/embeddings-sqlite",
     adapter_factory=SqliteVecFactory(vector_spec=vector_spec),
 )

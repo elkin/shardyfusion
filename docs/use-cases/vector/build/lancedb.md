@@ -26,7 +26,7 @@ from shardyfusion.vector import (
 )
 from shardyfusion.vector.config import VectorIndexConfig, VectorShardingConfig
 from shardyfusion.vector.adapters.lancedb_adapter import LanceDbFactory
-from shardyfusion.vector.types import DistanceMetric
+from shardyfusion.vector.types import DistanceMetric, VectorShardingStrategy
 
 records = [
     VectorRecord(id="a", vector=[0.1, 0.2, ...], payload={"category": "x"}),
@@ -34,7 +34,11 @@ records = [
 ]
 
 config = VectorShardedWriteConfig(
-    sharding=VectorShardingConfig(num_dbs=16),
+    sharding=VectorShardingConfig(
+        num_dbs=16,
+        strategy=VectorShardingStrategy.CLUSTER,
+        train_centroids=True,
+    ),
     s3_prefix="s3://my-bucket/snapshots/embeddings",
     index_config=VectorIndexConfig(dim=384, metric=DistanceMetric.COSINE),
     adapter_factory=LanceDbFactory(),
@@ -45,7 +49,7 @@ result = write_sharded(records, config)
 
 ## Configuration
 
-- `VectorShardedWriteConfig(index_config, sharding=VectorShardingConfig(num_dbs=...), storage=..., adapter=..., rate_limits=...)` at `vector/config.py`.
+- `VectorShardedWriteConfig(index_config, sharding=VectorShardingConfig(num_dbs=..., train_centroids=True), storage=..., adapter=..., rate_limits=...)` at `vector/config.py`.
 - `VectorIndexConfig(dim, metric, ...)` — `metric ∈ {cosine, l2, dot_product}` for LanceDB.
 - Sharding strategies: `CLUSTER` (default; k-means), `LSH`, `EXPLICIT` (use `VectorRecord.shard_id`), `CEL` (route on `routing_context`).
 
