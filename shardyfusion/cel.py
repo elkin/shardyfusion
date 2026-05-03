@@ -141,16 +141,24 @@ def _get_shard_hash_extension() -> Any:
 class CompiledCel:
     """Wrapper around a compiled CEL expression with its environment."""
 
-    __slots__ = ("_env", "_expr", "_columns")
+    __slots__ = ("_env", "_expr", "_columns", "_columns_list")
 
     def __init__(self, env: Any, expr: Any, columns: dict[str, str]) -> None:
         self._env = env
         self._expr = expr
         self._columns = columns
+        # Pre-built list of column names — reused by per-batch hot paths
+        # (e.g. evaluate_cel_arrow_batch) so they don't rebuild it per call.
+        self._columns_list: list[str] = list(columns)
 
     @property
     def columns(self) -> dict[str, str]:
         return self._columns
+
+    @property
+    def columns_list(self) -> list[str]:
+        """Cached column-name list. Do not mutate."""
+        return self._columns_list
 
     def evaluate(self, context: dict[str, Any]) -> int | str | bytes:
         """Evaluate the CEL expression with the given variable bindings.
@@ -216,12 +224,32 @@ def compile_cel(expr: str, columns: dict[str, str]) -> CompiledCel:
     return CompiledCel(env=env, expr=compiled_expr, columns=columns)
 
 
-@functools.lru_cache(maxsize=16)
-def _compile_cel_cached(
+@functools.lru_cache(maxsize=64)
+def compile_cel_cached(
     expr: str, columns_key: tuple[tuple[str, str], ...]
 ) -> CompiledCel:
-    """Cached wrapper around compile_cel for hashable arguments."""
+    """Cached wrapper around :func:`compile_cel` for hashable arguments.
+
+    Use this on hot paths (per-batch or per-partition) instead of
+    :func:`compile_cel`. The cache is process-local; on a 64-entry LRU it
+    safely accommodates many concurrent (expr, columns) combinations within
+    a single worker without bounded growth.
+
+    Args:
+        expr: CEL expression string (used as part of the cache key).
+        columns_key: Hashable column declaration; build with
+            ``tuple(sorted(columns.items()))``.
+
+    Returns:
+        A :class:`CompiledCel`. Compiled instances are reused across calls
+        with the same arguments.
+    """
     return compile_cel(expr, dict(columns_key))
+
+
+# Back-compat private alias retained for external callers that imported the
+# previous name. Prefer ``compile_cel_cached`` for new code.
+_compile_cel_cached = compile_cel_cached
 
 
 # ---------------------------------------------------------------------------
@@ -246,8 +274,9 @@ def evaluate_cel_arrow_batch(
     Returns:
         List of routing key values, one per row.
     """
-    col_names = list(compiled.columns)
-    return [compiled.evaluate(row) for row in batch.select(col_names).to_pylist()]
+    # Bind hot-path attrs to locals; reuse cached columns list.
+    _evaluate = compiled.evaluate
+    return [_evaluate(row) for row in batch.select(compiled.columns_list).to_pylist()]
 
 
 def route_cel_batch(
@@ -262,12 +291,15 @@ def route_cel_batch(
     """
     routing_keys = evaluate_cel_arrow_batch(compiled, batch)
     if routing_values is not None:
+        # Build the lookup once for the whole batch, not per row.
         lookup = build_categorical_routing_lookup(routing_values)
+        _resolve = resolve_cel_routing_key
         return [
-            resolve_cel_routing_key(rk, routing_values=routing_values, lookup=lookup)
+            _resolve(rk, routing_values=routing_values, lookup=lookup)
             for rk in routing_keys
         ]
-    return [resolve_cel_routing_key(rk) for rk in routing_keys]
+    _resolve = resolve_cel_routing_key
+    return [_resolve(rk) for rk in routing_keys]
 
 
 # ---------------------------------------------------------------------------

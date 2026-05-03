@@ -46,9 +46,9 @@ def _discover_categorical_routing_values(
     _cel_cols = dict(cel_columns)
 
     def _partition_tokens(rows):  # type: ignore[no-untyped-def]
-        from shardyfusion.cel import compile_cel
+        from shardyfusion.cel import compile_cel_cached
 
-        compiled = compile_cel(_cel_expr, _cel_cols)
+        compiled = compile_cel_cached(_cel_expr, tuple(sorted(_cel_cols.items())))
         for row in rows:
             yield compiled.evaluate(row.asDict(recursive=False))
 
@@ -154,10 +154,9 @@ def add_vector_db_id_column(
         def _cel_map_arrow(iterator):  # type: ignore[no-untyped-def]
             import pyarrow as pa
 
-            from shardyfusion.cel import compile_cel as _compile_inner
-            from shardyfusion.cel import route_cel_batch
+            from shardyfusion.cel import compile_cel_cached, route_cel_batch
 
-            _compiled = _compile_inner(_cel_expr, _cel_cols)
+            _compiled = compile_cel_cached(_cel_expr, tuple(sorted(_cel_cols.items())))
             for batch in iterator:
                 db_ids = route_cel_batch(
                     _compiled,

@@ -32,6 +32,7 @@ from shardyfusion.routing import (
     canonical_bytes,
     hash_db_id,
     hash_digest,
+    make_hash_router,
     xxh3_db_id,
     xxh3_digest,
 )
@@ -326,3 +327,82 @@ EDGE_CASE_KEYS: list[int] = sorted(
 
 # Keys valid for u32be (subset of EDGE_CASE_KEYS)
 U32_EDGE_CASE_KEYS: list[int] = [k for k in EDGE_CASE_KEYS if k <= _UINT32_MAX]
+
+
+# ---------------------------------------------------------------------------
+# make_hash_router cross-checks
+# ---------------------------------------------------------------------------
+#
+# The factory ``make_hash_router(num_dbs, algorithm, *, key_type=None)`` returns
+# a closure that MUST be observationally equivalent to ``xxh3_db_id(key, num_dbs)``
+# for every key in its declared key_type. The type-specialised variants skip the
+# isinstance dispatch in ``canonical_bytes``; we verify they agree on a wide
+# range of inputs.
+
+
+@settings(max_examples=400, deadline=None)
+@given(
+    key=st.integers(min_value=-(1 << 63), max_value=(1 << 63) - 1),
+    num_dbs=st.integers(min_value=1, max_value=4096),
+)
+def test_make_hash_router_int_matches_xxh3(key: int, num_dbs: int) -> None:
+    route_int = make_hash_router(num_dbs, ShardHashAlgorithm.XXH3_64, key_type="int")
+    route_generic = make_hash_router(num_dbs, ShardHashAlgorithm.XXH3_64)
+    expected = xxh3_db_id(key, num_dbs)
+    assert route_int(key) == expected
+    assert route_generic(key) == expected
+
+
+@settings(max_examples=400, deadline=None)
+@given(
+    key=st.text(min_size=0, max_size=64),
+    num_dbs=st.integers(min_value=1, max_value=4096),
+)
+def test_make_hash_router_str_matches_xxh3(key: str, num_dbs: int) -> None:
+    route_str = make_hash_router(num_dbs, ShardHashAlgorithm.XXH3_64, key_type="str")
+    route_generic = make_hash_router(num_dbs, ShardHashAlgorithm.XXH3_64)
+    expected = xxh3_db_id(key, num_dbs)
+    assert route_str(key) == expected
+    assert route_generic(key) == expected
+
+
+@settings(max_examples=400, deadline=None)
+@given(
+    key=st.binary(min_size=0, max_size=64),
+    num_dbs=st.integers(min_value=1, max_value=4096),
+)
+def test_make_hash_router_bytes_matches_xxh3(key: bytes, num_dbs: int) -> None:
+    route_bytes = make_hash_router(
+        num_dbs, ShardHashAlgorithm.XXH3_64, key_type="bytes"
+    )
+    route_generic = make_hash_router(num_dbs, ShardHashAlgorithm.XXH3_64)
+    expected = xxh3_db_id(key, num_dbs)
+    assert route_bytes(key) == expected
+    assert route_generic(key) == expected
+
+
+def test_make_hash_router_edge_case_keys_int() -> None:
+    """Verify against the curated edge-case key set for many shard counts."""
+    route = make_hash_router(257, ShardHashAlgorithm.XXH3_64, key_type="int")
+    for key in EDGE_CASE_KEYS:
+        assert route(key) == xxh3_db_id(key, 257)
+
+
+def test_make_hash_router_rejects_invalid_num_dbs() -> None:
+    import pytest
+
+    with pytest.raises(ValueError):
+        make_hash_router(0, ShardHashAlgorithm.XXH3_64)
+    with pytest.raises(ValueError):
+        make_hash_router(-1, ShardHashAlgorithm.XXH3_64)
+
+
+def test_make_hash_router_rejects_unknown_key_type() -> None:
+    import pytest
+
+    with pytest.raises(ValueError):
+        make_hash_router(
+            16,
+            ShardHashAlgorithm.XXH3_64,
+            key_type="float",  # type: ignore[arg-type]
+        )

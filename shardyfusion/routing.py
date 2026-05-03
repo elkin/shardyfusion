@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Protocol
+from typing import Literal, Protocol
 
 import xxhash
 
@@ -17,6 +17,9 @@ from .sharding_types import (
     validate_routing_values,
 )
 from .type_defs import KeyInput
+
+# Module-level alias to avoid attribute lookup on the hot path.
+_xxh3_64_intdigest = xxhash.xxh3_64_intdigest
 
 
 class ShardLookup(Protocol):
@@ -47,15 +50,19 @@ def canonical_bytes(key: KeyInput) -> bytes:
     - ``str`` → UTF-8 encoded bytes
     - ``bytes`` / ``bytearray`` → passed through as-is
     """
+    # `isinstance` against concrete builtins is essentially a C-level type
+    # check on CPython and gives pyright proper narrowing.
+    if isinstance(key, bytes):
+        return key  # passthrough — no copy needed
+    if isinstance(key, str):
+        return key.encode("utf-8")
     if isinstance(key, int):
         if key < _INT64_SIGNED_MIN or key > _INT64_SIGNED_MAX:
             raise ValueError(
                 f"Integer key {key} out of range [{_INT64_SIGNED_MIN}, {_INT64_SIGNED_MAX}]"
             )
         return key.to_bytes(8, "little", signed=True)
-    if isinstance(key, str):
-        return key.encode("utf-8")
-    if isinstance(key, (bytes, bytearray)):
+    if isinstance(key, bytearray):
         return bytes(key)
     raise ValueError(f"Unsupported key type for hashing: {type(key)!r}")
 
@@ -66,7 +73,87 @@ def xxh3_digest(key: KeyInput) -> int:
     This is the single authoritative hash step used by both HASH routing
     (``xxh3_db_id``) and the CEL ``shard_hash()`` function.
     """
-    return xxhash.xxh3_64_intdigest(canonical_bytes(key), seed=_XXH3_SEED)
+    return _xxh3_64_intdigest(canonical_bytes(key), seed=_XXH3_SEED)
+
+
+# ---------------------------------------------------------------------------
+# Type-specialized digest closures (used by make_hash_router when the key
+# type is statically known at the partition/batch boundary).
+# ---------------------------------------------------------------------------
+
+
+def _xxh3_digest_int(key: int) -> int:
+    if key < _INT64_SIGNED_MIN or key > _INT64_SIGNED_MAX:
+        raise ValueError(
+            f"Integer key {key} out of range [{_INT64_SIGNED_MIN}, {_INT64_SIGNED_MAX}]"
+        )
+    return _xxh3_64_intdigest(key.to_bytes(8, "little", signed=True), seed=_XXH3_SEED)
+
+
+def _xxh3_digest_str(key: str) -> int:
+    return _xxh3_64_intdigest(key.encode("utf-8"), seed=_XXH3_SEED)
+
+
+def _xxh3_digest_bytes(key: bytes) -> int:
+    return _xxh3_64_intdigest(key, seed=_XXH3_SEED)
+
+
+KeyType = Literal["int", "str", "bytes"]
+"""Static key-type hint accepted by :func:`make_hash_router`."""
+
+_DIGEST_BY_KEY_TYPE: dict[str, Callable[[KeyInput], int]] = {
+    "int": _xxh3_digest_int,  # type: ignore[dict-item]
+    "str": _xxh3_digest_str,  # type: ignore[dict-item]
+    "bytes": _xxh3_digest_bytes,  # type: ignore[dict-item]
+}
+
+
+def make_hash_router(
+    num_dbs: int,
+    algorithm: ShardHashAlgorithm | str = ShardHashAlgorithm.XXH3_64,
+    *,
+    key_type: KeyType | None = None,
+) -> Callable[[KeyInput], int]:
+    """Build a single-purpose ``key -> db_id`` routing closure.
+
+    Resolves the hash algorithm and (optionally) the key-type specialization
+    once, eliminating per-call enum coercion and ``isinstance`` branching on
+    the hot path. The returned closure is process-local; do not pickle or
+    share between writer paths that may pass differently typed keys.
+
+    Args:
+        num_dbs: Total shard count; must be > 0.
+        algorithm: Hash algorithm. Currently only XXH3_64 is supported.
+        key_type: Optional static key-type hint (``"int"``, ``"str"``, or
+            ``"bytes"``). When provided, the closure skips per-call type
+            dispatch and assumes every key matches the declared type. When
+            ``None``, the generic 3-branch dispatch in
+            :func:`canonical_bytes` is used.
+
+    Returns:
+        A closure ``(key) -> db_id`` equivalent to
+        ``hash_db_id(key, num_dbs, algorithm)``.
+    """
+    if num_dbs <= 0:
+        raise ValueError(f"num_dbs must be positive, got {num_dbs}")
+    algorithm = ShardHashAlgorithm.from_value(algorithm)
+    if algorithm != ShardHashAlgorithm.XXH3_64:
+        raise ValueError(f"Unsupported shard hash algorithm: {algorithm!r}")
+
+    if key_type is not None:
+        digest = _DIGEST_BY_KEY_TYPE.get(key_type)
+        if digest is None:
+            raise ValueError(
+                f"Unsupported key_type {key_type!r}; expected one of "
+                f"{sorted(_DIGEST_BY_KEY_TYPE)}"
+            )
+        # Bind locals for the closure to avoid global lookups on the hot path.
+        _digest = digest
+        _num = num_dbs
+        return lambda key: _digest(key) % _num
+
+    _num = num_dbs
+    return lambda key: xxh3_digest(key) % _num
 
 
 def hash_digest(
@@ -183,9 +270,19 @@ class SnapshotRouter:
             }
         else:
             self._routing_lookup = None
-        self._cel_compiled: object | None = None
         self._cel_expr = required_build.sharding.cel_expr
         self._cel_columns = required_build.sharding.cel_columns
+        # Eager-compile when CEL is in play so route_with_context skips a
+        # per-call None-check + lazy import on the hot path.
+        if self.strategy == ShardingStrategy.CEL:
+            from .cel import compile_cel
+
+            assert self._cel_expr is not None and self._cel_columns is not None
+            self._cel_compiled: object | None = compile_cel(
+                self._cel_expr, self._cel_columns
+            )
+        else:
+            self._cel_compiled = None
         self.route_one = self._build_route_one()
         self.encode_lookup_key = self._build_lookup_key_encoder()
 
@@ -304,23 +401,26 @@ class SnapshotRouter:
 
     def _build_route_one(self) -> Callable[[KeyInput], int]:
         if self.strategy == ShardingStrategy.HASH:
-            num_dbs = self.num_dbs
-            algorithm = self.hash_algorithm
-            return lambda key: hash_db_id(key, num_dbs, algorithm)
+            # Resolve enum + bind locals once (no key-type specialization at
+            # the reader since lookup keys can be any of int/str/bytes).
+            return make_hash_router(self.num_dbs, self.hash_algorithm)
 
         if self.strategy == ShardingStrategy.CEL:
-            from .cel import compile_cel, resolve_cel_routing_key
+            from .cel import resolve_cel_routing_key
 
             assert self._cel_expr is not None and self._cel_columns is not None
-            compiled = compile_cel(self._cel_expr, self._cel_columns)
+            # Reuse the eager-compiled instance from __init__ (no double compile).
+            compiled = self._cel_compiled
+            assert compiled is not None
             routing_values = self._routing_values
             routing_lookup = self._routing_lookup
 
             # Key-only mode: cel_columns has only "key" — auto-wrap key value
             cel_col_keys = set(self._cel_columns.keys())
             if cel_col_keys == {"key"}:
+                _evaluate = compiled.evaluate  # type: ignore[union-attr]
                 return lambda key: resolve_cel_routing_key(
-                    compiled.evaluate({"key": key}),
+                    _evaluate({"key": key}),
                     routing_values=routing_values,
                     lookup=routing_lookup,
                 )
@@ -344,13 +444,12 @@ class SnapshotRouter:
         """
         from .cel import resolve_cel_routing_key
 
-        if self._cel_compiled is None:
-            from .cel import compile_cel
-
-            assert self._cel_expr is not None and self._cel_columns is not None
-            self._cel_compiled = compile_cel(self._cel_expr, self._cel_columns)
+        # _cel_compiled is eager-compiled in __init__ when strategy == CEL.
+        compiled = self._cel_compiled
+        if compiled is None:
+            raise ValueError("route_with_context requires CEL sharding strategy")
         return resolve_cel_routing_key(
-            self._cel_compiled.evaluate(routing_context),  # type: ignore[union-attr]
+            compiled.evaluate(routing_context),  # type: ignore[union-attr]
             routing_values=self._routing_values,
             lookup=self._routing_lookup,
         )

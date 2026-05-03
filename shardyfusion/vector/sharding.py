@@ -295,10 +295,10 @@ def route_vector_to_shards(
             raise ConfigValidationError(
                 "CEL sharding requires cel_expr and cel_columns"
             )
-        from ..cel import _compile_cel_cached, route_cel
+        from ..cel import compile_cel_cached, route_cel
 
         columns_key = tuple(sorted(cel_columns.items()))
-        compiled = _compile_cel_cached(cel_expr, columns_key)
+        compiled = compile_cel_cached(cel_expr, columns_key)
         db_id = route_cel(compiled, routing_context, routing_values=routing_values)
         return [db_id]
 

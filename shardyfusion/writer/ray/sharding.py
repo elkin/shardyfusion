@@ -1,10 +1,14 @@
 """Ray Data-native sharding helpers."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
 import pyarrow as pa
 import ray.data
 
-from shardyfusion._writer_core import build_categorical_routing_values, route_hash
+from shardyfusion._writer_core import build_categorical_routing_values
 from shardyfusion.sharding_types import (
     DB_ID_COL,
     CelShardingSpec,
@@ -13,6 +17,21 @@ from shardyfusion.sharding_types import (
 from shardyfusion.vector._distributed import ResolvedVectorRouting
 from shardyfusion.vector.sharding import cluster_assign, lsh_assign
 from shardyfusion.vector.types import VectorShardingStrategy as VecStrategy
+
+if TYPE_CHECKING:
+    from shardyfusion.routing import KeyType
+
+
+def _infer_arrow_key_type(arrow_type: pa.DataType) -> KeyType | None:
+    """Map a PyArrow type to a KeyType hint for hash-router specialization."""
+
+    if pa.types.is_integer(arrow_type):
+        return "int"
+    if pa.types.is_string(arrow_type) or pa.types.is_large_string(arrow_type):
+        return "str"
+    if pa.types.is_binary(arrow_type) or pa.types.is_large_binary(arrow_type):
+        return "bytes"
+    return None
 
 
 def add_db_id_column_hash(
@@ -24,13 +43,15 @@ def add_db_id_column_hash(
     shard_id_col: str = DB_ID_COL,
 ) -> ray.data.Dataset:
     """Add deterministic ``shard_id_col`` column via hash routing."""
+    from shardyfusion.routing import make_hash_router
 
     def _apply_routing(table: pa.Table) -> pa.Table:
+        # Build the router once per batch — resolves enum + (when statically
+        # known from the column's Arrow dtype) specializes on key type.
+        key_type = _infer_arrow_key_type(table.schema.field(key_col).type)
+        route = make_hash_router(num_dbs, hash_algorithm, key_type=key_type)
         keys = table.column(key_col).to_pylist()
-        db_ids = [
-            route_hash(key, num_dbs=num_dbs, hash_algorithm=hash_algorithm)
-            for key in keys
-        ]
+        db_ids = [route(key) for key in keys]
         return table.append_column(shard_id_col, pa.array(db_ids, type=pa.int64()))
 
     return ds.map_batches(_apply_routing, batch_format="pyarrow", zero_copy_batch=True)
@@ -71,11 +92,12 @@ def add_db_id_column_cel(
     _routing_values = (
         list(resolved.routing_values) if resolved.routing_values is not None else None
     )
+    _cel_cols_key = tuple(sorted(_cel_cols.items()))
 
     def _apply_cel_routing(table: pa.Table) -> pa.Table:
-        from shardyfusion.cel import compile_cel, route_cel_batch
+        from shardyfusion.cel import compile_cel_cached, route_cel_batch
 
-        compiled = compile_cel(_cel_expr, _cel_cols)
+        compiled = compile_cel_cached(_cel_expr, _cel_cols_key)
         db_ids = route_cel_batch(compiled, table, _routing_values)
         return table.append_column(shard_id_col, pa.array(db_ids, type=pa.int64()))
 
@@ -93,10 +115,12 @@ def _discover_categorical_routing_values(
     cel_expr: str,
     cel_columns: dict[str, str],
 ) -> list[int | str | bytes]:
-    def _extract_tokens(table: pa.Table) -> pa.Table:
-        from shardyfusion.cel import compile_cel, evaluate_cel_arrow_batch
+    _cel_cols_key = tuple(sorted(cel_columns.items()))
 
-        compiled = compile_cel(cel_expr, cel_columns)
+    def _extract_tokens(table: pa.Table) -> pa.Table:
+        from shardyfusion.cel import compile_cel_cached, evaluate_cel_arrow_batch
+
+        compiled = compile_cel_cached(cel_expr, _cel_cols_key)
         tokens = evaluate_cel_arrow_batch(compiled, table)
         return pa.table({"routing_token": tokens})
 
@@ -192,14 +216,15 @@ def add_vector_db_id_column(
         assert routing.cel_expr is not None, "cel_expr required for CEL"
         assert routing_context_cols is not None, "routing_context_cols required for CEL"
 
-        from shardyfusion.cel import compile_cel, route_cel_batch
+        from shardyfusion.cel import compile_cel_cached, route_cel_batch
 
         _cel_expr = routing.cel_expr
         _cel_cols = dict(routing_context_cols)
+        _cel_cols_key = tuple(sorted(_cel_cols.items()))
         _routing_values = routing.routing_values
 
         def _apply_cel(table: pa.Table) -> pa.Table:
-            _compiled = compile_cel(_cel_expr, _cel_cols)
+            _compiled = compile_cel_cached(_cel_expr, _cel_cols_key)
             db_ids = route_cel_batch(_compiled, table, _routing_values)
             return table.append_column(output_col, pa.array(db_ids, type=pa.int64()))
 

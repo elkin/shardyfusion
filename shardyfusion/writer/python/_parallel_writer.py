@@ -20,13 +20,12 @@ from typing import Any, TypeVar, cast
 from shardyfusion._rate_limiter import RateLimiter, TokenBucket
 from shardyfusion._writer_core import (
     ShardAttemptResult,
-    route_cel,
-    route_hash,
     update_min_max,
 )
 from shardyfusion.config import BaseShardedWriteConfig
 from shardyfusion.errors import (
     ConfigValidationError,
+    ShardAssignmentError,
     ShardWriteError,
     ShardyfusionError,
 )
@@ -54,6 +53,56 @@ _DEFAULT_MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER = 32 * 1024 * 1024
 _SHARED_MEMORY_SUPPORTS_TRACK = (
     "track" in inspect.signature(shared_memory.SharedMemory).parameters
 )
+
+
+def _make_cel_router(
+    cel_expr: str,
+    cel_columns: dict[str, str],
+    routing_values: list[int | str | bytes] | None,
+    columns_fn: Callable[[T], dict[str, Any]] | None,
+) -> Callable[[KeyInput, T], int]:
+    """Build a (key, record) -> db_id closure with CEL compile + lookup hoisted.
+
+    Compiles the CEL expression once via :func:`compile_cel_cached` and
+    pre-builds the categorical routing-values lookup, so the per-record path
+    only does dict access + CEL evaluation (no tuple sort, no lru lookup, no
+    dict construction for empty contexts).
+    """
+    from shardyfusion.cel import (
+        UnknownRoutingTokenError,
+        compile_cel_cached,
+    )
+    from shardyfusion.cel import (
+        route_cel as _cel_route,
+    )
+
+    _compiled = compile_cel_cached(cel_expr, tuple(sorted(cel_columns.items())))
+    _lookup = (
+        {value: idx for idx, value in enumerate(routing_values)}
+        if routing_values is not None
+        else None
+    )
+    _columns_fn = columns_fn  # bind locally so pyright narrows below
+
+    if _columns_fn is None:
+
+        def get_db_id(key: KeyInput, record: T) -> int:
+            ctx: dict[str, object] = {"key": key}
+            try:
+                return _cel_route(_compiled, ctx, routing_values, _lookup)
+            except UnknownRoutingTokenError as exc:
+                raise ShardAssignmentError(str(exc)) from exc
+
+    else:
+
+        def get_db_id(key: KeyInput, record: T) -> int:
+            ctx = _columns_fn(record)
+            try:
+                return _cel_route(_compiled, ctx, routing_values, _lookup)
+            except UnknownRoutingTokenError as exc:
+                raise ShardAssignmentError(str(exc)) from exc
+
+    return get_db_id
 
 
 @dataclass(slots=True, frozen=True)
@@ -1169,8 +1218,12 @@ def _route_records_to_workers_hash(
     max_parallel_shared_memory_bytes: int | None,
     max_parallel_shared_memory_bytes_per_worker: int | None,
 ) -> None:
+    from shardyfusion.routing import make_hash_router
+
+    route = make_hash_router(num_dbs, hash_algorithm)
+
     def get_db_id(key: KeyInput, record: T) -> int:
-        return route_hash(key, num_dbs=num_dbs, hash_algorithm=hash_algorithm)
+        return route(key)
 
     return _route_records_to_workers_impl(
         runtime,
@@ -1203,19 +1256,7 @@ def _route_records_to_workers_cel(
     max_parallel_shared_memory_bytes: int | None,
     max_parallel_shared_memory_bytes_per_worker: int | None,
 ) -> None:
-    cel_lookup = None
-    if routing_values is not None:
-        cel_lookup = {value: idx for idx, value in enumerate(routing_values)}
-
-    def get_db_id(key: KeyInput, record: T) -> int:
-        return route_cel(
-            key,
-            cel_expr=cel_expr,
-            cel_columns=cel_columns,
-            routing_values=routing_values,
-            routing_context=(columns_fn(record) if columns_fn is not None else None),
-            cel_lookup=cel_lookup,
-        )
+    get_db_id = _make_cel_router(cel_expr, cel_columns, routing_values, columns_fn)
 
     return _route_records_to_workers_impl(
         runtime,
@@ -1288,8 +1329,12 @@ def _route_records_to_retry_workers_hash(
     hash_algorithm: ShardHashAlgorithm,
     chunk_size: int,
 ) -> None:
+    from shardyfusion.routing import make_hash_router
+
+    route = make_hash_router(num_dbs, hash_algorithm)
+
     def get_db_id(key: KeyInput, record: T) -> int:
-        return route_hash(key, num_dbs=num_dbs, hash_algorithm=hash_algorithm)
+        return route(key)
 
     return _route_records_to_retry_workers_impl(
         runtime,
@@ -1318,19 +1363,7 @@ def _route_records_to_retry_workers_cel(
     routing_values: list[int | str | bytes] | None,
     chunk_size: int,
 ) -> None:
-    cel_lookup = None
-    if routing_values is not None:
-        cel_lookup = {value: idx for idx, value in enumerate(routing_values)}
-
-    def get_db_id(key: KeyInput, record: T) -> int:
-        return route_cel(
-            key,
-            cel_expr=cel_expr,
-            cel_columns=cel_columns,
-            routing_values=routing_values,
-            routing_context=(columns_fn(record) if columns_fn is not None else None),
-            cel_lookup=cel_lookup,
-        )
+    get_db_id = _make_cel_router(cel_expr, cel_columns, routing_values, columns_fn)
 
     return _route_records_to_retry_workers_impl(
         runtime,
@@ -1638,8 +1671,12 @@ def _write_parallel_hash(
     max_writes_per_second: float | None,
     max_write_bytes_per_second: float | None,
 ) -> list[ShardAttemptResult]:
+    from shardyfusion.routing import make_hash_router
+
+    route = make_hash_router(num_dbs, hash_algorithm)
+
     def get_db_id(key: KeyInput, record: T) -> int:
-        return route_hash(key, num_dbs=num_dbs, hash_algorithm=hash_algorithm)
+        return route(key)
 
     return _write_parallel_impl(
         records=records,
@@ -1678,19 +1715,7 @@ def _write_parallel_cel(
     max_writes_per_second: float | None,
     max_write_bytes_per_second: float | None,
 ) -> list[ShardAttemptResult]:
-    cel_lookup = None
-    if routing_values is not None:
-        cel_lookup = {value: idx for idx, value in enumerate(routing_values)}
-
-    def get_db_id(key: KeyInput, record: T) -> int:
-        return route_cel(
-            key,
-            cel_expr=cel_expr,
-            cel_columns=cel_columns,
-            routing_values=routing_values,
-            routing_context=(columns_fn(record) if columns_fn is not None else None),
-            cel_lookup=cel_lookup,
-        )
+    get_db_id = _make_cel_router(cel_expr, cel_columns, routing_values, columns_fn)
 
     return _write_parallel_impl(
         records=records,

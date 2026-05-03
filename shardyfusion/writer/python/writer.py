@@ -18,8 +18,6 @@ from shardyfusion._writer_core import (
     inject_vector_manifest_fields,
     publish_to_store,
     resolve_cel_num_dbs,
-    route_cel,
-    route_hash,
     select_winners,
     update_min_max,
     wrap_factory_for_vector,
@@ -32,7 +30,7 @@ from shardyfusion.config import (
     PythonWriteOptions,
     validate_configs,
 )
-from shardyfusion.errors import ConfigValidationError
+from shardyfusion.errors import ConfigValidationError, ShardAssignmentError
 from shardyfusion.logging import get_logger, log_event
 from shardyfusion.manifest import BuildResult, WriterInfo
 from shardyfusion.metrics import MetricEvent
@@ -1029,8 +1027,15 @@ def _write_single_process_hash(
     max_total_batched_items: int | None,
     max_total_batched_bytes: int | None,
 ) -> tuple[list[ShardAttemptResult], int]:
+    from shardyfusion.routing import make_hash_router
+
+    # Build the hash router once (resolves enum + skips per-key dispatch);
+    # key type is unknown for arbitrary Python iterables so we use the
+    # generic 3-branch fallback.
+    route = make_hash_router(num_dbs, hash_algorithm)
+
     def get_db_id(key: KeyInput, record: T) -> int:
-        return route_hash(key, num_dbs=num_dbs, hash_algorithm=hash_algorithm)
+        return route(key)
 
     return _write_single_process_impl(
         records=records,
@@ -1071,19 +1076,40 @@ def _write_single_process_cel(
     max_total_batched_items: int | None,
     max_total_batched_bytes: int | None,
 ) -> tuple[list[ShardAttemptResult], int]:
-    cel_lookup = None
-    if routing_values is not None:
-        cel_lookup = {value: idx for idx, value in enumerate(routing_values)}
+    # Hoist CEL compile + categorical lookup out of the per-row loop.
+    from shardyfusion.cel import (
+        UnknownRoutingTokenError,
+        compile_cel_cached,
+    )
+    from shardyfusion.cel import (
+        route_cel as _cel_route,
+    )
 
-    def get_db_id(key: KeyInput, record: T) -> int:
-        return route_cel(
-            key,
-            cel_expr=cel_expr,
-            cel_columns=cel_columns,
-            routing_values=routing_values,
-            routing_context=(columns_fn(record) if columns_fn is not None else None),
-            cel_lookup=cel_lookup,
-        )
+    _compiled_cel = compile_cel_cached(cel_expr, tuple(sorted(cel_columns.items())))
+    _cel_lookup = (
+        {value: idx for idx, value in enumerate(routing_values)}
+        if routing_values is not None
+        else None
+    )
+    _columns_fn = columns_fn  # bind locally so pyright narrows below
+
+    if _columns_fn is None:
+
+        def get_db_id(key: KeyInput, record: T) -> int:
+            ctx: dict[str, object] = {"key": key}
+            try:
+                return _cel_route(_compiled_cel, ctx, routing_values, _cel_lookup)
+            except UnknownRoutingTokenError as exc:
+                raise ShardAssignmentError(str(exc)) from exc
+
+    else:
+
+        def get_db_id(key: KeyInput, record: T) -> int:
+            ctx = _columns_fn(record)
+            try:
+                return _cel_route(_compiled_cel, ctx, routing_values, _cel_lookup)
+            except UnknownRoutingTokenError as exc:
+                raise ShardAssignmentError(str(exc)) from exc
 
     return _write_single_process_impl(
         records=records,

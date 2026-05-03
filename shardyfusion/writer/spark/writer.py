@@ -59,7 +59,7 @@ from shardyfusion.manifest import (
     WriterInfo,
 )
 from shardyfusion.metrics import MetricEvent, MetricsCollector
-from shardyfusion.routing import hash_db_id
+from shardyfusion.routing import KeyType, make_hash_router
 from shardyfusion.run_registry import RunRecordLifecycle
 from shardyfusion.serde import ValueSpec
 from shardyfusion.sharding_types import (
@@ -531,6 +531,30 @@ def _verify_cel_routing_agreement(
         )
 
 
+def _infer_spark_key_type(spark_dtype: object) -> KeyType | None:
+    """Map a Spark DataType to a KeyType hint for hash-router specialization.
+
+    Returns ``None`` when the dtype is not one of the three supported Python
+    key types — the caller falls back to the generic 3-branch dispatch.
+    """
+    from pyspark.sql.types import (
+        BinaryType,
+        ByteType,
+        IntegerType,
+        LongType,
+        ShortType,
+        StringType,
+    )
+
+    if isinstance(spark_dtype, (ByteType, ShortType, IntegerType, LongType)):
+        return "int"
+    if isinstance(spark_dtype, StringType):
+        return "str"
+    if isinstance(spark_dtype, BinaryType):
+        return "bytes"
+    return None
+
+
 def _add_db_id_column_hash(
     df: DataFrame,
     *,
@@ -549,13 +573,17 @@ def _add_db_id_column_hash(
     _num_dbs = num_dbs
     _hash_algorithm = hash_algorithm
     _shard_id_col = shard_id_col
+    _key_type = _infer_spark_key_type(df.schema[key_col].dataType)
 
     def _hash_map_arrow(iterator):  # type: ignore[no-untyped-def]
         import pyarrow as pa  # type: ignore[import-not-found]
 
+        # Build the routing closure once per worker partition; resolves the
+        # algorithm enum and (when statically known) specializes on key type.
+        route = make_hash_router(_num_dbs, _hash_algorithm, key_type=_key_type)
         for batch in iterator:
             keys = batch.column(_key_col).to_pylist()
-            db_ids = [hash_db_id(k, _num_dbs, _hash_algorithm) for k in keys]
+            db_ids = [route(k) for k in keys]
             yield batch.append_column(_shard_id_col, pa.array(db_ids, type=pa.int32()))
 
     df_with_db_id = df.mapInArrow(_hash_map_arrow, output_schema)
@@ -620,10 +648,10 @@ def _add_db_id_column_cel(
     def _cel_map_arrow(iterator):  # type: ignore[no-untyped-def]
         import pyarrow as pa  # type: ignore[import-not-found]
 
-        from shardyfusion.cel import compile_cel as _compile
-        from shardyfusion.cel import route_cel_batch
+        from shardyfusion.cel import compile_cel_cached, route_cel_batch
 
-        _compiled = _compile(_cel_expr, _cel_cols)
+        # Cached: shared across all batches in a single worker process.
+        _compiled = compile_cel_cached(_cel_expr, tuple(sorted(_cel_cols.items())))
         for batch in iterator:
             db_ids = route_cel_batch(
                 _compiled,

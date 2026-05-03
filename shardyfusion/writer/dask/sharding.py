@@ -1,5 +1,9 @@
 """Dask-native sharding helpers."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import dask.dataframe as dd
 import numpy as np
 import pandas as pd
@@ -17,6 +21,22 @@ from shardyfusion.vector._distributed import (
 from shardyfusion.vector.sharding import cluster_assign, lsh_assign
 from shardyfusion.vector.types import VectorShardingStrategy as VecStrategy
 
+if TYPE_CHECKING:
+    from shardyfusion.routing import KeyType
+
+
+def _infer_pandas_key_type(dtype: object) -> KeyType | None:
+    """Map a pandas/numpy dtype to a KeyType hint for hash-router specialization."""
+
+    kind = getattr(dtype, "kind", None)
+    if kind in ("i", "u"):
+        return "int"
+    name = getattr(dtype, "name", "")
+    if name == "string" or name.startswith("string"):
+        return "str"
+    # object dtype (mixed/str/bytes) — let the generic dispatch handle it.
+    return None
+
 
 def add_db_id_column_hash(
     ddf: dd.DataFrame,
@@ -27,12 +47,15 @@ def add_db_id_column_hash(
     shard_id_col: str = DB_ID_COL,
 ) -> dd.DataFrame:
     """Add deterministic ``shard_id_col`` column for HASH routing."""
-    from shardyfusion._writer_core import route_hash
+    from shardyfusion.routing import make_hash_router
+
+    key_type = _infer_pandas_key_type(ddf[key_col].dtype)
 
     def _apply_routing(pdf: pd.DataFrame) -> pd.DataFrame:
-        db_ids = pdf[key_col].apply(
-            lambda key: route_hash(key, num_dbs=num_dbs, hash_algorithm=hash_algorithm)
-        )
+        # Build the router once per partition; resolves enum + (optionally)
+        # specializes on key type.
+        route = make_hash_router(num_dbs, hash_algorithm, key_type=key_type)
+        db_ids = pdf[key_col].map(route)
         return pdf.assign(**{shard_id_col: db_ids})
 
     meta = ddf._meta.assign(**{shard_id_col: 0})
@@ -75,12 +98,12 @@ def add_db_id_column_cel(
     def _apply_cel_routing(pdf: pd.DataFrame) -> pd.DataFrame:
         from shardyfusion.cel import (
             build_categorical_routing_lookup,
-            compile_cel,
+            compile_cel_cached,
             pandas_rows_to_contexts,
             route_cel,
         )
 
-        compiled = compile_cel(_cel_expr, _cel_cols)
+        compiled = compile_cel_cached(_cel_expr, tuple(sorted(_cel_cols.items())))
         contexts = pandas_rows_to_contexts(pdf, _cel_cols)
         routing_lookup = (
             build_categorical_routing_lookup(_routing_values)
@@ -109,9 +132,9 @@ def _discover_categorical_routing_values(
     cel_columns: dict[str, str],
 ) -> list[int | str | bytes]:
     def _extract_tokens(pdf: pd.DataFrame) -> pd.Series:
-        from shardyfusion.cel import compile_cel, pandas_rows_to_contexts
+        from shardyfusion.cel import compile_cel_cached, pandas_rows_to_contexts
 
-        compiled = compile_cel(cel_expr, cel_columns)
+        compiled = compile_cel_cached(cel_expr, tuple(sorted(cel_columns.items())))
         contexts = pandas_rows_to_contexts(pdf, cel_columns)
         tokens = [compiled.evaluate(ctx) for ctx in contexts]
         return pd.Series(tokens, dtype="object")
@@ -200,13 +223,14 @@ def add_vector_db_id_column(
 
         from shardyfusion.cel import (
             build_categorical_routing_lookup,
-            compile_cel,
+            compile_cel_cached,
             pandas_rows_to_contexts,
             route_cel,
         )
 
         _cel_expr = routing.cel_expr
         _cel_cols = dict(routing_context_cols)
+        _cel_cols_key = tuple(sorted(_cel_cols.items()))
         _routing_values = routing.routing_values
         _cel_lookup = (
             build_categorical_routing_lookup(_routing_values)
@@ -215,7 +239,7 @@ def add_vector_db_id_column(
         )
 
         def _apply_cel(pdf: pd.DataFrame) -> pd.DataFrame:
-            _compiled = compile_cel(_cel_expr, _cel_cols)
+            _compiled = compile_cel_cached(_cel_expr, _cel_cols_key)
             contexts = pandas_rows_to_contexts(pdf, _cel_cols)
             db_ids = [
                 route_cel(

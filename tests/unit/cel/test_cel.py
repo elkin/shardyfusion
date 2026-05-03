@@ -339,3 +339,53 @@ def test_cel_helpers_are_exported_from_package_root() -> None:
     assert CelType.STRING.value == "string"
     assert callable(cel_sharding)
     assert callable(cel_sharding_by_columns)
+
+
+# ---------------------------------------------------------------------------
+# compile_cel_cached: one compile per (expr, columns) per process
+# ---------------------------------------------------------------------------
+
+
+def test_compile_cel_cached_reuses_instance() -> None:
+    from shardyfusion.cel import compile_cel_cached
+
+    compile_cel_cached.cache_clear()
+    a = compile_cel_cached("key % 4u", (("key", "uint"),))
+    b = compile_cel_cached("key % 4u", (("key", "uint"),))
+    assert a is b
+
+
+def test_compile_cel_cached_calls_compile_once_per_args(monkeypatch) -> None:
+    """Verify the underlying compile_cel runs only once per (expr, columns)."""
+    from shardyfusion import cel as cel_mod
+
+    cel_mod.compile_cel_cached.cache_clear()
+
+    counter = {"n": 0}
+    real_compile = cel_mod.compile_cel
+
+    def counting_compile(expr, columns):
+        counter["n"] += 1
+        return real_compile(expr, columns)
+
+    monkeypatch.setattr(cel_mod, "compile_cel", counting_compile)
+
+    expr = "shard_hash(key) % 8u"
+    cols_key = (("key", "int"),)
+    for _ in range(20):
+        cel_mod.compile_cel_cached(expr, cols_key)
+    assert counter["n"] == 1, f"expected 1 compile, got {counter['n']}"
+
+    # Different (expr, cols) -> separate cache entry, compiles again
+    cel_mod.compile_cel_cached("shard_hash(key) % 16u", cols_key)
+    assert counter["n"] == 2
+
+
+def test_compiled_cel_columns_list_is_cached() -> None:
+    from shardyfusion.cel import compile_cel
+
+    compiled = compile_cel("key % 4u", {"key": "uint"})
+    a = compiled.columns_list
+    b = compiled.columns_list
+    assert a is b
+    assert a == ["key"]

@@ -124,9 +124,9 @@ _cel_imports: tuple[Any, ...] | None = None
 def _get_cel_imports() -> tuple[Any, ...]:
     global _cel_imports
     if _cel_imports is None:
-        from .cel import _compile_cel_cached, route_cel
+        from .cel import compile_cel_cached, route_cel
 
-        _cel_imports = (_compile_cel_cached, route_cel)
+        _cel_imports = (compile_cel_cached, route_cel)
     return _cel_imports
 
 
