@@ -13,8 +13,8 @@ from shardyfusion.vector.adapters.lancedb_adapter import (
 )
 from shardyfusion.vector.config import (
     VectorIndexConfig,
+    VectorShardedWriteConfig,
     VectorShardingSpec,
-    VectorWriteConfig,
 )
 from shardyfusion.vector.reader import ShardedVectorReader
 from shardyfusion.vector.types import (
@@ -22,7 +22,7 @@ from shardyfusion.vector.types import (
     VectorRecord,
     VectorShardingStrategy,
 )
-from shardyfusion.vector.writer import write_vector_sharded
+from shardyfusion.vector.writer import write_sharded
 from tests.e2e.conftest import (
     credential_provider_from_service,
     s3_connection_options_from_service,
@@ -55,7 +55,7 @@ def test_sync_vector_reader_e2e(
         s3_connection_options=s3_conn_opts,
     )
 
-    config = VectorWriteConfig(
+    config = VectorShardedWriteConfig(
         s3_prefix=s3_prefix,
         run_id="e2e-run-sync",
         index_config=VectorIndexConfig(dim=2, metric=DistanceMetric.L2),
@@ -64,7 +64,7 @@ def test_sync_vector_reader_e2e(
         ),
     )
 
-    write_vector_sharded(
+    write_sharded(
         records,
         config=config,
         local_dir=str(tmp_path / "writer"),

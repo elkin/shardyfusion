@@ -2,22 +2,22 @@
 
 This page enumerates the public configuration objects. Defaults and constraints come from source — links point at file:line.
 
-## `HashWriteConfig`
+## `HashShardedWriteConfig`
 
 `shardyfusion/config.py:260`. Dataclass, `slots=True`. Primary config for **HASH** sharded snapshot writes.
 
-Inherits all common fields from `WriteConfig` (see below) and adds:
+Inherits all common fields from `BaseShardedWriteConfig` (see below) and adds:
 
 | Field | Type | Default | Purpose |
 |---|---|---|---|
 | `num_dbs` | `int \| None` | `None` | Number of shards. Required (>0) unless `max_keys_per_shard` is set. |
 | `max_keys_per_shard` | `int \| None` | `None` | Alternative to `num_dbs` — computes shard count as `ceil(total_rows / max_keys_per_shard)` at write time. |
 
-## `CelWriteConfig`
+## `CelShardedWriteConfig`
 
 `shardyfusion/config.py:289`. Dataclass, `slots=True`. Primary config for **CEL** sharded snapshot writes.
 
-Inherits all common fields from `WriteConfig` (see below) and adds:
+Inherits all common fields from `BaseShardedWriteConfig` (see below) and adds:
 
 | Field | Type | Default | Purpose |
 |---|---|---|---|
@@ -26,28 +26,40 @@ Inherits all common fields from `WriteConfig` (see below) and adds:
 | `routing_values` | `list[RoutingValue] \| None` | `None` | Optional categorical values for token-based routing. |
 | `infer_routing_values_from_data` | `bool` | `False` | Discover routing values from input at write time (single-process only). |
 
-## `WriteConfig` (base class)
+## `BaseShardedWriteConfig` (base class)
 
-`shardyfusion/config.py:162`. Dataclass, `slots=True`. **Base class** for `HashWriteConfig` and `CelWriteConfig`. Do not instantiate directly.
+`shardyfusion/config.py:162`. Dataclass, `slots=True`. **Base class** for `HashShardedWriteConfig` and `CelShardedWriteConfig`. Do not instantiate directly.
 
 Common fields inherited by both concrete configs:
 
 | Field | Type | Default |
 |---|---|---|
-| `s3_prefix` | `str` | `""` |
-| `key_encoding` | `KeyEncoding` | `KeyEncoding.U64BE` |
-| `batch_size` | `int` | `50_000` |
-| `adapter_factory` | `DbAdapterFactory \| None` | `None` (treated as `SlateDbFactory()`) |
-| `output` | `OutputOptions` | `OutputOptions()` |
-| `manifest` | `ManifestOptions` | `ManifestOptions()` |
-| `metrics_collector` | `MetricsCollector \| None` | `None` |
-| `run_registry` | `RunRegistry \| None` | `None` |
-| `shard_retry` | `RetryConfig \| None` | `None` |
-| `credential_provider` | `CredentialProvider \| None` | `None` |
-| `s3_connection_options` | `S3ConnectionOptions \| None` | `None` |
-| `vector_spec` | `VectorSpec \| None` | `None` |
+| `storage` | `WriterStorageConfig` | `WriterStorageConfig()` |
+| `output` | `WriterOutputConfig` | `WriterOutputConfig()` |
+| `manifest` | `WriterManifestConfig` | `WriterManifestConfig()` |
+| `kv` | `KeyValueWriteConfig` | `KeyValueWriteConfig()` |
+| `retry` | `WriterRetryConfig` | `WriterRetryConfig()` |
+| `rate_limits` | `KvWriteRateLimitConfig` | `KvWriteRateLimitConfig()` |
+| `observability` | `WriterObservabilityConfig` | `WriterObservabilityConfig()` |
+| `lifecycle` | `WriterLifecycleConfig` | `WriterLifecycleConfig()` |
+| `vector` | `VectorSpec \| None` | `None` |
 
-Manifest layout (path, naming, store) is configured via the nested `manifest: ManifestOptions` field — there is no top-level `manifest_store` or `manifest_name` on `WriteConfig`.
+For migration convenience, concrete config constructors also accept previous flat keyword names such as `s3_prefix`, `key_encoding`, `batch_size`, `adapter_factory`, `metrics_collector`, `run_registry`, `shard_retry`, `credential_provider`, `s3_connection_options`, `vector_spec`, and rate-limit fields. New code should prefer nested group names when several related fields are set together.
+
+### Common nested groups
+
+| Config | Key fields |
+|---|---|
+| `WriterStorageConfig` | `s3_prefix`, `credential_provider`, `s3_connection_options` |
+| `WriterOutputConfig` | `run_id`, `db_path_template`, `shard_prefix`, `run_registry_prefix`, `local_root` |
+| `WriterManifestConfig` | `store`, `custom_manifest_fields`, `credential_provider`, `s3_connection_options` |
+| `KeyValueWriteConfig` | `key_encoding`, `batch_size`, `adapter_factory` |
+| `WriterRetryConfig` | `shard_retry` |
+| `KvWriteRateLimitConfig` | `max_writes_per_second`, `max_write_bytes_per_second` |
+| `WriterObservabilityConfig` | `metrics_collector` |
+| `WriterLifecycleConfig` | `run_registry` |
+
+Manifest layout (path, naming, store) is configured via the nested `manifest: WriterManifestConfig` field — there is no top-level `manifest_store` or `manifest_name` on writer configs.
 
 ## `HashShardingSpec`
 
@@ -71,7 +83,7 @@ Base class for `HashShardingSpec` and `CelShardingSpec`.
 
 ## `KeyEncoding`
 
-`shardyfusion/type_defs.py`. Enum: `U64BE`, `U32BE`, `UTF8`, `RAW`. Default on `WriteConfig` is `U64BE`.
+`shardyfusion/type_defs.py`. Enum: `U64BE`, `U32BE`, `UTF8`, `RAW`. Default on `KeyValueWriteConfig` is `U64BE`.
 
 ## `ShardHashAlgorithm`
 
@@ -93,20 +105,34 @@ Base class for `HashShardingSpec` and `CelShardingSpec`.
 
 `VectorSpec` does **not** carry a `backend` field. Backend selection happens via the adapter factory (`SqliteVecFactory` ⇒ sqlite-vec; `CompositeFactory(..., vector_factory=LanceDbFactory(), ...)` ⇒ lancedb). The manifest's `vector.backend` field is filled in from the chosen adapter and used by `UnifiedShardedReader` to dispatch.
 
-## `VectorWriteConfig`
+## `VectorShardedWriteConfig`
 
-`shardyfusion/vector/config.py:74`. Standalone vector writer config.
+`shardyfusion/vector/config.py:74`. Standalone and distributed vector writer config.
 
 Key fields (see source for full list):
 
-- `num_dbs: int` — required.
-- `s3_prefix: str` — required.
-- `index_config: VectorIndexConfig` — required.
-- `sharding: VectorShardingSpec` — default `cluster()`.
-- `adapter_factory` — required (LanceDB or sqlite-vec).
-- `batch_size: int = 10_000`.
+- `index_config: VectorIndexConfig` — required, `dim > 0`.
+- `sharding: VectorShardingConfig` — carries `num_dbs` and strategy-specific settings.
+- `storage: WriterStorageConfig` — `s3_prefix` and object-store connection settings.
+- `output: WriterOutputConfig` — run and shard path settings.
+- `manifest: WriterManifestConfig` — manifest-store settings.
+- `adapter: VectorAdapterConfig` — vector adapter factory, reader factory, and batch size.
+- `rate_limits: VectorWriteRateLimitConfig` — vector write ops/sec limit.
+- `observability: WriterObservabilityConfig` — metrics collector.
+- `lifecycle: WriterLifecycleConfig` — run registry.
 
-## `VectorShardingSpec`
+Like the KV configs, `VectorShardedWriteConfig` accepts flat migration keywords such as `num_dbs`, `s3_prefix`, `adapter_factory`, `reader_factory`, `batch_size`, and `max_writes_per_second`, but grouped configs are preferred for new code.
+
+## Writer input and options
+
+Public writer functions take `(data, config, input, options=None)` except standalone vector writes, where `input` is optional:
+
+- `PythonRecordInput(key_fn, value_fn, columns_fn=None, vector_fn=None)` for Python KV writes.
+- `ColumnWriteInput(key_col, value_spec, vector=None, vector_fn=None)` for Spark/Dask/Ray KV writes.
+- `VectorColumnInput(vector_col, id_col=None, payload_cols=None, shard_id_col=None, routing_context_cols=None)` for distributed vector writes.
+- `PythonWriteOptions`, `SparkWriteOptions`, `DaskWriteOptions`, `RayWriteOptions`, `SingleDbWriteOptions`, and `VectorWriteOptions` carry per-call execution behavior.
+
+## `VectorShardingConfig` / `VectorShardingSpec`
 
 Strategies: `CLUSTER` (k-means, default), `LSH`, `EXPLICIT` (uses `VectorRecord.shard_id`), `CEL` (uses `routing_context`).
 
@@ -116,7 +142,7 @@ Strategies: `CLUSTER` (k-means, default), `LSH`, `EXPLICIT` (uses `VectorRecord.
 - Run record: `runs/<timestamp>_run_id=<run_id>_<uuidhex>/run.yaml`
 - Pointer: `_CURRENT` (configurable as `current_pointer_key`)
 - Timestamp format: `%Y-%m-%dT%H:%M:%S.%fZ`
-- Supported manifest format versions: `{1, 2, 3}`. v3 required for `routing_values`.
+- Supported manifest format versions: `{4}`.
 - `CurrentPointer.format_version: int = 1` (separate from manifest version).
 
 ## Adapter factories

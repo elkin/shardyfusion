@@ -21,7 +21,7 @@ A **run** is one writer invocation. It has a unique `run_id`, a status, and a re
 | `S3RunRegistry` | S3 (one object per run record) | `run_registry.py` |
 | `InMemoryRunRegistry` | RAM (test fixture) | `run_registry.py` |
 
-`resolve_run_registry` (`run_registry.py`) picks the right one based on writer config. If `WriteConfig.run_registry` / `VectorWriteConfig.run_registry` is set, that registry is used directly. If the manifest store is in-memory, the run registry is also in-memory. Otherwise the default is `S3RunRegistry` under `s3_prefix/output.run_registry_prefix`.
+`resolve_run_registry` (`run_registry.py`) picks the right one based on writer config. If `config.lifecycle.run_registry` is set on a KV or vector writer config, that registry is used directly. If the manifest store is in-memory, the run registry is also in-memory. Otherwise the default is `S3RunRegistry` under `storage.s3_prefix/output.run_registry_prefix`.
 
 Default S3 run-registry resolution uses writer-level `credential_provider` and `s3_connection_options`. Manifest-level credentials/options are scoped to the default S3 manifest store and are not used for run-registry S3 access. If the run registry needs different settings, pass an explicit `run_registry`.
 

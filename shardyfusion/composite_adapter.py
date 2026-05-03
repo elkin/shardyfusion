@@ -75,7 +75,7 @@ class CompositeFactory:
     Args:
         kv_factory: Factory for the KV adapter (e.g. ``SlateDbFactory``).
         vector_factory: Factory for the vector writer (e.g. ``LanceDBWriterFactory``).
-        vector_spec: Vector configuration from ``WriteConfig``.
+        vector_spec: Vector configuration from a KV writer config.
     """
 
     kv_factory: DbAdapterFactory

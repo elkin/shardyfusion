@@ -243,11 +243,11 @@ The implementation creates a `shardyfusion/vector/` subpackage with the followin
 ### Module Layout
 
 - `types.py` — Enums (`DistanceMetric`, `VectorShardingStrategy`), data classes (`VectorRecord`, `SearchResult`, `VectorSearchResponse`, `VectorShardDetail`, `VectorSnapshotInfo`), and protocols (`VectorIndexWriter`, `VectorIndexWriterFactory`, `VectorShardReader`, `VectorShardReaderFactory`).
-- `config.py` — `VectorIndexConfig` (dim, metric, HNSW params, quantization), `VectorShardingSpec` (strategy, num_probes, centroids/hyperplanes), `VectorWriteConfig` (top-level config mirroring `WriteConfig` structure).
+- `config.py` — `VectorIndexConfig` (dim, metric, HNSW params, quantization), `VectorShardingSpec` (strategy, num_probes, centroids/hyperplanes), `VectorShardedWriteConfig` (top-level config mirroring `WriteConfig` structure).
 - `sharding.py` — Pure-numpy sharding implementations: k-means++ training (`train_centroids_kmeans`), cluster assignment and probing, LSH hyperplane generation, LSH hashing and probing, CEL expression-based routing (delegates to `shardyfusion.cel`), and a unified `route_vector_to_shards` dispatcher.
 - `_merge.py` — Heap-based top-k merge across per-shard result lists, metric-aware.
 - `adapters/lancedb_adapter.py` — `LanceDBWriter` (builds lancedb.Index + SQLite payloads locally, uploads to S3 on close), `LanceDBShardReader` (downloads from S3, loads index and payloads), and corresponding factories. lancedb is imported inside `_import_lancedb()` to keep it optional.
-- `writer.py` — `write_vector_sharded()` function with single-process implementation. Buffers records by shard, flushes in batches to the adapter, handles centroid training and hyperplane generation, uploads sharding metadata to S3, and publishes a manifest with vector config in custom fields.
+- `writer.py` — `write_sharded()` function with single-process implementation. Buffers records by shard, flushes in batches to the adapter, handles centroid training and hyperplane generation, uploads sharding metadata to S3, and publishes a manifest with vector config in custom fields.
 - `reader.py` — `ShardedVectorReader` class with lazy shard loading, LRU eviction, thread-pool fan-out for multi-shard search, manifest refresh, health monitoring, and shard inspection methods.
 - `__init__.py` — Public API exports (18 names).
 - `adapters/__init__.py` — Lazy `__getattr__` exports for LanceDB adapter types.

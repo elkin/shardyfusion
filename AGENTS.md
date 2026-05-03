@@ -78,7 +78,7 @@ The library is split into six independent paths that share config, manifest mode
 `cli/app.py` → `cli/config.py`, `cli/output.py`, `cli/interactive.py`, `cli/batch.py`
 
 **Vector writer path** (no Spark/Java needed; requires `vector-lancedb` or `vector-sqlite` extra):
-`vector/writer.py` (`write_vector_sharded`) → `vector/sharding.py` (CLUSTER/LSH/EXPLICIT/CEL assignment) → `vector/_distributed.py` (shared vector write core) → `vector/adapters/lancedb_adapter.py` (LanceDB HNSW)
+`vector/writer.py` (`write_sharded`) → `vector/sharding.py` (CLUSTER/LSH/EXPLICIT/CEL assignment) → `vector/_distributed.py` (shared vector write core) → `vector/adapters/lancedb_adapter.py` (LanceDB HNSW)
 
 **Vector reader path** (no Spark/Java needed):
 `vector/reader.py` (`ShardedVectorReader`) → `vector/sharding.py` (query routing) → `vector/adapters/lancedb_adapter.py` or `sqlite_vec_adapter.py` → `vector/_merge.py` (top-k heap merge)
@@ -98,7 +98,7 @@ Layer 1 — Config & serialization: config.py, serde.py, _rate_limiter.py, cel.p
 Layer 2 — Storage, routing, manifest, run registry: storage.py (`StorageBackend` + `AsyncStorageBackend` Protocols, `ObstoreBackend`/`AsyncObstoreBackend`, `MemoryBackend`/`AsyncMemoryBackend`, `create_s3_store()`), manifest.py, routing.py, manifest_store.py, async_manifest_store.py, db_manifest_store.py (PostgresManifestStore)
 Layer 3 — Writer core: _writer_core.py (shared by all writers; assemble_build_result, cleanup_losers, CleanupAction, cleanup_stale_attempts, cleanup_old_runs), _shard_writer.py (shared shard-write loop + retry: write_shard_core, write_shard_with_retry, ShardWriteParams)
 Layer 4 — Entry points: writer/{spark,dask,ray,python}/*.py, reader/ (reader.py, concurrent_reader.py, _base.py, _types.py, _state.py), reader/async_reader.py, reader/unified_reader.py, reader/async_unified_reader.py, cli/app.py
-Layer vec — Vector search: vector/types.py, vector/config.py (vector types/protocols/enums), vector/sharding.py (CLUSTER/LSH/EXPLICIT/CEL routing), vector/_merge.py (top-k heap merge), vector/_distributed.py (shared write core), vector/writer.py (write_vector_sharded), vector/reader.py (ShardedVectorReader), vector/async_reader.py (AsyncShardedVectorReader)
+Layer vec — Vector search: vector/types.py, vector/config.py (vector types/protocols/enums), vector/sharding.py (CLUSTER/LSH/EXPLICIT/CEL routing), vector/_merge.py (top-k heap merge), vector/_distributed.py (shared write core), vector/writer.py (write_sharded), vector/reader.py (ShardedVectorReader), vector/async_reader.py (AsyncShardedVectorReader)
 Layer 5 — Adapters & testing: slatedb_adapter.py, sqlite_adapter.py (optional apsw for range-read VFS), _sqlite_vfs.py (S3 range-read VFS with page-aligned LRU cache via obstore), sqlite_vec_adapter.py (unified KV+vector SQLite), vector/adapters/lancedb_adapter.py (LanceDB HNSW sidecar), composite_adapter.py (KV+vector composite), testing.py
 Layer opt — Optional publishers: metrics/prometheus.py (metrics-prometheus extra), metrics/otel.py (metrics-otel extra)
 Layer internal — Symbols & compatibility: _slatedb_symbols.py (lazy SlateDB symbol checks), writer/ray/_compat.py (pandas 3.0+ patches)
@@ -106,32 +106,32 @@ Layer internal — Symbols & compatibility: _slatedb_symbols.py (lazy SlateDB sy
 
 ### Write Pipeline
 
-**Spark writer** (`write_sharded_by_hash` / `write_sharded_by_cel`):
+**Spark writer** (`write_hash_sharded` / `write_cel_sharded`):
 1. Entry point in `writer/spark/writer.py`. Optionally applies Spark conf overrides via `SparkConfOverrideContext`.
 2. `writer/spark/sharding.py` adds `_shard_id` column via `mapInArrow` (hash or CEL, all Python-based), then converts the DataFrame to a pair RDD partitioned so partition index = db_id.
 3. Each partition writes one shard to S3 at a shard path (`shards/run_id=.../db=XXXXX/attempt=YY/`).
 4. The driver streams results via `toLocalIterator()` and selects deterministic winners (lowest attempt → task_attempt_id → URL).
 5. A manifest artifact is built and published, the `_CURRENT` pointer is updated, and the run record is marked terminal (`succeeded` or `failed`).
 
-**Dask writer** (`write_sharded_by_hash` / `write_sharded_by_cel`):
+**Dask writer** (`write_hash_sharded` / `write_cel_sharded`):
 1. Entry point in `writer/dask/writer.py`. Accepts `dd.DataFrame` with `key_col`/`value_spec`.
 2. `writer/dask/sharding.py` adds `_shard_id` column via Python routing function applied per partition. For CEL sharding, uses `pandas_rows_to_contexts()` + `route_cel()` with full row context (supporting non-key columns).
 3. Shuffles by `_shard_id`, then `map_partitions` writes each shard. Empty shards (no rows in partition) are omitted from the manifest; `select_winners()` filters them out.
-4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `verify_routing_agreement()`.
+4. Optional rate limiting via `config.rate_limits.max_writes_per_second` (token-bucket). Routing verification via `verify_routing_agreement()`.
 5. Uses the same `_writer_core.py` functions for winner selection, manifest building, publishing, and the same run-record lifecycle helper.
 
-**Ray writer** (`write_sharded_by_hash` / `write_sharded_by_cel`):
+**Ray writer** (`write_hash_sharded` / `write_cel_sharded`):
 1. Entry point in `writer/ray/writer.py`. Accepts `ray.data.Dataset` with `key_col`/`value_spec`.
 2. `writer/ray/sharding.py` adds `_shard_id` column via Arrow batch format (`map_batches` with `batch_format="pyarrow"`, `zero_copy_batch=True`). For CEL sharding, uses `route_cel_batch()` directly on Arrow batches (same approach as Spark).
 3. Repartitions by `_shard_id` using hash shuffle (`DataContext.shuffle_strategy = "HASH_SHUFFLE"`; saved/restored). Then `map_batches` writes each shard with `batch_format="pandas"`. Empty shards (no rows in partition) are omitted from the manifest; `select_winners()` filters them out.
-4. Optional rate limiting via `max_writes_per_second` (token-bucket). Routing verification via `_verify_routing_agreement()`.
+4. Optional rate limiting via `config.rate_limits.max_writes_per_second` (token-bucket). Routing verification via `_verify_routing_agreement()`.
 5. Uses the same `_writer_core.py` functions for winner selection, manifest building, publishing, and the same run-record lifecycle helper.
 
-**Python writer** (`write_sharded_by_hash` / `write_sharded_by_cel`):
+**Python writer** (`write_hash_sharded` / `write_cel_sharded`):
 1. Entry point in `writer/python/writer.py`. Accepts `Iterable[T]` with `key_fn`/`value_fn` callables.
 2. Supports single-process (all adapters open simultaneously via `contextlib.ExitStack`) or multi-process (`parallel=True`, one worker per shard via `multiprocessing.spawn`).
 3. Multi-process mode uses `writer/python/_parallel_writer.py` with shared memory for passing rows to worker processes. Configurable memory budgets via `max_parallel_shared_memory_bytes` and `max_parallel_shared_memory_bytes_per_worker`.
-4. Optional rate limiting via `max_writes_per_second` and `max_write_bytes_per_second` (token-bucket in `_rate_limiter.py`). Single-process mode supports global memory ceilings via `max_total_batched_items` and `max_total_batched_bytes` to prevent OOM when buffering across many shards.
+4. Optional rate limiting via `config.rate_limits.max_writes_per_second` and `config.rate_limits.max_write_bytes_per_second` (token-bucket in `_rate_limiter.py`). Single-process mode supports global memory ceilings via `options.buffering.max_total_batched_items` and `options.buffering.max_total_batched_bytes` to prevent OOM when buffering across many shards.
 5. Uses the same `_writer_core.py` functions for routing, winner selection, manifest building, publishing, and the same run-record lifecycle helper.
 
 ### Read Pipeline
@@ -189,7 +189,7 @@ The `search` subcommand performs vector ANN search against a vector or unified s
 A serialized SQLite database with two tables:
 - `build_meta` — single row with `RequiredBuildMeta` fields (`run_id`, `num_dbs`, `s3_prefix`, `sharding` as JSON, `key_encoding`, `format_version=4`, …)
 - `shards` — one row per non-empty shard (`db_id`, `db_url`, `checkpoint_id`, `row_count`, `db_bytes` (mandatory; 0 for SlateDB shards), …)
-- `custom` — user-defined fields from `ManifestOptions.custom_manifest_fields` (JSON TEXT in `build_meta`)
+- `custom` — user-defined fields from `WriterManifestConfig.custom_manifest_fields` (JSON TEXT in `build_meta`)
 
 Manifest S3 keys are timestamp-prefixed (e.g., `2026-03-14T10:30:00.000000Z_run_id=abc123/manifest`) for chronological listing via S3 `CommonPrefixes`. Readers strictly accept only `format_version=4`; older manifests fail with `ManifestParseError`.
 
@@ -258,7 +258,7 @@ Vector backend alternatives:
 
 ### Metrics & Observability
 
-`MetricsCollector` (Protocol in `metrics/_protocol.py`) is an optional observer: set `WriteConfig.metrics_collector` or pass it to the reader. The `MetricEvent` enum (in `metrics/_events.py`) defines events across writer lifecycle (e.g., `WRITE_STARTED`, `SHARD_WRITE_COMPLETED`), reader lifecycle (`READER_GET`, `READER_REFRESHED`), infrastructure (`S3_RETRY`, `RATE_LIMITER_THROTTLED`), writer retry (`SHARD_WRITE_RETRIED`, `SHARD_WRITE_RETRY_EXHAUSTED`), vector writer (`VECTOR_WRITE_STARTED`, `VECTOR_SHARD_WRITE_COMPLETED`, `VECTOR_WRITE_COMPLETED`), and vector reader (`VECTOR_READER_INITIALIZED`, `VECTOR_SEARCH`, `VECTOR_SHARD_SEARCH`, `VECTOR_READER_REFRESHED`, `VECTOR_READER_CLOSED`). Collectors receive `(event, payload_dict)` and should silently ignore unknown events for forward compatibility.
+`MetricsCollector` (Protocol in `metrics/_protocol.py`) is an optional observer: set `observability.metrics_collector` on writer configs or pass it to the reader. The `MetricEvent` enum (in `metrics/_events.py`) defines events across writer lifecycle (e.g., `WRITE_STARTED`, `SHARD_WRITE_COMPLETED`), reader lifecycle (`READER_GET`, `READER_REFRESHED`), infrastructure (`S3_RETRY`, `RATE_LIMITER_THROTTLED`), writer retry (`SHARD_WRITE_RETRIED`, `SHARD_WRITE_RETRY_EXHAUSTED`), vector writer (`VECTOR_WRITE_STARTED`, `VECTOR_SHARD_WRITE_COMPLETED`, `VECTOR_WRITE_COMPLETED`), and vector reader (`VECTOR_READER_INITIALIZED`, `VECTOR_SEARCH`, `VECTOR_SHARD_SEARCH`, `VECTOR_READER_REFRESHED`, `VECTOR_READER_CLOSED`). Collectors receive `(event, payload_dict)` and should silently ignore unknown events for forward compatibility.
 
 The `metrics/` package (`_events.py`, `_protocol.py`) is always available. Optional publishers require extras:
 - **`PrometheusCollector`** (`metrics/prometheus.py`): requires `metrics-prometheus` extra. Uses isolated `CollectorRegistry` for test safety.
@@ -267,8 +267,9 @@ The `metrics/` package (`_events.py`, `_protocol.py`) is always available. Optio
 ### Rate Limiting
 
 Token-bucket rate limiter in `_rate_limiter.py`. `RateLimiter` Protocol + `TokenBucket` implementation.
-- **ops/sec**: `max_writes_per_second` on `WriteConfig` — limits write_batch calls.
-- **bytes/sec**: `max_write_bytes_per_second` on `WriteConfig` — limits payload bytes. Each uses an independent `TokenBucket` instance.
+- **KV ops/sec**: `KvWriteRateLimitConfig.max_writes_per_second` on `config.rate_limits` — limits write_batch calls.
+- **KV bytes/sec**: `KvWriteRateLimitConfig.max_write_bytes_per_second` on `config.rate_limits` — limits payload bytes. Each uses an independent `TokenBucket` instance.
+- **Vector ops/sec**: `VectorWriteRateLimitConfig.max_writes_per_second` on `VectorShardedWriteConfig.rate_limits` — limits vector shard write calls.
 - **Reader-side**: readers accept `rate_limiter` parameter for reads/sec limiting. `AsyncShardedReader` calls `acquire_async()` directly on the limiter.
 - **`try_acquire()`**: non-blocking, pure arithmetic — safe for async code without `to_thread()`.
 - **`acquire_async()`**: part of the `RateLimiter` Protocol. Uses `asyncio.sleep` — safe for event loops.
@@ -289,7 +290,7 @@ Structured logging in `logging.py`:
 
 ### Key Encodings
 
-The `key_encoding` field on `WriteConfig` (default `"u64be"`) controls how keys are serialized to bytes in SlateDB:
+The `key_encoding` field on `KeyValueWriteConfig` (`config.kv.key_encoding`, default `"u64be"`) controls how keys are serialized to bytes in SlateDB:
 
 - **`u64be`** (default): 8-byte big-endian unsigned integer. Keys in `[0, 2^64-1]`.
 - **`u32be`**: 4-byte big-endian unsigned integer. Keys in `[0, 2^32-1]`. Cuts key storage in half.
@@ -351,7 +352,7 @@ All package-specific errors inherit from `ShardyfusionError` and expose `retryab
 
 Top-level exports from `shardyfusion.__init__` (`__all__`, grouped only for readability):
 
-- Config/build: `BuildDurations`, `BuildResult`, `BuildStats`, `CurrentPointer`, `ManifestOptions`, `OutputOptions`, `VectorSpec`, `WriteConfig`, `WriterInfo`
+- Config/build: `BaseShardedWriteConfig`, `HashShardedWriteConfig`, `CelShardedWriteConfig`, `SingleDbWriteConfig`, `WriterStorageConfig`, `WriterOutputConfig`, `WriterManifestConfig`, `KeyValueWriteConfig`, `HashShardingConfig`, `CelShardingConfig`, `WriterRetryConfig`, `KvWriteRateLimitConfig`, `VectorWriteRateLimitConfig`, `WriterObservabilityConfig`, `WriterLifecycleConfig`, `PythonRecordInput`, `ColumnWriteInput`, `VectorColumnInput`, `PythonWriteOptions`, `SparkWriteOptions`, `DaskWriteOptions`, `RayWriteOptions`, `SingleDbWriteOptions`, `SharedMemoryOptions`, `BufferingOptions`, `VectorSpec`, `UnifiedVectorWriteConfig`, `BuildDurations`, `BuildResult`, `BuildStats`, `CurrentPointer`, `WriterInfo`
 - Credentials/connectivity: `CredentialProvider`, `EnvCredentialProvider`, `RetryConfig`, `S3ConnectionOptions`, `S3Credentials`, `StaticCredentialProvider`
 - Errors: `ConfigValidationError`, `DbAdapterError`, `ManifestBuildError`, `ManifestParseError`, `ManifestStoreError`, `PoolExhaustedError`, `PublishCurrentError`, `PublishManifestError`, `ReaderStateError`, `S3TransientError`, `ShardAssignmentError`, `ShardCoverageError`, `ShardWriteError`, `ShardyfusionError`
 - Manifest/store: `InMemoryManifestStore`, `ManifestArtifact`, `ManifestRef`, `ManifestShardingSpec`, `ManifestStore`, `ParsedManifest`, `RequiredBuildMeta`, `RequiredShardMeta`, `S3ManifestStore`, `SQLITE_MANIFEST_CONTENT_TYPE`, `SqliteManifestBuilder`, `SqliteShardLookup`, `load_sqlite_build_meta`, `parse_manifest_payload`, `parse_sqlite_manifest`
@@ -363,23 +364,26 @@ Top-level exports from `shardyfusion.__init__` (`__all__`, grouped only for read
 - Sharding/serialization: `CelColumn`, `CelType`, `KeyEncoding`, `ShardingSpec`, `ShardingStrategy`, `ValueSpec`, `cel_sharding`, `cel_sharding_by_columns`
 
 Writer functions are imported from subpackages (not re-exported at top level):
-- **Spark:** `from shardyfusion.writer.spark import write_sharded_by_hash, write_sharded_by_cel, write_single_db, DataFrameCacheContext, SparkConfOverrideContext`
-- **Dask:** `from shardyfusion.writer.dask import write_sharded_by_hash, write_sharded_by_cel, write_single_db, DaskCacheContext`
-- **Ray:** `from shardyfusion.writer.ray import write_sharded_by_hash, write_sharded_by_cel, write_single_db, RayCacheContext`
-- **Python:** `from shardyfusion.writer.python import write_sharded_by_hash, write_sharded_by_cel` (KV + unified KV+vector via `VectorSpec` on `WriteConfig`)
+- **Spark:** `from shardyfusion.writer.spark import write_hash_sharded, write_cel_sharded, write_single_db, DataFrameCacheContext, SparkConfOverrideContext`
+- **Dask:** `from shardyfusion.writer.dask import write_hash_sharded, write_cel_sharded, write_single_db, DaskCacheContext`
+- **Ray:** `from shardyfusion.writer.ray import write_hash_sharded, write_cel_sharded, write_single_db, RayCacheContext`
+- **Python:** `from shardyfusion.writer.python import write_hash_sharded, write_cel_sharded` (KV + unified KV+vector via `VectorSpec` on `HashShardedWriteConfig` / `CelShardedWriteConfig`)
 
-> **Hard break note:** The unified `write_sharded` entry point has been removed in favor of per-strategy functions (`write_sharded_by_hash` / `write_sharded_by_cel`). `WriteConfig` and `ShardingSpec` are now strategy-agnostic base classes; use `HashWriteConfig`/`CelWriteConfig` and `HashShardingSpec`/`CelShardingSpec` instead.
+> **Hard break note:** KV writers now expose per-strategy functions (`write_hash_sharded` / `write_cel_sharded`) with four-argument public signatures: `(data, config, input, options=None)`. Use `HashShardedWriteConfig` / `CelShardedWriteConfig` plus `PythonRecordInput` or `ColumnWriteInput`. Standalone vector writers use `write_sharded(records, config, input=None, options=None)` from `shardyfusion.vector`; distributed vector writers use `write_sharded(data, config, input, options=None)` from `shardyfusion.writer.{spark,dask,ray}.vector_writer` or from the framework package. The package-level `write_vector_sharded` name remains as a compatibility alias to the refactored vector writer.
 
 SQLite backend adapters are imported from their module (not re-exported at top level):
 - `from shardyfusion.sqlite_adapter import SqliteFactory, SqliteReaderFactory, SqliteRangeReaderFactory, AdaptiveSqliteReaderFactory`
 - `from shardyfusion.sqlite_adapter import AsyncSqliteReaderFactory, AsyncSqliteRangeReaderFactory, AsyncAdaptiveSqliteReaderFactory`
 
 Vector types and functions are imported from subpackages (not re-exported at top level):
-- `from shardyfusion.vector.writer import write_vector_sharded`
+- `from shardyfusion.vector.writer import write_sharded`
 - `from shardyfusion.vector.reader import ShardedVectorReader`
 - `from shardyfusion.vector.async_reader import AsyncShardedVectorReader`
 - `from shardyfusion.vector.types import VectorRecord, SearchResult, VectorSearchResponse, DistanceMetric, VectorShardingStrategy`
-- `from shardyfusion.vector.config import VectorIndexConfig, VectorShardingSpec, VectorWriteConfig`
+- `from shardyfusion.vector.config import VectorIndexConfig, VectorShardingConfig, VectorShardingSpec, VectorShardedWriteConfig, VectorRecordInput, VectorWriteOptions`
+- `from shardyfusion.writer.spark import write_sharded` or `from shardyfusion.writer.spark.vector_writer import write_sharded` for Spark vector writes
+- `from shardyfusion.writer.dask import write_sharded` or `from shardyfusion.writer.dask.vector_writer import write_sharded` for Dask vector writes
+- `from shardyfusion.writer.ray import write_sharded` or `from shardyfusion.writer.ray.vector_writer import write_sharded` for Ray vector writes
 
 ## Testing Guidelines
 
@@ -435,7 +439,7 @@ Vector types and functions are imported from subpackages (not re-exported at top
 - **SQLite adapter lifecycle**: `SqliteAdapter` builds a local SQLite DB during writes, then uploads the `.db` file to S3 on `close()`. The reader downloads (or range-reads) the file from S3. The `checkpoint()` method computes a SHA-256 hash of the DB file as the checkpoint ID.
 - **SQLite range-read VFS uses per-instance VFS names**: Each `SqliteRangeShardReader` registers a unique APSW VFS (via `uuid4`) to avoid name collisions when multiple readers are open simultaneously. The VFS is unregistered on `close()`.
 - **Python writer parallel mode uses `spawn`**: `multiprocessing.get_context("spawn")` is hardcoded. All objects passed to workers must be picklable. Min/max key tracking happens in the main process. Workers communicate via shared memory; configurable budgets via `max_parallel_shared_memory_bytes` and `max_parallel_shared_memory_bytes_per_worker`.
-- **Rate limiter thread safety**: `TokenBucket` has no internal lock. Use `ThreadSafeTokenBucket` when sharing a limiter across threads (e.g. `ConcurrentShardedReader`). `ThreadSafeTokenBucket` locks around `try_acquire()` and loops with sleep outside the lock. Writers and readers depend on the `RateLimiter` Protocol, not the concrete class. Writers support both `max_writes_per_second` (ops) and `max_write_bytes_per_second` (bytes) via independent `TokenBucket` instances. Readers accept a `rate_limiter` parameter for reads/sec limiting.
+- **Rate limiter thread safety**: `TokenBucket` has no internal lock. Use `ThreadSafeTokenBucket` when sharing a limiter across threads (e.g. `ConcurrentShardedReader`). `ThreadSafeTokenBucket` locks around `try_acquire()` and loops with sleep outside the lock. Writers and readers depend on the `RateLimiter` Protocol, not the concrete class. KV writers support `KvWriteRateLimitConfig` with both ops/sec and bytes/sec limits via independent `TokenBucket` instances. Vector writers support `VectorWriteRateLimitConfig` with an ops/sec limit. Readers accept a `rate_limiter` parameter for reads/sec limiting.
 - **Reader reference counting**: `refresh()` serialises I/O via `_refresh_lock`, atomically swaps `_ReaderState` with a compare-and-swap guard, and defers closing old handles until `refcount` drops to zero. Pool-mode checkout has a configurable timeout (default 30s) — raises `PoolExhaustedError` (retryable) when exhausted. Metadata methods (`key_encoding`, `snapshot_info`, `shard_details`, `route_key`) use `_use_state()` and raise `ReaderStateError` on a closed reader.
 - **Borrow handle safety nets**: `ShardReaderHandle` and `AsyncShardReaderHandle` implement `__del__()` that logs a warning and releases the borrow if the handle was not explicitly closed. Prefer explicit `close()` or `with`/`async with` context managers.
 - **Async reader uses `open()` classmethod**: `AsyncShardedReader.__init__` does no I/O. Use `await AsyncShardedReader.open(...)` and then `await reader.close()`, or `async with await AsyncShardedReader.open(...) as reader`. The default `AsyncS3ManifestStore` requires `aiobotocore` (`read-slatedb-async`, or another install path that brings it in).
@@ -444,11 +448,11 @@ Vector types and functions are imported from subpackages (not re-exported at top
 - **Garage requires path-style addressing**: E2E tests set `addressing_style: "path"` in `S3ClientConfig` because Garage doesn't support virtual-hosted-style.
 - **Session-scoped test fixtures**: PySpark and S3 (moto/Garage) fixtures are session-scoped for performance. Tests share the same Spark session and S3 service.
 - **Writer scenario imports are deferred**: `tests/helpers/s3_test_scenarios.py` imports writer modules inside function bodies so reader-only test collection doesn't fail.
-- **Ray writer temporarily sets `DataContext.shuffle_strategy`**: During repartition, the Ray writer sets `DataContext.shuffle_strategy = "HASH_SHUFFLE"` and restores the previous value in a `try/finally` block, protected by `_SHUFFLE_STRATEGY_LOCK` (`threading.Lock`) to guard against concurrent `write_sharded()` calls in the same driver.
+- **Ray writer temporarily sets `DataContext.shuffle_strategy`**: During repartition, the Ray writer sets `DataContext.shuffle_strategy = "HASH_SHUFFLE"` and restores the previous value in a `try/finally` block, protected by `_SHUFFLE_STRATEGY_LOCK` (`threading.Lock`) to guard against concurrent Ray writer calls in the same driver.
 - **Ray tests need `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0`**: Ray ≥ 2.47 auto-detects `uv run` in the process tree and overrides worker Python to create fresh venvs. The env var is set in `tox.ini` for raywriter envs. For direct pytest, either set the var or use `uv run --extra writer-ray-slatedb pytest ...`.
 - **`acquire_async()` is part of the `RateLimiter` Protocol**: Uses `asyncio.sleep` — safe for event loops. The sync `acquire()` uses `time.sleep` and must not be called from async code.
 - **`try_acquire()` is pure arithmetic**: Guaranteed non-blocking (replenish + compare + deduct). Safe to call from async code directly without `to_thread()`.
-- **`RetryConfig` usage**: Used in `WriteConfig.shard_retry` for retryable writer paths. `shard_retry` currently covers Dask/Ray sharded writes, Spark/Dask/Ray `write_single_db()`, and Python parallel writes. Spark sharded writes still rely on Spark task retry/speculation. When `shard_retry` is set, the retry path writes each attempt to a fresh S3 prefix (`attempt=00`, `attempt=01`, ...). S3 I/O retries are delegated to obstore's Rust layer with shardyfusion-tuned aggressive defaults (`max_retries=5`, `init_backoff=200ms`, `max_backoff=4s`, `retry_timeout=30s`). A single Python-level fallback retry (2s delay) is applied for PUT operations on `GenericError` only.
+- **`RetryConfig` usage**: Used in `WriterRetryConfig.shard_retry` (`config.retry.shard_retry`, also exposed as `config.shard_retry`) for retryable writer paths. `shard_retry` currently covers Dask/Ray sharded writes, Spark/Dask/Ray `write_single_db()`, and Python parallel writes. Spark sharded writes still rely on Spark task retry/speculation. When `shard_retry` is set, the retry path writes each attempt to a fresh S3 prefix (`attempt=00`, `attempt=01`, ...). S3 I/O retries are delegated to obstore's Rust layer with shardyfusion-tuned aggressive defaults (`max_retries=5`, `init_backoff=200ms`, `max_backoff=4s`, `retry_timeout=30s`). A single Python-level fallback retry (2s delay) is applied for PUT operations on `GenericError` only.
 - **`cel-expr-python` does not support Python 3.14**: The `cel` extra depends on `cel-expr-python` which has no py3.14 wheels. CEL tests are skipped on py3.14 via `pytest.importorskip()`.
 - **UnifiedShardedReader and AsyncUnifiedShardedReader are lazily imported**: `__init__.py` uses `__getattr__` to defer the import of both classes (and their numpy transitive dependency) until first access. This prevents `import shardyfusion` from requiring numpy for non-vector users.
 - **LanceDB and sqlite-vec imports are deferred**: `lancedb_adapter.py` imports `lancedb.index` inside class methods. `sqlite_vec_adapter.py` imports `sqlite_vec` inside `_load_sqlite_vec()`. Both are optional dependencies.

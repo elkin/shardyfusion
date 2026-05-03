@@ -15,10 +15,10 @@ pytest.importorskip("cel_expr_python", reason="requires cel extra")
 
 from shardyfusion.async_manifest_store import AsyncS3ManifestStore
 from shardyfusion.config import (
-    CelWriteConfig,
-    ManifestOptions,
-    OutputOptions,
+    CelShardedWriteConfig,
     VectorSpec,
+    WriterManifestConfig,
+    WriterOutputConfig,
 )
 from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.storage import AsyncObstoreBackend, create_s3_store, parse_s3_url
@@ -80,12 +80,14 @@ class TestAsyncUnifiedWriteReadRoundTrip:
             AsyncSqliteVecReaderFactory,
             SqliteVecFactory,
         )
-        from shardyfusion.writer.python.writer import write_sharded_by_cel
+        from tests.helpers.writer_api import (
+            write_python_cel_sharded as write_cel_sharded,
+        )
 
         rng = np.random.default_rng(42)
         records = _make_records(rng)
 
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix=s3_prefix,
             cel_expr="shard_hash(key) % 3u",
             cel_columns={"key": "int"},
@@ -96,17 +98,19 @@ class TestAsyncUnifiedWriteReadRoundTrip:
                 credential_provider=cred_provider,
                 s3_connection_options=s3_conn_opts,
             ),
-            manifest=ManifestOptions(
+            manifest=WriterManifestConfig(
                 credential_provider=cred_provider,
                 s3_connection_options=s3_conn_opts,
             ),
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
-            output=OutputOptions(local_root=str(tmp_path / "async_unified_writer")),
+            output=WriterOutputConfig(
+                local_root=str(tmp_path / "async_unified_writer")
+            ),
         )
 
         # Write synchronously
-        result = write_sharded_by_cel(
+        result = write_cel_sharded(
             records,
             config,
             key_fn=lambda r: r.key,

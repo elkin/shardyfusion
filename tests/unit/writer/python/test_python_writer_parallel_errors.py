@@ -13,7 +13,11 @@ from typing import Self
 import pytest
 
 import shardyfusion.writer.python._parallel_writer as parallel_writer_mod
-from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
+from shardyfusion.config import (
+    HashShardedWriteConfig,
+    WriterManifestConfig,
+    WriterOutputConfig,
+)
 from shardyfusion.errors import ShardyfusionError
 from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.run_registry import InMemoryRunRegistry
@@ -21,7 +25,6 @@ from shardyfusion.serde import make_key_encoder
 from shardyfusion.sharding_types import ShardHashAlgorithm
 from shardyfusion.testing import FileBackedSlateDbAdapter, file_backed_load_db
 from shardyfusion.type_defs import RetryConfig
-from shardyfusion.writer.python import write_sharded_by_hash
 from shardyfusion.writer.python._parallel_writer import (
     _file_shard_worker,
     _FileChunkRef,
@@ -32,6 +35,7 @@ from tests.helpers.run_record_assertions import (
     load_in_memory_run_record,
 )
 from tests.helpers.tracking import TrackingFactory
+from tests.helpers.writer_api import write_python_hash_sharded as write_hash_sharded
 
 _MAX_PARALLEL_SHARED_MEMORY_BYTES = 256 * 1024 * 1024
 _MAX_PARALLEL_SHARED_MEMORY_BYTES_PER_WORKER = 32 * 1024 * 1024
@@ -216,13 +220,13 @@ def _make_config(
     local_root: str | None = None,
     shard_retry: RetryConfig | None = None,
     run_registry: InMemoryRunRegistry | None = None,
-) -> HashWriteConfig:
-    return HashWriteConfig(
+) -> HashShardedWriteConfig:
+    return HashShardedWriteConfig(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/test",
         adapter_factory=_good_factory,
-        manifest=ManifestOptions(store=InMemoryManifestStore()),
-        output=OutputOptions(
+        manifest=WriterManifestConfig(store=InMemoryManifestStore()),
+        output=WriterOutputConfig(
             run_id=run_id,
             local_root=local_root or "/tmp/shardyfusion-tests",
         ),
@@ -233,12 +237,12 @@ def _make_config(
 
 def test_worker_crash_raises_error() -> None:
     """Worker process crash is detected and raises ShardyfusionError."""
-    config = HashWriteConfig(
+    config = HashShardedWriteConfig(
         num_dbs=2,
         s3_prefix="s3://bucket/test",
         adapter_factory=_crashing_factory,
-        manifest=ManifestOptions(store=InMemoryManifestStore()),
-        output=OutputOptions(run_id="crash-test"),
+        manifest=WriterManifestConfig(store=InMemoryManifestStore()),
+        output=WriterOutputConfig(run_id="crash-test"),
     )
 
     records = [{"id": i, "val": b"x"} for i in range(100)]
@@ -432,7 +436,7 @@ def test_write_sharded_parallel_retry_records_succeeded_run_record(
     )
     config.adapter_factory = _FailOnceMarkerFactory(str(marker_path))
 
-    result = write_sharded_by_hash(
+    result = write_hash_sharded(
         [{"id": i, "val": b"x"} for i in range(10)],
         config,
         key_fn=lambda r: r["id"],

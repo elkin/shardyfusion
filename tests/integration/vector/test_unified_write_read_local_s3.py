@@ -18,10 +18,10 @@ import pytest
 pytest.importorskip("cel_expr_python", reason="requires cel extra")
 
 from shardyfusion.config import (
-    CelWriteConfig,
-    ManifestOptions,
-    OutputOptions,
+    CelShardedWriteConfig,
     VectorSpec,
+    WriterManifestConfig,
+    WriterOutputConfig,
 )
 from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.manifest_store import S3ManifestStore
@@ -259,12 +259,14 @@ class TestUnifiedWriteReadRoundTrip:
             SqliteVecFactory,
             SqliteVecReaderFactory,
         )
-        from shardyfusion.writer.python.writer import write_sharded_by_cel
+        from tests.helpers.writer_api import (
+            write_python_cel_sharded as write_cel_sharded,
+        )
 
         rng = np.random.default_rng(42)
         records = _make_records(rng)
 
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix=s3_prefix,
             cel_expr="shard_hash(key) % 3u",
             cel_columns={"key": "int"},
@@ -275,16 +277,16 @@ class TestUnifiedWriteReadRoundTrip:
                 credential_provider=cred_provider,
                 s3_connection_options=s3_conn_opts,
             ),
-            manifest=ManifestOptions(
+            manifest=WriterManifestConfig(
                 credential_provider=cred_provider,
                 s3_connection_options=s3_conn_opts,
             ),
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
-            output=OutputOptions(local_root=str(tmp_path / "unified_writer")),
+            output=WriterOutputConfig(local_root=str(tmp_path / "unified_writer")),
         )
 
-        result = write_sharded_by_cel(
+        result = write_cel_sharded(
             records,
             config,
             key_fn=lambda r: r.key,
@@ -348,12 +350,14 @@ class TestUnifiedWriteReadRoundTrip:
     ) -> None:
         """vector_col extracts vectors from columns_fn without explicit vector_fn."""
         from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-        from shardyfusion.writer.python.writer import write_sharded_by_cel
+        from tests.helpers.writer_api import (
+            write_python_cel_sharded as write_cel_sharded,
+        )
 
         rng = np.random.default_rng(123)
         records = _make_records(rng)
 
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix=f"{s3_prefix}-col",
             cel_expr="shard_hash(key) % 3u",
             cel_columns={"key": "int"},
@@ -364,16 +368,16 @@ class TestUnifiedWriteReadRoundTrip:
                 credential_provider=cred_provider,
                 s3_connection_options=s3_conn_opts,
             ),
-            manifest=ManifestOptions(
+            manifest=WriterManifestConfig(
                 credential_provider=cred_provider,
                 s3_connection_options=s3_conn_opts,
             ),
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
-            output=OutputOptions(local_root=str(tmp_path / "unified_writer2")),
+            output=WriterOutputConfig(local_root=str(tmp_path / "unified_writer2")),
         )
 
-        result = write_sharded_by_cel(
+        result = write_cel_sharded(
             records,
             config,
             key_fn=lambda r: r.key,

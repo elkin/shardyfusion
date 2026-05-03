@@ -6,12 +6,16 @@ import numpy as np
 import pytest
 
 from shardyfusion._writer_core import VectorColumnMapping, resolve_distributed_vector_fn
-from shardyfusion.config import CelWriteConfig, HashWriteConfig, VectorSpec
+from shardyfusion.config import (
+    CelShardedWriteConfig,
+    HashShardedWriteConfig,
+    VectorSpec,
+)
 from shardyfusion.errors import ConfigValidationError
 
 
-def _cel_config(vector_spec: VectorSpec | None) -> CelWriteConfig:
-    return CelWriteConfig(
+def _cel_config(vector_spec: VectorSpec | None) -> CelShardedWriteConfig:
+    return CelShardedWriteConfig(
         s3_prefix="s3://bucket/prefix",
         cel_expr="key % 2",
         cel_columns={"key": "int"},
@@ -21,7 +25,7 @@ def _cel_config(vector_spec: VectorSpec | None) -> CelWriteConfig:
 
 class TestResolveDistributedVectorFn:
     def test_no_vector_spec_returns_none(self) -> None:
-        config = HashWriteConfig(num_dbs=2, s3_prefix="s3://bucket/prefix")
+        config = HashShardedWriteConfig(num_dbs=2, s3_prefix="s3://bucket/prefix")
         result = resolve_distributed_vector_fn(
             config=config, key_col="key", vector_fn=None, vector_columns=None
         )
@@ -39,7 +43,7 @@ class TestResolveDistributedVectorFn:
         assert result is sentinel_fn
 
     def test_vector_fn_without_vector_spec_raises(self) -> None:
-        config = HashWriteConfig(num_dbs=2, s3_prefix="s3://bucket/prefix")
+        config = HashShardedWriteConfig(num_dbs=2, s3_prefix="s3://bucket/prefix")
         with pytest.raises(ConfigValidationError, match="vector_fn requires"):
             resolve_distributed_vector_fn(
                 config=config,

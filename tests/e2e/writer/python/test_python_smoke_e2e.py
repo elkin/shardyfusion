@@ -29,18 +29,18 @@ def _s3(svc):
 
 
 def _hash_write_fn(data, config):
-    from shardyfusion.writer.python import write_sharded_by_hash
+    from tests.helpers.writer_api import write_python_hash_sharded as write_hash_sharded
 
-    return write_sharded_by_hash(
+    return write_hash_sharded(
         data, config, key_fn=lambda r: r[0], value_fn=lambda r: r[1]
     )
 
 
 def _cel_write_fn(data, config):
     """Write using CEL routing (no extra context columns)."""
-    from shardyfusion.writer.python import write_sharded_by_cel
+    from tests.helpers.writer_api import write_python_cel_sharded as write_cel_sharded
 
-    return write_sharded_by_cel(
+    return write_cel_sharded(
         data,
         config,
         key_fn=lambda r: r[0],
@@ -50,9 +50,9 @@ def _cel_write_fn(data, config):
 
 def _cel_context_write_fn(data, config):
     """Like _cel_write_fn but provides the ``group`` column for CEL routing."""
-    from shardyfusion.writer.python import write_sharded_by_cel
+    from tests.helpers.writer_api import write_python_cel_sharded as write_cel_sharded
 
-    return write_sharded_by_cel(
+    return write_cel_sharded(
         data,
         config,
         key_fn=lambda r: r[0],
@@ -62,13 +62,13 @@ def _cel_context_write_fn(data, config):
 
 
 def _hash_retry_write_fn(data, config):
-    from shardyfusion.writer.python import write_sharded_by_hash
+    from tests.helpers.writer_api import write_python_hash_sharded as write_hash_sharded
 
     config.shard_retry = RetryConfig(
         max_retries=1,
         initial_backoff=timedelta(seconds=0),
     )
-    return write_sharded_by_hash(
+    return write_hash_sharded(
         data,
         config,
         key_fn=lambda r: r[0],

@@ -6,7 +6,7 @@
 
 | Concern | Function | Source |
 |---|---|---|
-| Resolve `num_dbs` from `HashWriteConfig` | `resolve_num_dbs` | `_writer_core.py:172` |
+| Resolve `num_dbs` from `HashShardedWriteConfig` | `resolve_num_dbs` | `_writer_core.py:172` |
 | Resolve CEL `num_dbs` from spec | `resolve_cel_num_dbs` | `_writer_core.py:277` |
 | Discover CEL `num_dbs` from data | `discover_cel_num_dbs` | `_writer_core.py:245` |
 | Build categorical CEL routing values | `build_categorical_routing_values` | `_writer_core.py:293` |

@@ -4,13 +4,18 @@ import logging
 import math
 import time
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from operator import index as operator_index
-from typing import Any, Literal, Protocol, SupportsIndex, cast
+from typing import Any, Literal, Protocol, SupportsIndex, TypeAlias, cast
 
-from .config import HashWriteConfig, WriteConfig, vector_metric_to_str
+from .config import (
+    BaseShardedWriteConfig,
+    HashShardedWriteConfig,
+    VectorColumnInput,
+    vector_metric_to_str,
+)
 from .errors import (
     ConfigValidationError,
     PublishCurrentError,
@@ -70,13 +75,7 @@ def _normalize_vector_id(raw_id: object) -> int | str:
         return str(raw_id)
 
 
-@dataclass(slots=True, frozen=True)
-class VectorColumnMapping:
-    """Column-based vector extraction config for distributed writers."""
-
-    vector_col: str
-    id_col: str | None = None
-    payload_cols: Sequence[str] | None = None
+VectorColumnMapping: TypeAlias = VectorColumnInput
 
 
 @dataclass(slots=True)
@@ -170,8 +169,8 @@ def route_cel(
         raise
 
 
-def resolve_num_dbs(config: HashWriteConfig, count_fn: Callable[[], int]) -> int:
-    """Resolve num_dbs from HashWriteConfig or max_keys_per_shard.
+def resolve_num_dbs(config: HashShardedWriteConfig, count_fn: Callable[[], int]) -> int:
+    """Resolve num_dbs from HashShardedWriteConfig or max_keys_per_shard.
 
     Args:
         config: Hash write configuration.
@@ -187,13 +186,13 @@ def resolve_num_dbs(config: HashWriteConfig, count_fn: Callable[[], int]) -> int
         return max(1, math.ceil(count / config.max_keys_per_shard))
 
     raise AssertionError(
-        "Either num_dbs or max_keys_per_shard must be set in HashWriteConfig"
+        "Either num_dbs or max_keys_per_shard must be set in HashShardedWriteConfig"
     )
 
 
 def resolve_distributed_vector_fn(
     *,
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     key_col: str,
     vector_fn: Callable[[_RowLike], tuple[int | str, Any, dict[str, Any] | None]]
     | None,
@@ -379,7 +378,7 @@ def _winner_sort_key(item: ShardAttemptResult) -> tuple[int, int, str]:
     return (item.attempt, normalized, item.db_url or "")
 
 
-def wrap_factory_for_vector(factory: Any, config: WriteConfig) -> Any:
+def wrap_factory_for_vector(factory: Any, config: BaseShardedWriteConfig) -> Any:
     """Wrap KV factory for unified KV+vector mode when needed."""
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
 
@@ -442,7 +441,7 @@ def detect_kv_backend(factory: Any) -> str:
     return "slatedb"
 
 
-def inject_vector_manifest_fields(config: WriteConfig, factory: Any) -> None:
+def inject_vector_manifest_fields(config: BaseShardedWriteConfig, factory: Any) -> None:
     """Add unified vector metadata to manifest custom fields."""
     vs = config.vector_spec
     assert vs is not None
@@ -464,7 +463,7 @@ def inject_vector_manifest_fields(config: WriteConfig, factory: Any) -> None:
 
 def publish_to_store(
     *,
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     run_id: str,
     resolved_sharding: ShardingSpec,
     winners: list[RequiredShardMeta],

@@ -19,20 +19,20 @@ ray.data = pytest.importorskip("ray.data")
 def test_ray_vector_cluster_write_to_sqlite(garage_s3_service, tmp_path) -> None:
     """Ray writes 1000 vectors with CLUSTER strategy to SQLite backend."""
     from shardyfusion.config import (
-        ManifestOptions,
-        OutputOptions,
         VectorSpec,
+        WriterManifestConfig,
+        WriterOutputConfig,
     )
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
     from shardyfusion.vector.config import (
         VectorIndexConfig,
+        VectorShardedWriteConfig,
         VectorShardingSpec,
         VectorShardingStrategy,
         VectorSpecSharding,
-        VectorWriteConfig,
     )
-    from shardyfusion.writer.ray import write_vector_sharded
     from tests.helpers.s3_test_scenarios import _make_s3_manifest_store
+    from tests.helpers.writer_api import write_ray_vector_sharded as write_sharded
 
     bucket = garage_s3_service["bucket"]
     prefix = f"{bucket}/ray-vector-cluster-e2e"
@@ -49,7 +49,7 @@ def test_ray_vector_cluster_write_to_sqlite(garage_s3_service, tmp_path) -> None
     data = [{"id": i, "embedding": vectors[i].tolist()} for i in range(num_records)]
     ds = ray.data.from_items(data)
 
-    config = VectorWriteConfig(
+    config = VectorShardedWriteConfig(
         num_dbs=num_dbs,
         s3_prefix=f"s3://{prefix}",
         index_config=VectorIndexConfig(dim=dim),
@@ -57,7 +57,7 @@ def test_ray_vector_cluster_write_to_sqlite(garage_s3_service, tmp_path) -> None
             strategy=VectorShardingStrategy.CLUSTER,
             train_centroids=True,
         ),
-        output=OutputOptions(run_id=run_id, local_root=str(tmp_path)),
+        output=WriterOutputConfig(run_id=run_id, local_root=str(tmp_path)),
         adapter_factory=SqliteVecFactory(
             vector_spec=VectorSpec(
                 dim=dim,
@@ -72,7 +72,7 @@ def test_ray_vector_cluster_write_to_sqlite(garage_s3_service, tmp_path) -> None
         ),
         credential_provider=creds,
         s3_connection_options=opts,
-        manifest=ManifestOptions(
+        manifest=WriterManifestConfig(
             store=_make_s3_manifest_store(
                 f"s3://{prefix}",
                 credential_provider=creds,
@@ -82,7 +82,7 @@ def test_ray_vector_cluster_write_to_sqlite(garage_s3_service, tmp_path) -> None
         batch_size=100,
     )
 
-    result = write_vector_sharded(
+    result = write_sharded(
         ds,
         config,
         vector_col="embedding",
@@ -101,20 +101,20 @@ def test_ray_vector_cluster_write_to_sqlite(garage_s3_service, tmp_path) -> None
 def test_ray_vector_lsh_write_to_sqlite(garage_s3_service, tmp_path) -> None:
     """Ray writes 1000 vectors with LSH strategy to SQLite backend."""
     from shardyfusion.config import (
-        ManifestOptions,
-        OutputOptions,
         VectorSpec,
+        WriterManifestConfig,
+        WriterOutputConfig,
     )
     from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
     from shardyfusion.vector.config import (
         VectorIndexConfig,
+        VectorShardedWriteConfig,
         VectorShardingSpec,
         VectorShardingStrategy,
         VectorSpecSharding,
-        VectorWriteConfig,
     )
-    from shardyfusion.writer.ray import write_vector_sharded
     from tests.helpers.s3_test_scenarios import _make_s3_manifest_store
+    from tests.helpers.writer_api import write_ray_vector_sharded as write_sharded
 
     bucket = garage_s3_service["bucket"]
     prefix = f"{bucket}/ray-vector-lsh-e2e"
@@ -131,7 +131,7 @@ def test_ray_vector_lsh_write_to_sqlite(garage_s3_service, tmp_path) -> None:
     data = [{"id": i, "embedding": vectors[i].tolist()} for i in range(num_records)]
     ds = ray.data.from_items(data)
 
-    config = VectorWriteConfig(
+    config = VectorShardedWriteConfig(
         num_dbs=num_dbs,
         s3_prefix=f"s3://{prefix}",
         index_config=VectorIndexConfig(dim=dim),
@@ -139,7 +139,7 @@ def test_ray_vector_lsh_write_to_sqlite(garage_s3_service, tmp_path) -> None:
             strategy=VectorShardingStrategy.LSH,
             num_hash_bits=4,
         ),
-        output=OutputOptions(run_id=run_id, local_root=str(tmp_path)),
+        output=WriterOutputConfig(run_id=run_id, local_root=str(tmp_path)),
         adapter_factory=SqliteVecFactory(
             vector_spec=VectorSpec(
                 dim=dim,
@@ -154,7 +154,7 @@ def test_ray_vector_lsh_write_to_sqlite(garage_s3_service, tmp_path) -> None:
         ),
         credential_provider=creds,
         s3_connection_options=opts,
-        manifest=ManifestOptions(
+        manifest=WriterManifestConfig(
             store=_make_s3_manifest_store(
                 f"s3://{prefix}",
                 credential_provider=creds,
@@ -164,7 +164,7 @@ def test_ray_vector_lsh_write_to_sqlite(garage_s3_service, tmp_path) -> None:
         batch_size=100,
     )
 
-    result = write_vector_sharded(
+    result = write_sharded(
         ds,
         config,
         vector_col="embedding",

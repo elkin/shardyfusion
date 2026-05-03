@@ -24,17 +24,17 @@ def _make_write_fn(spark):
 
     def write_fn(data, config):
         from shardyfusion.serde import ValueSpec
-        from shardyfusion.writer.spark import (
-            write_sharded_by_cel,
-            write_sharded_by_hash,
+        from tests.helpers.writer_api import (
+            write_spark_cel_sharded,
+            write_spark_hash_sharded,
         )
 
         df = spark.createDataFrame(data, ["key", "value", "group"])
         if hasattr(config, "cel_expr"):
-            return write_sharded_by_cel(
+            return write_spark_cel_sharded(
                 df, config, key_col="key", value_spec=ValueSpec.binary_col("value")
             )
-        return write_sharded_by_hash(
+        return write_spark_hash_sharded(
             df, config, key_col="key", value_spec=ValueSpec.binary_col("value")
         )
 

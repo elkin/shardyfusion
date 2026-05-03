@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from shardyfusion.config import OutputOptions
+from shardyfusion.config import WriterOutputConfig
 from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.manifest_store import S3ManifestStore
 from shardyfusion.storage import ObstoreBackend, create_s3_store, parse_s3_url
@@ -23,8 +23,8 @@ from shardyfusion.vector.adapters.lancedb_adapter import (
 )
 from shardyfusion.vector.config import (
     VectorIndexConfig,
+    VectorShardedWriteConfig,
     VectorShardingSpec,
-    VectorWriteConfig,
 )
 from shardyfusion.vector.reader import ShardedVectorReader
 from shardyfusion.vector.types import (
@@ -32,7 +32,7 @@ from shardyfusion.vector.types import (
     VectorRecord,
     VectorShardingStrategy,
 )
-from shardyfusion.vector.writer import write_vector_sharded
+from shardyfusion.vector.writer import write_sharded
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -102,7 +102,7 @@ class TestVectorWriterReaderRoundTrip:
             [rng.standard_normal(32).astype(np.float32) for _ in range(4)]
         )
 
-        config = VectorWriteConfig(
+        config = VectorShardedWriteConfig(
             num_dbs=4,
             s3_prefix=s3_prefix,
             index_config=VectorIndexConfig(dim=32, metric=DistanceMetric.L2),
@@ -118,11 +118,11 @@ class TestVectorWriterReaderRoundTrip:
             batch_size=50,
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
-            output=OutputOptions(local_root=str(tmp_path / "writer")),
+            output=WriterOutputConfig(local_root=str(tmp_path / "writer")),
         )
 
         # Write
-        result = write_vector_sharded(records, config)
+        result = write_sharded(records, config)
         assert result.manifest_ref is not None
         assert result.stats.rows_written == 100
 
@@ -177,7 +177,7 @@ class TestVectorWriterReaderRoundTrip:
                 )
             )
 
-        config = VectorWriteConfig(
+        config = VectorShardedWriteConfig(
             num_dbs=3,
             s3_prefix=prefix,
             index_config=VectorIndexConfig(dim=16, metric=DistanceMetric.COSINE),
@@ -191,10 +191,10 @@ class TestVectorWriterReaderRoundTrip:
             batch_size=25,
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
-            output=OutputOptions(local_root=str(tmp_path / "writer_explicit")),
+            output=WriterOutputConfig(local_root=str(tmp_path / "writer_explicit")),
         )
 
-        result = write_vector_sharded(records, config)
+        result = write_sharded(records, config)
         assert result.stats.rows_written == 60
 
         # Read back
@@ -231,7 +231,7 @@ class TestVectorWriterReaderRoundTrip:
         prefix = f"{s3_prefix}/lsh"
         records = _make_records(rng, n=50, dim=16)
 
-        config = VectorWriteConfig(
+        config = VectorShardedWriteConfig(
             num_dbs=4,
             s3_prefix=prefix,
             index_config=VectorIndexConfig(dim=16, metric=DistanceMetric.L2),
@@ -247,10 +247,10 @@ class TestVectorWriterReaderRoundTrip:
             batch_size=20,
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
-            output=OutputOptions(local_root=str(tmp_path / "writer_lsh")),
+            output=WriterOutputConfig(local_root=str(tmp_path / "writer_lsh")),
         )
 
-        result = write_vector_sharded(records, config)
+        result = write_sharded(records, config)
         assert result.stats.rows_written == 50
         assert result.manifest_ref is not None
 
@@ -288,7 +288,7 @@ class TestVectorWriterReaderRoundTrip:
         prefix = f"{s3_prefix}/health"
         records = _make_records(rng, n=20, dim=8)
 
-        config = VectorWriteConfig(
+        config = VectorShardedWriteConfig(
             num_dbs=2,
             s3_prefix=prefix,
             index_config=VectorIndexConfig(dim=8, metric=DistanceMetric.L2),
@@ -301,14 +301,14 @@ class TestVectorWriterReaderRoundTrip:
             ),
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
-            output=OutputOptions(local_root=str(tmp_path / "writer_health")),
+            output=WriterOutputConfig(local_root=str(tmp_path / "writer_health")),
         )
 
         # All records go to shard 0
         for r in records:
             r.shard_id = 0
 
-        write_vector_sharded(records, config)
+        write_sharded(records, config)
 
         reader = ShardedVectorReader(
             s3_prefix=prefix,

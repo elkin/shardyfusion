@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import pytest
 
-from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
+from shardyfusion.config import (
+    HashShardedWriteConfig,
+    WriterManifestConfig,
+    WriterOutputConfig,
+)
 from shardyfusion.manifest import BuildStats
 from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.serde import ValueSpec
 from shardyfusion.testing import real_file_adapter_factory
-from shardyfusion.writer.spark import write_sharded_by_hash
+from tests.helpers.writer_api import write_spark_hash_sharded as write_hash_sharded
 
 
 @pytest.mark.spark
@@ -16,15 +20,15 @@ def test_write_sharded_flow_with_in_memory_store(spark, tmp_path) -> None:
     df = spark.createDataFrame(rows, ["id", "payload"])
 
     store = InMemoryManifestStore()
-    config = HashWriteConfig(
+    config = HashShardedWriteConfig(
         num_dbs=4,
         s3_prefix="s3://bucket/prefix",
-        manifest=ManifestOptions(store=store),
+        manifest=WriterManifestConfig(store=store),
         adapter_factory=real_file_adapter_factory(str(tmp_path / "object-store")),
-        output=OutputOptions(run_id="run-test-1"),
+        output=WriterOutputConfig(run_id="run-test-1"),
     )
 
-    result = write_sharded_by_hash(
+    result = write_hash_sharded(
         df,
         config,
         key_col="id",

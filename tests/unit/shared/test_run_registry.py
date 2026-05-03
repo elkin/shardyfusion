@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from shardyfusion.config import HashWriteConfig, ManifestOptions
+from shardyfusion.config import HashShardedWriteConfig, WriterManifestConfig
 from shardyfusion.credentials import S3Credentials, StaticCredentialProvider
 from shardyfusion.run_registry import (
     InMemoryRunRegistry,
@@ -63,8 +63,8 @@ class _RecordingRegistry:
         return self.records[ref].model_copy(deep=True)
 
 
-def _config(*, registry: InMemoryRunRegistry | None = None) -> HashWriteConfig:
-    return HashWriteConfig(
+def _config(*, registry: InMemoryRunRegistry | None = None) -> HashShardedWriteConfig:
+    return HashShardedWriteConfig(
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
         run_registry=registry,
@@ -193,7 +193,7 @@ def test_resolve_run_registry_uses_only_writer_s3_settings(
         "shardyfusion.run_registry.ObstoreBackend", fake_obstore_backend
     )
 
-    cfg = HashWriteConfig(
+    cfg = HashShardedWriteConfig(
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
         credential_provider=StaticCredentialProvider(
@@ -201,7 +201,7 @@ def test_resolve_run_registry_uses_only_writer_s3_settings(
             secret_access_key="writer-secret",
         ),
         s3_connection_options={"endpoint_url": "http://writer.example"},
-        manifest=ManifestOptions(
+        manifest=WriterManifestConfig(
             credential_provider=StaticCredentialProvider(
                 access_key_id="manifest-key",
                 secret_access_key="manifest-secret",
@@ -258,10 +258,10 @@ def test_resolve_run_registry_does_not_use_manifest_s3_settings(
         "shardyfusion.run_registry.ObstoreBackend", lambda store: _RecordingBackend()
     )
 
-    cfg = HashWriteConfig(
+    cfg = HashShardedWriteConfig(
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
-        manifest=ManifestOptions(
+        manifest=WriterManifestConfig(
             credential_provider=StaticCredentialProvider(
                 access_key_id="manifest-key",
                 secret_access_key="manifest-secret",

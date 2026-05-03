@@ -26,17 +26,18 @@ def _s3(svc):
 def _write_fn(data, config):
     import ray.data
 
-    from shardyfusion.config import CelWriteConfig
+    from shardyfusion.config import CelShardedWriteConfig
     from shardyfusion.serde import ValueSpec
-    from shardyfusion.writer.ray import write_sharded_by_cel, write_sharded_by_hash
+    from tests.helpers.writer_api import write_ray_cel_sharded as write_cel_sharded
+    from tests.helpers.writer_api import write_ray_hash_sharded as write_hash_sharded
 
     items = [{"key": k, "value": v, "group": g} for k, v, g in data]
     ds = ray.data.from_items(items, override_num_blocks=2)
-    if isinstance(config, CelWriteConfig):
-        return write_sharded_by_cel(
+    if isinstance(config, CelShardedWriteConfig):
+        return write_cel_sharded(
             ds, config, key_col="key", value_spec=ValueSpec.binary_col("value")
         )
-    return write_sharded_by_hash(
+    return write_hash_sharded(
         ds, config, key_col="key", value_spec=ValueSpec.binary_col("value")
     )
 
@@ -44,9 +45,10 @@ def _write_fn(data, config):
 def _retry_write_fn(data, config):
     import ray.data
 
-    from shardyfusion.config import CelWriteConfig
+    from shardyfusion.config import CelShardedWriteConfig
     from shardyfusion.serde import ValueSpec
-    from shardyfusion.writer.ray import write_sharded_by_cel, write_sharded_by_hash
+    from tests.helpers.writer_api import write_ray_cel_sharded as write_cel_sharded
+    from tests.helpers.writer_api import write_ray_hash_sharded as write_hash_sharded
 
     config.shard_retry = RetryConfig(
         max_retries=1,
@@ -54,11 +56,11 @@ def _retry_write_fn(data, config):
     )
     items = [{"key": k, "value": v, "group": g} for k, v, g in data]
     ds = ray.data.from_items(items, override_num_blocks=2)
-    if isinstance(config, CelWriteConfig):
-        return write_sharded_by_cel(
+    if isinstance(config, CelShardedWriteConfig):
+        return write_cel_sharded(
             ds, config, key_col="key", value_spec=ValueSpec.binary_col("value")
         )
-    return write_sharded_by_hash(
+    return write_hash_sharded(
         ds, config, key_col="key", value_spec=ValueSpec.binary_col("value")
     )
 

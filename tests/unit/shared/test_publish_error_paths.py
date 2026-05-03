@@ -12,7 +12,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from shardyfusion._writer_core import publish_to_store
-from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
+from shardyfusion.config import (
+    HashShardedWriteConfig,
+    WriterManifestConfig,
+    WriterOutputConfig,
+)
 from shardyfusion.errors import PublishCurrentError, PublishManifestError
 from shardyfusion.manifest import (
     ManifestRef,
@@ -99,12 +103,12 @@ class _FakeManifestStore:
         return []
 
 
-def _config(store: _FakeManifestStore) -> HashWriteConfig:
-    return HashWriteConfig(
+def _config(store: _FakeManifestStore) -> HashShardedWriteConfig:
+    return HashShardedWriteConfig(
         num_dbs=2,
         s3_prefix="s3://bucket/prefix",
-        manifest=ManifestOptions(store=store),
-        output=OutputOptions(run_id="r1"),
+        manifest=WriterManifestConfig(store=store),
+        output=WriterOutputConfig(run_id="r1"),
     )
 
 
@@ -124,11 +128,11 @@ class TestPublishToStoreHappyPath:
     def test_metrics_emitted_on_success(self) -> None:
         mc = MagicMock()
         store = _FakeManifestStore()
-        cfg = HashWriteConfig(
+        cfg = HashShardedWriteConfig(
             num_dbs=2,
             s3_prefix="s3://bucket/prefix",
-            manifest=ManifestOptions(store=store),
-            output=OutputOptions(run_id="r1"),
+            manifest=WriterManifestConfig(store=store),
+            output=WriterOutputConfig(run_id="r1"),
             metrics_collector=mc,
         )
         publish_to_store(

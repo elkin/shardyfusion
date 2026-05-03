@@ -10,14 +10,18 @@ import dask.dataframe as dd
 import pandas as pd
 
 from shardyfusion.cel import compile_cel, route_cel
-from shardyfusion.config import CelWriteConfig, ManifestOptions, OutputOptions
+from shardyfusion.config import (
+    CelShardedWriteConfig,
+    WriterManifestConfig,
+    WriterOutputConfig,
+)
 from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.manifest_store import parse_manifest_payload
 from shardyfusion.routing import SnapshotRouter
 from shardyfusion.serde import ValueSpec
 from shardyfusion.testing import file_backed_adapter_factory
 from shardyfusion.type_defs import S3ConnectionOptions
-from shardyfusion.writer.dask import write_sharded_by_cel
+from tests.helpers.writer_api import write_dask_cel_sharded as write_cel_sharded
 
 pytestmark = pytest.mark.cel
 
@@ -27,16 +31,16 @@ def test_dask_cel_unified_publishes_manifest(local_s3_service, tmp_path):
     s3_prefix = f"s3://{bucket}/dask-cel"
     root = str(tmp_path / "file-backed")
 
-    config = CelWriteConfig(
+    config = CelShardedWriteConfig(
         s3_prefix=s3_prefix,
         adapter_factory=file_backed_adapter_factory(root),
         cel_expr="key % 4",
         cel_columns={"key": "int"},
-        output=OutputOptions(
+        output=WriterOutputConfig(
             run_id="dask-cel",
             local_root=str(tmp_path / "local"),
         ),
-        manifest=ManifestOptions(
+        manifest=WriterManifestConfig(
             credential_provider=StaticCredentialProvider(
                 access_key_id=local_s3_service["access_key_id"],
                 secret_access_key=local_s3_service["secret_access_key"],
@@ -51,7 +55,7 @@ def test_dask_cel_unified_publishes_manifest(local_s3_service, tmp_path):
     pdf = pd.DataFrame({"key": list(range(40)), "val": [f"v{i}" for i in range(40)]})
     ddf = dd.from_pandas(pdf, npartitions=2)
 
-    result = write_sharded_by_cel(
+    result = write_cel_sharded(
         ddf,
         config,
         key_col="key",

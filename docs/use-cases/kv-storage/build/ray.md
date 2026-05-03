@@ -29,23 +29,25 @@ uv add 'shardyfusion[writer-ray-sqlite]'
 
 ```python
 import ray
-from shardyfusion import HashWriteConfig
-from shardyfusion.writer.ray import write_sharded_by_hash
+from shardyfusion import ColumnWriteInput, HashShardedWriteConfig
+from shardyfusion.writer.ray import write_hash_sharded
 from shardyfusion.serde import ValueSpec
 
 ray.init()
 ds = ray.data.read_parquet("s3://lake/users/")
 
-config = HashWriteConfig(
+config = HashShardedWriteConfig(
     num_dbs=16,
     s3_prefix="s3://my-bucket/snapshots/users",
 )
 
-result = write_sharded_by_hash(
+result = write_hash_sharded(
     ds,
     config,
-    key_col="id",
-    value_spec=ValueSpec.binary_col("payload"),
+    ColumnWriteInput(
+        key_col="id",
+        value_spec=ValueSpec.binary_col("payload"),
+    ),
 )
 print(result.manifest_ref.ref)
 ```
@@ -53,21 +55,23 @@ print(result.manifest_ref.ref)
 ### CEL routing
 
 ```python
-from shardyfusion import CelWriteConfig
-from shardyfusion.writer.ray import write_sharded_by_cel
+from shardyfusion import CelShardedWriteConfig, ColumnWriteInput
+from shardyfusion.writer.ray import write_cel_sharded
 from shardyfusion.serde import ValueSpec
 
-config = CelWriteConfig(
+config = CelShardedWriteConfig(
     cel_expr='key % 16u',
     cel_columns={"key": "int"},
     s3_prefix="s3://my-bucket/snapshots/users-cel",
 )
 
-result = write_sharded_by_cel(
+result = write_cel_sharded(
     ds,
     config,
-    key_col="id",
-    value_spec=ValueSpec.binary_col("payload"),
+    ColumnWriteInput(
+        key_col="id",
+        value_spec=ValueSpec.binary_col("payload"),
+    ),
 )
 ```
 
@@ -78,7 +82,7 @@ Swap `adapter_factory` on either config:
 ```python
 from shardyfusion.sqlite_adapter import SqliteFactory
 
-config = HashWriteConfig(
+config = HashShardedWriteConfig(
     num_dbs=16,
     s3_prefix="s3://my-bucket/snapshots/users-sqlite",
     adapter_factory=SqliteFactory(),
@@ -89,7 +93,7 @@ config = HashWriteConfig(
 
 ```mermaid
 flowchart TD
-    A[Ray Dataset + HashWriteConfig / CelWriteConfig] --> B["Assign shard IDs<br/>(Arrow-native, hash or CEL)"]
+    A[Ray Dataset + HashShardedWriteConfig / CelShardedWriteConfig] --> B["Assign shard IDs<br/>(Arrow-native, hash or CEL)"]
     B --> C{"verify_routing?"}
     C -->|yes| D["Verify routing<br/>(sample 20 rows)"]
     C -->|no| E[Skip verification]
@@ -106,15 +110,26 @@ flowchart TD
 
 ## Configuration
 
-Ray-specific knobs on `write_sharded_by_hash` and `write_sharded_by_cel` (`shardyfusion/writer/ray/writer.py`):
+Ray writer signature:
+
+```python
+write_hash_sharded(ds, config, input: ColumnWriteInput, options: RayWriteOptions | None = None)
+write_cel_sharded(ds, config, input: ColumnWriteInput, options: RayWriteOptions | None = None)
+```
+
+`ColumnWriteInput` fields:
 
 | Param | Default | Purpose |
 |---|---|---|
 | `key_col` | required | Column used for routing. |
 | `value_spec` | required | Row -> bytes encoder. |
+
+`RayWriteOptions` fields:
+
+| Field | Default | Purpose |
+|---|---|---|
 | `sort_within_partitions` | `False` | Sort each partition by `key_col`. |
 | `verify_routing` | `True` | Re-verify writer/reader routing agreement. |
-| `max_writes_per_second` / `max_write_bytes_per_second` | `None` | Rate limits. |
 
 Internally the writer:
 
@@ -138,7 +153,7 @@ Internally the writer:
 - Atomic two-phase publish (same as all writers).
 - One Ray task per shard after repartition.
 - The shuffle-strategy swap is **process-global**: don't run two unrelated Ray Data pipelines in the same process during the build.
-- **Rate limiting**: per-shard scope. Aggregate rate = `max_writes_per_second x num_dbs`.
+- **Rate limiting**: per-shard scope. Aggregate rate = `config.rate_limits.max_writes_per_second x num_dbs`.
 
 ## Guarantees
 

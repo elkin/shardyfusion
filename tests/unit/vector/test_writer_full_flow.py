@@ -1,4 +1,4 @@
-"""Tests for vector writer full flow: write_vector_sharded end-to-end with mocks."""
+"""Tests for vector writer full flow: write_sharded end-to-end with mocks."""
 
 from __future__ import annotations
 
@@ -10,13 +10,13 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from shardyfusion.config import OutputOptions
+from shardyfusion.config import WriterOutputConfig
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.run_registry import InMemoryRunRegistry
 from shardyfusion.vector.config import (
     VectorIndexConfig,
+    VectorShardedWriteConfig,
     VectorShardingSpec,
-    VectorWriteConfig,
 )
 from shardyfusion.vector.types import VectorRecord, VectorShardingStrategy
 
@@ -79,13 +79,13 @@ def _explicit_config(
     batch_size: int = 100,
     metrics_collector: Any = None,
     max_writes_per_second: float | None = None,
-) -> VectorWriteConfig:
-    return VectorWriteConfig(
+) -> VectorShardedWriteConfig:
+    return VectorShardedWriteConfig(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/prefix",
         index_config=VectorIndexConfig(dim=4),
         sharding=VectorShardingSpec(strategy=VectorShardingStrategy.EXPLICIT),
-        output=OutputOptions(local_root=str(tmp_path)),
+        output=WriterOutputConfig(local_root=str(tmp_path)),
         batch_size=batch_size,
         metrics_collector=metrics_collector,
         max_writes_per_second=max_writes_per_second,
@@ -97,8 +97,8 @@ def _cluster_config(
     num_dbs: int = 2,
     centroids: np.ndarray | None = None,
     train_centroids: bool = False,
-) -> VectorWriteConfig:
-    return VectorWriteConfig(
+) -> VectorShardedWriteConfig:
+    return VectorShardedWriteConfig(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/prefix",
         index_config=VectorIndexConfig(dim=4),
@@ -107,15 +107,15 @@ def _cluster_config(
             centroids=centroids,
             train_centroids=train_centroids,
         ),
-        output=OutputOptions(local_root=str(tmp_path)),
+        output=WriterOutputConfig(local_root=str(tmp_path)),
     )
 
 
 def _lsh_config(
     tmp_path: Path,
     num_dbs: int = 4,
-) -> VectorWriteConfig:
-    return VectorWriteConfig(
+) -> VectorShardedWriteConfig:
+    return VectorShardedWriteConfig(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/prefix",
         index_config=VectorIndexConfig(dim=4),
@@ -123,7 +123,7 @@ def _lsh_config(
             strategy=VectorShardingStrategy.LSH,
             num_hash_bits=3,
         ),
-        output=OutputOptions(local_root=str(tmp_path)),
+        output=WriterOutputConfig(local_root=str(tmp_path)),
     )
 
 
@@ -139,16 +139,16 @@ def _make_records(n: int, shard_id: int = 0) -> list[VectorRecord]:
 
 
 # ---------------------------------------------------------------------------
-# write_vector_sharded full flow tests
+# write_sharded full flow tests
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.usefixtures("_patch_obstore_backend")
 class TestWriteVectorShardedExplicit:
-    """Test write_vector_sharded with EXPLICIT sharding (no optional deps)."""
+    """Test write_sharded with EXPLICIT sharding (no optional deps)."""
 
     def test_basic_flow(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import write_vector_sharded
+        from shardyfusion.vector.writer import write_sharded
 
         factory = _MockFactory()
         config = _explicit_config(tmp_path, num_dbs=2)
@@ -165,7 +165,7 @@ class TestWriteVectorShardedExplicit:
         mock_store.publish.return_value = "s3://bucket/prefix/manifests/test/manifest"
         config.manifest.store = mock_store
 
-        result = write_vector_sharded(records, config)
+        result = write_sharded(records, config)
 
         assert result.run_id is not None
         assert result.manifest_ref == "s3://bucket/prefix/manifests/test/manifest"
@@ -173,7 +173,7 @@ class TestWriteVectorShardedExplicit:
         assert result.stats.rows_written == 3
 
     def test_empty_records(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import write_vector_sharded
+        from shardyfusion.vector.writer import write_sharded
 
         factory = _MockFactory()
         config = _explicit_config(tmp_path, num_dbs=2)
@@ -183,13 +183,13 @@ class TestWriteVectorShardedExplicit:
         mock_store.publish.return_value = "s3://manifest"
         config.manifest.store = mock_store
 
-        result = write_vector_sharded([], config)
+        result = write_sharded([], config)
 
         assert result.stats.rows_written == 0
         assert len(result.winners) == 0
 
     def test_run_registry_populated(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import write_vector_sharded
+        from shardyfusion.vector.writer import write_sharded
 
         factory = _MockFactory()
         registry = InMemoryRunRegistry()
@@ -201,7 +201,7 @@ class TestWriteVectorShardedExplicit:
         mock_store.publish.return_value = "s3://manifest"
         config.manifest.store = mock_store
 
-        result = write_vector_sharded(_make_records(1, shard_id=0), config)
+        result = write_sharded(_make_records(1, shard_id=0), config)
 
         assert result.run_record_ref is not None
         record = registry.load(result.run_record_ref)
@@ -209,7 +209,7 @@ class TestWriteVectorShardedExplicit:
         assert record.manifest_ref == "s3://manifest"
 
     def test_metrics_collector_emits_events(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import write_vector_sharded
+        from shardyfusion.vector.writer import write_sharded
 
         factory = _MockFactory()
         mc = MagicMock()
@@ -223,7 +223,7 @@ class TestWriteVectorShardedExplicit:
         records = [
             VectorRecord(id=0, vector=np.zeros(4, dtype=np.float32), shard_id=0),
         ]
-        write_vector_sharded(records, config)
+        write_sharded(records, config)
 
         # Should have emitted VECTOR_WRITE_STARTED, VECTOR_SHARD_WRITE_COMPLETED,
         # VECTOR_WRITE_COMPLETED
@@ -235,7 +235,7 @@ class TestWriteVectorShardedExplicit:
         assert MetricEvent.VECTOR_WRITE_COMPLETED in event_names
 
     def test_rate_limiter_used(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import write_vector_sharded
+        from shardyfusion.vector.writer import write_sharded
 
         factory = _MockFactory()
         config = _explicit_config(
@@ -248,12 +248,12 @@ class TestWriteVectorShardedExplicit:
         config.manifest.store = mock_store
 
         records = _make_records(3, shard_id=0)
-        result = write_vector_sharded(records, config)
+        result = write_sharded(records, config)
         assert result.stats.rows_written == 3
 
     def test_zero_row_shard_excluded_from_winners(self, tmp_path: Path) -> None:
         """Shards with row_count=0 should be excluded from winners."""
-        from shardyfusion.vector.writer import write_vector_sharded
+        from shardyfusion.vector.writer import write_sharded
 
         factory = _MockFactory()
         config = _explicit_config(tmp_path, num_dbs=2)
@@ -267,7 +267,7 @@ class TestWriteVectorShardedExplicit:
         records = [
             VectorRecord(id=0, vector=np.zeros(4, dtype=np.float32), shard_id=0),
         ]
-        result = write_vector_sharded(records, config)
+        result = write_sharded(records, config)
 
         assert len(result.winners) == 1
         assert result.winners[0].db_id == 0
@@ -276,7 +276,7 @@ class TestWriteVectorShardedExplicit:
         """Without adapter_factory, should try to import LanceDbWriterFactory."""
         import builtins
 
-        from shardyfusion.vector.writer import write_vector_sharded
+        from shardyfusion.vector.writer import write_sharded
 
         config = _explicit_config(tmp_path, num_dbs=1)
         # Don't set adapter_factory — let it try the default
@@ -295,15 +295,15 @@ class TestWriteVectorShardedExplicit:
         records = _make_records(1, shard_id=0)
         with patch("builtins.__import__", side_effect=fail_lancedb):
             with pytest.raises(ImportError, match="lancedb"):
-                write_vector_sharded(records, config)
+                write_sharded(records, config)
 
 
 @pytest.mark.usefixtures("_patch_obstore_backend")
 class TestWriteVectorShardedCluster:
-    """Test write_vector_sharded with CLUSTER sharding."""
+    """Test write_sharded with CLUSTER sharding."""
 
     def test_cluster_with_centroids(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import write_vector_sharded
+        from shardyfusion.vector.writer import write_sharded
 
         centroids = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=np.float32)
         factory = _MockFactory()
@@ -319,11 +319,11 @@ class TestWriteVectorShardedCluster:
             VectorRecord(id=1, vector=np.array([0.1, 0.9, 0, 0], dtype=np.float32)),
         ]
 
-        result = write_vector_sharded(records, config)
+        result = write_sharded(records, config)
         assert result.stats.rows_written == 2
 
     def test_cluster_with_training(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import write_vector_sharded
+        from shardyfusion.vector.writer import write_sharded
 
         factory = _MockFactory()
         config = _cluster_config(tmp_path, num_dbs=2, train_centroids=True)
@@ -343,14 +343,14 @@ class TestWriteVectorShardedCluster:
             for i in range(20)
         ]
 
-        result = write_vector_sharded(records, config)
+        result = write_sharded(records, config)
         assert result.stats.rows_written == 20
 
     def test_cluster_infers_num_dbs_from_centroids(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import write_vector_sharded
+        from shardyfusion.vector.writer import write_sharded
 
         centroids = np.eye(3, 4, dtype=np.float32)
-        config = VectorWriteConfig(
+        config = VectorShardedWriteConfig(
             num_dbs=None,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=4),
@@ -358,7 +358,7 @@ class TestWriteVectorShardedCluster:
                 strategy=VectorShardingStrategy.CLUSTER,
                 centroids=centroids,
             ),
-            output=OutputOptions(local_root=str(tmp_path)),
+            output=WriterOutputConfig(local_root=str(tmp_path)),
         )
         factory = _MockFactory()
         config.adapter_factory = factory
@@ -370,14 +370,14 @@ class TestWriteVectorShardedCluster:
         records = [
             VectorRecord(id=0, vector=np.array([0.9, 0, 0, 0], dtype=np.float32)),
         ]
-        result = write_vector_sharded(records, config)
+        result = write_sharded(records, config)
         assert result.stats.rows_written == 1
 
     def test_cluster_mismatched_centroids_count_raises(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import write_vector_sharded
+        from shardyfusion.vector.writer import write_sharded
 
         centroids = np.eye(3, 4, dtype=np.float32)
-        config = VectorWriteConfig(
+        config = VectorShardedWriteConfig(
             num_dbs=5,  # != 3 centroids
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=4),
@@ -385,17 +385,17 @@ class TestWriteVectorShardedCluster:
                 strategy=VectorShardingStrategy.CLUSTER,
                 centroids=centroids,
             ),
-            output=OutputOptions(local_root=str(tmp_path)),
+            output=WriterOutputConfig(local_root=str(tmp_path)),
         )
         config.adapter_factory = _MockFactory()
 
         with pytest.raises(ConfigValidationError, match="centroids count"):
-            write_vector_sharded([], config)
+            write_sharded([], config)
 
     def test_cluster_training_requires_num_dbs(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import write_vector_sharded
+        from shardyfusion.vector.writer import write_sharded
 
-        config = VectorWriteConfig(
+        config = VectorShardedWriteConfig(
             num_dbs=None,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=4),
@@ -403,21 +403,21 @@ class TestWriteVectorShardedCluster:
                 strategy=VectorShardingStrategy.CLUSTER,
                 train_centroids=True,
             ),
-            output=OutputOptions(local_root=str(tmp_path)),
+            output=WriterOutputConfig(local_root=str(tmp_path)),
         )
         config.adapter_factory = _MockFactory()
 
         records = _make_records(10, shard_id=0)
         with pytest.raises(ConfigValidationError, match="num_dbs must be provided"):
-            write_vector_sharded(records, config)
+            write_sharded(records, config)
 
 
 @pytest.mark.usefixtures("_patch_obstore_backend")
 class TestWriteVectorShardedLSH:
-    """Test write_vector_sharded with LSH sharding."""
+    """Test write_sharded with LSH sharding."""
 
     def test_lsh_auto_generates_hyperplanes(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import write_vector_sharded
+        from shardyfusion.vector.writer import write_sharded
 
         factory = _MockFactory()
         config = _lsh_config(tmp_path, num_dbs=4)
@@ -435,13 +435,13 @@ class TestWriteVectorShardedLSH:
             for i in range(10)
         ]
 
-        result = write_vector_sharded(records, config)
+        result = write_sharded(records, config)
         assert result.stats.rows_written == 10
 
     def test_lsh_requires_num_dbs(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import write_vector_sharded
+        from shardyfusion.vector.writer import write_sharded
 
-        config = VectorWriteConfig(
+        config = VectorShardedWriteConfig(
             num_dbs=None,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=4),
@@ -449,31 +449,31 @@ class TestWriteVectorShardedLSH:
                 strategy=VectorShardingStrategy.LSH,
                 num_hash_bits=3,
             ),
-            output=OutputOptions(local_root=str(tmp_path)),
+            output=WriterOutputConfig(local_root=str(tmp_path)),
         )
         config.adapter_factory = _MockFactory()
 
         with pytest.raises(ConfigValidationError, match="num_dbs must be provided"):
-            write_vector_sharded([], config)
+            write_sharded([], config)
 
 
 class TestWriteVectorShardedNoNumDbs:
     """Test num_dbs inference failures."""
 
     def test_explicit_requires_num_dbs(self, tmp_path: Path) -> None:
-        from shardyfusion.vector.writer import write_vector_sharded
+        from shardyfusion.vector.writer import write_sharded
 
-        config = VectorWriteConfig(
+        config = VectorShardedWriteConfig(
             num_dbs=None,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=4),
             sharding=VectorShardingSpec(strategy=VectorShardingStrategy.EXPLICIT),
-            output=OutputOptions(local_root=str(tmp_path)),
+            output=WriterOutputConfig(local_root=str(tmp_path)),
         )
         config.adapter_factory = _MockFactory()
 
         with pytest.raises(ConfigValidationError, match="num_dbs must be provided"):
-            write_vector_sharded([], config)
+            write_sharded([], config)
 
 
 # ---------------------------------------------------------------------------

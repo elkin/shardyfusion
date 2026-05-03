@@ -9,10 +9,10 @@ import pytest
 
 from shardyfusion._writer_core import VectorColumnMapping
 from shardyfusion.config import (
-    CelWriteConfig,
-    ManifestOptions,
-    OutputOptions,
+    CelShardedWriteConfig,
     VectorSpec,
+    WriterManifestConfig,
+    WriterOutputConfig,
 )
 from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.manifest_store import parse_manifest_payload
@@ -31,7 +31,9 @@ pytestmark = [
 ]
 
 
-def _base_config(local_s3_service: dict[str, object], *, prefix: str) -> CelWriteConfig:
+def _base_config(
+    local_s3_service: dict[str, object], *, prefix: str
+) -> CelShardedWriteConfig:
     bucket = local_s3_service["bucket"]
     cred_provider = StaticCredentialProvider(
         access_key_id=local_s3_service["access_key_id"],  # type: ignore[index]
@@ -41,7 +43,7 @@ def _base_config(local_s3_service: dict[str, object], *, prefix: str) -> CelWrit
         endpoint_url=local_s3_service["endpoint_url"],  # type: ignore[index]
         region_name=local_s3_service["region_name"],  # type: ignore[index]
     )
-    return CelWriteConfig(
+    return CelShardedWriteConfig(
         s3_prefix=f"s3://{bucket}/{prefix}",
         credential_provider=cred_provider,
         s3_connection_options=s3_conn_opts,
@@ -52,8 +54,8 @@ def _base_config(local_s3_service: dict[str, object], *, prefix: str) -> CelWrit
         vector_spec=VectorSpec(dim=4, vector_col="embedding"),
         cel_expr="key % 2",
         cel_columns={"key": "int"},
-        output=OutputOptions(run_id=prefix, local_root="/tmp/shardyfusion-int"),
-        manifest=ManifestOptions(
+        output=WriterOutputConfig(run_id=prefix, local_root="/tmp/shardyfusion-int"),
+        manifest=WriterManifestConfig(
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
         ),
@@ -81,7 +83,7 @@ def test_dask_unified_vector_write(local_s3_service):
     dask = pytest.importorskip("dask")
     dd = pytest.importorskip("dask.dataframe")
     pandas = pytest.importorskip("pandas")
-    from shardyfusion.writer.dask import write_sharded_by_cel as write_dask_sharded
+    from tests.helpers.writer_api import write_dask_cel_sharded as write_dask_sharded
 
     config = _base_config(local_s3_service, prefix="dask-unified-vectors")
     pdf = pandas.DataFrame(
@@ -106,7 +108,7 @@ def test_dask_unified_vector_write(local_s3_service):
 
 def test_ray_unified_vector_write(local_s3_service):
     ray_data = pytest.importorskip("ray.data")
-    from shardyfusion.writer.ray import write_sharded_by_cel as write_ray_sharded
+    from tests.helpers.writer_api import write_ray_cel_sharded as write_ray_sharded
 
     config = _base_config(local_s3_service, prefix="ray-unified-vectors")
     ds = ray_data.from_items(
@@ -128,7 +130,7 @@ def test_ray_unified_vector_write(local_s3_service):
 
 def test_spark_unified_vector_write(spark, local_s3_service):
     pytest.importorskip("pyspark", reason="requires writer-spark-slatedb extra")
-    from shardyfusion.writer.spark import write_sharded_by_cel
+    from tests.helpers.writer_api import write_spark_cel_sharded as write_cel_sharded
 
     bucket = local_s3_service["bucket"]
     cred_provider = StaticCredentialProvider(
@@ -139,7 +141,7 @@ def test_spark_unified_vector_write(spark, local_s3_service):
         endpoint_url=local_s3_service["endpoint_url"],  # type: ignore[index]
         region_name=local_s3_service["region_name"],  # type: ignore[index]
     )
-    config = CelWriteConfig(
+    config = CelShardedWriteConfig(
         s3_prefix=f"s3://{bucket}/spark-unified-vectors",
         credential_provider=cred_provider,
         s3_connection_options=s3_conn_opts,
@@ -150,10 +152,10 @@ def test_spark_unified_vector_write(spark, local_s3_service):
         vector_spec=VectorSpec(dim=4, vector_col="embedding"),
         cel_expr="key % 2",
         cel_columns={"key": "int"},
-        output=OutputOptions(
+        output=WriterOutputConfig(
             run_id="spark-unified-vectors", local_root="/tmp/shardyfusion-int"
         ),
-        manifest=ManifestOptions(
+        manifest=WriterManifestConfig(
             credential_provider=cred_provider,
             s3_connection_options=s3_conn_opts,
         ),
@@ -162,7 +164,7 @@ def test_spark_unified_vector_write(spark, local_s3_service):
         [(0, "v0", [0.0, 0.1, 0.2, 0.3]), (1, "v1", [0.4, 0.5, 0.6, 0.7])],
         schema=["key", "value", "embedding"],
     )
-    result = write_sharded_by_cel(
+    result = write_cel_sharded(
         df,
         config,
         key_col="key",

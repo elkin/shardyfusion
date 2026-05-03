@@ -8,8 +8,8 @@ import pytest
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.vector.config import (
     VectorIndexConfig,
+    VectorShardedWriteConfig,
     VectorShardingSpec,
-    VectorWriteConfig,
 )
 from shardyfusion.vector.types import DistanceMetric, VectorShardingStrategy
 
@@ -68,16 +68,17 @@ class TestVectorShardingSpec:
         assert spec.strategy == VectorShardingStrategy.EXPLICIT
 
 
-class TestVectorWriteConfig:
+class TestVectorShardedWriteConfig:
     def test_missing_index_config_raises(self):
         with pytest.raises(ConfigValidationError, match=r"index_config\.dim"):
-            VectorWriteConfig()
+            VectorShardedWriteConfig()
 
     def test_custom_config(self):
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             num_dbs=8,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=256),
+            sharding=VectorShardingSpec(strategy=VectorShardingStrategy.EXPLICIT),
             batch_size=5000,
             max_writes_per_second=100.0,
         )

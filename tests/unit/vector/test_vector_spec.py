@@ -6,7 +6,11 @@ from typing import Any
 
 import pytest
 
-from shardyfusion.config import CelWriteConfig, HashWriteConfig, VectorSpec
+from shardyfusion.config import (
+    CelShardedWriteConfig,
+    HashShardedWriteConfig,
+    VectorSpec,
+)
 from shardyfusion.errors import ConfigValidationError
 
 
@@ -36,8 +40,8 @@ class TestVectorSpec:
 
 
 class TestWriteConfigVectorValidation:
-    def _cel_config(self, **kwargs: Any) -> CelWriteConfig:
-        return CelWriteConfig(
+    def _cel_config(self, **kwargs: Any) -> CelShardedWriteConfig:
+        return CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             cel_expr="shard_hash(key) % 4u",
             cel_columns={"key": "int"},
@@ -47,7 +51,7 @@ class TestWriteConfigVectorValidation:
 
     def test_vector_spec_accepted_with_hash_sharding(self) -> None:
         """Vector sharding is independent of KV sharding strategy."""
-        config = HashWriteConfig(
+        config = HashShardedWriteConfig(
             num_dbs=4,
             s3_prefix="s3://bucket/prefix",
             vector_spec=VectorSpec(dim=128),
@@ -83,7 +87,7 @@ class TestWriteConfigVectorValidation:
             assert config.vector_spec.metric == expected
 
     def test_no_vector_spec_is_valid(self) -> None:
-        config = HashWriteConfig(
+        config = HashShardedWriteConfig(
             num_dbs=4,
             s3_prefix="s3://bucket/prefix",
         )

@@ -9,14 +9,18 @@ cel_expr_python = pytest.importorskip("cel_expr_python")  # noqa: F841
 import ray.data
 
 from shardyfusion.cel import compile_cel, route_cel
-from shardyfusion.config import CelWriteConfig, ManifestOptions, OutputOptions
+from shardyfusion.config import (
+    CelShardedWriteConfig,
+    WriterManifestConfig,
+    WriterOutputConfig,
+)
 from shardyfusion.credentials import StaticCredentialProvider
 from shardyfusion.manifest_store import parse_manifest_payload
 from shardyfusion.routing import SnapshotRouter
 from shardyfusion.serde import ValueSpec
 from shardyfusion.testing import file_backed_adapter_factory
 from shardyfusion.type_defs import S3ConnectionOptions
-from shardyfusion.writer.ray import write_sharded_by_cel
+from tests.helpers.writer_api import write_ray_cel_sharded as write_cel_sharded
 
 pytestmark = pytest.mark.cel
 
@@ -26,16 +30,16 @@ def test_ray_cel_unified_publishes_manifest(local_s3_service, tmp_path):
     s3_prefix = f"s3://{bucket}/ray-cel"
     root = str(tmp_path / "file-backed")
 
-    config = CelWriteConfig(
+    config = CelShardedWriteConfig(
         s3_prefix=s3_prefix,
         adapter_factory=file_backed_adapter_factory(root),
         cel_expr="key % 4",
         cel_columns={"key": "int"},
-        output=OutputOptions(
+        output=WriterOutputConfig(
             run_id="ray-cel",
             local_root=str(tmp_path / "local"),
         ),
-        manifest=ManifestOptions(
+        manifest=WriterManifestConfig(
             credential_provider=StaticCredentialProvider(
                 access_key_id=local_s3_service["access_key_id"],
                 secret_access_key=local_s3_service["secret_access_key"],
@@ -49,7 +53,7 @@ def test_ray_cel_unified_publishes_manifest(local_s3_service, tmp_path):
 
     ds = ray.data.from_items([{"key": i, "val": f"v{i}"} for i in range(40)])
 
-    result = write_sharded_by_cel(
+    result = write_cel_sharded(
         ds,
         config,
         key_col="key",

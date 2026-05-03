@@ -26,8 +26,8 @@ class ShardyfusionError(Exception):
 class ConfigValidationError(ShardyfusionError):
     """Configuration failed validation.
 
-    Raised during ``WriteConfig.__post_init__`` or writer startup when
-    parameters are invalid (e.g. ``num_dbs <= 0``, malformed ``s3_prefix``,
+    Raised during config construction, explicit config validation, or writer startup
+    when parameters are invalid (e.g. ``num_dbs <= 0``, malformed ``s3_prefix``,
     unsupported sharding strategy for a given writer backend).
     """
 

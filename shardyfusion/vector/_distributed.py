@@ -26,7 +26,7 @@ from ..metrics._events import MetricEvent
 from ..metrics._protocol import MetricsCollector
 from ..sharding_types import KeyEncoding, ShardHashAlgorithm, ShardingStrategy
 from ..storage import ObstoreBackend, StorageBackend, create_s3_store, parse_s3_url
-from .config import VectorIndexConfig, VectorWriteConfig
+from .config import VectorIndexConfig, VectorShardedWriteConfig
 from .sharding import (
     cluster_assign,
     lsh_assign,
@@ -77,54 +77,12 @@ class ResolvedVectorRouting:
 
 
 # ---------------------------------------------------------------------------
-# Config validation
-# ---------------------------------------------------------------------------
-
-
-def validate_vector_config(config: VectorWriteConfig) -> None:
-    """Validate VectorWriteConfig before writing."""
-    if config.index_config.dim <= 0:
-        raise ConfigValidationError(f"dim must be > 0, got {config.index_config.dim}")
-    if not config.s3_prefix:
-        raise ConfigValidationError("s3_prefix is required")
-    if config.batch_size <= 0:
-        raise ConfigValidationError(f"batch_size must be > 0, got {config.batch_size}")
-
-    sharding = config.sharding
-    match sharding.strategy:
-        case VectorShardingStrategy.CLUSTER:
-            if sharding.centroids is None and not sharding.train_centroids:
-                raise ConfigValidationError(
-                    "CLUSTER sharding requires either centroids or train_centroids=True"
-                )
-        case VectorShardingStrategy.CEL:
-            if not sharding.cel_expr:
-                raise ConfigValidationError("CEL sharding requires cel_expr to be set")
-            if not sharding.cel_columns:
-                raise ConfigValidationError(
-                    "CEL sharding requires cel_columns to be set"
-                )
-            if sharding.num_probes > 1:
-                raise ConfigValidationError(
-                    f"num_probes is only supported for CLUSTER and LSH sharding, got {sharding.num_probes} for {sharding.strategy.value}"
-                )
-        case VectorShardingStrategy.EXPLICIT if sharding.num_probes > 1:
-            raise ConfigValidationError(
-                f"num_probes is only supported for CLUSTER and LSH sharding, got {sharding.num_probes} for {sharding.strategy.value}"
-            )
-    if sharding.num_probes < 1:
-        raise ConfigValidationError(
-            f"num_probes must be >= 1, got {sharding.num_probes}"
-        )
-
-
-# ---------------------------------------------------------------------------
 # Routing resolution
 # ---------------------------------------------------------------------------
 
 
 def resolve_vector_routing(
-    config: VectorWriteConfig,
+    config: VectorShardedWriteConfig,
     *,
     sample_vectors: np.ndarray | None = None,
 ) -> ResolvedVectorRouting:
@@ -460,7 +418,7 @@ def upload_routing_metadata(
 
 def publish_vector_manifest(
     *,
-    config: VectorWriteConfig,
+    config: VectorShardedWriteConfig,
     run_id: str,
     num_dbs: int,
     winners: list[RequiredShardMeta],
@@ -555,7 +513,7 @@ def publish_vector_manifest(
 
 
 def resolve_adapter_factory(
-    config: VectorWriteConfig,
+    config: VectorShardedWriteConfig,
 ) -> VectorIndexWriterFactory:
     """Return the user-provided factory or the default LanceDB factory."""
     if config.adapter_factory is not None:

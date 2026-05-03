@@ -8,14 +8,18 @@ This page enumerates the **public** symbols (those in `shardyfusion.__all__`) an
 
 ### Configuration
 
-- `HashWriteConfig` — writer config for HASH sharding (num_dbs, max_keys_per_shard, s3_prefix, adapter_factory, vector_spec, shard_retry, key_encoding, ...).
-- `CelWriteConfig` — writer config for CEL sharding (cel_expr, cel_columns, routing_values, infer_routing_values_from_data, s3_prefix, adapter_factory, vector_spec, shard_retry, key_encoding, ...).
-- `WriteConfig` — **base class** for `HashWriteConfig` and `CelWriteConfig`. Do not instantiate directly.
+- `HashShardedWriteConfig` — writer config for HASH sharding (num_dbs, max_keys_per_shard, s3_prefix, adapter_factory, vector_spec, shard_retry, key_encoding, ...).
+- `CelShardedWriteConfig` — writer config for CEL sharding (cel_expr, cel_columns, routing_values, infer_routing_values_from_data, s3_prefix, adapter_factory, vector_spec, shard_retry, key_encoding, ...).
+- `BaseShardedWriteConfig` — shared base class for KV writer configs. Do not instantiate directly.
+- `SingleDbWriteConfig` — writer config for single-database KV snapshots.
+- `WriterStorageConfig`, `WriterOutputConfig`, `WriterManifestConfig`, `KeyValueWriteConfig`, `WriterRetryConfig`, `KvWriteRateLimitConfig`, `WriterObservabilityConfig`, `WriterLifecycleConfig` — nested config groups shared by KV writer configs.
+- `PythonRecordInput`, `ColumnWriteInput`, `VectorColumnInput` — input mapping objects passed to public writer functions.
+- `PythonWriteOptions`, `SparkWriteOptions`, `DaskWriteOptions`, `RayWriteOptions`, `SingleDbWriteOptions`, `SharedMemoryOptions`, `BufferingOptions` — per-call writer execution options.
 - `HashShardingSpec` / `CelShardingSpec` — sharding strategy parameters for HASH and CEL respectively.
 - `ShardingSpec` — base class for sharding specs.
 - `KeyEncoding` — `U64BE`, `U32BE`, `UTF8`, `RAW`.
 - `ShardHashAlgorithm` — currently `XXH3_64`.
-- `VectorSpec` — vector dimension, metric, index type/params, optional quantization. Set on `HashWriteConfig.vector_spec` / `CelWriteConfig.vector_spec` for unified KV+vector flows. The backend (lancedb/sqlite-vec) is determined by the adapter factory, not by `VectorSpec`.
+- `VectorSpec` — vector dimension, metric, index type/params, optional quantization. Set on `HashShardedWriteConfig.vector_spec` / `CelShardedWriteConfig.vector_spec` for unified KV+vector flows. The backend (lancedb/sqlite-vec) is determined by the adapter factory, not by `VectorSpec`.
 
 ### Sharding / routing
 
@@ -64,24 +68,43 @@ Note: there is **no** `ManifestNotFoundError`. A missing `_CURRENT` surfaces as 
 
 Each framework has its own subpackage. Sharded writers are split by strategy:
 
-- `shardyfusion.writer.python` — `write_sharded_by_hash`, `write_sharded_by_cel`.
-- `shardyfusion.writer.spark` — `write_sharded_by_hash`, `write_sharded_by_cel`, `write_single_db`, `DataFrameCacheContext`, `SparkConfOverrideContext`.
-- `shardyfusion.writer.dask` — `write_sharded_by_hash`, `write_sharded_by_cel`, `write_single_db`, `DaskCacheContext`.
-- `shardyfusion.writer.ray` — `write_sharded_by_hash`, `write_sharded_by_cel`, `write_single_db`, `RayCacheContext`.
+- `shardyfusion.writer.python` — `write_hash_sharded`, `write_cel_sharded`.
+- `shardyfusion.writer.spark` — `write_hash_sharded`, `write_cel_sharded`, `write_single_db`, `DataFrameCacheContext`, `SparkConfOverrideContext`.
+- `shardyfusion.writer.dask` — `write_hash_sharded`, `write_cel_sharded`, `write_single_db`, `DaskCacheContext`.
+- `shardyfusion.writer.ray` — `write_hash_sharded`, `write_cel_sharded`, `write_single_db`, `RayCacheContext`.
 
-`write_vector_sharded` is also re-exported from `shardyfusion.writer.spark`, `.dask`, and `.ray` for distributed DataFrame/Dataset input. Distributed variants accept `VectorWriteConfig` (see `vector/config.py`) rather than `HashWriteConfig`.
+KV writer signatures are intentionally small:
+
+```python
+write_hash_sharded(data, config, input, options=None)
+write_cel_sharded(data, config, input, options=None)
+write_single_db(data, config, input, options=None)
+```
+
+For Python iterables, `input` is `PythonRecordInput`. For Spark/Dask/Ray DataFrame-style writers, `input` is `ColumnWriteInput`. Framework-specific settings such as routing verification, caching, sorting, and Python multiprocessing live in the matching `*WriteOptions` object.
 
 ## Vector
 
 `shardyfusion.vector` (also lazy):
 
 - `VectorRecord(id, vector, payload=None, shard_id=None, routing_context=None)`.
-- `VectorWriteConfig` — `num_dbs, s3_prefix, index_config, sharding, adapter_factory, batch_size`. Also provides `from_vector_spec(vector_spec, num_dbs, s3_prefix, ...)` for distributed writers.
+- `VectorShardedWriteConfig` — `index_config, sharding, storage, output, manifest, adapter, rate_limits, observability, lifecycle`.
 - `VectorIndexConfig(dim, metric, ...)`.
-- `VectorShardingSpec` — strategies `CLUSTER`, `LSH`, `EXPLICIT`, `CEL`.
+- `VectorShardingConfig` / `VectorShardingSpec` — strategies `CLUSTER`, `LSH`, `EXPLICIT`, `CEL`; carries vector `num_dbs`.
+- `VectorRecordInput`, `VectorWriteOptions` — standalone vector input marker and per-call options.
 - `DistanceMetric` — `COSINE`, `L2`, `DOT_PRODUCT`.
-- `write_vector_sharded(records, config) -> BuildResult`.
+- `write_sharded(records, config, input=None, options=None) -> BuildResult`.
 - `ShardedVectorReader` — `search(query, top_k, *, shard_ids=None, num_probes=None, routing_context=None)`. No filter parameter.
+
+Distributed vector writers are imported from engine-specific vector modules:
+
+```python
+from shardyfusion.writer.spark.vector_writer import write_sharded
+from shardyfusion.writer.dask.vector_writer import write_sharded
+from shardyfusion.writer.ray.vector_writer import write_sharded
+```
+
+Their signature is `write_sharded(data, config, input, options=None)`, where `input` is `VectorColumnInput`.
 
 ## Metrics
 

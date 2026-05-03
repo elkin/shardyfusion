@@ -15,7 +15,11 @@ from shardyfusion._shard_writer import (
     write_shard_with_retry,
 )
 from shardyfusion._writer_core import VectorColumnMapping, resolve_distributed_vector_fn
-from shardyfusion.config import CelWriteConfig, HashWriteConfig, VectorSpec
+from shardyfusion.config import (
+    CelShardedWriteConfig,
+    HashShardedWriteConfig,
+    VectorSpec,
+)
 from shardyfusion.errors import ConfigValidationError, ShardWriteError
 from shardyfusion.serde import make_key_encoder
 from shardyfusion.sharding_types import KeyEncoding
@@ -70,8 +74,8 @@ class _Factory:
         return self.adapter
 
 
-def _cel_config(vector_spec: VectorSpec | None) -> CelWriteConfig:
-    return CelWriteConfig(
+def _cel_config(vector_spec: VectorSpec | None) -> CelShardedWriteConfig:
+    return CelShardedWriteConfig(
         s3_prefix="s3://bucket/prefix",
         cel_expr="key % 2",
         cel_columns={"key": "int"},
@@ -101,7 +105,7 @@ def test_resolve_distributed_vector_fn_from_vector_columns() -> None:
 def test_resolve_distributed_vector_fn_requires_vector_spec() -> None:
     with pytest.raises(ConfigValidationError, match="vector_fn requires"):
         resolve_distributed_vector_fn(
-            config=HashWriteConfig(num_dbs=2, s3_prefix="s3://bucket/prefix"),
+            config=HashShardedWriteConfig(num_dbs=2, s3_prefix="s3://bucket/prefix"),
             key_col="key",
             vector_fn=lambda row: (1, row["embedding"], None),
             vector_columns=None,

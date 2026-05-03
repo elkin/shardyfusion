@@ -10,9 +10,9 @@ import pandas as pd
 import pytest
 
 from shardyfusion.config import (
-    HashWriteConfig,
-    ManifestOptions,
-    OutputOptions,
+    HashShardedWriteConfig,
+    WriterManifestConfig,
+    WriterOutputConfig,
 )
 from shardyfusion.errors import (
     ConfigValidationError,
@@ -28,10 +28,7 @@ from shardyfusion.testing import (
     file_backed_load_db,
 )
 from shardyfusion.type_defs import RetryConfig
-from shardyfusion.writer.dask.single_db_writer import (
-    DaskCacheContext,
-    write_single_db,
-)
+from shardyfusion.writer.dask.single_db_writer import DaskCacheContext
 from tests.helpers.run_record_assertions import (
     assert_success_run_record,
     load_in_memory_run_record,
@@ -42,6 +39,7 @@ from tests.helpers.tracking import (
     TrackingFactory,
     patch_token_bucket_fixture,
 )
+from tests.helpers.writer_api import write_dask_single_db as write_single_db
 
 _patch_token_bucket = patch_token_bucket_fixture(
     "shardyfusion.writer.dask.single_db_writer"
@@ -64,15 +62,15 @@ def _make_config(
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
     num_dbs: int = 1,
     run_registry: InMemoryRunRegistry | None = None,
-) -> HashWriteConfig:
-    return HashWriteConfig(
+) -> HashShardedWriteConfig:
+    return HashShardedWriteConfig(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/prefix",
         key_encoding=key_encoding,
         batch_size=batch_size,
         adapter_factory=factory or TrackingFactory(),
-        output=OutputOptions(run_id="test-run"),
-        manifest=ManifestOptions(store=InMemoryManifestStore()),
+        output=WriterOutputConfig(run_id="test-run"),
+        manifest=WriterManifestConfig(store=InMemoryManifestStore()),
         run_registry=run_registry,
     )
 
@@ -154,21 +152,6 @@ def test_sort_keys_false() -> None:
     )
 
     assert result.winners[0].row_count == 5
-
-
-def test_validates_num_dbs_1() -> None:
-    config = _make_config(num_dbs=2)
-
-    records = [{"id": 1}]
-    ddf = _make_dask_df(records, npartitions=1)
-
-    with pytest.raises(ConfigValidationError, match="num_dbs=1"):
-        write_single_db(
-            ddf,
-            config,
-            key_col="id",
-            value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
-        )
 
 
 def test_batch_size_controls_write_calls() -> None:
@@ -420,12 +403,12 @@ def test_min_max_keys() -> None:
 
 def test_manifest_structure() -> None:
     store = InMemoryManifestStore()
-    config = HashWriteConfig(
+    config = HashShardedWriteConfig(
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
         adapter_factory=TrackingFactory(),
-        output=OutputOptions(run_id="test-manifest"),
-        manifest=ManifestOptions(store=store),
+        output=WriterOutputConfig(run_id="test-manifest"),
+        manifest=WriterManifestConfig(store=store),
     )
 
     records = [{"id": k} for k in range(5)]
@@ -587,15 +570,15 @@ def test_shard_duration_is_zero() -> None:
 
 def test_data_integrity_file_backed(tmp_path: Path) -> None:
     root_dir = str(tmp_path / "file_backed")
-    config = HashWriteConfig(
+    config = HashShardedWriteConfig(
         num_dbs=1,
         s3_prefix="s3://bucket/prefix",
         adapter_factory=file_backed_adapter_factory(root_dir),
-        output=OutputOptions(
+        output=WriterOutputConfig(
             run_id="test-run",
             local_root=str(tmp_path / "local"),
         ),
-        manifest=ManifestOptions(store=InMemoryManifestStore()),
+        manifest=WriterManifestConfig(store=InMemoryManifestStore()),
     )
 
     records = [{"id": i} for i in range(50)]

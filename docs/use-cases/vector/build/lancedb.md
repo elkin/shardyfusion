@@ -22,29 +22,34 @@ uv add 'shardyfusion[vector-lancedb]'
 
 ```python
 from shardyfusion.vector import (
-    VectorRecord, VectorWriteConfig, write_vector_sharded,
+    VectorRecord, VectorShardedWriteConfig, write_sharded,
 )
-from shardyfusion.vector.config import VectorIndexConfig
+from shardyfusion.vector.config import VectorIndexConfig, VectorShardingConfig
 from shardyfusion.vector.adapters.lancedb_adapter import LanceDbFactory
+from shardyfusion.vector.types import DistanceMetric, VectorShardingStrategy
 
 records = [
     VectorRecord(id="a", vector=[0.1, 0.2, ...], payload={"category": "x"}),
     # ...
 ]
 
-config = VectorWriteConfig(
-    num_dbs=16,
+config = VectorShardedWriteConfig(
+    sharding=VectorShardingConfig(
+        num_dbs=16,
+        strategy=VectorShardingStrategy.CLUSTER,
+        train_centroids=True,
+    ),
     s3_prefix="s3://my-bucket/snapshots/embeddings",
-    index_config=VectorIndexConfig(dim=384, metric="cosine"),
+    index_config=VectorIndexConfig(dim=384, metric=DistanceMetric.COSINE),
     adapter_factory=LanceDbFactory(),
 )
 
-result = write_vector_sharded(records, config)
+result = write_sharded(records, config)
 ```
 
 ## Configuration
 
-- `VectorWriteConfig(num_dbs, s3_prefix, index_config, sharding=VectorShardingSpec.cluster(), adapter_factory, batch_size=10_000, ...)` at `vector/config.py:74`.
+- `VectorShardedWriteConfig(index_config, sharding=VectorShardingConfig(num_dbs=..., train_centroids=True), storage=..., adapter=..., rate_limits=...)` at `vector/config.py`.
 - `VectorIndexConfig(dim, metric, ...)` — `metric ∈ {cosine, l2, dot_product}` for LanceDB.
 - Sharding strategies: `CLUSTER` (default; k-means), `LSH`, `EXPLICIT` (use `VectorRecord.shard_id`), `CEL` (route on `routing_context`).
 
@@ -59,7 +64,7 @@ result = write_vector_sharded(records, config)
 
 ## Weaknesses
 
-- `write_vector_sharded` and `ShardedVectorReader` are **not re-exported** at top level — import from `shardyfusion.vector`.
+- `write_sharded` and `ShardedVectorReader` are **not re-exported** at top level — import from `shardyfusion.vector`.
 - `CLUSTER` sharding requires sampling pass over the data.
 
 ## Failure modes & recovery
@@ -74,11 +79,11 @@ result = write_vector_sharded(records, config)
 
 If your vectors already live in a Spark, Dask, or Ray dataset, use the distributed vector writers instead of the Python iterator-based writer:
 
-- **[Spark → vector](spark.md)** — `write_vector_sharded(df, config, vector_col=..., id_col=...)`
-- **[Dask → vector](dask.md)** — `write_vector_sharded(ddf, config, vector_col=..., id_col=...)`
-- **[Ray → vector](ray.md)** — `write_vector_sharded(ds, config, vector_col=..., id_col=...)`
+- **[Spark → vector](spark.md)** — `write_sharded(df, config, VectorColumnInput(...))`
+- **[Dask → vector](dask.md)** — `write_sharded(ddf, config, VectorColumnInput(...))`
+- **[Ray → vector](ray.md)** — `write_sharded(ds, config, VectorColumnInput(...))`
 
-Distributed writers accept `VectorWriteConfig` (or build one via `VectorWriteConfig.from_vector_spec()`) and shard directly from the dataframe/dataset without collecting everything into the driver first.
+Distributed writers accept `VectorShardedWriteConfig` plus `VectorColumnInput` and shard directly from the dataframe/dataset without collecting everything into the driver first.
 
 ## See also
 

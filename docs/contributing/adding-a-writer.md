@@ -26,7 +26,7 @@ Steps 2–6 are framework-agnostic and live in `_writer_core`. Step 1 is what ma
 ```
 shardyfusion/writer/<flavor>/
 ├── __init__.py
-├── writer.py          # public entry points: write_sharded_by_hash() / write_sharded_by_cel()
+├── writer.py          # public entry points: write_hash_sharded() / write_cel_sharded()
 ├── sharding.py        # framework-specific row distribution
 └── (helpers)
 ```
@@ -40,9 +40,9 @@ Read `shardyfusion/writer/python/writer.py` first — it's the simplest and uses
 The signature should be familiar to users of the framework. Provide **split entry points** by sharding strategy — one for HASH and one for CEL — each accepting the corresponding concrete config type. Framework-specific knobs live on the function signature.
 
 ```python
-def write_sharded_by_hash(
+def write_hash_sharded(
     records: <framework-native collection>,
-    config: HashWriteConfig,
+    config: HashShardedWriteConfig,
     *,
     key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
@@ -52,9 +52,9 @@ def write_sharded_by_hash(
 ) -> BuildResult: ...
 
 
-def write_sharded_by_cel(
+def write_cel_sharded(
     records: <framework-native collection>,
-    config: CelWriteConfig,
+    config: CelShardedWriteConfig,
     *,
     key_fn: Callable[[T], KeyInput],
     value_fn: Callable[[T], bytes],
@@ -152,8 +152,8 @@ Update [`architecture/writer-core.md`](../architecture/writer-core.md) if you in
 - **Re-implementing `route_hash` or `route_cel`.** Always reuse `_writer_core.route_hash` and `_writer_core.route_cel`.
 - **Forgetting `RunRecordLifecycle.start(...)`.** Run records won't be written; loser cleanup deferred from a previous run can't progress.
 - **Top-level framework import.** Breaks the base install.
-- **Accepting `key_col` instead of `key_fn`.** Spark is the exception (DataFrame-native); for everything else, use `key_fn`.
-- **Adding new fields to `HashWriteConfig` or `CelWriteConfig` for one framework.** Framework knobs go on the writer function signature; shared fields go on the `WriteConfig` base class.
+- **Adding scalar extraction parameters to public writer functions.** Keep public signatures to `(data, config, input, options=None)` and put extraction details in `PythonRecordInput`, `ColumnWriteInput`, or `VectorColumnInput`.
+- **Adding new fields to `HashShardedWriteConfig` or `CelShardedWriteConfig` for one framework.** Framework knobs go in the matching `*WriteOptions`; shared fields go in the nested public config groups.
 
 ## See also
 

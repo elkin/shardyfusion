@@ -12,7 +12,7 @@ Implemented as `hash_db_id` (`shardyfusion/routing.py`). The manifest records th
 
 - The only supported algorithm today is `xxh3_64`, the 64-bit variant of xxHash3 with `seed=0`.
 - `canonical_bytes` (`routing.py:42`) is the routing-hash input contract: `int` keys become 8-byte signed little-endian, `str` keys become UTF-8, and `bytes`/`bytearray` pass through.
-- `WriteConfig.key_encoding` is independent of routing. It controls stored lookup-key bytes, not hash input bytes.
+- `KeyValueWriteConfig.key_encoding` (`config.kv.key_encoding`) is independent of routing. It controls stored lookup-key bytes, not hash input bytes.
 - The modulus is taken in unsigned 64-bit space.
 
 `hash_digest` returns the raw 64-bit digest for the selected algorithm. `xxh3_digest` and `xxh3_db_id` remain compatibility helpers for the current algorithm.
@@ -24,7 +24,7 @@ For `ShardingStrategy.CEL`, the `db_id` is the result of evaluating a compiled C
 - **Direct mode**: `result % num_dbs` (result must be `int`).
 - **Categorical mode**: the result is a string token; the token is looked up in a precomputed `routing_values → db_id` map built by `build_categorical_routing_lookup` (`cel.py:303`). Unknown tokens raise `UnknownRoutingTokenError` (`cel.py:173`).
 
-The categorical map is materialized into the manifest at build time (see [`manifest-and-current.md`](manifest-and-current.md), format v3) so that readers can look up "which shard holds tenant `eu-west`" by name without compiling CEL themselves.
+The categorical map is materialized into the manifest at build time (see [`manifest-and-current.md`](manifest-and-current.md), format v4) so that readers can look up "which shard holds tenant `eu-west`" by name without compiling CEL themselves.
 
 ## SnapshotRouter
 
@@ -57,6 +57,6 @@ The hash is purely a function of the manifest-declared hash algorithm and the ke
 
 ## See also
 
-- [`sharding.md`](sharding.md) — `ShardingSpec`, `KeyEncoding`.
+- [`sharding.md`](sharding.md) — sharding config groups and `KeyEncoding`.
 - [`writer-core.md`](writer-core.md) — `route_hash`, `route_cel`, `resolve_cel_num_dbs`, `discover_cel_num_dbs`.
 - [`adapters.md`](adapters.md) — `ShardLookup` implementations per backend.

@@ -11,8 +11,12 @@ import click.testing
 import pytest
 
 from shardyfusion.cli.app import cli
-from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
-from shardyfusion.writer.python import write_sharded_by_hash
+from shardyfusion.config import (
+    HashShardedWriteConfig,
+    WriterManifestConfig,
+    WriterOutputConfig,
+)
+from tests.helpers.writer_api import write_python_hash_sharded as write_hash_sharded
 
 if TYPE_CHECKING:
     from tests.conftest import LocalS3Service
@@ -164,16 +168,16 @@ def _write_kv_data(
     ]
 
     s3_kwargs = _s3(s3_service)
-    config = HashWriteConfig(
+    config = HashShardedWriteConfig(
         num_dbs=num_dbs,
         s3_prefix=s3_prefix,
         **s3_kwargs,
         adapter_factory=backend.adapter_factory,
-        manifest=ManifestOptions(**s3_kwargs),
-        output=OutputOptions(run_id="cli-e2e-run", local_root=local_root),
+        manifest=WriterManifestConfig(**s3_kwargs),
+        output=WriterOutputConfig(run_id="cli-e2e-run", local_root=local_root),
     )
 
-    write_sharded_by_hash(
+    write_hash_sharded(
         records,
         config,
         key_fn=lambda r: r[0],
@@ -194,23 +198,23 @@ def _write_two_kv_manifests(
 
     s3_kwargs = _s3(s3_service)
 
-    def _build_config(run_id: str) -> HashWriteConfig:
-        return HashWriteConfig(
+    def _build_config(run_id: str) -> HashShardedWriteConfig:
+        return HashShardedWriteConfig(
             num_dbs=2,
             s3_prefix=s3_prefix,
             **s3_kwargs,
             adapter_factory=backend.adapter_factory,
-            manifest=ManifestOptions(**s3_kwargs),
-            output=OutputOptions(run_id=run_id, local_root=local_root),
+            manifest=WriterManifestConfig(**s3_kwargs),
+            output=WriterOutputConfig(run_id=run_id, local_root=local_root),
         )
 
-    write_sharded_by_hash(
+    write_hash_sharded(
         [(i, f"old-{i}".encode()) for i in range(8)],
         _build_config("cli-e2e-run-v1"),
         key_fn=lambda r: r[0],
         value_fn=lambda r: r[1],
     )
-    write_sharded_by_hash(
+    write_hash_sharded(
         [(i, f"new-{i}".encode()) for i in range(8)],
         _build_config("cli-e2e-run-v2"),
         key_fn=lambda r: r[0],

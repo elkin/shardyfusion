@@ -20,7 +20,12 @@ from shardyfusion._writer_core import (
     select_winners,
     update_min_max,
 )
-from shardyfusion.config import HashWriteConfig
+from shardyfusion.config import (
+    ColumnWriteInput,
+    SingleDbWriteConfig,
+    SingleDbWriteOptions,
+    validate_configs,
+)
 from shardyfusion.errors import (
     ConfigValidationError,
     ShardWriteError,
@@ -66,16 +71,9 @@ class DaskCacheContext:
 
 def write_single_db(
     ddf: dd.DataFrame,
-    config: HashWriteConfig,
-    *,
-    key_col: str,
-    value_spec: ValueSpec,
-    sort_keys: bool = True,
-    num_partitions: int | None = None,
-    prefetch_partitions: bool = True,
-    cache_input: bool = True,
-    max_writes_per_second: float | None = None,
-    max_write_bytes_per_second: float | None = None,
+    config: SingleDbWriteConfig,
+    input: ColumnWriteInput,
+    options: SingleDbWriteOptions | None = None,
 ) -> BuildResult:
     """Write a Dask DataFrame into a single shard database, optionally sorting by key first.
 
@@ -89,39 +87,38 @@ def write_single_db(
     and not cached.
     """
 
-    if config.num_dbs != 1:
-        raise ConfigValidationError(
-            f"write_single_db requires num_dbs=1, got {config.num_dbs}"
-        )
+    options = options or SingleDbWriteOptions()
+    validate_configs(config, input, options)
 
-    if key_col not in ddf.columns:
+    if input.key_col not in ddf.columns:
         raise ConfigValidationError(
-            f"Key column `{key_col}` not found in DataFrame columns: {list(ddf.columns)}"
+            f"Key column `{input.key_col}` not found in DataFrame columns: "
+            f"{list(ddf.columns)}"
         )
 
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
 
-    with DaskCacheContext(ddf, enabled=cache_input) as cached_ddf:
+    with DaskCacheContext(ddf, enabled=options.cache_input) as cached_ddf:
         return _write_single_db_impl(
             ddf=cached_ddf,
             config=config,
             run_id=run_id,
             started=started,
-            key_col=key_col,
-            value_spec=value_spec,
-            sort_keys=sort_keys,
-            num_partitions=num_partitions,
-            prefetch_partitions=prefetch_partitions,
-            max_writes_per_second=max_writes_per_second,
-            max_write_bytes_per_second=max_write_bytes_per_second,
+            key_col=input.key_col,
+            value_spec=input.value_spec,
+            sort_keys=options.sort_keys,
+            num_partitions=options.num_partitions,
+            prefetch_partitions=options.prefetch_partitions,
+            max_writes_per_second=config.rate_limits.max_writes_per_second,
+            max_write_bytes_per_second=config.rate_limits.max_write_bytes_per_second,
         )
 
 
 def _write_single_db_impl(
     *,
     ddf: dd.DataFrame,
-    config: HashWriteConfig,
+    config: SingleDbWriteConfig,
     run_id: str,
     started: float,
     key_col: str,
@@ -224,7 +221,7 @@ def _write_single_db_impl(
 def _stream_to_single_db(
     *,
     ddf: dd.DataFrame,
-    config: HashWriteConfig,
+    config: SingleDbWriteConfig,
     run_id: str,
     key_col: str,
     value_spec: ValueSpec,

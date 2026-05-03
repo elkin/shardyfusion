@@ -31,23 +31,25 @@ uv add 'shardyfusion[writer-spark-sqlite]'
 
 ```python
 from pyspark.sql import SparkSession
-from shardyfusion import HashWriteConfig
-from shardyfusion.writer.spark import write_sharded_by_hash
+from shardyfusion import ColumnWriteInput, HashShardedWriteConfig
+from shardyfusion.writer.spark import write_hash_sharded
 from shardyfusion.serde import ValueSpec
 
 spark = SparkSession.builder.appName("sf-build").getOrCreate()
 df = spark.read.parquet("s3://lake/users/")
 
-config = HashWriteConfig(
+config = HashShardedWriteConfig(
     num_dbs=16,
     s3_prefix="s3://my-bucket/snapshots/users",
 )
 
-result = write_sharded_by_hash(
+result = write_hash_sharded(
     df,
     config,
-    key_col="id",
-    value_spec=ValueSpec.binary_col("payload"),
+    ColumnWriteInput(
+        key_col="id",
+        value_spec=ValueSpec.binary_col("payload"),
+    ),
 )
 print(result.manifest_ref.ref)
 ```
@@ -55,21 +57,23 @@ print(result.manifest_ref.ref)
 ### CEL routing
 
 ```python
-from shardyfusion import CelWriteConfig
-from shardyfusion.writer.spark import write_sharded_by_cel
+from shardyfusion import CelShardedWriteConfig, ColumnWriteInput
+from shardyfusion.writer.spark import write_cel_sharded
 from shardyfusion.serde import ValueSpec
 
-config = CelWriteConfig(
+config = CelShardedWriteConfig(
     cel_expr='key % 16u',
     cel_columns={"key": "int"},
     s3_prefix="s3://my-bucket/snapshots/users-cel",
 )
 
-result = write_sharded_by_cel(
+result = write_cel_sharded(
     df,
     config,
-    key_col="id",
-    value_spec=ValueSpec.binary_col("payload"),
+    ColumnWriteInput(
+        key_col="id",
+        value_spec=ValueSpec.binary_col("payload"),
+    ),
 )
 ```
 
@@ -80,7 +84,7 @@ Swap `adapter_factory` on either config:
 ```python
 from shardyfusion.sqlite_adapter import SqliteFactory
 
-config = HashWriteConfig(
+config = HashShardedWriteConfig(
     num_dbs=16,
     s3_prefix="s3://my-bucket/snapshots/users-sqlite",
     adapter_factory=SqliteFactory(),
@@ -91,7 +95,7 @@ config = HashWriteConfig(
 
 ```mermaid
 flowchart TD
-    A[DataFrame + HashWriteConfig / CelWriteConfig] --> B["Apply Spark conf overrides<br/>(optional)"]
+    A[DataFrame + HashShardedWriteConfig / CelShardedWriteConfig] --> B["Apply Spark conf overrides<br/>(optional)"]
     B --> C{"cache_input?"}
     C -->|yes| D["Persist input DataFrame"]
     C -->|no| E[Use input DataFrame as-is]
@@ -112,20 +116,31 @@ flowchart TD
 
 ## Configuration
 
-Spark-specific knobs on `write_sharded_by_hash` and `write_sharded_by_cel` (`shardyfusion/writer/spark/writer.py`):
+Spark writer signature:
+
+```python
+write_hash_sharded(df, config, input: ColumnWriteInput, options: SparkWriteOptions | None = None)
+write_cel_sharded(df, config, input: ColumnWriteInput, options: SparkWriteOptions | None = None)
+```
+
+`ColumnWriteInput` fields:
 
 | Param | Default | Purpose |
 |---|---|---|
 | `key_col` | required | DataFrame column used for routing. |
 | `value_spec` | required | How to encode rows to bytes — `binary_col`, `json_cols`, or callable. |
+
+`SparkWriteOptions` fields:
+
+| Field | Default | Purpose |
+|---|---|---|
 | `sort_within_partitions` | `False` | Sort each partition by `key_col` before writing. |
 | `spark_conf_overrides` | `None` | `dict[str, str]` applied for the duration of the build. |
 | `cache_input` | `False` | `df.persist(...)` the input. |
 | `storage_level` | `None` | StorageLevel for `cache_input`. |
 | `verify_routing` | `True` | Re-verify writer-side routing matches reader-side router. |
-| `max_writes_per_second` / `max_write_bytes_per_second` | `None` | Rate limits across all executors. |
 
-`HashWriteConfig` and `CelWriteConfig` fields are the same as for the Python writer; SlateDB is the default `adapter_factory`.
+KV rate limits live on `config.rate_limits`. `HashShardedWriteConfig` and `CelShardedWriteConfig` fields are the same as for the Python writer; SlateDB is the default `kv.adapter_factory`.
 
 ## Backend-specific properties
 
@@ -144,7 +159,7 @@ Spark-specific knobs on `write_sharded_by_hash` and `write_sharded_by_cel` (`sha
 - **Driver work**: routing planning, manifest assembly, S3 publish — all on the driver.
 - **Executor work**: each task opens its adapter, writes batches of `config.batch_size`, calls `checkpoint()`.
 - **No Python UDFs**: routing uses Arrow `mapInArrow` to avoid UDF overhead.
-- **Rate limiting**: per-partition scope. Aggregate rate = `max_writes_per_second x num_dbs`.
+- **Rate limiting**: per-partition scope. Aggregate rate = `config.rate_limits.max_writes_per_second x num_dbs`.
 
 ## Speculative execution safety
 

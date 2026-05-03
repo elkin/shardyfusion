@@ -2,7 +2,6 @@
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
@@ -24,10 +23,15 @@ from shardyfusion._writer_core import (
     route_cel,
     route_hash,
     select_winners,
-    wrap_factory_for_vector,
 )
-from shardyfusion.config import CelWriteConfig, HashWriteConfig, WriteConfig
-from shardyfusion.credentials import CredentialProvider
+from shardyfusion.config import (
+    BaseShardedWriteConfig,
+    CelShardedWriteConfig,
+    ColumnWriteInput,
+    DaskWriteOptions,
+    HashShardedWriteConfig,
+    validate_configs,
+)
 from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.logging import (
     get_logger,
@@ -39,20 +43,18 @@ from shardyfusion.manifest import (
 )
 from shardyfusion.metrics import MetricEvent, MetricsCollector
 from shardyfusion.run_registry import RunRecordLifecycle
-from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
+from shardyfusion.serde import ValueSpec
 from shardyfusion.sharding_types import (
     DB_ID_COL,
     HashShardingSpec,
-    KeyEncoding,
     ShardHashAlgorithm,
     ShardingSpec,
 )
 from shardyfusion.slatedb_adapter import (
     DbAdapterFactory,
-    SlateDbFactory,
 )
-from shardyfusion.type_defs import RetryConfig
 from shardyfusion.writer._accumulators import KvAccumulator, UnifiedAccumulator
+from shardyfusion.writer._runtime import RetryingPartitionWriteRuntime
 
 from .sharding import (
     add_db_id_column_cel,
@@ -60,33 +62,6 @@ from .sharding import (
 )
 
 _logger = get_logger(__name__)
-
-
-@dataclass(slots=True)
-class _PartitionWriteRuntime:
-    """Picklable runtime config for Dask partition writers."""
-
-    run_id: str
-    s3_prefix: str
-    shard_prefix: str
-    db_path_template: str
-    local_root: str
-    key_col: str
-    key_encoding: KeyEncoding
-    key_encoder: KeyEncoder
-    value_spec: ValueSpec
-    batch_size: int
-    adapter_factory: DbAdapterFactory
-    credential_provider: CredentialProvider | None
-    max_writes_per_second: float | None
-    max_write_bytes_per_second: float | None = None
-    sort_within_partitions: bool = False
-    metrics_collector: MetricsCollector | None = None  # must be picklable
-    started: float = 0.0
-    shard_retry: RetryConfig | None = None
-    vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None = (
-        None
-    )
 
 
 # Meta schema for result DataFrames returned by partition writers.
@@ -119,24 +94,17 @@ _RESULT_META = pd.DataFrame(
 )
 
 
-def write_sharded_by_hash(
+def write_hash_sharded(
     ddf: dd.DataFrame,
-    config: HashWriteConfig,
-    *,
-    key_col: str,
-    value_spec: ValueSpec,
-    sort_within_partitions: bool = False,
-    max_writes_per_second: float | None = None,
-    max_write_bytes_per_second: float | None = None,
-    verify_routing: bool = True,
-    vector_fn: (
-        Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None
-    ) = None,
-    vector_columns: VectorColumnMapping | None = None,
+    config: HashShardedWriteConfig,
+    input: ColumnWriteInput,
+    options: DaskWriteOptions | None = None,
 ) -> BuildResult:
     """Write a Dask DataFrame into N independent sharded databases using HASH routing."""
     from shardyfusion._writer_core import resolve_num_dbs
 
+    options = options or DaskWriteOptions()
+    validate_configs(config, input, options)
     num_dbs = resolve_num_dbs(config, lambda: len(ddf))
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
@@ -147,33 +115,24 @@ def write_sharded_by_hash(
         num_dbs=num_dbs,
         run_id=run_id,
         started=started,
-        key_col=key_col,
-        value_spec=value_spec,
-        sort_within_partitions=sort_within_partitions,
-        max_writes_per_second=max_writes_per_second,
-        max_write_bytes_per_second=max_write_bytes_per_second,
-        verify_routing=verify_routing,
-        vector_fn=vector_fn,
-        vector_columns=vector_columns,
+        key_col=input.key_col,
+        value_spec=input.value_spec,
+        sort_within_partitions=options.sort_within_partitions,
+        verify_routing=options.verify_routing,
+        vector_fn=input.vector_fn,
+        vector_columns=input.vector,
     )
 
 
-def write_sharded_by_cel(
+def write_cel_sharded(
     ddf: dd.DataFrame,
-    config: CelWriteConfig,
-    *,
-    key_col: str,
-    value_spec: ValueSpec,
-    sort_within_partitions: bool = False,
-    max_writes_per_second: float | None = None,
-    max_write_bytes_per_second: float | None = None,
-    verify_routing: bool = True,
-    vector_fn: (
-        Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None
-    ) = None,
-    vector_columns: VectorColumnMapping | None = None,
+    config: CelShardedWriteConfig,
+    input: ColumnWriteInput,
+    options: DaskWriteOptions | None = None,
 ) -> BuildResult:
     """Write a Dask DataFrame into N independent sharded databases using CEL routing."""
+    options = options or DaskWriteOptions()
+    validate_configs(config, input, options)
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
 
@@ -182,29 +141,25 @@ def write_sharded_by_cel(
         config=config,
         run_id=run_id,
         started=started,
-        key_col=key_col,
-        value_spec=value_spec,
-        sort_within_partitions=sort_within_partitions,
-        max_writes_per_second=max_writes_per_second,
-        max_write_bytes_per_second=max_write_bytes_per_second,
-        verify_routing=verify_routing,
-        vector_fn=vector_fn,
-        vector_columns=vector_columns,
+        key_col=input.key_col,
+        value_spec=input.value_spec,
+        sort_within_partitions=options.sort_within_partitions,
+        verify_routing=options.verify_routing,
+        vector_fn=input.vector_fn,
+        vector_columns=input.vector,
     )
 
 
 def _write_hash_sharded(
     *,
     ddf: dd.DataFrame,
-    config: HashWriteConfig,
+    config: HashShardedWriteConfig,
     num_dbs: int,
     run_id: str,
     started: float,
     key_col: str,
     value_spec: ValueSpec,
     sort_within_partitions: bool,
-    max_writes_per_second: float | None,
-    max_write_bytes_per_second: float | None,
     verify_routing: bool,
     vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
     vector_columns: VectorColumnMapping | None,
@@ -292,8 +247,6 @@ def _write_hash_sharded(
             run_id=run_id,
             key_col=key_col,
             value_spec=value_spec,
-            max_writes_per_second=max_writes_per_second,
-            max_write_bytes_per_second=max_write_bytes_per_second,
             sort_within_partitions=sort_within_partitions,
             started=started,
             vector_fn=distributed_vector_fn,
@@ -337,14 +290,12 @@ def _write_hash_sharded(
 def _write_cel_sharded(
     *,
     ddf: dd.DataFrame,
-    config: CelWriteConfig,
+    config: CelShardedWriteConfig,
     run_id: str,
     started: float,
     key_col: str,
     value_spec: ValueSpec,
     sort_within_partitions: bool,
-    max_writes_per_second: float | None,
-    max_write_bytes_per_second: float | None,
     verify_routing: bool,
     vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
     vector_columns: VectorColumnMapping | None,
@@ -438,8 +389,6 @@ def _write_cel_sharded(
             run_id=run_id,
             key_col=key_col,
             value_spec=value_spec,
-            max_writes_per_second=max_writes_per_second,
-            max_write_bytes_per_second=max_write_bytes_per_second,
             sort_within_partitions=sort_within_partitions,
             started=started,
             vector_fn=distributed_vector_fn,
@@ -483,7 +432,7 @@ def _write_cel_sharded(
 
 def _finalize_sharded_write(
     *,
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     run_id: str,
     started: float,
     resolved_sharding: ShardingSpec,
@@ -492,7 +441,7 @@ def _finalize_sharded_write(
     all_attempt_urls: list[str],
     shard_duration_ms: int,
     write_duration_ms: int,
-    runtime: _PartitionWriteRuntime,
+    runtime: RetryingPartitionWriteRuntime,
     key_col: str,
     num_dbs: int,
     mc: MetricsCollector | None,
@@ -666,50 +615,32 @@ def _verify_cel_routing_agreement(
 
 def _build_partition_write_runtime(
     *,
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     run_id: str,
     key_col: str,
     value_spec: ValueSpec,
-    max_writes_per_second: float | None,
-    max_write_bytes_per_second: float | None,
     sort_within_partitions: bool,
     started: float,
     vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
-) -> _PartitionWriteRuntime:
+) -> RetryingPartitionWriteRuntime:
     """Construct picklable runtime config for Dask partition writers."""
-
-    factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory(
-        credential_provider=config.credential_provider
-    )
-    if config.vector_spec is not None:
-        factory = wrap_factory_for_vector(factory, config)
-
-    return _PartitionWriteRuntime(
+    runtime = RetryingPartitionWriteRuntime.from_public_config(
+        config=config,
+        input=ColumnWriteInput(
+            key_col=key_col,
+            value_spec=value_spec,
+        ),
         run_id=run_id,
-        s3_prefix=config.s3_prefix,
-        shard_prefix=config.output.shard_prefix,
-        db_path_template=config.output.db_path_template,
-        local_root=config.output.local_root,
-        key_col=key_col,
-        key_encoding=config.key_encoding,
-        key_encoder=make_key_encoder(config.key_encoding),
-        value_spec=value_spec,
-        batch_size=config.batch_size,
-        adapter_factory=factory,
-        credential_provider=config.credential_provider,
-        max_writes_per_second=max_writes_per_second,
-        max_write_bytes_per_second=max_write_bytes_per_second,
-        sort_within_partitions=sort_within_partitions,
-        metrics_collector=config.metrics_collector,
         started=started,
-        shard_retry=config.shard_retry,
+        sort_within_partitions=sort_within_partitions,
         vector_fn=vector_fn,
     )
+    return runtime
 
 
 def _write_partition(
     pdf: pd.DataFrame,
-    runtime: _PartitionWriteRuntime,
+    runtime: RetryingPartitionWriteRuntime,
 ) -> pd.DataFrame:
     """Write all db_id groups within one Dask partition."""
 

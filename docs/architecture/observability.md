@@ -24,7 +24,7 @@ Both backend collectors lazily import their dependency (`prometheus_client`, `op
 | OpenTelemetry | `metrics-otel` | `OtelCollector` |
 | Default (no metrics) | (none) | `None` |
 
-The writer/reader entry points accept `metrics: MetricsCollector | None`. **Passing `None` (default) skips all emission entirely** — there is no no-op recorder class; emission is gated by an `if metrics is not None` check at each call site, so the runtime cost when disabled is a single attribute test.
+Writer configs carry `observability.metrics_collector: MetricsCollector | None`. Readers accept a metrics collector directly. **Passing `None` (default) skips all emission entirely** — there is no no-op recorder class; emission is gated by an `if metrics is not None` check at each call site, so the runtime cost when disabled is a single attribute test.
 
 ## Event surface
 
@@ -63,10 +63,16 @@ For the canonical, current list, query the source — `validate-docs` checks tha
 
 ```python
 from shardyfusion.metrics import PrometheusCollector
-from shardyfusion.writer.python import write_sharded_by_hash
+from shardyfusion import HashShardedWriteConfig, PythonRecordInput, WriterObservabilityConfig
+from shardyfusion.writer.python import write_hash_sharded
 
 collector = PrometheusCollector()  # uses global default registry
-write_sharded_by_hash(records, config, key_fn=..., value_fn=..., metrics=collector)
+config = HashShardedWriteConfig(
+    num_dbs=8,
+    s3_prefix="s3://bucket/prefix",
+    observability=WriterObservabilityConfig(metrics_collector=collector),
+)
+write_hash_sharded(records, config, PythonRecordInput(key_fn=..., value_fn=...))
 ```
 
 Or with OTel:

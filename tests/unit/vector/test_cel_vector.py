@@ -13,15 +13,14 @@ from shardyfusion.errors import ConfigValidationError
 from shardyfusion.vector._distributed import ResolvedVectorRouting, assign_vector_shard
 from shardyfusion.vector.config import (
     VectorIndexConfig,
+    VectorShardedWriteConfig,
     VectorShardingSpec,
-    VectorWriteConfig,
 )
 from shardyfusion.vector.types import (
     DistanceMetric,
     VectorRecord,
     VectorShardingStrategy,
 )
-from shardyfusion.vector.writer import _validate_config
 
 # ---------------------------------------------------------------------------
 # Mock CEL helpers — avoids hard dependency on cel-expr-python for unit tests
@@ -39,13 +38,13 @@ class FakeCompiledCel:
 
 
 # ---------------------------------------------------------------------------
-# Writer: _validate_config with CEL
+# Writer config validation with CEL
 # ---------------------------------------------------------------------------
 
 
 class TestValidateConfigCel:
     def test_cel_valid(self):
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             num_dbs=3,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=128),
@@ -56,35 +55,33 @@ class TestValidateConfigCel:
                 routing_values=["us", "eu", "asia"],
             ),
         )
-        _validate_config(cfg)  # should not raise
+        cfg.validate()  # should not raise
 
     def test_cel_missing_expr_raises(self):
-        cfg = VectorWriteConfig(
-            num_dbs=3,
-            s3_prefix="s3://bucket/prefix",
-            index_config=VectorIndexConfig(dim=128),
-            sharding=VectorShardingSpec(
-                strategy=VectorShardingStrategy.CEL,
-                cel_expr=None,
-                cel_columns={"region": "string"},
-            ),
-        )
         with pytest.raises(ConfigValidationError, match="cel_expr"):
-            _validate_config(cfg)
+            VectorShardedWriteConfig(
+                num_dbs=3,
+                s3_prefix="s3://bucket/prefix",
+                index_config=VectorIndexConfig(dim=128),
+                sharding=VectorShardingSpec(
+                    strategy=VectorShardingStrategy.CEL,
+                    cel_expr=None,
+                    cel_columns={"region": "string"},
+                ),
+            )
 
     def test_cel_missing_columns_raises(self):
-        cfg = VectorWriteConfig(
-            num_dbs=3,
-            s3_prefix="s3://bucket/prefix",
-            index_config=VectorIndexConfig(dim=128),
-            sharding=VectorShardingSpec(
-                strategy=VectorShardingStrategy.CEL,
-                cel_expr="region",
-                cel_columns=None,
-            ),
-        )
         with pytest.raises(ConfigValidationError, match="cel_columns"):
-            _validate_config(cfg)
+            VectorShardedWriteConfig(
+                num_dbs=3,
+                s3_prefix="s3://bucket/prefix",
+                index_config=VectorIndexConfig(dim=128),
+                sharding=VectorShardingSpec(
+                    strategy=VectorShardingStrategy.CEL,
+                    cel_expr="region",
+                    cel_columns=None,
+                ),
+            )
 
 
 # ---------------------------------------------------------------------------

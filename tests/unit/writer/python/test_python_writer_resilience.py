@@ -8,11 +8,15 @@ from typing import Self
 
 import pytest
 
-from shardyfusion.config import HashWriteConfig, ManifestOptions, OutputOptions
+from shardyfusion.config import (
+    HashShardedWriteConfig,
+    WriterManifestConfig,
+    WriterOutputConfig,
+)
 from shardyfusion.manifest_store import InMemoryManifestStore
 from shardyfusion.run_registry import InMemoryRunRegistry, RunStatus
 from shardyfusion.sharding_types import KeyEncoding
-from shardyfusion.writer.python import write_sharded_by_hash
+from tests.helpers.writer_api import write_python_hash_sharded as write_hash_sharded
 
 # ---------------------------------------------------------------------------
 # Test infrastructure
@@ -70,15 +74,15 @@ def _make_config(
     run_registry: InMemoryRunRegistry | None = None,
     batch_size: int = 50_000,
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
-) -> HashWriteConfig:
-    return HashWriteConfig(
+) -> HashShardedWriteConfig:
+    return HashShardedWriteConfig(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/prefix",
         key_encoding=key_encoding,
         batch_size=batch_size,
         adapter_factory=factory or _TrackingFactory(),
-        output=OutputOptions(run_id="test-run"),
-        manifest=ManifestOptions(store=InMemoryManifestStore()),
+        output=WriterOutputConfig(run_id="test-run"),
+        manifest=WriterManifestConfig(store=InMemoryManifestStore()),
         run_registry=run_registry,
     )
 
@@ -100,7 +104,7 @@ class TestGlobalBatchLimits:
         # 50 records across 10 shards → ~5 per shard. Without limit, no flushes
         # until the final flush. With limit=20, flushes trigger mid-stream.
         records = list(range(50))
-        result = write_sharded_by_hash(
+        result = write_hash_sharded(
             records,
             config,
             key_fn=lambda r: r,
@@ -124,7 +128,7 @@ class TestGlobalBatchLimits:
         # Each record produces ~1KB value. 20 records → ~20KB across 2 shards.
         big_value = b"x" * 1024
         records = list(range(20))
-        result = write_sharded_by_hash(
+        result = write_hash_sharded(
             records,
             config,
             key_fn=lambda r: r,
@@ -145,7 +149,7 @@ class TestGlobalBatchLimits:
         config = _make_config(num_dbs=4, factory=factory, batch_size=100)
 
         records = list(range(40))
-        result = write_sharded_by_hash(
+        result = write_hash_sharded(
             records,
             config,
             key_fn=lambda r: r,
@@ -159,18 +163,18 @@ class TestGlobalBatchLimits:
         """Global limits only apply to single-process mode."""
         from shardyfusion.testing import fake_adapter_factory
 
-        config = HashWriteConfig(
+        config = HashShardedWriteConfig(
             num_dbs=2,
             s3_prefix="s3://bucket/prefix",
             batch_size=50_000,
             adapter_factory=fake_adapter_factory,
-            output=OutputOptions(run_id="test-run"),
-            manifest=ManifestOptions(store=InMemoryManifestStore()),
+            output=WriterOutputConfig(run_id="test-run"),
+            manifest=WriterManifestConfig(store=InMemoryManifestStore()),
         )
 
         records = list(range(10))
         # These params are accepted but only affect single-process mode
-        result = write_sharded_by_hash(
+        result = write_hash_sharded(
             records,
             config,
             key_fn=lambda r: r,
@@ -205,7 +209,7 @@ class TestAdapterCloseFailureLogging:
         config.adapter_factory = _FailingCloseFactory()
 
         with pytest.raises(RuntimeError, match="simulated close failure"):
-            write_sharded_by_hash(
+            write_hash_sharded(
                 list(range(10)),
                 config,
                 key_fn=lambda r: r,
@@ -240,7 +244,7 @@ class TestAdapterCloseFailureLogging:
         config.adapter_factory = _Factory()
 
         with pytest.raises(RuntimeError, match="first adapter close fails"):
-            write_sharded_by_hash(
+            write_hash_sharded(
                 list(range(6)),
                 config,
                 key_fn=lambda r: r,
@@ -271,7 +275,7 @@ class TestRunRecordFailureStatus:
         config.adapter_factory = _AlwaysFailFactory()
 
         with pytest.raises(RuntimeError, match="adapter write failed"):
-            write_sharded_by_hash(
+            write_hash_sharded(
                 list(range(4)),
                 config,
                 key_fn=lambda r: r,

@@ -12,7 +12,8 @@ import pandas as pd
 
 from shardyfusion._rate_limiter import TokenBucket
 from shardyfusion._writer_core import _normalize_vector_id
-from shardyfusion.errors import ShardAssignmentError
+from shardyfusion.config import VectorColumnInput, validate_configs
+from shardyfusion.errors import ConfigValidationError, ShardAssignmentError
 from shardyfusion.logging import get_logger
 from shardyfusion.manifest import (
     BuildDurations,
@@ -21,7 +22,7 @@ from shardyfusion.manifest import (
     RequiredShardMeta,
 )
 from shardyfusion.run_registry import RunRecordLifecycle
-from shardyfusion.vector.config import VectorWriteConfig
+from shardyfusion.vector.config import VectorShardedWriteConfig, VectorWriteOptions
 from shardyfusion.vector.types import VectorShardingStrategy
 
 from .sharding import VECTOR_DB_ID_COL, _stack_vector_values
@@ -136,31 +137,21 @@ def _verify_vector_routing_agreement(
         )
 
 
-def write_vector_sharded(
+def write_sharded(
     ddf: dd.DataFrame,
-    config: VectorWriteConfig,
-    *,
-    vector_col: str,
-    id_col: str,
-    payload_cols: list[str] | None = None,
-    shard_id_col: str | None = None,
-    routing_context_cols: dict[str, str] | None = None,
-    max_writes_per_second: float | None = None,
-    verify_routing: bool = True,
+    config: VectorShardedWriteConfig,
+    input: VectorColumnInput,
+    options: VectorWriteOptions | None = None,
 ) -> BuildResult:
     """Write vectors from a Dask DataFrame into N sharded vector indices.
 
     Args:
         ddf: Dask DataFrame with vector and ID columns.
         config: Vector write configuration.
-        vector_col: Name of the vector column.
-        id_col: Name of the ID column.
-        payload_cols: Optional payload columns.
-        shard_id_col: Column with explicit shard IDs (EXPLICIT strategy only).
-        routing_context_cols: Columns for CEL expression evaluation.
-        max_writes_per_second: Optional rate limit.
-        verify_routing: If True (default), spot-check that Dask-assigned vector
-            shard IDs match ``assign_vector_shard()``.
+        input: Vector column mapping.
+        options: Per-call execution options. ``verify_routing`` controls whether
+            Dask-assigned vector shard IDs are checked against
+            ``assign_vector_shard()``.
 
     Returns:
         BuildResult with manifest reference and stats.
@@ -175,6 +166,17 @@ def write_vector_sharded(
     )
 
     from .sharding import add_vector_db_id_column
+
+    options = options or VectorWriteOptions()
+    validate_configs(config, input, options)
+    if input.id_col is None:
+        raise ConfigValidationError("input.id_col is required for vector writes")
+    vector_col = input.vector_col
+    id_col = input.id_col
+    payload_cols = input.payload_cols
+    shard_id_col = input.shard_id_col
+    routing_context_cols = input.routing_context_cols
+    max_writes_per_second = config.rate_limits.max_writes_per_second
 
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
@@ -217,7 +219,7 @@ def write_vector_sharded(
             routing_context_cols=routing_context_cols,
         )
 
-        if verify_routing and num_dbs > 0:
+        if options.verify_routing and num_dbs > 0:
             _verify_vector_routing_agreement(
                 ddf_with_id,
                 id_col=id_col,

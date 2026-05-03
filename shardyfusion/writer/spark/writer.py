@@ -9,7 +9,7 @@ from itertools import chain
 from typing import Any
 from uuid import uuid4
 
-from pyspark import RDD, StorageLevel, TaskContext
+from pyspark import RDD, TaskContext
 from pyspark.sql import DataFrame, Row
 from pyspark.sql import functions as F
 from pyspark.sql.types import IntegerType, StructField, StructType
@@ -37,11 +37,16 @@ from shardyfusion._writer_core import (
     route_cel,
     route_hash,
     select_winners,
-    wrap_factory_for_vector,
 )
 from shardyfusion.cel import compile_cel
-from shardyfusion.config import CelWriteConfig, HashWriteConfig, WriteConfig
-from shardyfusion.credentials import CredentialProvider
+from shardyfusion.config import (
+    BaseShardedWriteConfig,
+    CelShardedWriteConfig,
+    ColumnWriteInput,
+    HashShardedWriteConfig,
+    SparkWriteOptions,
+    validate_configs,
+)
 from shardyfusion.errors import ShardAssignmentError
 from shardyfusion.logging import (
     LogContext,
@@ -55,7 +60,7 @@ from shardyfusion.manifest import (
 from shardyfusion.metrics import MetricEvent, MetricsCollector
 from shardyfusion.routing import hash_db_id
 from shardyfusion.run_registry import RunRecordLifecycle
-from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
+from shardyfusion.serde import ValueSpec
 from shardyfusion.sharding_types import (
     DB_ID_COL,
     CelShardingSpec,
@@ -66,13 +71,13 @@ from shardyfusion.sharding_types import (
 )
 from shardyfusion.slatedb_adapter import (
     DbAdapterFactory,
-    SlateDbFactory,
 )
 from shardyfusion.writer._accumulators import (
     KvAccumulator,
     ShardBatchAccumulator,
     UnifiedAccumulator,
 )
+from shardyfusion.writer._runtime import PartitionWriteRuntime
 from shardyfusion.writer.spark.util import (
     DataFrameCacheContext,
     SparkConfOverrideContext,
@@ -82,32 +87,8 @@ from .sharding import (
     _discover_categorical_routing_values,
     prepare_partitioned_rdd,
 )
-from .vector_writer import write_vector_sharded  # noqa: F401
 
 _logger = get_logger(__name__)
-
-
-@dataclass(slots=True)
-class PartitionWriteConfig:
-    run_id: str
-    s3_prefix: str
-    shard_prefix: str
-    db_path_template: str
-    local_root: str
-    key_col: str
-    key_encoding: KeyEncoding
-    key_encoder: KeyEncoder
-    value_spec: ValueSpec
-    batch_size: int
-    adapter_factory: DbAdapterFactory
-    credential_provider: CredentialProvider | None
-    max_writes_per_second: float | None
-    max_write_bytes_per_second: float | None = None
-    metrics_collector: MetricsCollector | None = None  # must be picklable
-    started: float = 0.0
-    vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None = (
-        None
-    )
 
 
 @dataclass(slots=True)
@@ -118,101 +99,75 @@ class _PreparedPartitionRows:
     shard_duration_ms: int
 
 
-def write_sharded_by_hash(
+def write_hash_sharded(
     df: DataFrame,
-    config: HashWriteConfig,
-    *,
-    key_col: str,
-    value_spec: ValueSpec,
-    sort_within_partitions: bool = False,
-    spark_conf_overrides: dict[str, str] | None = None,
-    cache_input: bool = False,
-    storage_level: StorageLevel | None = None,
-    max_writes_per_second: float | None = None,
-    max_write_bytes_per_second: float | None = None,
-    verify_routing: bool = True,
-    vector_fn: (
-        Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None
-    ) = None,
-    vector_columns: VectorColumnMapping | None = None,
+    config: HashShardedWriteConfig,
+    input: ColumnWriteInput,
+    options: SparkWriteOptions | None = None,
 ) -> BuildResult:
     """Write a DataFrame into N independent sharded databases using HASH routing."""
+    options = options or SparkWriteOptions()
+    validate_configs(config, input, options)
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
     spark = df.sparkSession
-    with SparkConfOverrideContext(spark, spark_conf_overrides):
+    with SparkConfOverrideContext(spark, options.spark_conf_overrides):
         with DataFrameCacheContext(
-            df, storage_level=storage_level, enabled=cache_input
+            df, storage_level=options.storage_level, enabled=options.cache_input
         ) as cached_df:
             return _write_hash_sharded(
                 df=cached_df,
                 config=config,
                 run_id=run_id,
                 started=started,
-                key_col=key_col,
-                value_spec=value_spec,
-                sort_within_partitions=sort_within_partitions,
-                max_writes_per_second=max_writes_per_second,
-                max_write_bytes_per_second=max_write_bytes_per_second,
-                verify_routing=verify_routing,
-                vector_fn=vector_fn,
-                vector_columns=vector_columns,
+                key_col=input.key_col,
+                value_spec=input.value_spec,
+                sort_within_partitions=options.sort_within_partitions,
+                verify_routing=options.verify_routing,
+                vector_fn=input.vector_fn,
+                vector_columns=input.vector,
             )
 
 
-def write_sharded_by_cel(
+def write_cel_sharded(
     df: DataFrame,
-    config: CelWriteConfig,
-    *,
-    key_col: str,
-    value_spec: ValueSpec,
-    sort_within_partitions: bool = False,
-    spark_conf_overrides: dict[str, str] | None = None,
-    cache_input: bool = False,
-    storage_level: StorageLevel | None = None,
-    max_writes_per_second: float | None = None,
-    max_write_bytes_per_second: float | None = None,
-    verify_routing: bool = True,
-    vector_fn: (
-        Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None
-    ) = None,
-    vector_columns: VectorColumnMapping | None = None,
+    config: CelShardedWriteConfig,
+    input: ColumnWriteInput,
+    options: SparkWriteOptions | None = None,
 ) -> BuildResult:
     """Write a DataFrame into N independent sharded databases using CEL routing."""
+    options = options or SparkWriteOptions()
+    validate_configs(config, input, options)
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
     spark = df.sparkSession
-    with SparkConfOverrideContext(spark, spark_conf_overrides):
+    with SparkConfOverrideContext(spark, options.spark_conf_overrides):
         with DataFrameCacheContext(
-            df, storage_level=storage_level, enabled=cache_input
+            df, storage_level=options.storage_level, enabled=options.cache_input
         ) as cached_df:
             return _write_cel_sharded(
                 df=cached_df,
                 config=config,
                 run_id=run_id,
                 started=started,
-                key_col=key_col,
-                value_spec=value_spec,
-                sort_within_partitions=sort_within_partitions,
-                max_writes_per_second=max_writes_per_second,
-                max_write_bytes_per_second=max_write_bytes_per_second,
-                verify_routing=verify_routing,
-                vector_fn=vector_fn,
-                vector_columns=vector_columns,
+                key_col=input.key_col,
+                value_spec=input.value_spec,
+                sort_within_partitions=options.sort_within_partitions,
+                verify_routing=options.verify_routing,
+                vector_fn=input.vector_fn,
+                vector_columns=input.vector,
             )
 
 
 def _write_hash_sharded(
     *,
     df: DataFrame,
-    config: HashWriteConfig,
+    config: HashShardedWriteConfig,
     run_id: str,
     started: float,
     key_col: str,
     value_spec: ValueSpec,
     sort_within_partitions: bool,
-    max_writes_per_second: float | None,
-    max_write_bytes_per_second: float | None,
     verify_routing: bool,
     vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
     vector_columns: VectorColumnMapping | None,
@@ -283,8 +238,6 @@ def _write_hash_sharded(
             run_id=run_id,
             key_col=key_col,
             value_spec=value_spec,
-            max_writes_per_second=max_writes_per_second,
-            max_write_bytes_per_second=max_write_bytes_per_second,
             started=started,
             vector_fn=distributed_vector_fn,
         )
@@ -309,14 +262,12 @@ def _write_hash_sharded(
 def _write_cel_sharded(
     *,
     df: DataFrame,
-    config: CelWriteConfig,
+    config: CelShardedWriteConfig,
     run_id: str,
     started: float,
     key_col: str,
     value_spec: ValueSpec,
     sort_within_partitions: bool,
-    max_writes_per_second: float | None,
-    max_write_bytes_per_second: float | None,
     verify_routing: bool,
     vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
     vector_columns: VectorColumnMapping | None,
@@ -386,8 +337,6 @@ def _write_cel_sharded(
             run_id=run_id,
             key_col=key_col,
             value_spec=value_spec,
-            max_writes_per_second=max_writes_per_second,
-            max_write_bytes_per_second=max_write_bytes_per_second,
             started=started,
             vector_fn=distributed_vector_fn,
         )
@@ -411,12 +360,12 @@ def _write_cel_sharded(
 
 def _finalize_sharded_write(
     *,
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     run_id: str,
     started: float,
     prepared_rows: _PreparedPartitionRows,
     write_outcome: PartitionWriteOutcome,
-    runtime: PartitionWriteConfig,
+    runtime: PartitionWriteRuntime,
     mc: MetricsCollector | None,
     run_record: Any,
 ) -> BuildResult:
@@ -680,7 +629,7 @@ def _add_db_id_column_cel(
 def _prepare_hash_partitioned_rows(
     *,
     df: DataFrame,
-    config: HashWriteConfig,
+    config: HashShardedWriteConfig,
     num_dbs: int,
     key_col: str,
     sort_within_partitions: bool,
@@ -726,7 +675,7 @@ def _prepare_hash_partitioned_rows(
 def _prepare_cel_partitioned_rows(
     *,
     df: DataFrame,
-    config: CelWriteConfig,
+    config: CelShardedWriteConfig,
     key_col: str,
     sort_within_partitions: bool,
     verify_routing: bool = True,
@@ -789,49 +738,32 @@ def _prepare_cel_partitioned_rows(
 
 def _build_partition_write_runtime(
     *,
-    config: WriteConfig,
+    config: BaseShardedWriteConfig,
     run_id: str,
     key_col: str,
     value_spec: ValueSpec,
-    max_writes_per_second: float | None,
-    max_write_bytes_per_second: float | None,
     started: float = 0.0,
     vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]]
     | None = None,
-) -> PartitionWriteConfig:
+) -> PartitionWriteRuntime:
     """Construct immutable worker-side runtime config for partition shard writers."""
-
-    factory: DbAdapterFactory = config.adapter_factory or SlateDbFactory(
-        credential_provider=config.credential_provider
-    )
-    if config.vector_spec is not None:
-        factory = wrap_factory_for_vector(factory, config)
-
-    return PartitionWriteConfig(
+    runtime = PartitionWriteRuntime.from_public_config(
+        config=config,
+        input=ColumnWriteInput(
+            key_col=key_col,
+            value_spec=value_spec,
+        ),
         run_id=run_id,
-        s3_prefix=config.s3_prefix,
-        shard_prefix=config.output.shard_prefix,
-        db_path_template=config.output.db_path_template,
-        local_root=config.output.local_root,
-        key_col=key_col,
-        key_encoding=config.key_encoding,
-        key_encoder=make_key_encoder(config.key_encoding),
-        value_spec=value_spec,
-        batch_size=config.batch_size,
-        adapter_factory=factory,
-        credential_provider=config.credential_provider,
-        max_writes_per_second=max_writes_per_second,
-        max_write_bytes_per_second=max_write_bytes_per_second,
-        metrics_collector=config.metrics_collector,
         started=started,
         vector_fn=vector_fn,
     )
+    return runtime
 
 
 def _run_partition_writes(
     *,
     partitioned_rdd: RDD[tuple[int, Row]],
-    runtime: PartitionWriteConfig,
+    runtime: PartitionWriteRuntime,
     num_dbs: int,
 ) -> PartitionWriteOutcome:
     """Execute partition writers and deterministically select winning shard attempts."""
@@ -855,7 +787,7 @@ def _run_partition_writes(
 def write_one_shard_partition(
     db_id: int,
     rows_iter: Iterable[tuple[int, Row]],
-    runtime: PartitionWriteConfig,
+    runtime: PartitionWriteRuntime,
 ) -> Iterator[ShardAttemptResult]:
     """Write exactly one shard from one partition and yield one ShardAttemptResult."""
 

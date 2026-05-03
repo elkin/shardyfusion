@@ -141,7 +141,7 @@ class HashShardingSpec(ShardingSpec):
     """HASH sharding configuration.
 
     Uniform distribution via ``hash_algorithm(canonical_bytes(key)) % num_dbs``.
-    Supports int, str, and bytes keys. ``num_dbs`` lives on :class:`HashWriteConfig`.
+    Supports int, str, and bytes keys. ``num_dbs`` lives on :class:`HashShardedWriteConfig`.
     """
 
     hash_algorithm: ShardHashAlgorithm = ShardHashAlgorithm.XXH3_64

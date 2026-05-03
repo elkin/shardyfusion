@@ -18,7 +18,11 @@ cel_expr_python = pytest.importorskip("cel_expr_python")  # noqa: F841
 from shardyfusion._writer_core import route_cel as route_cel_raw
 from shardyfusion.cel import compile_cel
 from shardyfusion.cel import route_cel as route_cel_compiled
-from shardyfusion.config import CelWriteConfig, ManifestOptions, OutputOptions
+from shardyfusion.config import (
+    CelShardedWriteConfig,
+    WriterManifestConfig,
+    WriterOutputConfig,
+)
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.manifest import BuildResult
 from shardyfusion.manifest_store import InMemoryManifestStore
@@ -29,7 +33,7 @@ from shardyfusion.testing import (
     file_backed_adapter_factory,
     file_backed_load_db,
 )
-from shardyfusion.writer.python import write_sharded_by_cel
+from tests.helpers.writer_api import write_python_cel_sharded as write_cel_sharded
 
 pytestmark = pytest.mark.cel
 
@@ -47,11 +51,11 @@ def _make_cel_config(
     routing_values: list[int | str | bytes] | None = None,
     key_encoding: KeyEncoding = KeyEncoding.U64BE,
     batch_size: int = 50_000,
-) -> tuple[CelWriteConfig, str]:
+) -> tuple[CelShardedWriteConfig, str]:
     """Build a CEL WriteConfig with file-backed adapter for data verification."""
     root_dir = str(tmp_path / "file_backed")
     store = InMemoryManifestStore()
-    config = CelWriteConfig(
+    config = CelShardedWriteConfig(
         s3_prefix="s3://bucket/prefix",
         key_encoding=key_encoding,
         batch_size=batch_size,
@@ -59,8 +63,8 @@ def _make_cel_config(
         cel_expr=cel_expr,
         cel_columns=cel_columns,
         routing_values=routing_values,
-        output=OutputOptions(run_id="test-cel"),
-        manifest=ManifestOptions(store=store),
+        output=WriterOutputConfig(run_id="test-cel"),
+        manifest=WriterManifestConfig(store=store),
     )
     return config, root_dir
 
@@ -83,7 +87,7 @@ class TestCelUnifiedMode:
         )
 
         records = list(range(100))
-        result = write_sharded_by_cel(
+        result = write_cel_sharded(
             records,
             config,
             key_fn=lambda r: r,
@@ -117,7 +121,7 @@ class TestCelUnifiedMode:
         )
         config.manifest.store = store
 
-        result = write_sharded_by_cel(
+        result = write_cel_sharded(
             list(range(20)),
             config,
             key_fn=lambda r: r,
@@ -142,7 +146,7 @@ class TestCelUnifiedMode:
         )
         config.manifest.store = store
 
-        result = write_sharded_by_cel(
+        result = write_cel_sharded(
             list(range(30)),
             config,
             key_fn=lambda r: r,
@@ -169,17 +173,17 @@ class TestCelUnifiedMode:
         """Direct CEL can route all keys to shard 0."""
         store = InMemoryManifestStore()
         root_dir = str(tmp_path / "file_backed")
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             key_encoding=KeyEncoding.U64BE,
             adapter_factory=file_backed_adapter_factory(root_dir),
             cel_expr="0",
             cel_columns={"key": "int"},
-            output=OutputOptions(run_id="test-single"),
-            manifest=ManifestOptions(store=store),
+            output=WriterOutputConfig(run_id="test-single"),
+            manifest=WriterManifestConfig(store=store),
         )
 
-        result = write_sharded_by_cel(
+        result = write_cel_sharded(
             list(range(50)),
             config,
             key_fn=lambda r: r,
@@ -197,7 +201,7 @@ class TestCelUnifiedMode:
             cel_columns={"key": "int"},
         )
 
-        result = write_sharded_by_cel(
+        result = write_cel_sharded(
             [],
             config,
             key_fn=lambda r: r,
@@ -216,7 +220,7 @@ class TestCelUnifiedMode:
         )
 
         records = list(range(200))
-        result = write_sharded_by_cel(
+        result = write_cel_sharded(
             records,
             config,
             key_fn=lambda r: r,
@@ -238,18 +242,18 @@ class TestCelUnifiedMode:
         """CEL direct mode: shard_hash(key) % N produces shard IDs directly."""
         store = InMemoryManifestStore()
         root_dir = str(tmp_path / "file_backed")
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             key_encoding=KeyEncoding.U64BE,
             adapter_factory=file_backed_adapter_factory(root_dir),
             cel_expr="shard_hash(key) % 4u",
             cel_columns={"key": "int"},
-            output=OutputOptions(run_id="test-direct-hash"),
-            manifest=ManifestOptions(store=store),
+            output=WriterOutputConfig(run_id="test-direct-hash"),
+            manifest=WriterManifestConfig(store=store),
         )
 
         records = list(range(100))
-        result = write_sharded_by_cel(
+        result = write_cel_sharded(
             records,
             config,
             key_fn=lambda r: r,
@@ -281,7 +285,7 @@ class TestCelUnifiedMode:
         with pytest.raises(
             ConfigValidationError, match="Parallel mode requires num_dbs"
         ):
-            write_sharded_by_cel(
+            write_cel_sharded(
                 list(range(10)),
                 config,
                 key_fn=lambda r: r,
@@ -307,15 +311,15 @@ class TestCelSplitMode:
         """Records route by 'region' context, stored by 'user_id' key."""
         store = InMemoryManifestStore()
         root_dir = str(tmp_path / "file_backed")
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             key_encoding=KeyEncoding.UTF8,
             adapter_factory=file_backed_adapter_factory(root_dir),
             cel_expr="region",
             cel_columns={"region": "string"},
             routing_values=["ap", "eu", "us"],
-            output=OutputOptions(run_id="test-split"),
-            manifest=ManifestOptions(store=store),
+            output=WriterOutputConfig(run_id="test-split"),
+            manifest=WriterManifestConfig(store=store),
         )
 
         # Records: (user_id, region)
@@ -328,7 +332,7 @@ class TestCelSplitMode:
             ("frank", "us"),
         ]
 
-        result = write_sharded_by_cel(
+        result = write_cel_sharded(
             records,
             config,
             key_fn=lambda r: r[0],
@@ -361,15 +365,15 @@ class TestCelSplitMode:
         """Router.route_with_context produces same shard IDs as write time."""
         store = InMemoryManifestStore()
         root_dir = str(tmp_path / "file_backed")
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             key_encoding=KeyEncoding.UTF8,
             adapter_factory=file_backed_adapter_factory(root_dir),
             cel_expr="region",
             cel_columns={"region": "string"},
             routing_values=["ap", "eu", "us"],
-            output=OutputOptions(run_id="test-split-read"),
-            manifest=ManifestOptions(store=store),
+            output=WriterOutputConfig(run_id="test-split-read"),
+            manifest=WriterManifestConfig(store=store),
         )
 
         records = [
@@ -378,7 +382,7 @@ class TestCelSplitMode:
             ("user3", "us"),
         ]
 
-        result = write_sharded_by_cel(
+        result = write_cel_sharded(
             records,
             config,
             key_fn=lambda r: r[0],
@@ -398,15 +402,15 @@ class TestCelSplitMode:
         """Shards can have uneven record counts in split mode."""
         store = InMemoryManifestStore()
         root_dir = str(tmp_path / "file_backed")
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             key_encoding=KeyEncoding.UTF8,
             adapter_factory=file_backed_adapter_factory(root_dir),
             cel_expr="region",
             cel_columns={"region": "string"},
             routing_values=["ap", "eu", "us"],
-            output=OutputOptions(run_id="test-uneven"),
-            manifest=ManifestOptions(store=store),
+            output=WriterOutputConfig(run_id="test-uneven"),
+            manifest=WriterManifestConfig(store=store),
         )
 
         # Most records in "us" region
@@ -416,7 +420,7 @@ class TestCelSplitMode:
             + [("ap_user", "ap")]
         )
 
-        result = write_sharded_by_cel(
+        result = write_cel_sharded(
             records,
             config,
             key_fn=lambda r: r[0],
@@ -433,15 +437,15 @@ class TestCelCategoricalMode:
     def test_infers_routing_values_from_helper(self, tmp_path: Path) -> None:
         store = InMemoryManifestStore()
         root_dir = str(tmp_path / "file_backed")
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             key_encoding=KeyEncoding.UTF8,
             adapter_factory=file_backed_adapter_factory(root_dir),
             cel_expr="region",
             cel_columns={"region": "string"},
             infer_routing_values_from_data=True,
-            output=OutputOptions(run_id="test-categorical"),
-            manifest=ManifestOptions(store=store),
+            output=WriterOutputConfig(run_id="test-categorical"),
+            manifest=WriterManifestConfig(store=store),
         )
 
         records = [
@@ -451,7 +455,7 @@ class TestCelCategoricalMode:
             ("dave", "ap"),
         ]
 
-        result = write_sharded_by_cel(
+        result = write_cel_sharded(
             records,
             config,
             key_fn=lambda r: r[0],
@@ -472,15 +476,15 @@ class TestCelCategoricalMode:
     def test_inferred_categorical_requires_reiterable_input(
         self, tmp_path: Path
     ) -> None:
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             key_encoding=KeyEncoding.UTF8,
             adapter_factory=file_backed_adapter_factory(str(tmp_path / "file_backed")),
             cel_expr="region",
             cel_columns={"region": "string"},
             infer_routing_values_from_data=True,
-            output=OutputOptions(run_id="test-categorical-iter"),
-            manifest=ManifestOptions(store=InMemoryManifestStore()),
+            output=WriterOutputConfig(run_id="test-categorical-iter"),
+            manifest=WriterManifestConfig(store=InMemoryManifestStore()),
         )
 
         def _records():
@@ -488,7 +492,7 @@ class TestCelCategoricalMode:
             yield ("bob", "eu")
 
         with pytest.raises(ConfigValidationError, match="reiterable input"):
-            write_sharded_by_cel(
+            write_cel_sharded(
                 _records(),
                 config,
                 key_fn=lambda r: r[0],
@@ -497,21 +501,21 @@ class TestCelCategoricalMode:
             )
 
     def test_inferred_categorical_rejects_parallel(self, tmp_path: Path) -> None:
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             key_encoding=KeyEncoding.UTF8,
             adapter_factory=file_backed_adapter_factory(str(tmp_path / "file_backed")),
             cel_expr="region",
             cel_columns={"region": "string"},
             infer_routing_values_from_data=True,
-            output=OutputOptions(run_id="test-categorical-parallel"),
-            manifest=ManifestOptions(store=InMemoryManifestStore()),
+            output=WriterOutputConfig(run_id="test-categorical-parallel"),
+            manifest=WriterManifestConfig(store=InMemoryManifestStore()),
         )
 
         with pytest.raises(
             ConfigValidationError, match="does not support inferred categorical"
         ):
-            write_sharded_by_cel(
+            write_cel_sharded(
                 [("alice", "ap"), ("bob", "eu")],
                 config,
                 key_fn=lambda r: r[0],

@@ -9,18 +9,17 @@ from typing import Any
 import numpy as np
 import pytest
 
-from shardyfusion.config import OutputOptions
+from shardyfusion.config import WriterOutputConfig
 from shardyfusion.errors import ConfigValidationError
 from shardyfusion.vector.config import (
     VectorIndexConfig,
+    VectorShardedWriteConfig,
     VectorShardingSpec,
-    VectorWriteConfig,
 )
 from shardyfusion.vector.types import VectorRecord, VectorShardingStrategy
 from shardyfusion.vector.writer import (
     _flush_shard_batch,
     _ShardState,
-    _validate_config,
 )
 
 # ---------------------------------------------------------------------------
@@ -83,7 +82,7 @@ class MockWriterFactory:
 
 class TestValidateConfig:
     def test_valid_config(self):
-        cfg = VectorWriteConfig(
+        cfg = VectorShardedWriteConfig(
             num_dbs=4,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=128),
@@ -92,35 +91,33 @@ class TestValidateConfig:
                 train_centroids=True,
             ),
         )
-        _validate_config(cfg)  # should not raise
+        cfg.validate()  # should not raise
 
     def test_zero_dim_raises(self):
         with pytest.raises(ConfigValidationError, match=r"index_config\.dim"):
-            VectorWriteConfig(
+            VectorShardedWriteConfig(
                 s3_prefix="s3://bucket/prefix",
                 index_config=VectorIndexConfig(dim=0),
             )
 
     def test_empty_prefix_raises(self):
-        cfg = VectorWriteConfig(
-            s3_prefix="",
-            index_config=VectorIndexConfig(dim=128),
-        )
         with pytest.raises(ConfigValidationError, match="s3_prefix"):
-            _validate_config(cfg)
+            VectorShardedWriteConfig(
+                s3_prefix="",
+                index_config=VectorIndexConfig(dim=128),
+            )
 
     def test_cluster_without_centroids_or_training_raises(self):
-        cfg = VectorWriteConfig(
-            s3_prefix="s3://bucket/prefix",
-            index_config=VectorIndexConfig(dim=128),
-            sharding=VectorShardingSpec(
-                strategy=VectorShardingStrategy.CLUSTER,
-                train_centroids=False,
-                centroids=None,
-            ),
-        )
         with pytest.raises(ConfigValidationError, match="centroids"):
-            _validate_config(cfg)
+            VectorShardedWriteConfig(
+                s3_prefix="s3://bucket/prefix",
+                index_config=VectorIndexConfig(dim=128),
+                sharding=VectorShardingSpec(
+                    strategy=VectorShardingStrategy.CLUSTER,
+                    train_centroids=False,
+                    centroids=None,
+                ),
+            )
 
 
 class TestAssignShard:
@@ -352,19 +349,21 @@ class TestAssignShardAdditional:
 
 
 class TestWriteSingleProcess:
-    def _make_config(self, tmp_path: Path, num_dbs: int = 2) -> VectorWriteConfig:
-        return VectorWriteConfig(
+    def _make_config(
+        self, tmp_path: Path, num_dbs: int = 2
+    ) -> VectorShardedWriteConfig:
+        return VectorShardedWriteConfig(
             num_dbs=num_dbs,
             s3_prefix="s3://bucket/prefix",
             index_config=VectorIndexConfig(dim=4),
             sharding=VectorShardingSpec(
                 strategy=VectorShardingStrategy.EXPLICIT,
             ),
-            output=OutputOptions(local_root=str(tmp_path)),
+            output=WriterOutputConfig(local_root=str(tmp_path)),
             batch_size=100,
         )
 
-    def _make_routing(self, config: VectorWriteConfig, num_dbs: int) -> Any:
+    def _make_routing(self, config: VectorShardedWriteConfig, num_dbs: int) -> Any:
         from shardyfusion.vector._distributed import ResolvedVectorRouting
         from shardyfusion.vector.types import DistanceMetric
 
@@ -491,55 +490,51 @@ class TestWriteSingleProcess:
 
 
 # ---------------------------------------------------------------------------
-# _validate_config — additional cases
+# VectorShardedWriteConfig validation — additional cases
 # ---------------------------------------------------------------------------
 
 
 class TestValidateConfigAdditional:
     def test_negative_batch_size_raises(self):
-        cfg = VectorWriteConfig(
-            s3_prefix="s3://bucket/prefix",
-            index_config=VectorIndexConfig(dim=128),
-            batch_size=0,
-        )
         with pytest.raises(ConfigValidationError, match="batch_size"):
-            _validate_config(cfg)
+            VectorShardedWriteConfig(
+                s3_prefix="s3://bucket/prefix",
+                index_config=VectorIndexConfig(dim=128),
+                batch_size=0,
+            )
 
     def test_cel_missing_expr_raises(self):
-        cfg = VectorWriteConfig(
-            s3_prefix="s3://bucket/prefix",
-            index_config=VectorIndexConfig(dim=128),
-            sharding=VectorShardingSpec(
-                strategy=VectorShardingStrategy.CEL,
-                cel_columns={"key": "string"},
-            ),
-        )
         with pytest.raises(ConfigValidationError, match="cel_expr"):
-            _validate_config(cfg)
+            VectorShardedWriteConfig(
+                s3_prefix="s3://bucket/prefix",
+                index_config=VectorIndexConfig(dim=128),
+                sharding=VectorShardingSpec(
+                    strategy=VectorShardingStrategy.CEL,
+                    cel_columns={"key": "string"},
+                ),
+            )
 
     def test_cel_missing_columns_raises(self):
-        cfg = VectorWriteConfig(
-            s3_prefix="s3://bucket/prefix",
-            index_config=VectorIndexConfig(dim=128),
-            sharding=VectorShardingSpec(
-                strategy=VectorShardingStrategy.CEL,
-                cel_expr="shard_hash(key) % 4u",
-            ),
-        )
         with pytest.raises(ConfigValidationError, match="cel_columns"):
-            _validate_config(cfg)
+            VectorShardedWriteConfig(
+                s3_prefix="s3://bucket/prefix",
+                index_config=VectorIndexConfig(dim=128),
+                sharding=VectorShardingSpec(
+                    strategy=VectorShardingStrategy.CEL,
+                    cel_expr="shard_hash(key) % 4u",
+                ),
+            )
 
     def test_num_probes_zero_raises(self):
-        cfg = VectorWriteConfig(
-            s3_prefix="s3://bucket/prefix",
-            index_config=VectorIndexConfig(dim=128),
-            sharding=VectorShardingSpec(
-                strategy=VectorShardingStrategy.EXPLICIT,
-                num_probes=0,
-            ),
-        )
         with pytest.raises(ConfigValidationError, match="num_probes"):
-            _validate_config(cfg)
+            VectorShardedWriteConfig(
+                s3_prefix="s3://bucket/prefix",
+                index_config=VectorIndexConfig(dim=128),
+                sharding=VectorShardingSpec(
+                    strategy=VectorShardingStrategy.EXPLICIT,
+                    num_probes=0,
+                ),
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -551,10 +546,12 @@ class TestParallelVectorSpecBlocked:
     """parallel=True with vector_spec must raise ConfigValidationError."""
 
     def test_parallel_with_vector_spec_raises(self) -> None:
-        from shardyfusion.config import CelWriteConfig, VectorSpec
-        from shardyfusion.writer.python.writer import write_sharded_by_cel
+        from shardyfusion.config import CelShardedWriteConfig, VectorSpec
+        from tests.helpers.writer_api import (
+            write_python_cel_sharded as write_cel_sharded,
+        )
 
-        config = CelWriteConfig(
+        config = CelShardedWriteConfig(
             s3_prefix="s3://bucket/prefix",
             cel_expr="shard_hash(key) % 4u",
             cel_columns={"key": "int"},
@@ -565,7 +562,7 @@ class TestParallelVectorSpecBlocked:
         with pytest.raises(
             ConfigValidationError, match="Parallel mode is not supported"
         ):
-            write_sharded_by_cel(
+            write_cel_sharded(
                 [],
                 config,
                 key_fn=lambda r: str(r),
