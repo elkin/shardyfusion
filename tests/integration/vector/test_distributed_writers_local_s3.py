@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from shardyfusion.sharding_types import VECTOR_DB_ID_COL
 from shardyfusion.vector._distributed import resolve_vector_routing
 from shardyfusion.vector.config import (
     VectorIndexConfig,
@@ -58,7 +59,7 @@ def test_spark_write_cluster_sharded(
         routing=routing,
     )
 
-    assert "_vector_db_id" in df_with_id.columns
+    assert VECTOR_DB_ID_COL in df_with_id.columns
     assert num_dbs == 4
 
 
@@ -107,7 +108,7 @@ def test_dask_write_cluster_sharded(
             routing=routing,
         )
 
-        assert "_vector_db_id" in ddf_with_id.columns
+        assert VECTOR_DB_ID_COL in ddf_with_id.columns
         assert num_dbs == 4
 
 
@@ -147,5 +148,5 @@ def test_spark_write_lsh_sharded(
         routing=routing,
     )
 
-    assert "_vector_db_id" in df_with_id.columns
+    assert VECTOR_DB_ID_COL in df_with_id.columns
     assert num_dbs == 8

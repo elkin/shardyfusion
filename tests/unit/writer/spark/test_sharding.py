@@ -58,6 +58,46 @@ def test_hash_sharding_is_deterministic(spark) -> None:
     assert first_map == second_map
 
 
+def test_hash_sharding_custom_column_name(spark) -> None:
+    """Custom shard_id_col should be used instead of default _shard_id."""
+    df = spark.createDataFrame([(i,) for i in range(100)], ["id"])
+    custom_col = "my_shard"
+    with_db_id = _add_db_id_column_hash(
+        df,
+        key_col="id",
+        num_dbs=8,
+        hash_algorithm=ShardHashAlgorithm.XXH3_64,
+        shard_id_col=custom_col,
+    )
+
+    assert custom_col in with_db_id.columns
+    assert DB_ID_COL not in with_db_id.columns
+    bad = with_db_id.where((F.col(custom_col) < 0) | (F.col(custom_col) >= 8)).count()
+    assert bad == 0
+
+
+def test_hash_sharding_custom_column_verify_routing(spark) -> None:
+    """Verify routing agreement should work with custom column name."""
+    df = spark.createDataFrame([(i,) for i in range(50)], ["id"])
+    custom_col = "custom_shard"
+    with_db_id = _add_db_id_column_hash(
+        df,
+        key_col="id",
+        num_dbs=8,
+        hash_algorithm=ShardHashAlgorithm.XXH3_64,
+        shard_id_col=custom_col,
+    )
+
+    _verify_hash_routing_agreement(
+        with_db_id,
+        key_col="id",
+        num_dbs=8,
+        hash_algorithm=ShardHashAlgorithm.XXH3_64,
+        key_encoding=KeyEncoding.U64BE,
+        shard_id_col=custom_col,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Runtime spot-check tests (_verify_hash_routing_agreement)
 # ---------------------------------------------------------------------------
