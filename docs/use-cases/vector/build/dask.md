@@ -32,29 +32,31 @@ uv sync --extra writer-dask-vector-sqlite
 
 ```python
 import dask.dataframe as dd
-from shardyfusion import VectorSpec
-from shardyfusion.vector.config import VectorWriteConfig, VectorSpecSharding
-from shardyfusion.writer.dask import write_vector_sharded
+from shardyfusion import VectorColumnInput
+from shardyfusion.vector.config import (
+    VectorIndexConfig,
+    VectorShardedWriteConfig,
+    VectorShardingConfig,
+)
+from shardyfusion.vector.types import DistanceMetric, VectorShardingStrategy
+from shardyfusion.writer.dask.vector_writer import write_sharded
 
 ddf = dd.read_parquet("s3://lake/embeddings/")
 
-vector_spec = VectorSpec(
-    dim=384,
-    metric="cosine",
-    sharding=VectorSpecSharding(strategy="cluster", train_centroids=True),
-)
-
-config = VectorWriteConfig.from_vector_spec(
-    vector_spec=vector_spec,
-    num_dbs=16,
+config = VectorShardedWriteConfig(
+    index_config=VectorIndexConfig(dim=384, metric=DistanceMetric.COSINE),
+    sharding=VectorShardingConfig(
+        num_dbs=16,
+        strategy=VectorShardingStrategy.CLUSTER,
+        train_centroids=True,
+    ),
     s3_prefix="s3://my-bucket/vectors/embeddings",
 )
 
-result = write_vector_sharded(
+result = write_sharded(
     ddf,
     config,
-    vector_col="embedding",
-    id_col="doc_id",
+    VectorColumnInput(vector_col="embedding", id_col="doc_id"),
 )
 print(result.manifest_ref.ref)
 ```
@@ -62,50 +64,57 @@ print(result.manifest_ref.ref)
 ### sqlite-vec backend swap
 
 ```python
-from shardyfusion import VectorSpec
+from shardyfusion import UnifiedVectorWriteConfig, VectorColumnInput
 from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-from shardyfusion.vector.config import VectorWriteConfig
+from shardyfusion.vector.config import VectorIndexConfig, VectorShardedWriteConfig
+from shardyfusion.vector.types import DistanceMetric
 
-vector_spec = VectorSpec(dim=384, metric="cosine")
+vector_spec = UnifiedVectorWriteConfig(dim=384, metric="cosine")
 
-config = VectorWriteConfig.from_vector_spec(
-    vector_spec=vector_spec,
+config = VectorShardedWriteConfig(
+    index_config=VectorIndexConfig(dim=384, metric=DistanceMetric.COSINE),
     num_dbs=16,
     s3_prefix="s3://my-bucket/vectors/embeddings-sqlite",
     adapter_factory=SqliteVecFactory(vector_spec=vector_spec),
 )
 
-result = write_vector_sharded(ddf, config, vector_col="embedding", id_col="doc_id")
+result = write_sharded(
+    ddf,
+    config,
+    VectorColumnInput(vector_col="embedding", id_col="doc_id"),
+)
 ```
 
 ### CEL routing
 
 ```python
-from shardyfusion import VectorSpec
-from shardyfusion.vector.config import VectorWriteConfig, VectorSpecSharding
+from shardyfusion import VectorColumnInput
+from shardyfusion.vector.config import (
+    VectorIndexConfig,
+    VectorShardedWriteConfig,
+    VectorShardingConfig,
+)
+from shardyfusion.vector.types import DistanceMetric, VectorShardingStrategy
 
-vector_spec = VectorSpec(
-    dim=384,
-    metric="cosine",
-    sharding=VectorSpecSharding(
-        strategy="cel",
+config = VectorShardedWriteConfig(
+    index_config=VectorIndexConfig(dim=384, metric=DistanceMetric.COSINE),
+    sharding=VectorShardingConfig(
+        num_dbs=4,
+        strategy=VectorShardingStrategy.CEL,
         cel_expr='tenant_id == "acme" ? 0u : tenant_id == "corp" ? 1u : 2u',
         cel_columns={"tenant_id": "str"},
     ),
-)
-
-config = VectorWriteConfig.from_vector_spec(
-    vector_spec=vector_spec,
-    num_dbs=4,
     s3_prefix="s3://my-bucket/vectors/tenant-sharded",
 )
 
-result = write_vector_sharded(
+result = write_sharded(
     ddf,
     config,
-    vector_col="embedding",
-    id_col="doc_id",
-    routing_context_cols={"tenant_id": "tenant_id"},
+    VectorColumnInput(
+        vector_col="embedding",
+        id_col="doc_id",
+        routing_context_cols={"tenant_id": "tenant_id"},
+    ),
 )
 ```
 
@@ -113,7 +122,7 @@ result = write_vector_sharded(
 
 ```mermaid
 flowchart TD
-    A[Dask DataFrame + VectorWriteConfig] --> B["Sample vectors<br/>(CLUSTER only)"]
+    A[Dask DataFrame + VectorShardedWriteConfig] --> B["Sample vectors<br/>(CLUSTER only)"]
     B --> C["Train centroids / generate hyperplanes"]
     C --> D["Assign vector shard IDs<br/>(per partition)"]
     D --> E{"verify_routing?"}
@@ -130,7 +139,13 @@ flowchart TD
 
 ## Configuration
 
-Dask-specific knobs on `write_vector_sharded` (`shardyfusion/writer/dask/writer.py`):
+Dask vector writer signature:
+
+```python
+write_sharded(ddf, config, input: VectorColumnInput, options: VectorWriteOptions | None = None)
+```
+
+`VectorColumnInput` fields:
 
 | Param | Default | Purpose |
 |---|---|---|
@@ -139,12 +154,14 @@ Dask-specific knobs on `write_vector_sharded` (`shardyfusion/writer/dask/writer.
 | `payload_cols` | `None` | Optional metadata columns. |
 | `shard_id_col` | `None` | Column with explicit shard IDs (EXPLICIT strategy only). |
 | `routing_context_cols` | `None` | Column mapping for CEL expression evaluation. |
+
+`VectorWriteOptions` fields:
+
+| Field | Default | Purpose |
+|---|---|---|
 | `verify_routing` | `True` | Spot-check that Dask-assigned shard IDs match `assign_vector_shard()`. |
-| `max_writes_per_second` | `None` | Token-bucket rate limit per partition. |
 
 The writer repartitions internally via `ddf.shuffle(on=VECTOR_DB_ID_COL, npartitions=num_dbs)` so the per-shard task layout matches `num_dbs`.
-
-Use `VectorWriteConfig.from_vector_spec()` as a convenience factory when you already have a `VectorSpec`.
 
 ## Backend-specific properties
 
@@ -162,7 +179,7 @@ Use `VectorWriteConfig.from_vector_spec()` as a convenience factory when you alr
 - Uses the **ambient Dask scheduler** — distributed, threads, processes, or single-machine.
 - One Dask task per shard after the shuffle. Memory per task ~ `partition_size + per-shard buffers`.
 - Routing pass and write pass are separate Dask graphs; the shuffle materializes between them.
-- **Rate limiting**: per-shard scope. Aggregate rate = `max_writes_per_second x num_dbs`.
+- **Rate limiting**: per-shard scope. Aggregate rate = `config.rate_limits.max_writes_per_second x num_dbs`.
 
 ## Empty shards
 

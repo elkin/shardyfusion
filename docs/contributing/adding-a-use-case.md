@@ -109,7 +109,7 @@ This requires the `pymdownx.tabbed` extension (already enabled in `mkdocs.yml`).
 
 - **No marketing.** Describe what the code does, including its limits.
 - **No comparisons that don't exist in code.** "Faster than X" needs a benchmark in `tests/` or it doesn't go in.
-- **Use real symbol names with file:line refs**: `WriteConfig.batch_size` (`shardyfusion/config.py:201`).
+- **Use real symbol names with file:line refs**: `KeyValueWriteConfig.batch_size` (`shardyfusion/config.py`).
 - **Prefer absolute correctness to brevity.** If the failure-mode table has 10 rows, list 10 rows.
 - **Cross-link generously.** Every "Configuration" field that has its own section in `architecture/` should link there. Every "When NOT to use" alternative should link.
 - **Be visual.** Include mermaid diagrams for data flow, state machines, and comparisons. Diagrams significantly improve comprehension.

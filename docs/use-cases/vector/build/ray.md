@@ -31,30 +31,32 @@ uv sync --extra writer-ray-vector-sqlite
 
 ```python
 import ray
-from shardyfusion import VectorSpec
-from shardyfusion.vector.config import VectorWriteConfig, VectorSpecSharding
-from shardyfusion.writer.ray import write_vector_sharded
+from shardyfusion import VectorColumnInput
+from shardyfusion.vector.config import (
+    VectorIndexConfig,
+    VectorShardedWriteConfig,
+    VectorShardingConfig,
+)
+from shardyfusion.vector.types import DistanceMetric, VectorShardingStrategy
+from shardyfusion.writer.ray.vector_writer import write_sharded
 
 ray.init()
 ds = ray.data.read_parquet("s3://lake/embeddings/")
 
-vector_spec = VectorSpec(
-    dim=384,
-    metric="cosine",
-    sharding=VectorSpecSharding(strategy="cluster", train_centroids=True),
-)
-
-config = VectorWriteConfig.from_vector_spec(
-    vector_spec=vector_spec,
-    num_dbs=16,
+config = VectorShardedWriteConfig(
+    index_config=VectorIndexConfig(dim=384, metric=DistanceMetric.COSINE),
+    sharding=VectorShardingConfig(
+        num_dbs=16,
+        strategy=VectorShardingStrategy.CLUSTER,
+        train_centroids=True,
+    ),
     s3_prefix="s3://my-bucket/vectors/embeddings",
 )
 
-result = write_vector_sharded(
+result = write_sharded(
     ds,
     config,
-    vector_col="embedding",
-    id_col="doc_id",
+    VectorColumnInput(vector_col="embedding", id_col="doc_id"),
 )
 print(result.manifest_ref.ref)
 ```
@@ -62,50 +64,57 @@ print(result.manifest_ref.ref)
 ### sqlite-vec backend swap
 
 ```python
-from shardyfusion import VectorSpec
+from shardyfusion import UnifiedVectorWriteConfig, VectorColumnInput
 from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
-from shardyfusion.vector.config import VectorWriteConfig
+from shardyfusion.vector.config import VectorIndexConfig, VectorShardedWriteConfig
+from shardyfusion.vector.types import DistanceMetric
 
-vector_spec = VectorSpec(dim=384, metric="cosine")
+vector_spec = UnifiedVectorWriteConfig(dim=384, metric="cosine")
 
-config = VectorWriteConfig.from_vector_spec(
-    vector_spec=vector_spec,
+config = VectorShardedWriteConfig(
+    index_config=VectorIndexConfig(dim=384, metric=DistanceMetric.COSINE),
     num_dbs=16,
     s3_prefix="s3://my-bucket/vectors/embeddings-sqlite",
     adapter_factory=SqliteVecFactory(vector_spec=vector_spec),
 )
 
-result = write_vector_sharded(ds, config, vector_col="embedding", id_col="doc_id")
+result = write_sharded(
+    ds,
+    config,
+    VectorColumnInput(vector_col="embedding", id_col="doc_id"),
+)
 ```
 
 ### CEL routing
 
 ```python
-from shardyfusion import VectorSpec
-from shardyfusion.vector.config import VectorWriteConfig, VectorSpecSharding
+from shardyfusion import VectorColumnInput
+from shardyfusion.vector.config import (
+    VectorIndexConfig,
+    VectorShardedWriteConfig,
+    VectorShardingConfig,
+)
+from shardyfusion.vector.types import DistanceMetric, VectorShardingStrategy
 
-vector_spec = VectorSpec(
-    dim=384,
-    metric="cosine",
-    sharding=VectorSpecSharding(
-        strategy="cel",
+config = VectorShardedWriteConfig(
+    index_config=VectorIndexConfig(dim=384, metric=DistanceMetric.COSINE),
+    sharding=VectorShardingConfig(
+        num_dbs=4,
+        strategy=VectorShardingStrategy.CEL,
         cel_expr='tenant_id == "acme" ? 0u : tenant_id == "corp" ? 1u : 2u',
         cel_columns={"tenant_id": "str"},
     ),
-)
-
-config = VectorWriteConfig.from_vector_spec(
-    vector_spec=vector_spec,
-    num_dbs=4,
     s3_prefix="s3://my-bucket/vectors/tenant-sharded",
 )
 
-result = write_vector_sharded(
+result = write_sharded(
     ds,
     config,
-    vector_col="embedding",
-    id_col="doc_id",
-    routing_context_cols={"tenant_id": "tenant_id"},
+    VectorColumnInput(
+        vector_col="embedding",
+        id_col="doc_id",
+        routing_context_cols={"tenant_id": "tenant_id"},
+    ),
 )
 ```
 
@@ -113,7 +122,7 @@ result = write_vector_sharded(
 
 ```mermaid
 flowchart TD
-    A[Ray Dataset + VectorWriteConfig] --> B["Sample vectors<br/>(CLUSTER only)"]
+    A[Ray Dataset + VectorShardedWriteConfig] --> B["Sample vectors<br/>(CLUSTER only)"]
     B --> C["Train centroids / generate hyperplanes"]
     C --> D["Assign vector shard IDs<br/>(Arrow-native)"]
     D --> E{"verify_routing?"}
@@ -130,7 +139,13 @@ flowchart TD
 
 ## Configuration
 
-Ray-specific knobs on `write_vector_sharded` (`shardyfusion/writer/ray/writer.py`):
+Ray vector writer signature:
+
+```python
+write_sharded(ds, config, input: VectorColumnInput, options: VectorWriteOptions | None = None)
+```
+
+`VectorColumnInput` fields:
 
 | Param | Default | Purpose |
 |---|---|---|
@@ -139,16 +154,18 @@ Ray-specific knobs on `write_vector_sharded` (`shardyfusion/writer/ray/writer.py
 | `payload_cols` | `None` | Optional metadata columns. |
 | `shard_id_col` | `None` | Column with explicit shard IDs (EXPLICIT strategy only). |
 | `routing_context_cols` | `None` | Column mapping for CEL expression evaluation. |
+
+`VectorWriteOptions` fields:
+
+| Field | Default | Purpose |
+|---|---|---|
 | `verify_routing` | `True` | Spot-check that Ray-assigned shard IDs match `assign_vector_shard()`. |
-| `max_writes_per_second` | `None` | Token-bucket rate limit per partition. |
 
 Internally the writer:
 
 - Forces `DataContext.shuffle_strategy = HASH_SHUFFLE` for the duration of the build (process-wide; guarded by `_SHUFFLE_STRATEGY_LOCK`).
 - Repartitions via `ds.repartition(num_dbs, shuffle=True, keys=[VECTOR_DB_ID_COL])`.
 - Writes per-partition via `map_batches(..., batch_format="pandas")`.
-
-Use `VectorWriteConfig.from_vector_spec()` as a convenience factory when you already have a `VectorSpec`.
 
 ## Backend-specific properties
 
@@ -166,7 +183,7 @@ Use `VectorWriteConfig.from_vector_spec()` as a convenience factory when you alr
 - Atomic two-phase publish (same as all writers).
 - One Ray task per shard after repartition.
 - The shuffle-strategy swap is **process-global**: don't run two unrelated Ray Data pipelines in the same process during the build.
-- **Rate limiting**: per-shard scope. Aggregate rate = `max_writes_per_second x num_dbs`.
+- **Rate limiting**: per-shard scope. Aggregate rate = `config.rate_limits.max_writes_per_second x num_dbs`.
 
 ## Guarantees
 

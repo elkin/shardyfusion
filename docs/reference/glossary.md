@@ -10,7 +10,7 @@
 
 **Manifest** — Immutable record listing per-shard databases for one published snapshot. Lives at `manifests/<timestamp>_run_id=<run_id>/manifest`.
 
-**Manifest format version** — Integer in `{1, 2, 3}`. v3 required for `routing_values`. Distinct from `CurrentPointer.format_version` (currently `1`).
+**Manifest format version** — Integer in `{4}`. Distinct from `CurrentPointer.format_version` (currently `1`).
 
 **Manifest store** — Backend for manifest read/write. Default is filesystem/S3. Postgres-backed store uses three tables (builds, shards, pointer) in a single transaction.
 
@@ -32,9 +32,9 @@
 
 **`ShardHashAlgorithm`** — Manifest-required hash algorithm for HASH routing. Currently only `XXH3_64` is supported.
 
-**`VectorSpec`** — `(dim, metric, index_type, index_params, quantization, ...)`. Set on `HashWriteConfig.vector_spec` or `CelWriteConfig.vector_spec` for unified KV+vector flows. Backend (`"lancedb"` / `"sqlite-vec"`) is determined by the adapter factory, not by `VectorSpec`. The chosen backend is recorded in the manifest's `vector.backend` field; readers dispatch on it.
+**`VectorSpec`** — `(dim, metric, index_type, index_params, quantization, ...)`. Set on `HashShardedWriteConfig.vector_spec` or `CelShardedWriteConfig.vector_spec` for unified KV+vector flows. Backend (`"lancedb"` / `"sqlite-vec"`) is determined by the adapter factory, not by `VectorSpec`. The chosen backend is recorded in the manifest's `vector.backend` field; readers dispatch on it.
 
-**Standalone vector** — Vector path with no KV side. Writer: `write_vector_sharded` from `shardyfusion.vector`. Reader: `ShardedVectorReader`.
+**Standalone vector** — Vector path with no KV side. Writer: `write_sharded` from `shardyfusion.vector`. Reader: `ShardedVectorReader`.
 
 **Composite (KV+vector)** — Two adapters per shard. `CompositeFactory` glues them. Used with LanceDB.
 
@@ -46,7 +46,7 @@
 
 **Snapshot pinning** — Once a reader loads a manifest, all reads use that manifest until `refresh()` is called.
 
-**`shard_retry`** — Per-shard retry budget for transient adapter failures. Lives on `HashWriteConfig` / `CelWriteConfig` (inherited from the `WriteConfig` base class). Independent of framework-level task retry.
+**`shard_retry`** — Per-shard retry budget for transient adapter failures. Lives on `config.retry.shard_retry` for `HashShardedWriteConfig`, `CelShardedWriteConfig`, and `SingleDbWriteConfig` (also exposed as `config.shard_retry`). Independent of framework-level task retry.
 
 **`ShardCoverageError`** — Raised when one or more shards failed to produce a database after `shard_retry` is exhausted.
 

@@ -23,28 +23,29 @@ uv add 'shardyfusion[vector-sqlite]'
 
 ```python
 from shardyfusion.vector import (
-    VectorRecord, VectorWriteConfig, write_vector_sharded,
+    VectorRecord, VectorShardedWriteConfig, write_sharded,
 )
-from shardyfusion.vector.config import VectorIndexConfig
+from shardyfusion.vector.config import VectorIndexConfig, VectorShardingConfig
 from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
+from shardyfusion.vector.types import DistanceMetric
 from shardyfusion import VectorSpec
 
 vector_spec = VectorSpec(dim=384, metric="cosine")
 
-config = VectorWriteConfig(
-    num_dbs=16,
+config = VectorShardedWriteConfig(
+    sharding=VectorShardingConfig(num_dbs=16),
     s3_prefix="s3://my-bucket/snapshots/embeddings",
-    index_config=VectorIndexConfig(dim=384, metric="cosine"),
+    index_config=VectorIndexConfig(dim=384, metric=DistanceMetric.COSINE),
     adapter_factory=SqliteVecFactory(vector_spec=vector_spec),
 )
 
-result = write_vector_sharded(records, config)
+result = write_sharded(records, config)
 ```
 
 ## Configuration
 
 - Allowed metrics: `cosine`, `l2`. `dot_product` rejected.
-- Same `VectorShardingSpec` strategies as the LanceDB variant.
+- Same `VectorShardingConfig` strategies as the LanceDB variant.
 
 ## Functional properties
 
@@ -68,11 +69,11 @@ Same as [LanceDB](lancedb.md), minus IVF cluster-size errors.
 
 If your vectors already live in a Spark, Dask, or Ray dataset, use the distributed vector writers instead of the Python iterator-based writer:
 
-- **[Spark → vector](spark.md)** — `write_vector_sharded(df, config, vector_col=..., id_col=...)`
-- **[Dask → vector](dask.md)** — `write_vector_sharded(ddf, config, vector_col=..., id_col=...)`
-- **[Ray → vector](ray.md)** — `write_vector_sharded(ds, config, vector_col=..., id_col=...)`
+- **[Spark → vector](spark.md)** — `write_sharded(df, config, VectorColumnInput(...))`
+- **[Dask → vector](dask.md)** — `write_sharded(ddf, config, VectorColumnInput(...))`
+- **[Ray → vector](ray.md)** — `write_sharded(ds, config, VectorColumnInput(...))`
 
-Distributed writers accept `VectorWriteConfig` (or build one via `VectorWriteConfig.from_vector_spec()`) and shard directly from the dataframe/dataset without collecting everything into the driver first.
+Distributed writers accept `VectorShardedWriteConfig` plus `VectorColumnInput` and shard directly from the dataframe/dataset without collecting everything into the driver first.
 
 ## See also
 

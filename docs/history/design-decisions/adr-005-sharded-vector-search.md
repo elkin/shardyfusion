@@ -17,7 +17,7 @@ A naive "one big index" approach doesn't scale and doesn't compose with the exis
 
 Build a **parallel sharded vector path** that mirrors the KV path:
 
-- `VectorWriteConfig` mirrors `WriteConfig` (num_dbs, s3_prefix, manifest, two-phase publish).
+- `VectorShardedWriteConfig` mirrors `WriteConfig` (num_dbs, s3_prefix, manifest, two-phase publish).
 - `VectorShardingSpec` strategies: `CLUSTER` (k-means, default), `LSH`, `EXPLICIT` (`VectorRecord.shard_id`), `CEL`.
 - Standalone reader: `ShardedVectorReader.search(query, top_k, ...)` scatter-gathers across shards.
 - Composition with KV: two paths

@@ -11,8 +11,8 @@ The store guarantees that pointer updates are observable atomically (at least to
 
 | Store | Module | Backend | Async | Atomic pointer |
 |---|---|---|---|---|
-| `S3ManifestStore` | `manifest_store.py:126` | S3 (boto3) | No (sync) | Object PUT (S3 single-key write is atomic). |
-| `AsyncS3ManifestStore` | `async_manifest_store.py:32` | S3 (aiobotocore) | Yes | Read-only (`AsyncManifestStore` Protocol at `async_manifest_store.py:22` exposes `load_current` / `load_manifest` / `list_manifests` only). |
+| `S3ManifestStore` | `manifest_store.py:126` | S3/object store (obstore) | No (sync) | Object PUT (S3 single-key write is atomic). |
+| `AsyncS3ManifestStore` | `async_manifest_store.py:32` | S3/object store (async obstore) | Yes | Read-only (`AsyncManifestStore` Protocol at `async_manifest_store.py:22` exposes `load_current` / `load_manifest` / `list_manifests` only). |
 | `InMemoryManifestStore` | `manifest_store.py:267` | RAM (test fixture) | No | Dict assignment. |
 | `PostgresManifestStore` | `db_manifest_store.py:56` | Postgres (psycopg) | No | Single transaction; pointer is an append-only table. |
 
@@ -38,7 +38,7 @@ The async store is read-only by design: writers run synchronously, so async publ
 
 - Manifest filenames use `_format_manifest_timestamp` (`manifest_store.py:92`) — UTC microsecond-precision ISO-8601 with trailing `Z`, sortable lexicographically.
 - The default `manifest_name` is `"manifest"` with no file extension; the SQLite magic header (`SQLite format 3\x00`) at `manifest_store.py:322` identifies the format.
-- The shard data path is fully configurable via `WriteConfig.output.db_path_template` (default `"db={db_id:05d}"`) and `output.shard_prefix` (default `"shards"`); the layout above is illustrative.
+- The shard data path is fully configurable via `WriterOutputConfig.db_path_template` (default `"db={db_id:05d}"`) and `output.shard_prefix` (default `"shards"`); the layout above is illustrative.
 
 ## Postgres store
 
@@ -78,5 +78,5 @@ See [`error-model.md`](error-model.md) for the full taxonomy.
 ## See also
 
 - [`manifest-and-current.md`](manifest-and-current.md) — manifest format and two-phase publish.
-- The Postgres-backed manifest store is used by setting `WriteConfig.manifest.store` to a `PostgresManifestStore` instance. There is no dedicated use-case page yet — see the source at `shardyfusion/db_manifest_store.py`.
+- The Postgres-backed manifest store is used by setting `config.manifest.store` to a `PostgresManifestStore` instance. There is no dedicated use-case page yet — see the source at `shardyfusion/db_manifest_store.py`.
 - [`history/design-decisions/adr-001-two-phase-publish.md`](../history/design-decisions/adr-001-two-phase-publish.md).
