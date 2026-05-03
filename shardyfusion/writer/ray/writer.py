@@ -209,12 +209,14 @@ def _write_hash_sharded(
 
         # --- Phase 1: Sharding ---
         shard_started = time.perf_counter()
+        shard_id_col = config.shard_id_col
 
         ds_with_id = add_db_id_column_hash(
             ds,
             key_col=key_col,
             num_dbs=num_dbs,
             hash_algorithm=resolved_sharding.hash_algorithm,
+            shard_id_col=shard_id_col,
         )
 
         if verify_routing and num_dbs > 0:
@@ -223,6 +225,7 @@ def _write_hash_sharded(
                 key_col=key_col,
                 num_dbs=num_dbs,
                 hash_algorithm=resolved_sharding.hash_algorithm,
+                shard_id_col=shard_id_col,
             )
 
         shard_duration_ms = int((time.perf_counter() - shard_started) * 1000)
@@ -261,7 +264,7 @@ def _write_hash_sharded(
             try:
                 ctx.shuffle_strategy = _HASH_SHUFFLE_STRATEGY  # type: ignore[assignment]
                 ds_shuffled = ds_with_id.repartition(
-                    num_dbs, shuffle=True, keys=[DB_ID_COL]
+                    num_dbs, shuffle=True, keys=[shard_id_col]
                 )
             finally:
                 ctx.shuffle_strategy = prev_strategy
@@ -378,6 +381,7 @@ def _write_cel_sharded(
 
         # --- Phase 1: Sharding ---
         shard_started = time.perf_counter()
+        shard_id_col = config.shard_id_col
 
         ds_with_id, resolved_sharding = add_db_id_column_cel(
             ds,
@@ -385,13 +389,14 @@ def _write_cel_sharded(
             cel_columns=config.cel_columns,
             routing_values=config.routing_values,
             infer_routing_values_from_data=config.infer_routing_values_from_data,
+            shard_id_col=shard_id_col,
         )
         assert isinstance(resolved_sharding, CelShardingSpec)
 
         if resolved_sharding.routing_values is not None:
             num_dbs = resolve_cel_num_dbs(resolved_sharding)
         else:
-            distinct_ids = set(ds_with_id.unique(DB_ID_COL))
+            distinct_ids = set(ds_with_id.unique(shard_id_col))
             num_dbs = discover_cel_num_dbs(distinct_ids)
 
         if verify_routing and num_dbs > 0:
@@ -402,6 +407,7 @@ def _write_cel_sharded(
                 cel_expr=resolved_sharding.cel_expr,
                 cel_columns=resolved_sharding.cel_columns,
                 routing_values=resolved_sharding.routing_values,
+                shard_id_col=shard_id_col,
             )
 
         shard_duration_ms = int((time.perf_counter() - shard_started) * 1000)
@@ -440,7 +446,7 @@ def _write_cel_sharded(
             try:
                 ctx.shuffle_strategy = _HASH_SHUFFLE_STRATEGY  # type: ignore[assignment]
                 ds_shuffled = ds_with_id.repartition(
-                    num_dbs, shuffle=True, keys=[DB_ID_COL]
+                    num_dbs, shuffle=True, keys=[shard_id_col]
                 )
             finally:
                 ctx.shuffle_strategy = prev_strategy
@@ -583,6 +589,7 @@ def _verify_hash_routing_agreement(
     key_col: str,
     num_dbs: int,
     hash_algorithm: ShardHashAlgorithm,
+    shard_id_col: str = DB_ID_COL,
     sample_size: int = 20,
 ) -> None:
     """Sample rows and verify Ray-computed db_id matches Python hash routing."""
@@ -597,7 +604,7 @@ def _verify_hash_routing_agreement(
         # Convert numpy scalars to Python types for routing compatibility
         if hasattr(key, "item"):
             key = key.item()
-        ray_db_id = int(row[DB_ID_COL])
+        ray_db_id = int(row[shard_id_col])
         python_db_id = route_hash(
             key,
             num_dbs=num_dbs,
@@ -624,6 +631,7 @@ def _verify_cel_routing_agreement(
     cel_expr: str,
     cel_columns: dict[str, str],
     routing_values: list[int | str | bytes] | None,
+    shard_id_col: str = DB_ID_COL,
     sample_size: int = 20,
 ) -> None:
     """Sample rows and verify Ray-computed db_id matches Python CEL routing."""
@@ -642,7 +650,7 @@ def _verify_cel_routing_agreement(
         # Convert numpy scalars to Python types for routing compatibility
         if hasattr(key, "item"):
             key = key.item()
-        ray_db_id = int(row[DB_ID_COL])
+        ray_db_id = int(row[shard_id_col])
         python_db_id = route_cel(
             key,
             cel_expr=cel_expr,
@@ -679,9 +687,14 @@ def _write_partition(
         UnifiedAccumulator if runtime.vector_fn is not None else KvAccumulator
     )
 
-    for db_id, group_pdf in pdf.groupby(DB_ID_COL):
+    shard_id_col = runtime.shard_id_col
+    for db_id, group_pdf in pdf.groupby(shard_id_col):
         if runtime.sort_within_partitions:
             group_pdf = group_pdf.sort_values(runtime.key_col)
+
+        # Drop the internal shard_id column so it doesn't leak into stored data
+        if shard_id_col in group_pdf.columns:
+            group_pdf = group_pdf.drop(columns=[shard_id_col])
 
         vec_fn = runtime.vector_fn
         attempt_result = write_shard_with_retry(

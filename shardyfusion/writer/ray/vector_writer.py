@@ -22,10 +22,11 @@ from shardyfusion.manifest import (
     RequiredShardMeta,
 )
 from shardyfusion.run_registry import RunRecordLifecycle
+from shardyfusion.sharding_types import VECTOR_DB_ID_COL
 from shardyfusion.vector.config import VectorShardedWriteConfig, VectorWriteOptions
 from shardyfusion.vector.types import VectorShardingStrategy
 
-from .sharding import VECTOR_DB_ID_COL
+from .sharding import add_vector_db_id_column
 from .writer import _RESULT_COLUMNS
 
 _logger = get_logger(__name__)
@@ -73,6 +74,7 @@ def _verify_vector_routing_agreement(
     routing: Any,
     shard_id_col: str | None = None,
     routing_context_cols: dict[str, str] | None = None,
+    internal_col: str = VECTOR_DB_ID_COL,
     sample_size: int = 20,
 ) -> None:
     """Sample rows and verify vector db_id column matches Python routing."""
@@ -112,7 +114,7 @@ def _verify_vector_routing_agreement(
             shard_id=shard_id,
             routing_context=routing_context,
         )
-        computed_db_id = int(row[VECTOR_DB_ID_COL])
+        computed_db_id = int(row[internal_col])
         if expected_db_id != computed_db_id:
             mismatches.append((vector_id, computed_db_id, expected_db_id))
 
@@ -155,8 +157,6 @@ def write_sharded(
         upload_routing_metadata,
     )
 
-    from .sharding import add_vector_db_id_column
-
     options = options or VectorWriteOptions()
     validate_configs(config, input, options)
     if input.id_col is None:
@@ -197,12 +197,14 @@ def write_sharded(
 
         adapter_factory = resolve_adapter_factory(config)
 
+        internal_col = config.shard_id_col
         ds_with_id, num_dbs = add_vector_db_id_column(
             ds,
             vector_col=vector_col,
             routing=routing,
             shard_id_col=shard_id_col,
             routing_context_cols=routing_context_cols,
+            output_col=internal_col,
         )
 
         if options.verify_routing and num_dbs > 0:
@@ -213,12 +215,13 @@ def write_sharded(
                 routing=routing,
                 shard_id_col=shard_id_col,
                 routing_context_cols=routing_context_cols,
+                internal_col=internal_col,
             )
 
         ds_shuffled = ds_with_id.repartition(
             num_dbs,
             shuffle=True,
-            keys=[VECTOR_DB_ID_COL],
+            keys=[internal_col],
         )
 
         runtime = _VectorPartitionWriteRuntime(
@@ -258,7 +261,7 @@ def write_sharded(
                 )
 
             pdf_copy = pdf.copy()
-            pdf_copy["_temp_vec_id"] = pdf_copy[VECTOR_DB_ID_COL].astype(int)
+            pdf_copy["_temp_vec_id"] = pdf_copy[internal_col].astype(int)
             groups = pdf_copy.groupby("_temp_vec_id")
 
             results = []

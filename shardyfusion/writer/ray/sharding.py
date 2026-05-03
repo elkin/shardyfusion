@@ -21,8 +21,9 @@ def add_db_id_column_hash(
     key_col: str,
     num_dbs: int,
     hash_algorithm: ShardHashAlgorithm,
+    shard_id_col: str = DB_ID_COL,
 ) -> ray.data.Dataset:
-    """Add deterministic ``_shard_id`` column via hash routing."""
+    """Add deterministic ``shard_id_col`` column via hash routing."""
 
     def _apply_routing(table: pa.Table) -> pa.Table:
         keys = table.column(key_col).to_pylist()
@@ -30,7 +31,7 @@ def add_db_id_column_hash(
             route_hash(key, num_dbs=num_dbs, hash_algorithm=hash_algorithm)
             for key in keys
         ]
-        return table.append_column(DB_ID_COL, pa.array(db_ids, type=pa.int64()))
+        return table.append_column(shard_id_col, pa.array(db_ids, type=pa.int64()))
 
     return ds.map_batches(_apply_routing, batch_format="pyarrow", zero_copy_batch=True)
 
@@ -42,8 +43,9 @@ def add_db_id_column_cel(
     cel_columns: dict[str, str],
     routing_values: list[int | str | bytes] | None,
     infer_routing_values_from_data: bool,
+    shard_id_col: str = DB_ID_COL,
 ) -> tuple[ray.data.Dataset, CelShardingSpec]:
-    """Add deterministic ``_shard_id`` column via CEL routing.
+    """Add deterministic ``shard_id_col`` column via CEL routing.
 
     Uses Arrow batch format to avoid Arrow->pandas->Arrow round-trip.
     Delegates to ``route_cel_batch()`` which evaluates the CEL expression
@@ -75,7 +77,7 @@ def add_db_id_column_cel(
 
         compiled = compile_cel(_cel_expr, _cel_cols)
         db_ids = route_cel_batch(compiled, table, _routing_values)
-        return table.append_column(DB_ID_COL, pa.array(db_ids, type=pa.int64()))
+        return table.append_column(shard_id_col, pa.array(db_ids, type=pa.int64()))
 
     return (
         ds.map_batches(
@@ -116,8 +118,9 @@ def add_vector_db_id_column(
     routing: ResolvedVectorRouting,
     shard_id_col: str | None = None,
     routing_context_cols: dict[str, str] | None = None,
+    output_col: str = VECTOR_DB_ID_COL,
 ) -> tuple[ray.data.Dataset, int]:
-    """Add deterministic _vector_db_id column based on vector routing.
+    """Add deterministic output_col column based on vector routing.
 
     Uses map_batches with Arrow batch format to match the Python writer's
     assign_vector_shard() behavior.
@@ -133,9 +136,7 @@ def add_vector_db_id_column(
 
         def _apply_explicit(table: pa.Table) -> pa.Table:
             shard_ids = table.column(shard_id_col).to_pylist()
-            return table.append_column(
-                VECTOR_DB_ID_COL, pa.array(shard_ids, type=pa.int64())
-            )
+            return table.append_column(output_col, pa.array(shard_ids, type=pa.int64()))
 
         return (
             ds.map_batches(
@@ -160,9 +161,7 @@ def add_vector_db_id_column(
                 cluster_assign(np.asarray(v, dtype=np.float32), _centroids, metric)
                 for v in vectors
             ]
-            return table.append_column(
-                VECTOR_DB_ID_COL, pa.array(db_ids, type=pa.int64())
-            )
+            return table.append_column(output_col, pa.array(db_ids, type=pa.int64()))
 
         return (
             ds.map_batches(
@@ -181,9 +180,7 @@ def add_vector_db_id_column(
                 lsh_assign(np.asarray(v, dtype=np.float32), _hyperplanes, num_dbs)
                 for v in vectors
             ]
-            return table.append_column(
-                VECTOR_DB_ID_COL, pa.array(db_ids, type=pa.int64())
-            )
+            return table.append_column(output_col, pa.array(db_ids, type=pa.int64()))
 
         return (
             ds.map_batches(_apply_lsh, batch_format="pyarrow", zero_copy_batch=True),
@@ -204,9 +201,7 @@ def add_vector_db_id_column(
         def _apply_cel(table: pa.Table) -> pa.Table:
             _compiled = compile_cel(_cel_expr, _cel_cols)
             db_ids = route_cel_batch(_compiled, table, _routing_values)
-            return table.append_column(
-                VECTOR_DB_ID_COL, pa.array(db_ids, type=pa.int64())
-            )
+            return table.append_column(output_col, pa.array(db_ids, type=pa.int64()))
 
         return (
             ds.map_batches(_apply_cel, batch_format="pyarrow", zero_copy_batch=True),
