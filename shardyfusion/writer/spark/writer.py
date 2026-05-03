@@ -233,11 +233,13 @@ def _write_hash_sharded(
                 },
             )
 
-        runtime = _build_partition_write_runtime(
+        runtime = PartitionWriteRuntime.from_public_config(
             config=config,
+            input=ColumnWriteInput(
+                key_col=key_col,
+                value_spec=value_spec,
+            ),
             run_id=run_id,
-            key_col=key_col,
-            value_spec=value_spec,
             started=started,
             vector_fn=distributed_vector_fn,
         )
@@ -332,11 +334,13 @@ def _write_cel_sharded(
                 },
             )
 
-        runtime = _build_partition_write_runtime(
+        runtime = PartitionWriteRuntime.from_public_config(
             config=config,
+            input=ColumnWriteInput(
+                key_col=key_col,
+                value_spec=value_spec,
+            ),
             run_id=run_id,
-            key_col=key_col,
-            value_spec=value_spec,
             started=started,
             vector_fn=distributed_vector_fn,
         )
@@ -734,30 +738,6 @@ def _prepare_cel_partitioned_rows(
         resolved_num_dbs=num_dbs,
         shard_duration_ms=shard_duration_ms,
     )
-
-
-def _build_partition_write_runtime(
-    *,
-    config: BaseShardedWriteConfig,
-    run_id: str,
-    key_col: str,
-    value_spec: ValueSpec,
-    started: float = 0.0,
-    vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]]
-    | None = None,
-) -> PartitionWriteRuntime:
-    """Construct immutable worker-side runtime config for partition shard writers."""
-    runtime = PartitionWriteRuntime.from_public_config(
-        config=config,
-        input=ColumnWriteInput(
-            key_col=key_col,
-            value_spec=value_spec,
-        ),
-        run_id=run_id,
-        started=started,
-        vector_fn=vector_fn,
-    )
-    return runtime
 
 
 def _run_partition_writes(

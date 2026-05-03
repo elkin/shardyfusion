@@ -242,13 +242,15 @@ def _write_hash_sharded(
             )
 
         # --- Phase 2: Write ---
-        runtime = _build_partition_write_runtime(
+        runtime = RetryingPartitionWriteRuntime.from_public_config(
             config=config,
+            input=ColumnWriteInput(
+                key_col=key_col,
+                value_spec=value_spec,
+            ),
             run_id=run_id,
-            key_col=key_col,
-            value_spec=value_spec,
-            sort_within_partitions=sort_within_partitions,
             started=started,
+            sort_within_partitions=sort_within_partitions,
             vector_fn=distributed_vector_fn,
         )
 
@@ -384,13 +386,15 @@ def _write_cel_sharded(
             )
 
         # --- Phase 2: Write ---
-        runtime = _build_partition_write_runtime(
+        runtime = RetryingPartitionWriteRuntime.from_public_config(
             config=config,
+            input=ColumnWriteInput(
+                key_col=key_col,
+                value_spec=value_spec,
+            ),
             run_id=run_id,
-            key_col=key_col,
-            value_spec=value_spec,
-            sort_within_partitions=sort_within_partitions,
             started=started,
+            sort_within_partitions=sort_within_partitions,
             vector_fn=distributed_vector_fn,
         )
 
@@ -611,31 +615,6 @@ def _verify_cel_routing_agreement(
             f"Dask/Python routing mismatch in {len(mismatches)}/{len(sampled)} "
             f"sampled rows. First mismatches: {details}"
         )
-
-
-def _build_partition_write_runtime(
-    *,
-    config: BaseShardedWriteConfig,
-    run_id: str,
-    key_col: str,
-    value_spec: ValueSpec,
-    sort_within_partitions: bool,
-    started: float,
-    vector_fn: Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]] | None,
-) -> RetryingPartitionWriteRuntime:
-    """Construct picklable runtime config for Dask partition writers."""
-    runtime = RetryingPartitionWriteRuntime.from_public_config(
-        config=config,
-        input=ColumnWriteInput(
-            key_col=key_col,
-            value_spec=value_spec,
-        ),
-        run_id=run_id,
-        started=started,
-        sort_within_partitions=sort_within_partitions,
-        vector_fn=vector_fn,
-    )
-    return runtime
 
 
 def _write_partition(
