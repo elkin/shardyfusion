@@ -10,8 +10,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .._checkpoint_id import generate_checkpoint_id
 from .._rate_limiter import TokenBucket
+from .._shard_writer import seal_and_stamp
 from ..config import validate_configs
 from ..errors import ConfigValidationError
 from ..logging import get_logger, log_event
@@ -101,9 +101,7 @@ def _write_single_process(
                     ops_limiter.acquire()
                 flush_vector_shard_batch(state)
             if state.adapter is not None:
-                state.adapter.seal()
-                state.checkpoint_id = generate_checkpoint_id()
-                state.db_bytes = state.adapter.db_bytes()
+                state.checkpoint_id, state.db_bytes = seal_and_stamp(state.adapter)
 
     return shard_states
 

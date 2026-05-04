@@ -12,8 +12,8 @@ from typing import Any
 
 import numpy as np
 
-from .._checkpoint_id import generate_checkpoint_id
 from .._rate_limiter import TokenBucket
+from .._shard_writer import seal_and_stamp
 from ..errors import ConfigValidationError
 from ..logging import get_logger, log_event
 from ..manifest import (
@@ -347,9 +347,7 @@ def write_vector_shard(
                 ops_limiter.acquire()
             flush_vector_shard_batch(state)
 
-        adapter.seal()
-        state.checkpoint_id = generate_checkpoint_id()
-        state.db_bytes = adapter.db_bytes()
+        state.checkpoint_id, state.db_bytes = seal_and_stamp(adapter)
 
     if metrics_collector is not None:
         metrics_collector.emit(

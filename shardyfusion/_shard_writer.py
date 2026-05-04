@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
 
-from ._adapter import DbAdapterFactory
+from ._adapter import DbAdapter, DbAdapterFactory
 from ._checkpoint_id import generate_checkpoint_id
 from ._rate_limiter import RateLimiter, TokenBucket
 from ._writer_core import ShardAttemptResult
@@ -43,6 +43,29 @@ class _PandasRowLike(Protocol):
 
 class _PandasFrameLike(Protocol):
     def iterrows(self) -> Iterable[tuple[object, _PandasRowLike]]: ...
+
+
+# ---------------------------------------------------------------------------
+# Adapter finalization helper
+# ---------------------------------------------------------------------------
+
+
+def seal_and_stamp(adapter: DbAdapter) -> tuple[str, int]:
+    """Run the canonical finalize-and-stamp sequence on a shard adapter.
+
+    Returns ``(checkpoint_id, db_bytes)`` after invoking
+    ``adapter.flush() → adapter.seal() → generate_checkpoint_id() →
+    adapter.db_bytes()`` in order. Centralises the four-line ritual
+    introduced by the slatedb 0.12 migration so backend writers cannot
+    drift on call ordering or skip the size capture.
+
+    The opaque checkpoint id is stamped *after* ``seal()`` succeeds —
+    if either ``flush()`` or ``seal()`` raises, no id is produced and
+    the caller's exception handler abandons the shard.
+    """
+    adapter.flush()
+    adapter.seal()
+    return generate_checkpoint_id(), adapter.db_bytes()
 
 
 # ---------------------------------------------------------------------------
@@ -228,10 +251,7 @@ def write_shard_core(
                 metrics_collector=mc,
                 started=params.started,
             )
-            adapter.flush()
-            adapter.seal()
-            checkpoint_id = generate_checkpoint_id()
-            db_bytes = adapter.db_bytes()
+            checkpoint_id, db_bytes = seal_and_stamp(adapter)
     except ShardyfusionError:
         raise
     except Exception as exc:

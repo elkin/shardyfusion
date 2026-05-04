@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Any, TypeVar, cast
 
 from shardyfusion._adapter import DbAdapterFactory
-from shardyfusion._checkpoint_id import generate_checkpoint_id
 from shardyfusion._rate_limiter import RateLimiter, TokenBucket
+from shardyfusion._shard_writer import seal_and_stamp
 from shardyfusion._writer_core import (
     ShardAttemptResult,
     update_min_max,
@@ -605,10 +605,7 @@ def _shard_worker(
                 adapter.write_batch(batch)
                 batch.clear()
 
-            adapter.flush()
-            adapter.seal()
-            checkpoint_id = generate_checkpoint_id()
-            db_bytes = adapter.db_bytes()
+            checkpoint_id, db_bytes = seal_and_stamp(adapter)
     except Exception as exc:
         log_failure(
             "python_shard_worker_failed",
@@ -716,10 +713,7 @@ def _file_shard_worker(
                 adapter.write_batch(batch)
                 batch.clear()
 
-            adapter.flush()
-            adapter.seal()
-            checkpoint_id = generate_checkpoint_id()
-            db_bytes = adapter.db_bytes()
+            checkpoint_id, db_bytes = seal_and_stamp(adapter)
     except ShardyfusionError as exc:
         log_failure(
             "python_file_spool_worker_failed",

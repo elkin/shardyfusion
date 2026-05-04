@@ -14,9 +14,12 @@ from shardyfusion._adapter import (
     DbAdapter,
     DbAdapterFactory,
 )
-from shardyfusion._checkpoint_id import generate_checkpoint_id
 from shardyfusion._rate_limiter import RateLimiter, TokenBucket
-from shardyfusion._shard_writer import _RetryAttemptContext, _run_attempts_with_retry
+from shardyfusion._shard_writer import (
+    _RetryAttemptContext,
+    _run_attempts_with_retry,
+    seal_and_stamp,
+)
 from shardyfusion._writer_core import (
     ShardAttemptResult,
     assemble_build_result,
@@ -288,10 +291,7 @@ def _stream_to_single_db(
                     bytes_bucket=bytes_bucket,
                 )
 
-            adapter.flush()
-            adapter.seal()
-            checkpoint_id = generate_checkpoint_id()
-            db_bytes = adapter.db_bytes()
+            checkpoint_id, db_bytes = seal_and_stamp(adapter)
     except ShardyfusionError:
         raise
     except Exception as exc:
