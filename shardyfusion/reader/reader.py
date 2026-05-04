@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 from datetime import timedelta
+from pathlib import Path
 from typing import Literal
 
 from shardyfusion._rate_limiter import RateLimiter
@@ -433,11 +434,33 @@ class ShardedReader(_BaseShardedReader):
         self._validate_manifest_compatibility(manifest)
         router = SnapshotRouter(manifest.required_build, manifest.shards)
         readers: dict[int, ShardReader] = {}
+        non_empty = [s for s in router.shards if s.db_url is not None]
+        empty = [s for s in router.shards if s.db_url is None]
+        for shard in empty:
+            readers[shard.db_id] = _NullShardReader()
+
+        # Fast path: if the configured factory exposes ``open_many``,
+        # open all non-empty shards in a single bridge hop so the
+        # slatedb Tokio runtime can drive the builds concurrently. Falls
+        # back to per-shard ``_open_one_reader`` when the factory does
+        # not implement the optional protocol method (custom user
+        # factories, vector backends, etc.).
+        open_many = getattr(self._reader_factory, "open_many", None)
         try:
-            for shard in router.shards:
-                if shard.db_url is None:
-                    readers[shard.db_id] = _NullShardReader()
-                else:
+            if open_many is not None and len(non_empty) > 1:
+                # Pre-create local dirs for symmetry with the per-shard
+                # path; the SlateDB factory ignores them but other
+                # adapters may not.
+                for shard in non_empty:
+                    local_path = Path(self.local_root) / f"shard={shard.db_id:05d}"
+                    local_path.mkdir(parents=True, exist_ok=True)
+                opened = open_many(
+                    [(shard.db_url, manifest) for shard in non_empty]  # type: ignore[arg-type]
+                )
+                for shard, reader in zip(non_empty, opened, strict=True):
+                    readers[shard.db_id] = reader
+            else:
+                for shard in non_empty:
                     readers[shard.db_id] = self._open_one_reader(shard, manifest)
         except Exception:
             for reader in readers.values():

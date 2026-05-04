@@ -11,13 +11,14 @@ from pathlib import Path
 from typing import Any, Literal, Self
 
 from shardyfusion._rate_limiter import RateLimiter
-from shardyfusion._slatedb_symbols import get_slatedb_reader_class
+from shardyfusion._slatedb_symbols import get_reader_symbols
 from shardyfusion.async_manifest_store import (
     AsyncManifestStore,
     AsyncS3ManifestStore,
 )
 from shardyfusion.credentials import (
     CredentialProvider,
+    apply_env_file,
     resolve_env_file,
 )
 from shardyfusion.errors import DbAdapterError, ManifestParseError, ReaderStateError
@@ -75,16 +76,40 @@ class _NullAsyncShardReader:
 
 
 class _SlateDbAsyncShardReader:
-    """Adapts SlateDB's ``get_async``/``close_async`` to ``AsyncShardReader``."""
+    """Adapts a uniffi ``DbReader`` to the ``AsyncShardReader`` protocol.
+
+    uniffi's ``Db.get`` is already async, so this is a thin pass-through.
+    ``close()`` invokes ``DbReader.shutdown()`` to release the inner
+    Tokio/object-store resources eagerly; the ``_closed`` flag also
+    short-circuits subsequent ``get`` calls.
+    """
 
     def __init__(self, inner: Any) -> None:
         self._inner = inner
+        self._closed = False
 
     async def get(self, key: bytes) -> bytes | None:
-        return await self._inner.get_async(key)
+        if self._closed:
+            return None
+        return await self._inner.get(bytes(key))
 
     async def close(self) -> None:
-        await self._inner.close_async()
+        if self._closed:
+            return
+        self._closed = True
+        # uniffi DbReader exposes async ``shutdown()`` that releases the
+        # underlying Tokio/object-store resources. Without this call the
+        # reader (and its background prefetch tasks) would survive until
+        # Python finalization, which is unacceptable for long-running
+        # services that periodically refresh snapshots. Swallow shutdown
+        # errors so a hiccup does not break the caller's cleanup path.
+        shutdown = getattr(self._inner, "shutdown", None)
+        if shutdown is None:
+            return
+        try:
+            await shutdown()
+        except Exception:
+            pass
 
 
 class _AsyncReaderState:
@@ -161,7 +186,12 @@ class _AsyncReaderState:
 
 @dataclass(slots=True)
 class AsyncSlateDbReaderFactory:
-    """Default async factory using ``SlateDBReader.open_async()``."""
+    """Default async factory using uniffi ``DbReaderBuilder``.
+
+    ``checkpoint_id`` is accepted for protocol symmetry but ignored —
+    uniffi 0.12 does not expose checkpoint pinning, and shardyfusion's
+    serial publish + S3 strong consistency make it unnecessary.
+    """
 
     env_file: str | None = None
     credential_provider: CredentialProvider | None = None
@@ -174,19 +204,20 @@ class AsyncSlateDbReaderFactory:
         checkpoint_id: str | None,
         manifest: Manifest,
     ) -> AsyncShardReader:
+        del local_dir, checkpoint_id, manifest  # not used by uniffi reader
         try:
-            reader_cls = get_slatedb_reader_class()
+            db_reader_builder_cls, _, object_store_cls = get_reader_symbols()
         except DbAdapterError as exc:  # pragma: no cover - runtime dependent
             raise DbAdapterError(
                 "slatedb package is required for reading shards"
             ) from exc
 
         with resolve_env_file(self.env_file, self.credential_provider) as env_path:
-            kwargs: dict[str, Any] = {"url": db_url, "checkpoint_id": checkpoint_id}
-            if env_path is not None:
-                kwargs["env_file"] = env_path
-            inner = await reader_cls.open_async(str(local_dir), **kwargs)
-            return _SlateDbAsyncShardReader(inner)
+            with apply_env_file(env_path):
+                store = object_store_cls.resolve(db_url)
+                builder = db_reader_builder_cls("", store)
+                inner = await builder.build()
+        return _SlateDbAsyncShardReader(inner)
 
 
 class AsyncShardReaderHandle:
