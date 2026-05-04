@@ -165,3 +165,78 @@ def resolve_env_file(
 ) -> _EnvFileContext:
     """Create a context manager that resolves an env file for SlateDB."""
     return _EnvFileContext(env_file, credential_provider)
+
+
+def _parse_dotenv(text: str) -> dict[str, str]:
+    """Minimal dotenv parser.
+
+    Accepts lines of the form ``KEY=VALUE``; ignores blank lines and
+    comments starting with ``#``. Surrounding single or double quotes
+    are stripped from values. Inline ``export`` prefixes are tolerated.
+
+    This intentionally does not implement the full dotenv grammar
+    (variable interpolation, multiline values, escape sequences). Our
+    only producer is :func:`materialize_env_file`, which writes a
+    flat ``KEY=VALUE`` file. User-supplied env files are expected to
+    follow the same shape.
+    """
+    out: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        out[key] = value
+    return out
+
+
+class _AppliedEnvContext:
+    """Apply env_file contents to ``os.environ`` for the context body."""
+
+    __slots__ = ("_env_file", "_previous")
+
+    def __init__(self, env_file: str | None) -> None:
+        self._env_file = env_file
+        self._previous: dict[str, str | None] = {}
+
+    def __enter__(self) -> None:
+        if self._env_file is None:
+            return
+        try:
+            with open(self._env_file, encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError as exc:
+            _logger.warning("Failed to read env file %s: %s", self._env_file, exc)
+            return
+        for key, value in _parse_dotenv(text).items():
+            self._previous[key] = os.environ.get(key)
+            os.environ[key] = value
+
+    def __exit__(self, *args: object) -> None:
+        for key, prior in self._previous.items():
+            if prior is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = prior
+        self._previous.clear()
+
+
+def apply_env_file(env_file: str | None) -> _AppliedEnvContext:
+    """Context manager that loads ``env_file`` into ``os.environ``.
+
+    Restores the prior environment on exit. ``None`` is a no-op.
+    Used by the slatedb.uniffi adapter so per-shard ``ObjectStore.resolve(url)``
+    calls can pick up credentials from a caller-supplied dotenv file
+    without leaking them across worker processes.
+    """
+    return _AppliedEnvContext(env_file)

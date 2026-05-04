@@ -7,12 +7,14 @@ import types
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Self, TypedDict
+from typing import Any, Self
 from urllib.parse import quote
 
-from ._slatedb_symbols import get_slatedb_writer_symbols
-from .errors import DbAdapterError
+from ._slatedb_runtime import run_coro
+from ._slatedb_symbols import get_reader_symbols, get_writer_symbols
+from .credentials import apply_env_file
 from .metrics import MetricEvent
+from .slatedb_adapter import DefaultSlateDbAdapter
 from .storage import parse_s3_url
 
 
@@ -54,8 +56,8 @@ class FakeSlateDbAdapter:
     def flush(self) -> None:
         return None
 
-    def checkpoint(self) -> str | None:
-        return "fake-checkpoint"
+    def seal(self) -> None:
+        return None
 
     def db_bytes(self) -> int:
         return 0
@@ -128,8 +130,8 @@ class FileBackedSlateDbAdapter:
     def flush(self) -> None:
         return None
 
-    def checkpoint(self) -> str | None:
-        return "file-backed-checkpoint"
+    def seal(self) -> None:
+        return None
 
     def db_bytes(self) -> int:
         return 0
@@ -213,14 +215,16 @@ def local_dir_for_file_shard(object_store_root: str, db_url: str) -> Path:
     return local_path
 
 
-class _SlateDbOpenKwargs(TypedDict, total=False):
-    url: str
-    env_file: str
-    settings: str
-
-
 class RealSlateDbFileAdapter:
-    """Real SlateDB adapter that writes to a local file:// object-store path."""
+    """Real SlateDB adapter that writes to a local ``file://`` object-store path.
+
+    Used in tests as a drop-in for the production S3-backed adapter so we
+    can exercise the end-to-end SlateDB write/seal/close path without
+    needing an S3 endpoint. Internally delegates to
+    :class:`shardyfusion.slatedb_adapter.DefaultSlateDbAdapter` after
+    rewriting the shard's S3 URL into a deterministic ``file://`` URL
+    rooted at ``object_store_root``.
+    """
 
     def __init__(
         self,
@@ -230,22 +234,22 @@ class RealSlateDbFileAdapter:
         local_dir: Path,
     ) -> None:
         self._object_store_root = object_store_root
-        _ = local_dir  # ignored; SlateDB requires a deterministic path
-        try:
-            slatedb_cls, _ = get_slatedb_writer_symbols()
-        except DbAdapterError as exc:
-            raise RuntimeError("slatedb.SlateDB is unavailable at runtime") from exc
-
+        _ = local_dir  # uniffi DbBuilder writes straight to the object store
         mapped_url = map_s3_db_url_to_file_url(db_url, self._object_store_root)
-        shard_local = local_dir_for_file_shard(self._object_store_root, db_url)
-        kwargs: _SlateDbOpenKwargs = {"url": mapped_url}
-        self._db = slatedb_cls(str(shard_local), **kwargs)
+        self._inner = DefaultSlateDbAdapter(
+            db_url=mapped_url,
+            local_dir=local_dir,
+            settings=None,
+            env_file=None,
+        )
 
     @property
     def db(self) -> object:
-        return self._db
+        # Exposed for tests that poke at the underlying uniffi Db handle.
+        return self._inner._db  # noqa: SLF001 -- intentional test hook
 
     def __enter__(self) -> Self:
+        self._inner.__enter__()
         return self
 
     def __exit__(
@@ -254,30 +258,22 @@ class RealSlateDbFileAdapter:
         exc: BaseException | None,
         tb: types.TracebackType | None,
     ) -> None:
-        self.close()
+        self._inner.__exit__(exc_type, exc, tb)
 
     def write_batch(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
-        try:
-            _, write_batch_cls = get_slatedb_writer_symbols()
-        except DbAdapterError as exc:
-            raise RuntimeError("slatedb.WriteBatch is unavailable at runtime") from exc
-        wb = write_batch_cls()
-        for key, value in pairs:
-            wb.put(bytes(key), bytes(value))
-        self._db.write(wb)
+        self._inner.write_batch(pairs)
 
     def flush(self) -> None:
-        self._db.flush_with_options("wal")
+        self._inner.flush()
 
-    def checkpoint(self) -> str | None:
-        checkpoint = self._db.create_checkpoint(scope="durable")
-        return checkpoint["id"]
+    def seal(self) -> None:
+        self._inner.seal()
 
     def db_bytes(self) -> int:
-        return 0
+        return self._inner.db_bytes()
 
     def close(self) -> None:
-        self._db.close()
+        self._inner.close()
 
 
 @dataclass(slots=True)
@@ -303,6 +299,40 @@ def real_file_adapter_factory(object_store_root: str) -> RealSlateDbFileAdapterF
     """Return a serializable real SlateDB file-backed adapter factory."""
 
     return RealSlateDbFileAdapterFactory(object_store_root=object_store_root)
+
+
+# ---------------------------------------------------------------------------
+# Convenience open helpers (test-only)
+# ---------------------------------------------------------------------------
+
+
+def open_slatedb_db(db_url: str, *, env_file: str | None = None) -> Any:
+    """Open a uniffi ``Db`` for ad-hoc test inspection.
+
+    Returns the raw uniffi ``Db`` handle. The caller is responsible for
+    awaiting ``run_coro(db.shutdown())`` (or using the higher-level
+    :class:`DefaultSlateDbAdapter` which handles lifecycle). Reserved for
+    tests that need to assert directly on the underlying SlateDB state
+    without going through a shardyfusion adapter.
+    """
+    db_builder_cls, _, _, object_store_cls = get_writer_symbols()
+    with apply_env_file(env_file):
+        store = object_store_cls.resolve(db_url)
+        builder = db_builder_cls("", store)
+        return run_coro(builder.build())
+
+
+def open_slatedb_reader(db_url: str, *, env_file: str | None = None) -> Any:
+    """Open a uniffi ``DbReader`` for ad-hoc test inspection.
+
+    Mirrors :func:`open_slatedb_db` for the read path. The caller owns
+    the returned reader's lifecycle.
+    """
+    db_reader_builder_cls, _, object_store_cls = get_reader_symbols()
+    with apply_env_file(env_file):
+        store = object_store_cls.resolve(db_url)
+        builder = db_reader_builder_cls("", store)
+        return run_coro(builder.build())
 
 
 _DB_ID_RE = re.compile(r"(?:^|/)db=(\d+)(?:/|$)")
@@ -365,8 +395,8 @@ class _FailOnceAdapter:
     def flush(self) -> None:
         self._inner.flush()
 
-    def checkpoint(self) -> str | None:
-        return self._inner.checkpoint()
+    def seal(self) -> None:
+        return self._inner.seal()
 
     def db_bytes(self) -> int:
         return self._inner.db_bytes()

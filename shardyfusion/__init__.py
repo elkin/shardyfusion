@@ -1,11 +1,16 @@
 """Public API for shardyfusion."""
 
+from ._adapter import (
+    DbAdapter,
+    DbAdapterFactory,
+)
 from ._rate_limiter import (
     AcquireResult,
     RateLimiter,
     ThreadSafeTokenBucket,
     TokenBucket,
 )
+from ._settings import SlateDbSettings
 from .async_manifest_store import (
     AsyncManifestStore,
     AsyncS3ManifestStore,
@@ -125,8 +130,6 @@ from .sharding_types import (
     ShardingStrategy,
 )
 from .slatedb_adapter import (
-    DbAdapter,
-    DbAdapterFactory,
     SlateDbFactory,
 )
 from .type_defs import (
@@ -227,6 +230,7 @@ __all__ = [
     "ShardyfusionError",
     "SlateDbFactory",
     "SlateDbReaderFactory",
+    "SlateDbSettings",
     "SnapshotInfo",
     "SnapshotRouter",
     "SqliteManifestBuilder",

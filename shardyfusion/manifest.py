@@ -112,7 +112,23 @@ class RequiredShardMeta(BaseModel):
     db_bytes: int = Field(ge=0)
     min_key: int | str | bytes | None = None
     max_key: int | str | bytes | None = None
-    checkpoint_id: str | None = None
+    checkpoint_id: str | None = Field(
+        default=None,
+        description=(
+            "Opaque per-shard identifier stamped by the writer via "
+            "shardyfusion._checkpoint_id.generate_checkpoint_id() — a "
+            "uuid4().hex string. Used by SQLite/SQLiteVec/LanceDB reader "
+            "factories as a local-cache identity key (cache invalidation "
+            "happens when this id changes between snapshots). The SlateDB "
+            "reader factory accepts but ignores this field; slatedb 0.12 "
+            "has no read-side checkpoint API, and the shardyfusion "
+            "user-invariant (single writer per DB, publish-after-finish) "
+            "plus S3 strong consistency together remove the need for "
+            "checkpoint pinning. Prior to the slatedb 0.12 upgrade this "
+            "was sometimes a SHA-256 digest of the materialised shard "
+            "DB; that semantic was dropped in favour of UUIDs."
+        ),
+    )
     writer_info: WriterInfo = Field(default_factory=WriterInfo)
 
 

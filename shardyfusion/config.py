@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeAlias, TypeVar
 from urllib.parse import urlparse
 
+from ._adapter import DbAdapterFactory
 from .credentials import CredentialProvider
 from .errors import ConfigValidationError
 from .metrics import MetricsCollector
@@ -18,7 +19,6 @@ from .sharding_types import (
     RoutingValue,
     validate_routing_values,
 )
-from .slatedb_adapter import DbAdapterFactory
 from .type_defs import JsonObject, KeyInput, RetryConfig, S3ConnectionOptions
 
 if TYPE_CHECKING:
