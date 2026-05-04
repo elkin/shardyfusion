@@ -1,7 +1,12 @@
 """Tests for credential provider types and env file materialization."""
 
+from __future__ import annotations
+
 import os
 import pickle
+import threading
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -9,6 +14,9 @@ from shardyfusion.credentials import (
     EnvCredentialProvider,
     S3Credentials,
     StaticCredentialProvider,
+    _AppliedEnvContext,
+    _parse_dotenv,
+    apply_env_file,
     materialize_env_file,
     remove_env_file,
 )
@@ -167,3 +175,217 @@ class TestMaterializeEnvFile:
 
     def test_remove_nonexistent_is_safe(self):
         remove_env_file("/tmp/nonexistent_shardyfusion_test_file")
+
+
+# ---------------------------------------------------------------------------
+# _parse_dotenv (S8)
+# ---------------------------------------------------------------------------
+
+
+class TestParseDotenv:
+    def test_simple_pairs(self) -> None:
+        assert _parse_dotenv("A=1\nB=two\n") == {"A": "1", "B": "two"}
+
+    def test_skips_blank_and_comment_lines(self) -> None:
+        text = "# top comment\nA=1\n\n# another comment\nB=2\n"
+        assert _parse_dotenv(text) == {"A": "1", "B": "2"}
+
+    def test_strips_export_prefix(self) -> None:
+        assert _parse_dotenv("export AWS_ACCESS_KEY_ID=AKIA\n") == {
+            "AWS_ACCESS_KEY_ID": "AKIA"
+        }
+        # Leading whitespace before key after ``export`` is tolerated.
+        assert _parse_dotenv("export   FOO=bar\n") == {"FOO": "bar"}
+
+    def test_strips_matching_quotes(self) -> None:
+        assert _parse_dotenv('A="quoted"\n') == {"A": "quoted"}
+        assert _parse_dotenv("B='single'\n") == {"B": "single"}
+
+    def test_preserves_mismatched_quotes(self) -> None:
+        # Mismatched quotes are preserved literally — not unquoted.
+        assert _parse_dotenv("C=\"mismatch'\n") == {"C": "\"mismatch'"}
+
+    def test_empty_value_allowed(self) -> None:
+        assert _parse_dotenv("EMPTY=\n") == {"EMPTY": ""}
+
+    def test_value_with_equals_signs(self) -> None:
+        # ``str.partition('=')`` splits on the first ``=`` only.
+        assert _parse_dotenv("URL=postgres://u:p@h:5432/db?x=1&y=2\n") == {
+            "URL": "postgres://u:p@h:5432/db?x=1&y=2"
+        }
+
+    def test_skips_lines_without_equals(self) -> None:
+        assert _parse_dotenv("invalid line no equals\nA=1\n") == {"A": "1"}
+
+    def test_skips_empty_keys(self) -> None:
+        # ``=value`` with no key is silently dropped.
+        assert _parse_dotenv("=orphan\nA=1\n") == {"A": "1"}
+
+
+# ---------------------------------------------------------------------------
+# _AppliedEnvContext / apply_env_file (S8 + W5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def clean_env() -> Iterator[None]:
+    """Save/restore the env keys these tests touch, so they cannot
+    leak across test cases or pollute the developer's shell."""
+    keys = ("_SF_TEST_KEY_A", "_SF_TEST_KEY_B", "_SF_TEST_KEY_C")
+    saved = {k: os.environ.get(k) for k in keys}
+    for k in keys:
+        os.environ.pop(k, None)
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+class TestAppliedEnvFile:
+    def test_none_is_no_op(self, clean_env: None) -> None:
+        before = dict(os.environ)
+        with apply_env_file(None):
+            assert os.environ == before
+        assert os.environ == before
+
+    def test_sets_then_pops_when_key_was_absent(
+        self, clean_env: None, tmp_path: Path
+    ) -> None:
+        p = tmp_path / "creds.env"
+        p.write_text("_SF_TEST_KEY_A=alpha\n")
+
+        assert "_SF_TEST_KEY_A" not in os.environ
+        with apply_env_file(str(p)):
+            assert os.environ["_SF_TEST_KEY_A"] == "alpha"
+        assert "_SF_TEST_KEY_A" not in os.environ
+
+    def test_restores_pre_existing_value(
+        self, clean_env: None, tmp_path: Path
+    ) -> None:
+        os.environ["_SF_TEST_KEY_A"] = "original"
+        p = tmp_path / "creds.env"
+        p.write_text("_SF_TEST_KEY_A=overridden\n")
+
+        with apply_env_file(str(p)):
+            assert os.environ["_SF_TEST_KEY_A"] == "overridden"
+        assert os.environ["_SF_TEST_KEY_A"] == "original"
+
+    def test_missing_file_logs_warning_and_no_op(
+        self,
+        clean_env: None,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        missing = tmp_path / "does-not-exist.env"
+        before = dict(os.environ)
+        with caplog.at_level("WARNING"):
+            with apply_env_file(str(missing)):
+                assert os.environ == before
+        assert os.environ == before
+        assert any(
+            "Failed to read env file" in rec.getMessage() for rec in caplog.records
+        )
+
+    def test_empty_pairs_does_not_acquire_lock(
+        self, clean_env: None, tmp_path: Path
+    ) -> None:
+        # A file with only comments produces no pairs; no lock is held.
+        p = tmp_path / "empty.env"
+        p.write_text("# only a comment\n\n")
+        ctx = _AppliedEnvContext(str(p))
+        with ctx:
+            assert ctx._locked is False
+        assert ctx._locked is False
+
+    def test_lock_released_after_exit(
+        self, clean_env: None, tmp_path: Path
+    ) -> None:
+        """A subsequent ``apply_env_file`` works after the previous one
+        exits — guards against a regression where ``__exit__`` forgets
+        to release the lock and the next caller deadlocks."""
+        p = tmp_path / "creds.env"
+        p.write_text("_SF_TEST_KEY_A=v1\n")
+
+        with apply_env_file(str(p)):
+            pass
+        finished = threading.Event()
+
+        def _retry() -> None:
+            with apply_env_file(str(p)):
+                assert os.environ["_SF_TEST_KEY_A"] == "v1"
+            finished.set()
+
+        t = threading.Thread(target=_retry)
+        t.start()
+        t.join(timeout=2.0)
+        assert finished.is_set(), "second apply_env_file deadlocked → lock leaked"
+
+
+class TestAppliedEnvFileConcurrency:
+    """W5: serialise the entire context body across threads so concurrent
+    enters with overlapping keys do not corrupt the snapshot/restore."""
+
+    def test_concurrent_overlapping_keys_restore_to_absent(
+        self, clean_env: None, tmp_path: Path
+    ) -> None:
+        files = []
+        for i in range(8):
+            p = tmp_path / f"creds_{i}.env"
+            p.write_text(f"_SF_TEST_KEY_A=v{i}\n")
+            files.append(str(p))
+
+        barrier = threading.Barrier(len(files))
+        errors: list[BaseException] = []
+        err_lock = threading.Lock()
+
+        def _worker(env_file: str) -> None:
+            barrier.wait()
+            try:
+                with apply_env_file(env_file):
+                    # Body sees *some* value; the W5 invariant is about
+                    # the post-exit state, not the body view.
+                    assert os.environ.get("_SF_TEST_KEY_A") is not None
+            except BaseException as exc:
+                with err_lock:
+                    errors.append(exc)
+                raise
+
+        threads = [threading.Thread(target=_worker, args=(f,)) for f in files]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5.0)
+            assert not t.is_alive(), "thread deadlocked on env mutation lock"
+
+        assert errors == []
+        # Every thread saw the key as absent on entry → all threads
+        # popped on exit. End state = absent, despite N concurrent
+        # mutations to the same key.
+        assert "_SF_TEST_KEY_A" not in os.environ
+
+    def test_concurrent_overlapping_keys_restore_pre_existing(
+        self, clean_env: None, tmp_path: Path
+    ) -> None:
+        os.environ["_SF_TEST_KEY_A"] = "original"
+
+        files = []
+        for i in range(4):
+            p = tmp_path / f"creds_{i}.env"
+            p.write_text(f"_SF_TEST_KEY_A=v{i}\n")
+            files.append(str(p))
+
+        def _worker(env_file: str) -> None:
+            with apply_env_file(env_file):
+                pass
+
+        threads = [threading.Thread(target=_worker, args=(f,)) for f in files]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5.0)
+
+        assert os.environ.get("_SF_TEST_KEY_A") == "original"
