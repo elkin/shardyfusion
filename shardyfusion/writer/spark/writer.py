@@ -14,6 +14,9 @@ from pyspark.sql import DataFrame, Row
 from pyspark.sql import functions as F
 from pyspark.sql.types import IntegerType, StructField, StructType
 
+from shardyfusion._adapter import (
+    DbAdapterFactory,
+)
 from shardyfusion._rate_limiter import RateLimiter, TokenBucket
 from shardyfusion._shard_writer import (
     ShardWriteParams,
@@ -70,9 +73,6 @@ from shardyfusion.sharding_types import (
     KeyEncoding,
     ShardHashAlgorithm,
     ShardingSpec,
-)
-from shardyfusion.slatedb_adapter import (
-    DbAdapterFactory,
 )
 from shardyfusion.writer._accumulators import (
     KvAccumulator,

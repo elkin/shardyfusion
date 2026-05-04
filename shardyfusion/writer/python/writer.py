@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import Any, TypeVar
 from uuid import uuid4
 
+from shardyfusion._adapter import DbAdapterFactory
+from shardyfusion._checkpoint_id import generate_checkpoint_id
 from shardyfusion._rate_limiter import RateLimiter, TokenBucket
 from shardyfusion._writer_core import (
     ShardAttemptResult,
@@ -43,7 +45,7 @@ from shardyfusion.sharding_types import (
     ShardHashAlgorithm,
     ShardingSpec,
 )
-from shardyfusion.slatedb_adapter import DbAdapterFactory, SlateDbFactory
+from shardyfusion.slatedb_adapter import SlateDbFactory
 from shardyfusion.type_defs import KeyInput
 from shardyfusion.writer.python._parallel_writer import (
     _make_db_url,
@@ -873,7 +875,8 @@ def _flush_remaining_single_process_batches(
 def _finalize_single_process_adapters(state: _SingleProcessState) -> None:
     for db_id, adapter in state.adapters.items():
         adapter.flush()
-        state.checkpoint_ids[db_id] = adapter.checkpoint()
+        adapter.seal()
+        state.checkpoint_ids[db_id] = generate_checkpoint_id()
         state.db_bytes_per_shard[db_id] = adapter.db_bytes()
 
 

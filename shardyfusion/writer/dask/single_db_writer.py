@@ -10,6 +10,11 @@ from uuid import uuid4
 import dask.dataframe as dd
 import pandas as pd
 
+from shardyfusion._adapter import (
+    DbAdapter,
+    DbAdapterFactory,
+)
+from shardyfusion._checkpoint_id import generate_checkpoint_id
 from shardyfusion._rate_limiter import RateLimiter, TokenBucket
 from shardyfusion._shard_writer import _RetryAttemptContext, _run_attempts_with_retry
 from shardyfusion._writer_core import (
@@ -37,8 +42,6 @@ from shardyfusion.run_registry import RunRecordLifecycle
 from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import HashShardingSpec, ShardHashAlgorithm
 from shardyfusion.slatedb_adapter import (
-    DbAdapter,
-    DbAdapterFactory,
     SlateDbFactory,
 )
 from shardyfusion.type_defs import KeyInput
@@ -286,7 +289,8 @@ def _stream_to_single_db(
                 )
 
             adapter.flush()
-            checkpoint_id = adapter.checkpoint()
+            adapter.seal()
+            checkpoint_id = generate_checkpoint_id()
             db_bytes = adapter.db_bytes()
     except ShardyfusionError:
         raise

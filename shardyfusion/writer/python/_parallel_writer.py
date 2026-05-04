@@ -17,6 +17,8 @@ from multiprocessing.connection import wait as wait_for_handles
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
+from shardyfusion._adapter import DbAdapterFactory
+from shardyfusion._checkpoint_id import generate_checkpoint_id
 from shardyfusion._rate_limiter import RateLimiter, TokenBucket
 from shardyfusion._writer_core import (
     ShardAttemptResult,
@@ -34,7 +36,6 @@ from shardyfusion.manifest import WriterInfo
 from shardyfusion.metrics import MetricEvent
 from shardyfusion.serde import make_key_encoder
 from shardyfusion.sharding_types import ShardHashAlgorithm
-from shardyfusion.slatedb_adapter import DbAdapterFactory
 from shardyfusion.storage import join_s3
 from shardyfusion.type_defs import KeyInput, RetryConfig
 
@@ -605,7 +606,8 @@ def _shard_worker(
                 batch.clear()
 
             adapter.flush()
-            checkpoint_id = adapter.checkpoint()
+            adapter.seal()
+            checkpoint_id = generate_checkpoint_id()
             db_bytes = adapter.db_bytes()
     except Exception as exc:
         log_failure(
@@ -715,7 +717,8 @@ def _file_shard_worker(
                 batch.clear()
 
             adapter.flush()
-            checkpoint_id = adapter.checkpoint()
+            adapter.seal()
+            checkpoint_id = generate_checkpoint_id()
             db_bytes = adapter.db_bytes()
     except ShardyfusionError as exc:
         log_failure(

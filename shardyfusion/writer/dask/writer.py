@@ -8,6 +8,9 @@ from uuid import uuid4
 import dask.dataframe as dd
 import pandas as pd
 
+from shardyfusion._adapter import (
+    DbAdapterFactory,
+)
 from shardyfusion._shard_writer import (
     results_pdf_to_attempts,
     write_shard_with_retry,
@@ -51,9 +54,6 @@ from shardyfusion.sharding_types import (
     HashShardingSpec,
     ShardHashAlgorithm,
     ShardingSpec,
-)
-from shardyfusion.slatedb_adapter import (
-    DbAdapterFactory,
 )
 from shardyfusion.writer._accumulators import KvAccumulator, UnifiedAccumulator
 from shardyfusion.writer._runtime import RetryingPartitionWriteRuntime

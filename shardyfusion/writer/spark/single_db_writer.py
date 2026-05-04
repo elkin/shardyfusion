@@ -6,6 +6,8 @@ from uuid import uuid4
 
 from pyspark.sql import DataFrame
 
+from shardyfusion._adapter import DbAdapterFactory
+from shardyfusion._checkpoint_id import generate_checkpoint_id
 from shardyfusion._rate_limiter import RateLimiter, TokenBucket
 from shardyfusion._shard_writer import _RetryAttemptContext, _run_attempts_with_retry
 from shardyfusion._writer_core import (
@@ -32,7 +34,6 @@ from shardyfusion.run_registry import RunRecordLifecycle
 from shardyfusion.serde import ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import HashShardingSpec, ShardHashAlgorithm
 from shardyfusion.slatedb_adapter import (
-    DbAdapterFactory,
     SlateDbFactory,
 )
 from shardyfusion.type_defs import KeyInput
@@ -261,7 +262,8 @@ def _stream_to_single_db(
                 batch.clear()
 
             adapter.flush()
-            checkpoint_id = adapter.checkpoint()
+            adapter.seal()
+            checkpoint_id = generate_checkpoint_id()
             db_bytes = adapter.db_bytes()
     except ShardyfusionError:
         raise

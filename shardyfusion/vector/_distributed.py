@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 
+from .._checkpoint_id import generate_checkpoint_id
 from .._rate_limiter import TokenBucket
 from ..errors import ConfigValidationError
 from ..logging import get_logger, log_event
@@ -346,7 +347,8 @@ def write_vector_shard(
                 ops_limiter.acquire()
             flush_vector_shard_batch(state)
 
-        state.checkpoint_id = adapter.checkpoint()
+        adapter.seal()
+        state.checkpoint_id = generate_checkpoint_id()
         state.db_bytes = adapter.db_bytes()
 
     if metrics_collector is not None:

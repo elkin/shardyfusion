@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+from ._adapter import DbAdapterFactory
+from ._checkpoint_id import generate_checkpoint_id
 from ._rate_limiter import RateLimiter, TokenBucket
 from ._writer_core import ShardAttemptResult
 from .errors import ShardWriteError, ShardyfusionError
@@ -24,7 +26,6 @@ from .logging import FailureSeverity, get_logger, log_event, log_failure
 from .manifest import WriterInfo
 from .metrics import MetricEvent, MetricsCollector
 from .serde import KeyEncoder
-from .slatedb_adapter import DbAdapterFactory
 from .storage import join_s3
 from .type_defs import RetryConfig
 from .writer._accumulators import (
@@ -228,7 +229,8 @@ def write_shard_core(
                 started=params.started,
             )
             adapter.flush()
-            checkpoint_id = adapter.checkpoint()
+            adapter.seal()
+            checkpoint_id = generate_checkpoint_id()
             db_bytes = adapter.db_bytes()
     except ShardyfusionError:
         raise

@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from shardyfusion._adapter import DbAdapterFactory
 from shardyfusion._writer_core import wrap_factory_for_vector
 from shardyfusion.config import (
     BaseShardedWriteConfig,
@@ -15,7 +16,7 @@ from shardyfusion.config import (
 from shardyfusion.metrics import MetricsCollector
 from shardyfusion.serde import KeyEncoder, ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import DB_ID_COL
-from shardyfusion.slatedb_adapter import DbAdapterFactory, SlateDbFactory
+from shardyfusion.slatedb_adapter import SlateDbFactory
 from shardyfusion.type_defs import RetryConfig
 
 _VectorFn = Callable[[Any], tuple[int | str, Any, dict[str, Any] | None]]
