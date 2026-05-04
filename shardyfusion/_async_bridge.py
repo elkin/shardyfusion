@@ -48,8 +48,11 @@ from typing import Any, TypeVar
 
 from shardyfusion._slatedb_runtime import get_loop, run_coro
 from shardyfusion.errors import BridgeTimeoutError
+from shardyfusion.logging import FailureSeverity, get_logger, log_failure
 
 _T = TypeVar("_T")
+
+_logger = get_logger(__name__)
 
 __all__ = [
     "BridgeTimeoutError",
@@ -244,8 +247,9 @@ async def _best_effort_close(obj: Any) -> None:
     siblings that already produced a result (e.g. an open SlateDB
     ``DbReader``) need their ``shutdown``/``close`` method invoked so
     Tokio/object-store resources are released. Errors from the close
-    itself are suppressed — the caller is already going to see the
-    original failure.
+    itself do not prevent the original failure from propagating, but
+    they are logged so genuine cleanup bugs (corrupt state, hung Tokio
+    task) are not lost.
     """
     for attr in ("shutdown", "aclose", "close"):
         fn = getattr(obj, attr, None)
@@ -255,6 +259,12 @@ async def _best_effort_close(obj: Any) -> None:
             result = fn()
             if asyncio.iscoroutine(result):
                 await result
-        except Exception:
-            pass
+        except Exception as exc:
+            log_failure(
+                "bridge_best_effort_close_failed",
+                severity=FailureSeverity.TRANSIENT,
+                logger=_logger,
+                error=exc,
+                attr=attr,
+            )
         return

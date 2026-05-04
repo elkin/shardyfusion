@@ -118,7 +118,11 @@ def get_loop() -> asyncio.AbstractEventLoop:
         thread.start()
         _loop = loop
         _thread = thread
-    _register_with_uniffi(loop)
+        # Register inside the lock so two first-use threads cannot both
+        # see ``_uniffi_registered=False`` and double-call
+        # ``uniffi_set_event_loop``. The flag and the registration must
+        # be atomic with the loop creation they pair with.
+        _register_with_uniffi(loop)
     return loop
 
 

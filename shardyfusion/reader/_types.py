@@ -15,9 +15,11 @@ from shardyfusion.credentials import (
     apply_env_file,
     resolve_env_file,
 )
-from shardyfusion.errors import DbAdapterError
+from shardyfusion.errors import ConfigValidationError, DbAdapterError
 from shardyfusion.logging import (
+    FailureSeverity,
     get_logger,
+    log_failure,
 )
 from shardyfusion.routing import SnapshotRouter
 from shardyfusion.sharding_types import (
@@ -138,27 +140,52 @@ class _SlateDbReaderHandle:
 
         iterator = call_sync(_open_iterator())
         chunk = self._iterator_chunk_size
+        # Probe the iterator's batch capability once outside the per-chunk
+        # loop. uniffi 0.12.1 exposes only ``next``; ``next_batch`` may
+        # land in a future slatedb release. Doing the check inline with
+        # ``try/except AttributeError`` would silently mask
+        # AttributeErrors raised *inside* a future ``next_batch`` body,
+        # turning a real bug into a permanent fall-through to the slow
+        # per-row path.
+        has_next_batch = hasattr(iterator, "next_batch")
 
         async def _drain() -> list[tuple[bytes, bytes]]:
-            try:
+            if has_next_batch:
                 batch = await iterator.next_batch(chunk)
-            except AttributeError:
-                # uniffi 0.12 exposes only single-item ``next``; pull a
-                # chunk per round-trip to amortize the bridge cost.
-                out: list[tuple[bytes, bytes]] = []
-                for _ in range(chunk):
-                    item = await iterator.next()
-                    if item is None:
-                        break
-                    out.append((bytes(item.key), bytes(item.value)))
-                return out
-            return [(bytes(kv.key), bytes(kv.value)) for kv in batch]
+                return [(bytes(kv.key), bytes(kv.value)) for kv in batch]
+            out: list[tuple[bytes, bytes]] = []
+            for _ in range(chunk):
+                item = await iterator.next()
+                if item is None:
+                    break
+                out.append((bytes(item.key), bytes(item.value)))
+            return out
 
-        while True:
-            batch = call_sync(_drain())
-            if not batch:
-                return
-            yield from batch
+        try:
+            while True:
+                batch = call_sync(_drain())
+                if not batch:
+                    return
+                yield from batch
+        finally:
+            # Best-effort iterator cleanup. ``try/finally`` also fires on
+            # ``GeneratorExit`` (consumer ``break``) and on exception, so
+            # Tokio prefetch tasks and the iterator's object-store
+            # reader release eagerly instead of waiting for the parent
+            # ``DbReader.shutdown`` cascade. uniffi 0.12.1 does not
+            # expose ``aclose``; the call is gated by ``hasattr`` so the
+            # path is forward-compatible without breaking today.
+            aclose = getattr(iterator, "aclose", None)
+            if aclose is not None:
+                try:
+                    call_sync(aclose())
+                except Exception as exc:
+                    log_failure(
+                        "scan_iter_aclose_failed",
+                        severity=FailureSeverity.TRANSIENT,
+                        logger=_logger,
+                        error=exc,
+                    )
 
     def close(self) -> None:
         if self._closed:
@@ -189,11 +216,20 @@ class SlateDbReaderFactory:
 
     ``iterator_chunk_size`` controls how many rows the sync iterator
     bridge fetches per async hop — see :class:`_SlateDbReaderHandle`.
+    Must be positive; ``0`` would silently produce empty scans because
+    the per-chunk drain loop runs ``range(chunk_size)`` rows at a time.
     """
 
     env_file: str | None = None
     credential_provider: CredentialProvider | None = None
     iterator_chunk_size: int = 1024
+
+    def __post_init__(self) -> None:
+        if self.iterator_chunk_size <= 0:
+            raise ConfigValidationError(
+                f"iterator_chunk_size must be positive, "
+                f"got {self.iterator_chunk_size}"
+            )
 
     def __call__(
         self,
