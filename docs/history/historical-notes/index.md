@@ -13,3 +13,4 @@ Dated engineering notes preserved verbatim from the pre-reorg `engineering-notes
 - [2026-04-04 Sharded vector search](2026-04-04-sharded-vector-search.md)
 - [2026-04-06 Vector search review](2026-04-06-vector-search-review.md)
 - [2026-04-19 LanceDB vector migration](2026-04-19-lancedb-vector-migration.md)
+- [2026-05-04 slatedb 0.12 uniffi migration](2026-05-04-slatedb-0.12-uniffi-migration.md)

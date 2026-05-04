@@ -192,7 +192,7 @@ Key `CelShardedWriteConfig` fields (in addition to the common fields above):
 ### SlateDB
 
 - Streaming-safe: generators work; dataset does not need to fit in memory.
-- Append-only LSM: each batch is written incrementally; `checkpoint()` flushes the memtable.
+- Append-only LSM: each batch is written incrementally; `seal()` flushes the memtable and persists the shard.
 
 ### SQLite
 

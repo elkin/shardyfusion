@@ -79,8 +79,12 @@ For each shard attempt:
 1. Construct the adapter via `config.adapter_factory(db_url=..., local_dir=...)`.
 2. Buffer records into batches of `config.batch_size`.
 3. `adapter.write_batch(pairs)` per batch.
-4. After all records: `adapter.flush()`, then `adapter.checkpoint()`.
-5. Report a `ShardAttemptResult` (db_id, attempt index, row count, byte count, min/max keys, db_url returned by checkpoint).
+4. After all records: `adapter.flush()`, then `adapter.seal()`. Generate the
+   shard's `checkpoint_id` via
+   `shardyfusion._checkpoint_id.generate_checkpoint_id()` (an opaque
+   `uuid4().hex`). Adapters do **not** return a checkpoint id; the writer
+   stamps one and stores it on `RequiredShardMeta.checkpoint_id`.
+5. Report a `ShardAttemptResult` (db_id, attempt index, row count, byte count, min/max keys, db_url, generated `checkpoint_id`).
 
 ### 4. Winner selection + publish
 

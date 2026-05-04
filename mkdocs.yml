@@ -150,6 +150,7 @@ nav:
       - 2026-04-04 Sharded vector search: history/historical-notes/2026-04-04-sharded-vector-search.md
       - 2026-04-06 Vector search review: history/historical-notes/2026-04-06-vector-search-review.md
       - 2026-04-19 LanceDB vector migration: history/historical-notes/2026-04-19-lancedb-vector-migration.md
+      - 2026-05-04 slatedb 0.12 uniffi migration: history/historical-notes/2026-05-04-slatedb-0.12-uniffi-migration.md
 
 markdown_extensions:
   - admonition

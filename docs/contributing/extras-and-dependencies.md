@@ -141,7 +141,7 @@ Promote to base only if **all** of these hold:
 
 ## When to bump a pinned upper bound
 
-Upper bounds (e.g. `slatedb<0.12`) exist when an upstream had a known-breaking change. To bump:
+Upper bounds (e.g. `slatedb<0.13`) exist when an upstream had a known-breaking change. To bump:
 
 1. Bump the pin in `pyproject.toml` and the matching `[dependency-groups]` entry.
 2. Run `just ci d-e2e`.

@@ -37,6 +37,15 @@ This page enumerates the **public** symbols (those in `shardyfusion.__all__`) an
     - `from shardyfusion.sqlite_adapter import SqliteFactory, SqliteReaderFactory, SqliteRangeReaderFactory, AsyncSqliteReaderFactory`
     - `from shardyfusion.sqlite_vec_adapter import SqliteVecFactory`
     - `from shardyfusion.composite_adapter import CompositeFactory`
+- `SlateDbSettings` — typed dataclass for slatedb 0.12 settings (`Settings.set(dotted_key, json_literal)`); includes a `raw_overrides: dict[str, str]` escape hatch for keys not yet promoted to typed fields. Re-exported at the top level. Legacy JSON-dict configs are still accepted but emit `DeprecationWarning`.
+
+#### Adapter Protocol changes (slatedb 0.12)
+
+The `DbAdapter` write-side Protocol exposes:
+
+- `write_batch(pairs)`, `flush()`, `seal() -> None`, `db_bytes() -> int`, `close()`, context-manager.
+
+`seal()` (formerly `checkpoint() -> str | None`) finalises the shard DB and uploads it; it returns `None`. Writers stamp the shard's `checkpoint_id` themselves via `shardyfusion._checkpoint_id.generate_checkpoint_id()` (an opaque `uuid4().hex`). See [adding an adapter](../contributing/adding-an-adapter.md) for the full template.
 
 ### Readers
 
@@ -45,7 +54,7 @@ This page enumerates the **public** symbols (those in `shardyfusion.__all__`) an
 - `AsyncShardedReader` — async; construct via `await AsyncShardedReader.open(...)`.
 - `ShardReaderHandle`, `AsyncShardReaderHandle` — borrowed per-shard handles returned by `reader_for_key` / `readers_for_keys`.
 - `SnapshotInfo`, `ShardDetail`, `ReaderHealth` — value types returned by `snapshot_info`, `shard_details`, `health`.
-- `SlateDbReaderFactory`, `AsyncSlateDbReaderFactory` — adapter factories for SlateDB.
+- `SlateDbReaderFactory`, `AsyncSlateDbReaderFactory` — adapter factories for SlateDB. The sync `SlateDbReaderFactory` accepts `iterator_chunk_size: int = 1024` to amortise the sync→async bridge cost on `scan_iter` (tune downward for low-latency partial scans, upward for bulk dumps); the async factory exposes the native uniffi iterator and does not need this knob. The `checkpoint_id` argument is accepted on both for Protocol symmetry but ignored — slatedb 0.12 has no read-side checkpoint API. SQLite/SQLiteVec/LanceDB factories continue to use `checkpoint_id` as a local-cache identity key.
 
 Lazy unified KV+vector readers (loaded via top-level `__getattr__`):
 

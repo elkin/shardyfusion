@@ -7,6 +7,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### Changed (breaking)
+
+#### SlateDB upgrade — 0.7 → 0.12
+
+- **Bumped `slatedb` requirement to `>=0.12,<0.13`** (was `>=0.7,<0.8`). The
+  legacy top-level `slatedb.SlateDB` / `slatedb.SlateDBReader` API was removed
+  upstream in 0.12; all runtime imports now go through `slatedb.uniffi`
+  (`Db`, `DbBuilder`, `DbReader`, `DbReaderBuilder`, `WriteBatch`, `Settings`,
+  `ObjectStore`, `FlushOptions`, `FlushType`).
+- **All slatedb operations are async upstream**. shardyfusion exposes the
+  same sync writer/reader Protocols as before by funneling every hop
+  through a process-global daemon-thread `asyncio` loop in
+  `shardyfusion._slatedb_runtime` (`run_coro(...)`). The bridge is owned by
+  shardyfusion and is not user-customizable.
+- **Adapter `checkpoint() -> str | None` renamed to `seal() -> None`**
+  (breaking for custom `DbAdapter` implementations). Writers now do
+  `adapter.flush(); adapter.seal(); checkpoint_id = generate_checkpoint_id()`.
+  The `checkpoint_id` field on `RequiredShardMeta` is now an opaque shardyfusion-
+  generated `uuid.uuid4().hex` (32 lowercase hex chars), produced centrally by
+  `shardyfusion._checkpoint_id.generate_checkpoint_id()`. **Migration**:
+  rename your `def checkpoint(self) -> str | None` to `def seal(self) -> None`
+  and drop the return value.
+- **SQLite / SQLiteVec checkpoint-id semantics changed**: the SHA-256 digest
+  of the materialized DB file is no longer the `checkpoint_id`; a UUID is
+  used instead. Reader cache identity (per-shard local-cache directory) still
+  keys on `checkpoint_id`, so cache invalidation behaviour is unchanged. If
+  you persisted SHA-256 fingerprints externally, switch to comparing
+  `db_bytes()` or computing your own digest from the downloaded file.
+- **`SlateDbReaderFactory` no longer forwards `checkpoint_id` to slatedb**
+  (slatedb 0.12 has no equivalent of the legacy `create_checkpoint(scope=...)`
+  API; user invariant is single-writer-per-DB with publish-after-finish, plus
+  S3 strong consistency, which together remove the need for checkpoint pinning
+  on the read path). The `checkpoint_id` argument is still accepted by the
+  factory for Protocol symmetry but is ignored. `SQLite*` and `LanceDB*`
+  factories continue to use `checkpoint_id` for local-cache identity.
+- **New `SlateDbReaderFactory(iterator_chunk_size=1024)` parameter** controls
+  the batch size for the sync→async iterator bridge in `scan_iter()`. A single
+  bridge hop costs ~15–40 µs; per-row hops would dominate scans by ~30×, so
+  chunking is mandatory. Tune downward (e.g. 256) for low-latency partial
+  scans, upward (e.g. 4096) for bulk dumps. Lives only on the reader factory.
+- **New typed `shardyfusion.SlateDbSettings` dataclass** for slatedb settings
+  configuration. Includes a `raw_overrides: dict[str, str]` escape hatch for
+  keys not yet promoted to typed fields. The pre-0.12 free-form JSON-dict
+  shape is **not** accepted — `SlateDbFactory.settings` is typed
+  `SlateDbSettings | None`.
+- **`DbAdapter` and `DbAdapterFactory` Protocols moved to
+  `shardyfusion._adapter`** (backend-neutral). They were re-exported from
+  `shardyfusion.slatedb_adapter` historically but were never SlateDB-specific.
+  Public re-exports (`shardyfusion.DbAdapter`, `shardyfusion.DbAdapterFactory`)
+  are unchanged. **Migration**: if you imported either Protocol from
+  `shardyfusion.slatedb_adapter` directly, switch to `shardyfusion._adapter`
+  (or, preferably, the top-level `shardyfusion` namespace).
+- **`shardyfusion.credentials.apply_env_file()`** is the new in-house dotenv
+  loader (context manager); we no longer rely on `slatedb`'s legacy
+  `env_file=` ctor parameter. `SlateDbReaderFactory(env_file=...)` and the
+  writer adapter both call it before resolving `ObjectStore`.
+
+#### Test fakes & helpers
+- **`shardyfusion.testing.open_slatedb_db(db_url)`** /
+  **`open_slatedb_reader(db_url)`** — convenience helpers that return raw
+  uniffi `Db` / `DbReader` handles for tests that need to assert directly
+  against slatedb state. Caller owns lifecycle (`run_coro(db.shutdown())`).
+
+### Added
+- **Performance microbenchmarks** under `tests/integration/perf/`
+  (`@pytest.mark.perf`, opt-in only, excluded from default `pytest tests`
+  via `addopts = "-ra -m 'not perf'"`). Run with `just perf`. Currently
+  covers WriteBatch throughput, point-get round-trip, and chunked-scan
+  per-row cost; budgets are deliberately loose to catch order-of-magnitude
+  regressions only.
+- **`just perf [path]`** recipe — runs `pytest -m perf` against
+  `tests/integration/perf/` (or a narrower path) without tox parallelism so
+  timings stay stable. Not part of `just ci`.
+
+#### Async bridge (sync→async) public surface
+- **`shardyfusion._async_bridge`** with `call_sync(coro, *, timeout=None)` and
+  `gather_sync(coros, *, timeout=None, return_exceptions=False)`. Both submit
+  to the shardyfusion-owned bridge loop, raise `BridgeTimeoutError`
+  (`shardyfusion.errors.BridgeTimeoutError`, `retryable=True`) on timeout,
+  cancel the in-flight coroutine(s) on `KeyboardInterrupt`, and refuse re-entry
+  from the bridge loop itself (raises `RuntimeError`). The legacy `run_coro`
+  remains as a thin alias for back-compat.
+- **`gather_sync` fan-out**: pays the sync→async hop cost (~16-18 µs) once for
+  N coroutines instead of N times. Wired into `SlateDbReaderFactory.open_many`
+  so opening a snapshot with K non-empty shards costs one bridge round-trip
+  rather than K. The reader (`shardyfusion.reader.reader`) duck-types this on
+  the factory and falls back to per-shard `_open_one_reader` when absent, so
+  custom factories without `open_many` keep working.
+- **`SlateDbBridgeTimeouts`** dataclass on `shardyfusion.slatedb_adapter` with
+  `open_s` / `write_s` / `flush_s` / `shutdown_s` (all default `None`,
+  unbounded — zero behavioral change). Pass via
+  `SlateDbFactory(..., bridge_timeouts=SlateDbBridgeTimeouts(write_s=30.0))`
+  to opt into bounded ops. **`BridgeTimeoutError` is preserved across the
+  open path** — it is no longer wrapped in `DbAdapterError`, so the shard
+  retry path correctly observes `exc.retryable=True`.
+
+#### Reader/bridge lifecycle correctness
+- **`_SlateDbReaderHandle.close()` and `_SlateDbAsyncShardReader.close()`
+  now invoke uniffi `DbReader.shutdown()`** to release Tokio/object-store
+  resources eagerly. Previously the handle only flipped `_closed` and the
+  inner reader survived until Python finalization, leaking resources in
+  long-running services that periodically refresh snapshots.
+- **`gather_sync(..., return_exceptions=False)` cancels still-pending
+  siblings on the first failure** and best-effort closes any already-
+  successful results (`shutdown`/`aclose`/`close`). For
+  `SlateDbReaderFactory.open_many` this means a partial-failure open no
+  longer leaks orphaned background reader builds or fully-built
+  `DbReader`s. `return_exceptions=True` mode still returns all results
+  unchanged (caller owns lifecycle).
+
 ### Added
 
 #### SQLite B-tree metadata sidecar (writer-side)

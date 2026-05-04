@@ -13,7 +13,7 @@ Before starting, read:
 A KV adapter has four pieces:
 
 1. **`DbAdapterFactory`** — constructs per-shard adapters.
-2. **`DbAdapter`** — write-side protocol (`write_batch`, `flush`, `checkpoint`, `close`, context-manager).
+2. **`DbAdapter`** — write-side protocol (`write_batch`, `flush`, `seal`, `db_bytes`, `close`, context-manager).
 3. **`ShardReaderFactory`** — constructs per-shard readers.
 4. **`ShardReader`** — read-side `get(key) -> bytes | None`.
 
@@ -102,11 +102,20 @@ class FooDbAdapter:
     def flush(self) -> None:
         self._db.flush()
 
-    def checkpoint(self) -> str | None:
-        # Persist locally, upload to db_url, return the canonical URL.
+    def seal(self) -> None:
+        # Finalise the local DB (close, fsync), then upload to db_url. The
+        # adapter no longer returns a checkpoint id; the writer generates
+        # one via shardyfusion._checkpoint_id.generate_checkpoint_id() and
+        # stores it on RequiredShardMeta.checkpoint_id. seal() must be
+        # idempotent and is called exactly once before close().
         self._db.close()
         _upload_dir_to_s3(self._local_dir, self._db_url)
-        return self._db_url
+
+    def db_bytes(self) -> int:
+        # Total bytes uploaded to db_url; used by adaptive read-mode
+        # heuristics (e.g. SQLite download vs. range mode). Return 0 if
+        # the backend has no cheap way to total this.
+        return self._uploaded_bytes
 
     def close(self) -> None:
         with suppress(Exception):
@@ -116,7 +125,11 @@ class FooDbAdapter:
 Notes:
 
 - `__call__` signature is **keyword-only**: `(*, db_url, local_dir)`.
-- `checkpoint()` returns the canonical URL stored in the manifest (used for winner-selection tiebreak).
+- `seal()` finalises the shard DB and uploads it; it returns `None`. Writers
+  call `adapter.flush(); adapter.seal()` then stamp the
+  `checkpoint_id` themselves via
+  `shardyfusion._checkpoint_id.generate_checkpoint_id()` (an opaque
+  `uuid4().hex`).
 - All backend-specific exceptions are wrapped in `FooDbAdapterError` (subclass of `DbAdapterError`).
 - The lazy import lives in a helper, not at module top.
 

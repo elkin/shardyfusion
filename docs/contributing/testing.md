@@ -78,6 +78,26 @@ uv run pytest -q -k "test_routing_contract"     # property test
 
 Unit tests use `pytest-xdist` for parallelism: `uv run pytest -n 4 -q tests/unit`.
 
+## Performance microbenchmarks
+
+Microbenchmarks live under `tests/integration/perf/` and are gated by the
+`perf` pytest marker. They are **opt-in**: the default `pytest tests` /
+`just unit` / `just integration` runs exclude them via
+`addopts = "-ra -m 'not perf'"`. They are not part of `just ci` and do not
+gate PRs.
+
+Run them locally with:
+
+```bash
+just perf                                                        # all perf tests
+just perf tests/integration/perf/test_slatedb_bridge_overhead.py  # one file
+```
+
+These tests exist to catch order-of-magnitude regressions in the
+sync→async slatedb.uniffi bridge — not microsecond drift. Budgets are
+deliberately loose (e.g. 500 µs/write, 1 ms/get, 200 µs/scanned-row);
+revisit them only when a real upstream change moves the floor.
+
 ## Test adapters
 
 `shardyfusion/testing.py` provides three SlateDB-shaped fakes for use in tests:

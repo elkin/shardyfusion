@@ -114,7 +114,7 @@ The writer also adds a temporary `_shard_id` column for shard routing. It is dro
 
 ### SlateDB
 
-- Incremental writes through SlateDB adapter; `checkpoint()` flushes memtable.
+- Incremental writes through SlateDB adapter; `seal()` flushes the memtable and persists the shard.
 
 ### SQLite
 

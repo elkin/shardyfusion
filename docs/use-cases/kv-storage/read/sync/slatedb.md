@@ -52,6 +52,24 @@ Constructor (`shardyfusion/reader/reader.py:72`):
 
 Call `reader.refresh()` to pick up newly published manifests.
 
+### Tuning the SlateDB iterator chunk size
+
+shardyfusion bridges the slatedb 0.12 async iterator API to a sync `scan_iter` via a process-global asyncio loop. To keep per-row bridge overhead (~15–40 µs per `await`) from dominating scans, the sync handle drains the underlying `DbIterator` in batches.
+
+The batch size is controlled by `SlateDbReaderFactory(iterator_chunk_size=1024)`:
+
+```python
+from shardyfusion import ShardedReader, SlateDbReaderFactory
+
+reader = ShardedReader(
+    s3_prefix="s3://my-bucket/snapshots/users",
+    local_root="/var/cache/shardy/users",
+    reader_factory=SlateDbReaderFactory(iterator_chunk_size=4096),
+)
+```
+
+Tune downward (e.g. `64`) for low-latency partial scans where you only consume a few rows; tune upward (e.g. `4096`–`16384`) for bulk dumps. The default of `1024` is a safe middle ground. The setting has no effect on point-key `get()` / `multi_get()`.
+
 ## Reader API
 
 All methods are pinned to the manifest currently loaded (use `refresh()` to advance).

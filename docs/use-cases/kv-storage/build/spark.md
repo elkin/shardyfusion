@@ -148,7 +148,7 @@ The writer also adds a temporary `_shard_id` column for shard routing. It is dro
 
 ### SlateDB
 
-- Incremental writes through SlateDB adapter; `checkpoint()` flushes memtable.
+- Incremental writes through SlateDB adapter; `seal()` flushes the memtable and persists the shard.
 - `sort_within_partitions=True` helps SlateDB compaction by writing keys in sorted order.
 
 ### SQLite
@@ -159,7 +159,7 @@ The writer also adds a temporary `_shard_id` column for shard routing. It is dro
 ## Non-functional properties
 
 - **Driver work**: routing planning, manifest assembly, S3 publish — all on the driver.
-- **Executor work**: each task opens its adapter, writes batches of `config.batch_size`, calls `checkpoint()`.
+- **Executor work**: each task opens its adapter, writes batches of `config.batch_size`, calls `seal()`. The shard's `checkpoint_id` is stamped by the writer via `shardyfusion._checkpoint_id.generate_checkpoint_id()`.
 - **No Python UDFs**: routing uses Arrow `mapInArrow` to avoid UDF overhead.
 - **Rate limiting**: per-partition scope. Aggregate rate = `config.rate_limits.max_writes_per_second x num_dbs`.
 

@@ -62,6 +62,8 @@ async with await AsyncShardedReader.open(...) as reader:
 
 State must be loaded via `await AsyncShardedReader.open(...)` — direct `__init__` does not load the manifest.
 
+> **Note:** The async path uses the native uniffi `DbIterator` directly, so there is no `iterator_chunk_size` knob (unlike the [sync SlateDB reader](../sync/slatedb.md)). Per-row `await` cost is the bridge cost of the slatedb uniffi binding itself.
+
 ## Reader API
 
 The async reader mirrors the sync reader API:

@@ -209,12 +209,48 @@ full run impractical. If it cannot be run, say exactly what was skipped.
 - `acquire_async()` uses `asyncio.sleep`; do not call sync `acquire()` from an
   event loop.
 - SQLite range-read VFS requires APSW and uses per-instance VFS names.
-- SQLite adapter writes build a local DB and upload it on close; checkpoint is
-  the DB file SHA-256.
+- SQLite adapter writes build a local DB and upload it on close; the
+  shard's `checkpoint_id` is an opaque `uuid4().hex` stamped by the
+  writer (see `shardyfusion._checkpoint_id.generate_checkpoint_id`), not
+  a SHA-256 of the materialized DB file. The SHA-256 semantic was
+  dropped in the slatedb 0.12 upgrade.
 - SQLite adapters emit a `shard.btreemeta` sidecar alongside `shard.db` by
   default (opt out via `emit_btree_metadata=False`). Requires APSW + zstandard
   from the `[sqlite-range]` extra; silently skips when either is missing.
   Format spec: `docs/reference/sqlite-btree-sidecar-format.md`.
+- slatedb 0.12 only exposes an async API (`slatedb.uniffi.Db` /
+  `WriteBatch` / `DbReader`). shardyfusion bridges sync writer/reader
+  Protocols to it through a process-global daemon-thread asyncio loop in
+  `shardyfusion._slatedb_runtime`. Public sync→async entry points are
+  `shardyfusion._async_bridge.call_sync(coro, *, timeout=None)` and
+  `gather_sync(coros, *, timeout=None, return_exceptions=False)`; the
+  legacy `run_coro` is a back-compat alias. Both raise
+  `BridgeTimeoutError` on timeout and refuse re-entry from the bridge
+  loop. Per-call bridge cost is ~15–40 µs; sync iterators must batch via
+  `iterator_chunk_size` (default 1024 on `SlateDbReaderFactory`) or
+  per-row hops dominate scans by ~30×. For N concurrent shard hops
+  prefer `gather_sync`/`SlateDbReaderFactory.open_many` to pay the hop
+  cost once instead of N times.
+- All `slatedb.uniffi` symbol lookups go through
+  `shardyfusion._slatedb_symbols`. Tests should monkey-patch
+  `sys.modules["slatedb.uniffi"]` (and `sys.modules["slatedb"]`) rather
+  than the top-level `slatedb` module alone.
+- `DbAdapter` write-side Protocol uses `seal() -> None`, **not**
+  `checkpoint() -> str | None`. The writer stamps `checkpoint_id`
+  separately. Custom adapters that still implement `checkpoint()` will
+  fail Protocol checks. Both `DbAdapter` and `DbAdapterFactory` live in
+  `shardyfusion/_adapter.py` (backend-neutral); `slatedb_adapter.py`
+  only contains SlateDB-specific code (`SlateDbFactory`,
+  `DefaultSlateDbAdapter`). Public re-exports under `shardyfusion.*`
+  unchanged.
+- `SlateDbReaderFactory` accepts `checkpoint_id` for Protocol symmetry
+  but ignores it (slatedb 0.12 has no read-side checkpoint API). Cache
+  identity for SlateDB shards is the `db_url` only; SQLite/SQLiteVec/
+  LanceDB factories still key on `checkpoint_id`.
+- Performance microbenchmarks (`tests/integration/perf/`,
+  `@pytest.mark.perf`) are excluded from default `pytest tests` via
+  `addopts = "-ra -m 'not perf'"`. Run them via `just perf`. They are
+  not part of `just ci`.
 - Session-scoped Spark and S3 fixtures are shared across tests for speed.
 - Writer scenario imports in `tests/helpers/` are intentionally deferred so
   reader-only collection does not require writer extras.
