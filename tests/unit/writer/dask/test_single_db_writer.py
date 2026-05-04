@@ -528,7 +528,13 @@ def test_checkpoint_id_in_result() -> None:
         value_spec=ValueSpec.callable_encoder(lambda row: b"v"),
     )
 
-    assert result.winners[0].checkpoint_id == "fake-checkpoint"
+    assert result.winners[0].checkpoint_id is not None
+    # Writer now stamps a shardyfusion-generated uuid4 hex (32 chars).
+    assert (
+        isinstance(result.winners[0].checkpoint_id, str)
+        and len(result.winners[0].checkpoint_id) == 32
+        and all(c in "0123456789abcdef" for c in result.winners[0].checkpoint_id)
+    )
 
 
 def test_explicit_num_partitions_skips_count() -> None:

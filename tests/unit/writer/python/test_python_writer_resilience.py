@@ -43,8 +43,8 @@ class _TrackingAdapter:
     def flush(self) -> None:
         self.flushed = True
 
-    def checkpoint(self) -> str | None:
-        return "fake-checkpoint"
+    def seal(self) -> None:
+        return None
 
     def db_bytes(self) -> int:
         return 0

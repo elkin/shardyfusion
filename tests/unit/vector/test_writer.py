@@ -34,7 +34,6 @@ class MockVectorWriter:
     )
     flushed: bool = False
     closed: bool = False
-    _checkpoint_id: str = "mock-checkpoint"
 
     def add_batch(
         self,
@@ -47,8 +46,8 @@ class MockVectorWriter:
     def flush(self) -> None:
         self.flushed = True
 
-    def checkpoint(self) -> str | None:
-        return self._checkpoint_id
+    def seal(self) -> None:
+        return None
 
     def db_bytes(self) -> int:
         return 0
@@ -447,8 +446,13 @@ class TestWriteSingleProcess:
             ops_limiter=None,
         )
 
-        assert states[0].checkpoint_id == "mock-checkpoint"
-        assert states[1].checkpoint_id == "mock-checkpoint"
+        # Each shard now gets its own shardyfusion-generated uuid4 hex; they
+        # are unique per shard, not shared by the adapter.
+        assert states[0].checkpoint_id is not None
+        assert states[1].checkpoint_id is not None
+        assert len(states[0].checkpoint_id) == 32
+        assert len(states[1].checkpoint_id) == 32
+        assert states[0].checkpoint_id != states[1].checkpoint_id
 
     def test_empty_records_produces_empty_states(self, tmp_path: Path) -> None:
         from shardyfusion.vector.writer import _write_single_process

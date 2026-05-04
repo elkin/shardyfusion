@@ -4,8 +4,9 @@ import json
 from datetime import datetime
 from typing import Any
 
-import slatedb
-
+from shardyfusion._checkpoint_id import generate_checkpoint_id
+from shardyfusion._slatedb_runtime import run_coro
+from shardyfusion._slatedb_symbols import get_flush_options_classes, get_writer_symbols
 from shardyfusion.manifest import (
     ManifestRef,
     ManifestShardingSpec,
@@ -15,6 +16,7 @@ from shardyfusion.manifest import (
 )
 from shardyfusion.reader import ConcurrentShardedReader
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
+from shardyfusion.testing import open_slatedb_db
 
 
 class InMemoryManifestStore:
@@ -84,26 +86,26 @@ def test_sharded_reader_get_and_multi_get_with_custom_manifest_reader(tmp_path) 
     #   shard 0: keys 4, 9
     #   shard 1: keys 2, 15
     #   shard 2: keys 1, 10
-    db0 = slatedb.SlateDB(str(db0_local), url=db0_url)
-    db0.put((4).to_bytes(8, "big", signed=False), b"v4")
-    db0.put((9).to_bytes(8, "big", signed=False), b"v9")
-    db0.flush_with_options("wal")
-    db0_ckpt = db0.create_checkpoint(scope="durable")["id"]
-    db0.close()
+    _, _, write_batch_cls, _ = get_writer_symbols()
+    flush_options_cls, flush_type_cls = get_flush_options_classes()
 
-    db1 = slatedb.SlateDB(str(db1_local), url=db1_url)
-    db1.put((2).to_bytes(8, "big", signed=False), b"v2")
-    db1.put((15).to_bytes(8, "big", signed=False), b"v15")
-    db1.flush_with_options("wal")
-    db1_ckpt = db1.create_checkpoint(scope="durable")["id"]
-    db1.close()
+    def _seed(db_url: str, items: list[tuple[int, bytes]]) -> str:
+        db = open_slatedb_db(db_url)
+        try:
+            wb = write_batch_cls()
+            for k, v in items:
+                wb.put(k.to_bytes(8, "big", signed=False), v)
+            run_coro(db.write(wb))
+            run_coro(
+                db.flush_with_options(flush_options_cls(flush_type=flush_type_cls.WAL))
+            )
+        finally:
+            run_coro(db.shutdown())
+        return generate_checkpoint_id()
 
-    db2 = slatedb.SlateDB(str(db2_local), url=db2_url)
-    db2.put((1).to_bytes(8, "big", signed=False), b"v1")
-    db2.put((10).to_bytes(8, "big", signed=False), b"v10")
-    db2.flush_with_options("wal")
-    db2_ckpt = db2.create_checkpoint(scope="durable")["id"]
-    db2.close()
+    db0_ckpt = _seed(db0_url, [(4, b"v4"), (9, b"v9")])
+    db1_ckpt = _seed(db1_url, [(2, b"v2"), (15, b"v15")])
+    db2_ckpt = _seed(db2_url, [(1, b"v1"), (10, b"v10")])
 
     required = RequiredBuildMeta(
         run_id="run-1",

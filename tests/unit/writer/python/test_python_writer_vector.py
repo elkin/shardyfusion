@@ -347,8 +347,8 @@ class TestFlushSingleProcessShardVectorBatch:
             def flush(self) -> None:
                 pass
 
-            def checkpoint(self) -> str:
-                return "ckpt"
+            def seal(self) -> None:
+                return None
 
             def db_bytes(self) -> int:
                 return 0

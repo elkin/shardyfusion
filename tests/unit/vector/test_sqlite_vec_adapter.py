@@ -59,56 +59,56 @@ def _create_sqlite3_conn(*args: Any, **kwargs: Any) -> sqlite3.Connection:
 
 
 class TestSqliteVecAdapterLifecycle:
-    """Write → checkpoint → close → upload flow."""
+    """Write → seal → close → upload flow."""
 
-    def test_write_kv_and_checkpoint(self, tmp_path: Path) -> None:
+    def test_write_kv_and_seal(self, tmp_path: Path) -> None:
         adapter = SqliteVecAdapter(
             db_url="s3://bucket/shard",
             local_dir=tmp_path / "shard",
             vector_spec=MagicMock(dim=4),
         )
         adapter.write_batch([(b"k1", b"v1"), (b"k2", b"v2")])
-        ckpt = adapter.checkpoint()
+        # seal() finalizes the local DB and captures db_bytes; the writer now
+        # stamps the checkpoint id separately via generate_checkpoint_id().
+        adapter.seal()
+        assert adapter.db_bytes() > 0
 
-        assert ckpt is not None
-        assert len(ckpt) == 64  # SHA-256 hex digest
-
-    def test_write_after_checkpoint_raises(self, tmp_path: Path) -> None:
-        """After checkpoint, conn is closed so write_batch raises 'already closed'."""
+    def test_write_after_seal_raises(self, tmp_path: Path) -> None:
+        """After seal, conn is closed so write_batch raises 'already closed'."""
         adapter = SqliteVecAdapter(
             db_url="s3://bucket/shard",
             local_dir=tmp_path / "shard",
             vector_spec=MagicMock(dim=4),
         )
-        adapter.checkpoint()
+        adapter.seal()
 
         with pytest.raises(SqliteVecAdapterError, match="already closed"):
             adapter.write_batch([(b"k", b"v")])
 
-    def test_write_vector_after_checkpoint_raises(self, tmp_path: Path) -> None:
+    def test_write_vector_after_seal_raises(self, tmp_path: Path) -> None:
         adapter = SqliteVecAdapter(
             db_url="s3://bucket/shard",
             local_dir=tmp_path / "shard",
             vector_spec=MagicMock(dim=4),
         )
-        adapter.checkpoint()
+        adapter.seal()
 
         with pytest.raises(SqliteVecAdapterError, match="already closed"):
             adapter.write_vector_batch(
                 np.array([1]), np.random.randn(1, 4).astype(np.float32)
             )
 
-    def test_double_checkpoint_raises(self, tmp_path: Path) -> None:
-        """After checkpoint, conn is None so second checkpoint raises 'already closed'."""
+    def test_double_seal_raises(self, tmp_path: Path) -> None:
+        """After seal, conn is None so a second seal raises 'already closed'."""
         adapter = SqliteVecAdapter(
             db_url="s3://bucket/shard",
             local_dir=tmp_path / "shard",
             vector_spec=MagicMock(dim=4),
         )
-        adapter.checkpoint()
+        adapter.seal()
 
         with pytest.raises(SqliteVecAdapterError, match="already closed"):
-            adapter.checkpoint()
+            adapter.seal()
 
     def test_write_after_close_raises(self, tmp_path: Path) -> None:
         with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend"):
@@ -201,7 +201,7 @@ class TestSqliteVecIdMapping:
         )
         vecs = np.random.randn(len(ids), dim).astype(np.float32)
         adapter.write_vector_batch(ids, vecs, payloads)
-        adapter.checkpoint()
+        adapter.seal()
         return shard_dir / "shard.db"
 
     def test_integer_ids_have_typed_id_map_rows(self, tmp_path: Path) -> None:
@@ -252,7 +252,7 @@ class TestSqliteVecIdMapping:
             np.array(["x", "y"], dtype=object),
             np.random.randn(2, 4).astype(np.float32),
         )
-        adapter.checkpoint()
+        adapter.seal()
 
         conn = _create_sqlite3_conn(str(shard_dir / "shard.db"))
         sqlite_vec.load(conn)
@@ -310,7 +310,7 @@ class TestSqliteVecIdMapping:
         ids = np.array([10, "doc_a", 2, "doc_b"], dtype=object)
         vecs = np.random.randn(4, 4).astype(np.float32)
         adapter.write_vector_batch(ids, vecs)
-        adapter.checkpoint()
+        adapter.seal()
 
         conn = _create_sqlite3_conn(str(shard_dir / "shard.db"))
         sqlite_vec.load(conn)
@@ -343,7 +343,7 @@ class TestSqliteVecIdMapping:
             {"kind": "string_b"},
         ]
         adapter.write_vector_batch(ids, vecs, payloads)
-        adapter.checkpoint()
+        adapter.seal()
 
         conn = _create_sqlite3_conn(str(shard_dir / "shard.db"))
         sqlite_vec.load(conn)
@@ -368,10 +368,13 @@ class TestSqliteVecIdMapping:
             (3, {"kind": "string_b"}),
         ]
 
-    def test_mixed_ids_across_batches_checkpoint_is_reproducible(
+    def test_mixed_ids_across_batches_id_map_is_reproducible(
         self, tmp_path: Path
     ) -> None:
-        def build_checkpoint(shard_name: str) -> tuple[str, list[tuple[int, str]]]:
+        # SHA-256 content fingerprints were dropped when checkpoint() became
+        # seal(); the writer now stamps an opaque uuid4 hex per shard. We can
+        # still verify deterministic id assignment via the vec_id_map table.
+        def build_id_map(shard_name: str) -> list[tuple[int, str]]:
             shard_dir = tmp_path / shard_name
             adapter = SqliteVecAdapter(
                 db_url=f"s3://bucket/{shard_name}",
@@ -392,7 +395,7 @@ class TestSqliteVecIdMapping:
 
             adapter.write_vector_batch(batch1_ids, batch1_vecs)
             adapter.write_vector_batch(batch2_ids, batch2_vecs)
-            checkpoint = adapter.checkpoint()
+            adapter.seal()
 
             conn = _create_sqlite3_conn(str(shard_dir / "shard.db"))
             sqlite_vec.load(conn)
@@ -400,12 +403,11 @@ class TestSqliteVecIdMapping:
                 "SELECT internal_id, original_id FROM vec_id_map ORDER BY internal_id"
             ).fetchall()
             conn.close()
-            return checkpoint, id_map_rows
+            return id_map_rows
 
-        checkpoint_a, id_map_a = build_checkpoint("shard_a")
-        checkpoint_b, id_map_b = build_checkpoint("shard_b")
+        id_map_a = build_id_map("shard_a")
+        id_map_b = build_id_map("shard_b")
 
-        assert checkpoint_a == checkpoint_b
         assert id_map_a == id_map_b
         # All 6 entries with synthetic rowids 0-5
         assert len(id_map_a) == 6
@@ -476,7 +478,7 @@ class TestSqliteVecShardReader:
             vecs,
             [{"label": "first"}, {"label": "second"}],
         )
-        adapter.checkpoint()
+        adapter.seal()
         return (shard_dir / "shard.db").read_bytes()
 
     def test_kv_get(self, tmp_path: Path) -> None:
@@ -522,7 +524,7 @@ class TestSqliteVecShardReader:
         )
         vecs = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]], dtype=np.float32)
         adapter.write_vector_batch(np.array(["doc_a", "doc_b"], dtype=object), vecs)
-        adapter.checkpoint()
+        adapter.seal()
         db_bytes = (shard_dir / "shard.db").read_bytes()
 
         with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as MockBackend:
@@ -557,7 +559,7 @@ class TestSqliteVecShardReader:
         )
         payloads = [{"kind": "int"}, {"kind": "string"}, {"kind": "int2"}]
         adapter.write_vector_batch(ids, vecs, payloads)
-        adapter.checkpoint()
+        adapter.seal()
         db_bytes = (shard_dir / "shard.db").read_bytes()
 
         with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as MockBackend:
@@ -711,7 +713,7 @@ class TestSqliteVecFactory:
             local_dir=shard_dir,
             vector_spec=MagicMock(dim=4),
         )
-        adapter.checkpoint()
+        adapter.seal()
         db_bytes = (shard_dir / "shard.db").read_bytes()
 
         factory = SqliteVecReaderFactory()

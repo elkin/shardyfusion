@@ -41,15 +41,22 @@ class _FlushFailAdapter:
     def flush(self) -> None:
         raise OSError("disk full during flush")
 
-    def checkpoint(self) -> str:
-        return "ckpt"
+    def seal(self) -> None:
+        return None
 
     def db_bytes(self) -> int:
         return 0
 
 
 class _BadCheckpointAdapter:
-    """Adapter whose checkpoint() returns None."""
+    """Adapter whose ``seal()`` returns ``None`` (the only valid return).
+
+    Pre-slatedb-0.12 the adapter Protocol exposed ``checkpoint() -> str | None``
+    and the writer surfaced that string as ``ShardAttemptResult.checkpoint_id``.
+    The Protocol now uses ``seal() -> None`` and the writer stamps a
+    shardyfusion-generated UUID hex unconditionally; this adapter exists to
+    cover the "adapter contributes no metadata" path.
+    """
 
     def __init__(self, *, db_url: str, local_dir: Path) -> None:
         pass
@@ -66,7 +73,7 @@ class _BadCheckpointAdapter:
     def flush(self) -> None:
         pass
 
-    def checkpoint(self) -> str | None:
+    def seal(self) -> None:
         return None
 
     def db_bytes(self) -> int:
@@ -91,8 +98,8 @@ class _ExitFailAdapter:
     def flush(self) -> None:
         pass
 
-    def checkpoint(self) -> str:
-        return "ckpt"
+    def seal(self) -> None:
+        return None
 
     def db_bytes(self) -> int:
         return 0
@@ -131,11 +138,22 @@ class TestFlushFailure:
 
 
 class TestBadCheckpoint:
-    def test_checkpoint_returns_none(self, tmp_path: Path) -> None:
-        """checkpoint() returning None results in None checkpoint_id in result."""
+    def test_seal_returning_none_still_stamps_uuid_checkpoint(
+        self, tmp_path: Path
+    ) -> None:
+        """``seal()`` returns ``None``; writer still stamps a UUID checkpoint_id.
+
+        Post-slatedb-0.12 the adapter Protocol no longer carries checkpoint
+        metadata. The shard writer mints ``uuid.uuid4().hex`` for every
+        successful shard via ``shardyfusion._checkpoint_id.generate_checkpoint_id``.
+        """
         params = _params(_BadCheckpointAdapter, tmp_path)
         result = write_shard_core(params, iter(_rows()))
-        assert result.checkpoint_id is None
+        assert result.checkpoint_id is not None
+        assert isinstance(result.checkpoint_id, str)
+        assert len(result.checkpoint_id) == 32
+        # Hex-only, lowercase (uuid4().hex contract).
+        int(result.checkpoint_id, 16)
         assert result.row_count == 3
 
 

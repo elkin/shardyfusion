@@ -27,7 +27,7 @@ class FakeKvAdapter:
     def __init__(self) -> None:
         self.batches: list[list[tuple[bytes, bytes]]] = []
         self.flushed = False
-        self.checkpointed = False
+        self.sealed = False
         self.closed = False
 
     def __enter__(self) -> Self:
@@ -47,9 +47,10 @@ class FakeKvAdapter:
     def flush(self) -> None:
         self.flushed = True
 
-    def checkpoint(self) -> str | None:
-        self.checkpointed = True
-        return "kv-ckpt-abc"
+    def seal(self) -> None:
+        # Track call so the composite-adapter test can verify both halves
+        # were sealed before the writer stamped a checkpoint id.
+        self.sealed = True
 
     def db_bytes(self) -> int:
         return 0
@@ -64,7 +65,7 @@ class FakeVectorWriter:
     def __init__(self) -> None:
         self.added: list[tuple[np.ndarray, np.ndarray]] = []
         self.flushed = False
-        self.checkpointed = False
+        self.sealed = False
         self.closed = False
 
     def __enter__(self) -> Self:
@@ -84,9 +85,10 @@ class FakeVectorWriter:
     def flush(self) -> None:
         self.flushed = True
 
-    def checkpoint(self) -> str | None:
-        self.checkpointed = True
-        return "vec-ckpt-xyz"
+    def seal(self) -> None:
+        # Track call so the composite-adapter test can verify both halves
+        # were sealed before the writer stamped a checkpoint id.
+        self.sealed = True
 
     def db_bytes(self) -> int:
         return 0
@@ -157,15 +159,17 @@ class TestCompositeAdapter:
         assert kv.flushed
         assert vec.flushed
 
-    def test_checkpoint_calls_both_returns_kv(self) -> None:
+    def test_seal_calls_both(self) -> None:
         kv = FakeKvAdapter()
         vec = FakeVectorWriter()
         adapter = CompositeAdapter(kv_adapter=kv, vector_writer=vec)
 
-        result = adapter.checkpoint()
-        assert result == "kv-ckpt-abc"
-        assert kv.checkpointed
-        assert vec.checkpointed
+        adapter.seal()
+        # CompositeShardAdapter.seal() seals both halves; the writer then
+        # stamps a single shardyfusion-generated UUID checkpoint id, so the
+        # adapter no longer returns one.
+        assert kv.sealed
+        assert vec.sealed
 
     def test_close_calls_both(self) -> None:
         kv = FakeKvAdapter()

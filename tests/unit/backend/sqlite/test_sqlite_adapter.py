@@ -49,9 +49,11 @@ class TestSqliteAdapter:
             pairs = [(b"key1", b"val1"), (b"key2", b"val2"), (b"key3", b"val3")]
             adapter.write_batch(pairs)
 
-            checkpoint_id = adapter.checkpoint()
-            assert checkpoint_id is not None
-            assert len(checkpoint_id) == 64  # SHA-256 hex
+            # seal() finalizes the local DB (COMMIT + PRAGMA optimize) and
+            # captures db_bytes; it returns no value. The writer stamps the
+            # checkpoint id separately via generate_checkpoint_id().
+            adapter.seal()
+            assert adapter.db_bytes() > 0
 
         db_path = local_dir / "shard.db"
         assert db_path.exists()
@@ -67,7 +69,7 @@ class TestSqliteAdapter:
         with SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir) as adapter:
             adapter.write_batch([(b"a", b"1"), (b"b", b"2")])
             adapter.write_batch([(b"c", b"3"), (b"d", b"4")])
-            adapter.checkpoint()
+            adapter.seal()
 
         conn = sqlite3.connect(str(local_dir / "shard.db"))
         count = conn.execute("SELECT count(*) FROM kv").fetchone()[0]
@@ -78,8 +80,8 @@ class TestSqliteAdapter:
         local_dir = tmp_path / "shard"
         with SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir) as adapter:
             adapter.write_batch([])
-            cp = adapter.checkpoint()
-            assert cp is not None  # still produces a valid hash
+            # seal() succeeds even on an empty DB; it now returns None.
+            adapter.seal()
 
     def test_write_after_close_raises(
         self, tmp_path: Path, mock_backend: MagicMock
@@ -87,7 +89,7 @@ class TestSqliteAdapter:
         local_dir = tmp_path / "shard"
         adapter = SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir)
         adapter.__enter__()
-        adapter.checkpoint()
+        adapter.seal()
         adapter.close()
 
         with pytest.raises(SqliteAdapterError, match="already closed"):
@@ -100,7 +102,7 @@ class TestSqliteAdapter:
         with SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir) as adapter:
             adapter.write_batch([(b"key1", b"old")])
             adapter.write_batch([(b"key1", b"new")])
-            adapter.checkpoint()
+            adapter.seal()
 
         conn = sqlite3.connect(str(local_dir / "shard.db"))
         val = conn.execute("SELECT v FROM kv WHERE k = ?", (b"key1",)).fetchone()[0]
@@ -112,10 +114,10 @@ class TestSqliteAdapter:
         with SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir) as adapter:
             adapter.flush()  # should not raise
 
-    def test_close_without_checkpoint_uploads(
+    def test_close_without_seal_uploads(
         self, tmp_path: Path, mock_backend: MagicMock
     ) -> None:
-        """Calling close() directly (no checkpoint) should still upload."""
+        """Calling close() directly (no seal) should still upload."""
         local_dir = tmp_path / "shard"
         with SqliteAdapter(
             db_url="s3://test/shard",
@@ -142,7 +144,7 @@ class TestSqliteAdapter:
             emit_btree_metadata=False,
         )
         adapter.write_batch([(b"k", b"v")])
-        adapter.checkpoint()
+        adapter.seal()
 
         with patch(
             "shardyfusion.sqlite_adapter.ObstoreBackend",

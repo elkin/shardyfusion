@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from shardyfusion._adapter import DbAdapterFactory
 from shardyfusion.credentials import CredentialProvider, StaticCredentialProvider
 from shardyfusion.manifest import (
     CurrentPointer,
@@ -28,7 +29,6 @@ from shardyfusion.manifest import (
 from shardyfusion.manifest_store import S3ManifestStore, parse_manifest_payload
 from shardyfusion.reader import ConcurrentShardedReader
 from shardyfusion.sharding_types import KeyEncoding, ShardingStrategy
-from shardyfusion.slatedb_adapter import DbAdapterFactory
 from shardyfusion.storage import ObstoreBackend, create_s3_store, parse_s3_url
 from shardyfusion.type_defs import S3ConnectionOptions, ShardReaderFactory
 from tests.helpers.run_record_assertions import (
@@ -121,7 +121,13 @@ def run_reader_loads_manifest_scenario(
         ]
     )
     adapter.flush()
-    db0_ckpt = adapter.checkpoint()
+    # The adapter no longer returns a checkpoint id; the writer stamps an
+    # opaque uuid4 hex via shardyfusion._checkpoint_id.generate_checkpoint_id().
+    # Mirror that here so the manifest below matches the new contract.
+    adapter.seal()
+    from shardyfusion._checkpoint_id import generate_checkpoint_id
+
+    db0_ckpt = generate_checkpoint_id()
     adapter.close()
 
     # Build manifest + CURRENT payloads

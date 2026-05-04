@@ -8,6 +8,7 @@ from typing import Self
 
 import pytest
 
+from shardyfusion._adapter import DbAdapterFactory
 from shardyfusion._writer_core import route_hash
 from shardyfusion.config import (
     HashShardedWriteConfig,
@@ -23,7 +24,6 @@ from shardyfusion.serde import make_key_encoder
 from shardyfusion.sharding_types import (
     KeyEncoding,
 )
-from shardyfusion.slatedb_adapter import DbAdapterFactory
 from shardyfusion.testing import (
     ListMetricsCollector,
     fake_adapter_factory,
@@ -67,8 +67,8 @@ class _TrackingAdapter:
     def flush(self) -> None:
         self.flushed = True
 
-    def checkpoint(self) -> str | None:
-        return "fake-checkpoint"
+    def seal(self) -> None:
+        return None
 
     def db_bytes(self) -> int:
         return 0

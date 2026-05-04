@@ -169,35 +169,87 @@ def test_refresh_swaps_manifest_ref_and_readers(tmp_path) -> None:
         assert unchanged is False
 
 
-def test_slate_db_reader_factory_uses_official_slatedbreader_signature(
+def test_slate_db_reader_factory_uses_uniffi_db_reader_builder(
     monkeypatch,
 ) -> None:
-    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
-    sentinel = _FakeReader({})
+    """SlateDbReaderFactory drives the uniffi DbReaderBuilder path.
 
-    def fake_reader_ctor(*args, **kwargs):
-        calls.append((args, kwargs))
-        return sentinel
+    Pre-slatedb-0.12 the factory called the legacy top-level
+    ``slatedb.SlateDBReader(local_dir, url=..., checkpoint_id=..., env_file=...)``
+    constructor. Post-0.12 there is no top-level reader; the factory
+    resolves ``db_url`` through ``ObjectStore.resolve(...)`` and constructs
+    a ``DbReader`` via ``DbReaderBuilder().build()`` driven through the
+    shardyfusion async-bridge runtime. The factory ignores
+    ``checkpoint_id`` (uniffi has no read-side checkpoint API).
+    """
+    builder_calls: list[dict[str, object]] = []
+    object_store_calls: list[str] = []
 
-    fake_module = types.ModuleType("slatedb")
-    fake_module.SlateDBReader = fake_reader_ctor
-    monkeypatch.setitem(sys.modules, "slatedb", fake_module)
+    class _FakeBuiltReader:
+        async def get(self, key: bytes) -> bytes | None:
+            return None
 
-    factory = SlateDbReaderFactory(env_file="slatedb.env")
+    class _FakeBuilder:
+        def __init__(self, path: str, store: object) -> None:
+            builder_calls.append({"step": "init", "path": path, "store": store})
+
+        def settings(self, settings: object) -> _FakeBuilder:
+            builder_calls.append({"step": "settings", "settings": settings})
+            return self
+
+        async def build(self) -> _FakeBuiltReader:
+            builder_calls.append({"step": "build"})
+            return _FakeBuiltReader()
+
+    class _FakeObjectStore:
+        @staticmethod
+        def resolve(url: str) -> str:
+            object_store_calls.append(url)
+            return f"resolved::{url}"
+
+    fake_uniffi = types.ModuleType("slatedb.uniffi")
+    fake_uniffi.DbReaderBuilder = _FakeBuilder
+    fake_uniffi.DbReader = _FakeBuiltReader
+    fake_uniffi.ObjectStore = _FakeObjectStore
+    # The shardyfusion async bridge calls uniffi_set_event_loop(loop) on
+    # first use to register its daemon-thread loop with slatedb's
+    # generated bindings. The real symbol lives at
+    # slatedb.uniffi._slatedb_uniffi.slatedb.uniffi_set_event_loop;
+    # provide a no-op stand-in at the real path so this fake is a
+    # faithful drop-in for the slatedb.uniffi surface.
+    fake_inner_pkg = types.ModuleType("slatedb.uniffi._slatedb_uniffi")
+    fake_inner_mod = types.ModuleType("slatedb.uniffi._slatedb_uniffi.slatedb")
+    fake_inner_mod.uniffi_set_event_loop = lambda _loop: None
+    monkeypatch.setitem(sys.modules, "slatedb.uniffi._slatedb_uniffi", fake_inner_pkg)
+    monkeypatch.setitem(
+        sys.modules,
+        "slatedb.uniffi._slatedb_uniffi.slatedb",
+        fake_inner_mod,
+    )
+    fake_slatedb = types.ModuleType("slatedb")
+    fake_slatedb.uniffi = fake_uniffi
+    monkeypatch.setitem(sys.modules, "slatedb", fake_slatedb)
+    monkeypatch.setitem(sys.modules, "slatedb.uniffi", fake_uniffi)
+
+    factory = SlateDbReaderFactory(env_file=None, iterator_chunk_size=64)
     reader = factory(
         db_url="s3://bucket/db",
         local_dir=Path("/tmp/local"),
-        checkpoint_id="ckpt-1",
+        checkpoint_id="ckpt-ignored",
         manifest=None,  # type: ignore[arg-type]
     )
 
-    assert reader is sentinel
-    assert len(calls) == 1
-    args, kwargs = calls[0]
-    assert args == ("/tmp/local",)
-    assert kwargs["url"] == "s3://bucket/db"
-    assert kwargs["checkpoint_id"] == "ckpt-1"
-    assert kwargs["env_file"] == "slatedb.env"
+    # Reader is the sync handle wrapping the built uniffi reader; iterator
+    # chunk size is captured from the factory.
+    assert reader is not None
+    assert reader._iterator_chunk_size == 64  # type: ignore[attr-defined]
+    # ObjectStore.resolve was called with the raw db_url.
+    assert object_store_calls == ["s3://bucket/db"]
+    # Builder constructed with (path, store), then build() was awaited.
+    steps = [c["step"] for c in builder_calls]
+    assert steps[0] == "init"
+    assert builder_calls[0]["store"] == "resolved::s3://bucket/db"
+    assert steps[-1] == "build"
 
 
 class _NullManifestStore:

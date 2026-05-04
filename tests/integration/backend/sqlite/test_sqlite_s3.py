@@ -81,15 +81,13 @@ class TestSqliteKvRoundTrip:
                     (b"key3", b"val3"),
                 ]
             )
-            checkpoint_id = adapter.checkpoint()
-
-        assert checkpoint_id is not None
+            adapter.seal()
 
         # Read
         reader = SqliteShardReader(
             db_url=db_url,
             local_dir=read_dir,
-            checkpoint_id=checkpoint_id,
+            checkpoint_id=None,
         )
         assert reader.get(b"key1") == b"val1"
         assert reader.get(b"key2") == b"val2"
@@ -106,8 +104,7 @@ class TestSqliteKvRoundTrip:
 
         with SqliteAdapter(db_url=db_url, local_dir=write_dir) as adapter:
             adapter.write_batch(pairs)
-            adapter.checkpoint()
-
+            adapter.seal()
         reader = SqliteShardReader(
             db_url=db_url, local_dir=read_dir, checkpoint_id=None
         )
@@ -125,8 +122,7 @@ class TestSqliteReaderFactory:
 
         with SqliteAdapter(db_url=db_url, local_dir=write_dir) as adapter:
             adapter.write_batch([(b"k", b"v")])
-            adapter.checkpoint()
-
+            adapter.seal()
         factory = SqliteReaderFactory()
         reader = factory(
             db_url=db_url,
@@ -150,18 +146,20 @@ class TestSqliteShardReaderCacheIdentity:
             db_url=db_url_v1, local_dir=tmp_path / "write-v1"
         ) as adapter:
             adapter.write_batch([(b"k", b"old")])
-            checkpoint_v1 = adapter.checkpoint()
-
+            adapter.seal()
         with SqliteAdapter(
             db_url=db_url_v2, local_dir=tmp_path / "write-v2"
         ) as adapter:
             adapter.write_batch([(b"k", b"new")])
-            checkpoint_v2 = adapter.checkpoint()
-
+            adapter.seal()
+        # Adapters no longer return checkpoint ids; seed the reader cache
+        # with distinct synthetic ids so the cache-identity check stays
+        # meaningful (in production the writer stamps a unique uuid4 hex
+        # per shard via generate_checkpoint_id()).
         reader_v1 = SqliteShardReader(
             db_url=db_url_v1,
             local_dir=shared_read_dir,
-            checkpoint_id=checkpoint_v1,
+            checkpoint_id="ckpt-v1",
         )
         assert reader_v1.get(b"k") == b"old"
         reader_v1.close()
@@ -169,7 +167,7 @@ class TestSqliteShardReaderCacheIdentity:
         reader_v2 = SqliteShardReader(
             db_url=db_url_v2,
             local_dir=shared_read_dir,
-            checkpoint_id=checkpoint_v2,
+            checkpoint_id="ckpt-v2",
         )
         assert reader_v2.get(b"k") == b"new"
         reader_v2.close()
@@ -184,8 +182,7 @@ class TestAsyncSqliteRoundTrip:
 
         with SqliteAdapter(db_url=db_url, local_dir=tmp_path / "write") as adapter:
             adapter.write_batch([(b"k1", b"v1"), (b"k2", b"v2")])
-            adapter.checkpoint()
-
+            adapter.seal()
         factory = AsyncSqliteReaderFactory()
         reader = await factory(
             db_url=db_url,
@@ -217,7 +214,7 @@ def _write_three_shards(
             adapter.write_batch(
                 [(f"k{i}-{j}".encode(), f"v{i}-{j}".encode()) for j in range(20)]
             )
-            adapter.checkpoint()
+            adapter.seal()
         # On-disk size of the local SQLite file == bytes uploaded to S3
         local_db_path = write_dir / "shard.db"
         db_bytes_per_shard.append(local_db_path.stat().st_size)

@@ -32,7 +32,6 @@ class _MockWriter:
     )
     flushed: bool = False
     closed: bool = False
-    _checkpoint_id: str = "ckpt-mock"
 
     def add_batch(
         self,
@@ -45,8 +44,8 @@ class _MockWriter:
     def flush(self) -> None:
         self.flushed = True
 
-    def checkpoint(self) -> str | None:
-        return self._checkpoint_id
+    def seal(self) -> None:
+        return None
 
     def db_bytes(self) -> int:
         return 0

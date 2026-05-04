@@ -7,11 +7,11 @@ from unittest.mock import MagicMock, patch
 
 from pyspark.sql import Row
 
+from shardyfusion._adapter import DbAdapterFactory
 from shardyfusion._writer_core import ShardAttemptResult
 from shardyfusion.metrics import MetricEvent
 from shardyfusion.serde import ValueSpec, make_key_encoder
 from shardyfusion.sharding_types import KeyEncoding
-from shardyfusion.slatedb_adapter import DbAdapterFactory
 from shardyfusion.testing import ListMetricsCollector
 from shardyfusion.writer.spark.writer import (
     PartitionWriteRuntime,
@@ -32,9 +32,8 @@ _patch_token_bucket = patch_token_bucket_fixture("shardyfusion.writer.spark.writ
 class _FakeAdapter:
     """In-memory SlateDB adapter that records writes without touching disk or S3."""
 
-    def __init__(self, checkpoint_id: str | None = None) -> None:
+    def __init__(self) -> None:
         self.write_calls: list[list[tuple[bytes, bytes]]] = []
-        self._checkpoint_id = checkpoint_id
         self.flushed = False
 
     def __enter__(self) -> _FakeAdapter:
@@ -53,8 +52,8 @@ class _FakeAdapter:
     def flush(self) -> None:
         self.flushed = True
 
-    def checkpoint(self) -> str | None:
-        return self._checkpoint_id
+    def seal(self) -> None:
+        return None
 
     def db_bytes(self) -> int:
         return 0
@@ -64,8 +63,8 @@ class _FakeAdapter:
 
 
 class _FakeVectorAdapter(_FakeAdapter):
-    def __init__(self, checkpoint_id: str | None = None) -> None:
-        super().__init__(checkpoint_id=checkpoint_id)
+    def __init__(self) -> None:
+        super().__init__()
         self.vector_calls: list[
             tuple[object, object, list[dict[str, object] | None]]
         ] = []
@@ -181,18 +180,26 @@ def test_empty_partition(tmp_path) -> None:
     assert result.max_key is None
 
 
-def test_checkpoint_id_propagated(tmp_path) -> None:
-    adapter = _FakeAdapter(checkpoint_id="ckpt-abc")
+def test_checkpoint_id_is_uuid_hex(tmp_path) -> None:
+    # Adapters no longer choose the checkpoint id; the writer always stamps a
+    # shardyfusion-generated uuid4 hex (32 lowercase hex chars) after seal().
+    adapter = _FakeAdapter()
     runtime = _make_runtime(tmp_path, adapter=adapter)
     result = _run(0, _rows(1), runtime)
-    assert result.checkpoint_id == "ckpt-abc"
+    assert isinstance(result.checkpoint_id, str)
+    assert len(result.checkpoint_id) == 32
+    assert all(c in "0123456789abcdef" for c in result.checkpoint_id)
 
 
-def test_no_checkpoint_when_not_supported(tmp_path) -> None:
-    adapter = _FakeAdapter(checkpoint_id=None)
-    runtime = _make_runtime(tmp_path, adapter=adapter)
-    result = _run(0, _rows(1), runtime)
-    assert result.checkpoint_id is None
+def test_checkpoint_ids_are_unique_per_call(tmp_path) -> None:
+    # Each shard write produces an independent uuid4 hex.
+    adapter1 = _FakeAdapter()
+    adapter2 = _FakeAdapter()
+    runtime1 = _make_runtime(tmp_path, adapter=adapter1)
+    runtime2 = _make_runtime(tmp_path, adapter=adapter2)
+    r1 = _run(0, _rows(1), runtime1)
+    r2 = _run(0, _rows(1), runtime2)
+    assert r1.checkpoint_id != r2.checkpoint_id
 
 
 def test_writer_info_contains_attempt(tmp_path) -> None:

@@ -514,7 +514,13 @@ def test_shard_worker_consumes_shared_memory_chunks_and_reports_result(
     assert [len(call) for call in adapter.write_calls] == [2, 1]
     assert adapter.flushed is True
     assert result.row_count == 3
-    assert result.checkpoint_id == "fake-checkpoint"
+    assert result.checkpoint_id is not None
+    # Writer now stamps a shardyfusion-generated uuid4 hex (32 chars).
+    assert (
+        isinstance(result.checkpoint_id, str)
+        and len(result.checkpoint_id) == 32
+        and all(c in "0123456789abcdef" for c in result.checkpoint_id)
+    )
     assert (
         result.db_url
         == "s3://bucket/prefix/shards/run_id=shared-memory-worker/db=00000/attempt=00"

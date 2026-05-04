@@ -86,7 +86,13 @@ class TestWriteShardCore:
         assert result.row_count == 3
         assert result.min_key == 0
         assert result.max_key == 2
-        assert result.checkpoint_id == "fake-checkpoint"
+        assert result.checkpoint_id is not None
+        # Writer now stamps a shardyfusion-generated uuid4 hex (32 chars).
+        assert (
+            isinstance(result.checkpoint_id, str)
+            and len(result.checkpoint_id) == 32
+            and all(c in "0123456789abcdef" for c in result.checkpoint_id)
+        )
         assert result.db_url == params.db_url
 
         # Adapter was opened and used
@@ -629,8 +635,8 @@ class TestWriteShardWithRetryUnified:
             def flush(self) -> None:
                 pass
 
-            def checkpoint(self) -> str:
-                return "ckpt"
+            def seal(self) -> None:
+                return None
 
             def db_bytes(self) -> int:
                 return 0

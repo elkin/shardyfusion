@@ -14,10 +14,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from shardyfusion._adapter import DbAdapterFactory
 from shardyfusion.credentials import CredentialProvider
 from shardyfusion.serde import make_key_encoder
 from shardyfusion.sharding_types import KeyEncoding
-from shardyfusion.slatedb_adapter import DbAdapterFactory
 from shardyfusion.type_defs import S3ConnectionOptions, ShardReaderFactory
 from tests.helpers.run_record_assertions import (
     assert_success_run_record,
