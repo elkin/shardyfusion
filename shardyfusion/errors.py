@@ -68,6 +68,23 @@ class DbAdapterError(ShardyfusionError):
     retryable = False
 
 
+class BridgeTimeoutError(ShardyfusionError):
+    """A sync\u2192async bridge call exceeded its allotted timeout.
+
+    Raised by :func:`shardyfusion._async_bridge.call_sync` (and helpers
+    that build on it) when the underlying coroutine running on the
+    shardyfusion-owned slatedb event loop did not complete within
+    ``timeout`` seconds. The bridge cancels the in-flight coroutine
+    before raising so the loop is not left holding work for a caller
+    that has already given up.
+
+    Marked retryable because the most common cause is transient
+    object-store latency or backpressure rather than a programmer error.
+    """
+
+    retryable = True
+
+
 class ManifestBuildError(ShardyfusionError):
     """Manifest artifact creation failed.
 
@@ -145,7 +162,7 @@ class ManifestStoreError(ShardyfusionError):
 class ShardWriteError(ShardyfusionError):
     """Shard write operation failed with a potentially transient error.
 
-    Raised when adapter operations (write_batch, flush, checkpoint) fail
+    Raised when adapter operations (write_batch, flush, seal) fail
     with errors that may succeed on retry (e.g. underlying S3 I/O failures
     in the storage adapter).
     """
