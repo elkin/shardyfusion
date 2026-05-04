@@ -44,7 +44,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 from collections.abc import Coroutine, Iterable
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar, overload
 
 from shardyfusion._slatedb_runtime import get_loop, run_coro
 from shardyfusion.errors import BridgeTimeoutError
@@ -128,12 +128,30 @@ def call_sync(
         raise
 
 
+@overload
+def gather_sync(
+    coros: Iterable[Coroutine[Any, Any, _T]],
+    *,
+    timeout: float | None = ...,
+    return_exceptions: Literal[False] = False,
+) -> list[_T]: ...
+
+
+@overload
+def gather_sync(
+    coros: Iterable[Coroutine[Any, Any, _T]],
+    *,
+    timeout: float | None = ...,
+    return_exceptions: Literal[True],
+) -> list[_T | BaseException]: ...
+
+
 def gather_sync(
     coros: Iterable[Coroutine[Any, Any, _T]],
     *,
     timeout: float | None = None,
     return_exceptions: bool = False,
-) -> list[_T]:
+) -> list[_T] | list[_T | BaseException]:
     """Submit N coroutines to the bridge loop in one hop and block on all.
 
     Functionally equivalent to ``[call_sync(c) for c in coros]`` but
