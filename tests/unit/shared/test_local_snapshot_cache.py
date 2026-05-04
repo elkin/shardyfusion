@@ -142,13 +142,7 @@ def _proc_worker(args: tuple[str, str, bytes, int]) -> tuple[int, bytes]:
     return os.getpid(), db_path.read_bytes()
 
 
-@pytest.mark.skipif(
-    not hasattr(
-        __import__("shardyfusion._local_snapshot_cache"), "_local_snapshot_cache"
-    )
-    or os.name == "nt",
-    reason="POSIX-only fcntl path",
-)
+@pytest.mark.skipif(os.name == "nt", reason="POSIX-only fcntl path")
 def test_multiprocess_concurrent_callers_safe(tmp_path: Path) -> None:
     """Eight processes hammer the same cache dir; all must read the same bytes."""
     cache_dir = str(tmp_path / "shard")

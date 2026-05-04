@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 from datetime import timedelta
-from pathlib import Path
 from typing import Literal
 
 from shardyfusion._rate_limiter import RateLimiter
@@ -448,12 +447,10 @@ class ShardedReader(_BaseShardedReader):
         open_many = getattr(self._reader_factory, "open_many", None)
         try:
             if open_many is not None and len(non_empty) > 1:
-                # Pre-create local dirs for symmetry with the per-shard
-                # path; the SlateDB factory ignores them but other
-                # adapters may not.
-                for shard in non_empty:
-                    local_path = Path(self.local_root) / f"shard={shard.db_id:05d}"
-                    local_path.mkdir(parents=True, exist_ok=True)
+                # ``open_many`` takes ``(db_url, manifest)`` per spec —
+                # ``local_dir`` is not in the contract. Custom factories
+                # that ever expose ``open_many`` own dir creation inside
+                # the implementation, mirroring per-shard ``__call__``.
                 opened = open_many(
                     [(shard.db_url, manifest) for shard in non_empty]  # type: ignore[arg-type]
                 )

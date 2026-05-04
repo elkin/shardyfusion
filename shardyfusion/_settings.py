@@ -86,6 +86,8 @@ class SlateDbSettings:
                 ("l0_sst_size_bytes", _to_json_literal(self.l0_sst_size_bytes))
             )
         if self.default_ttl_ms is not None:
+            # slatedb's settings key is ``default_ttl`` (interpreted as
+            # milliseconds); we keep ``_ms`` in the field name for clarity.
             pairs.append(("default_ttl", _to_json_literal(self.default_ttl_ms)))
         for key, value in self.raw_overrides.items():
             pairs.append((key, _to_json_literal(value)))

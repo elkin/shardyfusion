@@ -98,7 +98,9 @@ def call_sync(
         raised, so the loop is not left holding stale work.
     RuntimeError
         If called from inside the bridge loop itself (would deadlock).
-        Async callers should ``await coro`` directly.
+        Async callers should ``await coro`` directly. Also raised by
+        :func:`asyncio.run_coroutine_threadsafe` if ``coro`` has
+        already been awaited — construct a fresh coroutine per call.
     KeyboardInterrupt
         Re-raised after cancelling the in-flight coroutine on the loop.
     Exception
