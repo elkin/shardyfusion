@@ -10,10 +10,16 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import threading
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 _logger = logging.getLogger(__name__)
+
+# Serialises ``_AppliedEnvContext`` bodies across threads in the same
+# process so concurrent context entries cannot race on the
+# ``os.environ`` snapshot/restore pattern (see ``_AppliedEnvContext``).
+_env_mutation_lock = threading.Lock()
 
 
 @dataclass(slots=True, frozen=True)
@@ -201,13 +207,29 @@ def _parse_dotenv(text: str) -> dict[str, str]:
 
 
 class _AppliedEnvContext:
-    """Apply env_file contents to ``os.environ`` for the context body."""
+    """Apply env_file contents to ``os.environ`` for the context body.
 
-    __slots__ = ("_env_file", "_previous")
+    ``os.environ`` is process-global, so two threads entering this
+    context concurrently with overlapping keys would race on the
+    snapshot/restore pattern: a later-entering thread can capture the
+    earlier thread's mutation as its "prior" and restore the wrong
+    value on exit. To keep the invariant *env on exit equals env on
+    entry*, the entire context body is serialised across threads via
+    :data:`_env_mutation_lock`.
+
+    The lock is held only while ``env_file`` is non-empty and readable,
+    and only as long as the caller's body runs (typically a handful of
+    ``os.environ`` writes plus one ``ObjectStore.resolve`` — well under
+    a millisecond per call). Reads on hot paths (``get``/``multi_get``)
+    do not touch this lock.
+    """
+
+    __slots__ = ("_env_file", "_previous", "_locked")
 
     def __init__(self, env_file: str | None) -> None:
         self._env_file = env_file
         self._previous: dict[str, str | None] = {}
+        self._locked = False
 
     def __enter__(self) -> None:
         if self._env_file is None:
@@ -218,17 +240,28 @@ class _AppliedEnvContext:
         except OSError as exc:
             _logger.warning("Failed to read env file %s: %s", self._env_file, exc)
             return
-        for key, value in _parse_dotenv(text).items():
+        pairs = _parse_dotenv(text)
+        if not pairs:
+            return
+        _env_mutation_lock.acquire()
+        self._locked = True
+        for key, value in pairs.items():
             self._previous[key] = os.environ.get(key)
             os.environ[key] = value
 
     def __exit__(self, *args: object) -> None:
-        for key, prior in self._previous.items():
-            if prior is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = prior
-        self._previous.clear()
+        if not self._locked:
+            return
+        try:
+            for key, prior in self._previous.items():
+                if prior is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = prior
+            self._previous.clear()
+        finally:
+            _env_mutation_lock.release()
+            self._locked = False
 
 
 def apply_env_file(env_file: str | None) -> _AppliedEnvContext:
