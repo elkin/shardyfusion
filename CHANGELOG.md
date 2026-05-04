@@ -117,6 +117,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DbReader`s. `return_exceptions=True` mode still returns all results
   unchanged (caller owns lifecycle).
 
+#### SQLite / SQLite-vec download cache concurrency
+- **`SqliteShardReader` and the SQLite-vec download-cache reader now use
+  process-safe atomic writes plus a per-`local_dir` `fcntl` lock**
+  (`shardyfusion._local_snapshot_cache.ensure_cached_snapshot`). Previous
+  behaviour was a TOCTOU identity check followed by non-atomic
+  `Path.write_bytes`, which under concurrent CLI / test workloads
+  (`tox -p N`, multiple CLI processes sharing `/tmp/shardyfusion`) caused
+  torn reads (returning bytes from a stale snapshot) and intermittent
+  `SIGBUS` from mmap on a half-truncated file. The new helper:
+  re-checks identity inside the lock so peers skip duplicate downloads,
+  writes the database to `shard.db.tmp.<pid>` + `os.fsync` + `os.replace`,
+  then writes the identity file via the same temp+replace dance. Lance
+  readers were unaffected (they connect directly to S3).
+
 ### Added
 
 #### SQLite B-tree metadata sidecar (writer-side)

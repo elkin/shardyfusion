@@ -218,6 +218,16 @@ full run impractical. If it cannot be run, say exactly what was skipped.
   default (opt out via `emit_btree_metadata=False`). Requires APSW + zstandard
   from the `[sqlite-range]` extra; silently skips when either is missing.
   Format spec: `docs/reference/sqlite-btree-sidecar-format.md`.
+- The `SqliteShardReader` and SQLite-vec download-cache reader share
+  `local_root` (default `/tmp/shardyfusion`) across CLI invocations and
+  test processes. Concurrent access is serialised through
+  `shardyfusion._local_snapshot_cache.ensure_cached_snapshot`, which
+  takes an `fcntl.flock` on `<local_dir>/.cache.lock`, re-checks the
+  cached identity inside the lock, then writes via
+  temp-file + `os.fsync` + `os.replace`. Backends adding new
+  download-and-cache readers should reuse this helper rather than
+  reimplementing the check-then-write pattern; raw `Path.write_bytes`
+  on a shared cache file produces torn reads and `SIGBUS` from mmap.
 - slatedb 0.12 only exposes an async API (`slatedb.uniffi.Db` /
   `WriteBatch` / `DbReader`). shardyfusion bridges sync writer/reader
   Protocols to it through a process-global daemon-thread asyncio loop in
