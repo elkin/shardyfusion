@@ -30,6 +30,7 @@ from typing import Any, Literal, Self
 
 import numpy as np
 
+from ._local_snapshot_cache import ensure_cached_snapshot
 from .config import VectorSpec
 from .credentials import CredentialProvider, S3Credentials
 from .errors import ConfigValidationError, ShardyfusionError
@@ -460,12 +461,8 @@ class SqliteVecShardReader:
     ) -> None:
         self._db_url = db_url
         self._local_dir = local_dir
-        local_dir.mkdir(parents=True, exist_ok=True)
-        db_path = local_dir / _DB_FILENAME
-        identity_path = local_dir / _DB_IDENTITY_FILENAME
 
-        # Check cache validity
-        if not _is_cached_snapshot_current(identity_path, db_url, checkpoint_id):
+        def _download() -> bytes:
             s3_key = f"{db_url.rstrip('/')}/{_DB_FILENAME}"
             bucket, _ = parse_s3_url(s3_key)
             creds = credential_provider.resolve() if credential_provider else None
@@ -475,11 +472,15 @@ class SqliteVecShardReader:
                 connection_options=s3_connection_options,
             )
             backend = ObstoreBackend(store)
-            data = backend.get(s3_key)
-            db_path.write_bytes(data)
-            identity_path.write_text(
-                json.dumps({"db_url": db_url, "checkpoint_id": checkpoint_id})
-            )
+            return backend.get(s3_key)
+
+        db_path = ensure_cached_snapshot(
+            local_dir=local_dir,
+            db_filename=_DB_FILENAME,
+            identity_filename=_DB_IDENTITY_FILENAME,
+            expected_identity={"db_url": db_url, "checkpoint_id": checkpoint_id},
+            downloader=_download,
+        )
 
         conn = sqlite3.connect(
             f"file:{db_path}?mode=ro", uri=True, check_same_thread=False

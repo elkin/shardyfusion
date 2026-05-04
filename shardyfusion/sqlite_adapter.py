@@ -17,7 +17,6 @@ Reader tiers:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import sqlite3
 import struct
@@ -27,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol, Self, runtime_checkable
 
+from ._local_snapshot_cache import ensure_cached_snapshot
 from ._sqlite_vfs import S3ReadOnlyFile, S3VfsError, create_apsw_vfs
 from .credentials import CredentialProvider, S3Credentials
 from .errors import ShardyfusionError
@@ -554,12 +554,10 @@ class SqliteShardReader:
         credential_provider: CredentialProvider | None = None,
     ) -> None:
         self._db_url = db_url
-        local_dir.mkdir(parents=True, exist_ok=True)
-        self._db_path = local_dir / _DB_FILENAME
         self._identity_path = local_dir / _DB_IDENTITY_FILENAME
         self._checkpoint_id = checkpoint_id
 
-        if not self._is_cached_snapshot_current():
+        def _download() -> bytes:
             s3_key = f"{db_url.rstrip('/')}/{_DB_FILENAME}"
             bucket, _ = parse_s3_url(s3_key)
             creds = credential_provider.resolve() if credential_provider else None
@@ -569,9 +567,15 @@ class SqliteShardReader:
                 connection_options=s3_connection_options,
             )
             backend = ObstoreBackend(store)
-            data = backend.get(s3_key)
-            self._db_path.write_bytes(data)
-            self._write_cached_snapshot_identity()
+            return backend.get(s3_key)
+
+        self._db_path = ensure_cached_snapshot(
+            local_dir=local_dir,
+            db_filename=_DB_FILENAME,
+            identity_filename=_DB_IDENTITY_FILENAME,
+            expected_identity=self._expected_snapshot_identity(),
+            downloader=_download,
+        )
 
         mmap_size = int(mmap_size)
         conn = sqlite3.connect(
@@ -586,22 +590,6 @@ class SqliteShardReader:
             "db_url": self._db_url,
             "checkpoint_id": self._checkpoint_id,
         }
-
-    def _is_cached_snapshot_current(self) -> bool:
-        if not self._db_path.exists() or not self._identity_path.exists():
-            return False
-
-        try:
-            cached_identity = json.loads(self._identity_path.read_text())
-        except (OSError, json.JSONDecodeError):
-            return False
-
-        return cached_identity == self._expected_snapshot_identity()
-
-    def _write_cached_snapshot_identity(self) -> None:
-        self._identity_path.write_text(
-            json.dumps(self._expected_snapshot_identity(), sort_keys=True)
-        )
 
     # -- ShardReader protocol --
 
