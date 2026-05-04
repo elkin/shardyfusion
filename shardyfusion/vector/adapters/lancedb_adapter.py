@@ -189,10 +189,18 @@ class LanceDbWriter:
                 exc,
             )
 
-    def checkpoint(self) -> str | None:
+    def seal(self) -> None:
+        """Finalize the local LanceDB dataset before upload.
+
+        Calls :meth:`flush` (creating the HNSW index when warranted) and
+        tallies the on-disk dataset size for :meth:`db_bytes`. Earlier
+        shardyfusion versions returned a placeholder ``"checkpoint"``
+        string here; the writer now stamps shards with an opaque UUID
+        from :func:`shardyfusion._checkpoint_id.generate_checkpoint_id`.
+        """
         self.flush()
         if self._table is None:
-            return None
+            return
         # Sum the local .lance dataset directory size for db_bytes reporting.
         dataset_dir = self._local_dir / f"{self._table_name}.lance"
         if dataset_dir.exists():
@@ -206,9 +214,6 @@ class LanceDbWriter:
                     except OSError:
                         pass
             self._db_bytes = total
-        return (
-            "checkpoint"  # LanceDB checkpoints could use version but we just use string
-        )
 
     def db_bytes(self) -> int:
         return self._db_bytes

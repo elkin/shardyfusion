@@ -26,10 +26,10 @@ from typing import Any, Self
 
 import numpy as np
 
+from ._adapter import DbAdapter, DbAdapterFactory
 from .config import VectorSpec, vector_metric_to_str
 from .errors import ShardyfusionError
 from .logging import get_logger, log_event
-from .slatedb_adapter import DbAdapter, DbAdapterFactory
 from .type_defs import (
     AsyncShardReader,
     AsyncShardReaderFactory,
@@ -164,11 +164,13 @@ class CompositeAdapter:
         self._kv.flush()
         self._vec.flush()
 
-    def checkpoint(self) -> str | None:
-        kv_ckpt = self._kv.checkpoint()
-        self._vec.checkpoint()
-        # Return KV checkpoint ID as the primary identifier
-        return kv_ckpt
+    def seal(self) -> None:
+        """Seal both halves. The composite has no separate identity:
+        the writer stamps a single UUID covering KV + vector together
+        (see :func:`shardyfusion._checkpoint_id.generate_checkpoint_id`).
+        """
+        self._kv.seal()
+        self._vec.seal()
 
     def db_bytes(self) -> int:
         return int(self._kv.db_bytes()) + int(self._vec.db_bytes())

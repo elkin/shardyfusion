@@ -17,7 +17,6 @@ Reader tiers:
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import sqlite3
@@ -364,7 +363,7 @@ class SqliteAdapter:
         self._db_path = local_dir / _DB_FILENAME
         self._uploaded = False
         self._closed = False
-        self._checkpointed = False
+        self._sealed = False
         self._db_bytes = 0
         self._emit_btree_metadata = bool(emit_btree_metadata)
         self._s3_conn_opts = s3_connection_options
@@ -408,35 +407,40 @@ class SqliteAdapter:
     def write_batch(self, pairs: Iterable[tuple[bytes, bytes]]) -> None:
         if self._conn is None:
             raise SqliteAdapterError("Adapter already closed")
-        if self._checkpointed:
-            raise SqliteAdapterError("Cannot write after checkpoint")
+        if self._sealed:
+            raise SqliteAdapterError("Cannot write after seal")
         self._conn.executemany("INSERT OR REPLACE INTO kv (k, v) VALUES (?, ?)", pairs)
 
     def flush(self) -> None:
         pass  # no-op: local file, no WAL
 
-    def checkpoint(self) -> str | None:
+    def seal(self) -> None:
+        """Finalize the local SQLite DB before upload.
+
+        Performs the trailing ``COMMIT`` + ``PRAGMA optimize``, closes
+        the local connection, and captures the on-disk size for
+        :meth:`db_bytes`. Earlier shardyfusion versions also returned a
+        SHA-256 of the file as a content-addressed checkpoint id; that
+        is no longer used (writers now stamp shards with an opaque
+        UUID — see :func:`shardyfusion._checkpoint_id.generate_checkpoint_id`).
+        """
         if self._conn is None:
             raise SqliteAdapterError("Adapter already closed")
-        if self._checkpointed:
-            raise SqliteAdapterError("Adapter already checkpointed")
+        if self._sealed:
+            raise SqliteAdapterError("Adapter already sealed")
         self._conn.execute("COMMIT")
         self._conn.execute("PRAGMA optimize")
         self._conn.close()
         self._conn = None
-        self._checkpointed = True
+        self._sealed = True
 
-        with open(self._db_path, "rb") as f:
-            file_hash = hashlib.file_digest(f, "sha256").hexdigest()
         self._db_bytes = self._db_path.stat().st_size
         log_event(
-            "sqlite_adapter_checkpointed",
+            "sqlite_adapter_sealed",
             level=logging.DEBUG,
             logger=_logger,
             db_url=self._db_url,
-            checkpoint_id=file_hash,
         )
-        return file_hash
 
     def db_bytes(self) -> int:
         return self._db_bytes
