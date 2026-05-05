@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
 
-from ._adapter import DbAdapter, DbAdapterFactory
+from ._adapter import DbAdapterFactory
 from ._checkpoint_id import generate_checkpoint_id
 from ._rate_limiter import RateLimiter, TokenBucket
 from ._writer_core import ShardAttemptResult
@@ -50,16 +50,29 @@ class _PandasFrameLike(Protocol):
 # ---------------------------------------------------------------------------
 
 
-def seal_and_stamp(adapter: DbAdapter) -> tuple[str, int]:
+class _Sealable(Protocol):
+    """Minimal finalization contract used by :func:`seal_and_stamp`.
+
+    Both :class:`DbAdapter` (KV writers) and
+    :class:`shardyfusion.vector.types.VectorIndexWriter` structurally
+    satisfy this — neither needs to share the wider adapter surface to
+    be finalized.
+    """
+
+    def seal(self) -> None: ...
+    def db_bytes(self) -> int: ...
+
+
+def seal_and_stamp(adapter: _Sealable) -> tuple[str, int]:
     """Seal a shard and return its ``(checkpoint_id, db_bytes)``.
 
-    ``DbAdapter.seal()`` is the canonical finalization point per the
-    Protocol contract — callers MUST have already invoked
-    ``adapter.flush()`` if their backend separates the two steps
-    (slatedb's WAL flush, for example). Backends whose ``seal()`` is
-    self-contained (LanceDB calls ``flush()`` internally) need no
-    pre-call. The id is stamped *after* ``seal()`` returns, so a
-    raising ``seal()`` leaves no half-stamped state.
+    ``seal()`` is the canonical finalization point per the Protocol
+    contract — callers MUST have already invoked ``adapter.flush()`` if
+    their backend separates the two steps (slatedb's WAL flush, for
+    example). Backends whose ``seal()`` is self-contained (LanceDB
+    calls ``flush()`` internally) need no pre-call. The id is stamped
+    *after* ``seal()`` returns, so a raising ``seal()`` leaves no
+    half-stamped state.
     """
     adapter.seal()
     return generate_checkpoint_id(), adapter.db_bytes()
