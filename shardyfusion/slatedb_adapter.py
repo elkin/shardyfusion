@@ -43,7 +43,7 @@ import types
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 from ._async_bridge import call_sync
 from ._settings import SlateDbSettings
@@ -57,6 +57,9 @@ from ._slatedb_symbols import (
 from .credentials import CredentialProvider, apply_env_file, resolve_env_file
 from .errors import BridgeTimeoutError, DbAdapterError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
+
+if TYPE_CHECKING:
+    from slatedb.uniffi import Db, Settings
 
 __all__ = [
     "DefaultSlateDbAdapter",
@@ -135,6 +138,8 @@ class DefaultSlateDbAdapter:
 
     __slots__ = ("_db_url", "_local_dir", "_db", "_settings", "_timeouts")
 
+    _db: Db
+
     def __init__(
         self,
         *,
@@ -184,14 +189,14 @@ class DefaultSlateDbAdapter:
         )
 
     @staticmethod
-    def _build_settings(settings: SlateDbSettings) -> object:
+    def _build_settings(settings: SlateDbSettings) -> Settings:
         settings_cls = get_settings_class()
         obj = settings_cls.default()
         settings.apply(obj)
         return obj
 
     @property
-    def db(self) -> object:
+    def db(self) -> Db:
         return self._db
 
     def __enter__(self) -> Self:
