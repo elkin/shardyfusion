@@ -874,6 +874,7 @@ def _flush_remaining_single_process_batches(
 
 def _finalize_single_process_adapters(state: _SingleProcessState) -> None:
     for db_id, adapter in state.adapters.items():
+        adapter.flush()
         state.checkpoint_ids[db_id], state.db_bytes_per_shard[db_id] = (
             seal_and_stamp(adapter)
         )

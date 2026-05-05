@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import pickle
 import threading
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -228,21 +227,11 @@ class TestParseDotenv:
 
 
 @pytest.fixture
-def clean_env() -> Iterator[None]:
-    """Save/restore the env keys these tests touch, so they cannot
-    leak across test cases or pollute the developer's shell."""
-    keys = ("_SF_TEST_KEY_A", "_SF_TEST_KEY_B", "_SF_TEST_KEY_C")
-    saved = {k: os.environ.get(k) for k in keys}
-    for k in keys:
-        os.environ.pop(k, None)
-    try:
-        yield
-    finally:
-        for k, v in saved.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
+def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure the test keys are absent at start; ``monkeypatch`` records
+    their pre-test values and restores on teardown."""
+    for k in ("_SF_TEST_KEY_A", "_SF_TEST_KEY_B", "_SF_TEST_KEY_C"):
+        monkeypatch.delenv(k, raising=False)
 
 
 class TestAppliedEnvFile:

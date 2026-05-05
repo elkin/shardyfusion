@@ -140,13 +140,9 @@ class _SlateDbReaderHandle:
 
         iterator = call_sync(_open_iterator())
         chunk = self._iterator_chunk_size
-        # Probe the iterator's batch capability once outside the per-chunk
-        # loop. uniffi 0.12.1 exposes only ``next``; ``next_batch`` may
-        # land in a future slatedb release. Doing the check inline with
-        # ``try/except AttributeError`` would silently mask
-        # AttributeErrors raised *inside* a future ``next_batch`` body,
-        # turning a real bug into a permanent fall-through to the slow
-        # per-row path.
+        # Probe once outside the loop; an inline ``try/except
+        # AttributeError`` would also swallow AttributeErrors raised
+        # *inside* a future ``next_batch`` body.
         has_next_batch = hasattr(iterator, "next_batch")
 
         async def _drain() -> list[tuple[bytes, bytes]]:
@@ -168,13 +164,9 @@ class _SlateDbReaderHandle:
                     return
                 yield from batch
         finally:
-            # Best-effort iterator cleanup. ``try/finally`` also fires on
-            # ``GeneratorExit`` (consumer ``break``) and on exception, so
-            # Tokio prefetch tasks and the iterator's object-store
-            # reader release eagerly instead of waiting for the parent
-            # ``DbReader.shutdown`` cascade. uniffi 0.12.1 does not
-            # expose ``aclose``; the call is gated by ``hasattr`` so the
-            # path is forward-compatible without breaking today.
+            # Release the iterator on exhaustion, exception, or
+            # ``GeneratorExit``. ``hasattr`` keeps the call forward-
+            # compatible with future uniffi versions that add ``aclose``.
             aclose = getattr(iterator, "aclose", None)
             if aclose is not None:
                 try:

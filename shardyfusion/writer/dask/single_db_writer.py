@@ -291,6 +291,7 @@ def _stream_to_single_db(
                     bytes_bucket=bytes_bucket,
                 )
 
+            adapter.flush()
             checkpoint_id, db_bytes = seal_and_stamp(adapter)
     except ShardyfusionError:
         raise

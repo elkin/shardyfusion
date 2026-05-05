@@ -169,12 +169,9 @@ class CompositeAdapter:
         the writer stamps a single UUID covering KV + vector together
         (see :func:`shardyfusion._checkpoint_id.generate_checkpoint_id`).
 
-        Partial-failure semantics: if ``self._kv.seal()`` raises,
-        ``self._vec.seal()`` is skipped and the writer's surrounding
-        exception handler abandons the shard. The asymmetric
-        "kv sealed, vec not" state is acceptable because the discarded
-        shard is never published — no defensive ``try/finally`` is
-        added here on purpose; exceptional paths propagate cleanly.
+        If ``_kv.seal()`` raises, ``_vec.seal()`` is skipped; the
+        partial state is harmless because the writer abandons the
+        unpublished shard.
         """
         self._kv.seal()
         self._vec.seal()

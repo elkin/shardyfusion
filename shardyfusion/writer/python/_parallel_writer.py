@@ -605,6 +605,7 @@ def _shard_worker(
                 adapter.write_batch(batch)
                 batch.clear()
 
+            adapter.flush()
             checkpoint_id, db_bytes = seal_and_stamp(adapter)
     except Exception as exc:
         log_failure(
@@ -713,6 +714,7 @@ def _file_shard_worker(
                 adapter.write_batch(batch)
                 batch.clear()
 
+            adapter.flush()
             checkpoint_id, db_bytes = seal_and_stamp(adapter)
     except ShardyfusionError as exc:
         log_failure(

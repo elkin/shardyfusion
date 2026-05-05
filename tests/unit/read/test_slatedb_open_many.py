@@ -110,10 +110,6 @@ def fake_uniffi_reader(
     fake_uniffi_mod.DbReaderBuilder = _FakeDbReaderBuilder
     fake_uniffi_mod.DbReader = _FakeDbReader
     fake_uniffi_mod.ObjectStore = _FakeObjectStore
-    # KeyRange is referenced from scan_iter, not from open_many, but the
-    # symbol resolver still bundles it up via get_reader_symbols → so we
-    # add a placeholder.
-    fake_uniffi_mod.KeyRange = lambda **_: None  # type: ignore[assignment]
 
     fake_slatedb = types.ModuleType("slatedb")
     fake_slatedb.uniffi = fake_uniffi_mod

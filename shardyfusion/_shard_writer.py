@@ -51,19 +51,16 @@ class _PandasFrameLike(Protocol):
 
 
 def seal_and_stamp(adapter: DbAdapter) -> tuple[str, int]:
-    """Run the canonical finalize-and-stamp sequence on a shard adapter.
+    """Seal a shard and return its ``(checkpoint_id, db_bytes)``.
 
-    Returns ``(checkpoint_id, db_bytes)`` after invoking
-    ``adapter.flush() → adapter.seal() → generate_checkpoint_id() →
-    adapter.db_bytes()`` in order. Centralises the four-line ritual
-    introduced by the slatedb 0.12 migration so backend writers cannot
-    drift on call ordering or skip the size capture.
-
-    The opaque checkpoint id is stamped *after* ``seal()`` succeeds —
-    if either ``flush()`` or ``seal()`` raises, no id is produced and
-    the caller's exception handler abandons the shard.
+    ``DbAdapter.seal()`` is the canonical finalization point per the
+    Protocol contract — callers MUST have already invoked
+    ``adapter.flush()`` if their backend separates the two steps
+    (slatedb's WAL flush, for example). Backends whose ``seal()`` is
+    self-contained (LanceDB calls ``flush()`` internally) need no
+    pre-call. The id is stamped *after* ``seal()`` returns, so a
+    raising ``seal()`` leaves no half-stamped state.
     """
-    adapter.flush()
     adapter.seal()
     return generate_checkpoint_id(), adapter.db_bytes()
 
@@ -251,6 +248,7 @@ def write_shard_core(
                 metrics_collector=mc,
                 started=params.started,
             )
+            adapter.flush()
             checkpoint_id, db_bytes = seal_and_stamp(adapter)
     except ShardyfusionError:
         raise
