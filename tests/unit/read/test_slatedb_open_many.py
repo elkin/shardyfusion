@@ -169,9 +169,7 @@ def test_open_many_partial_failure_shuts_down_successful_siblings(
 
     factory = SlateDbReaderFactory()
     with pytest.raises(_OpenError, match="simulated open failure"):
-        factory.open_many(
-            [_spec("s3://b/0"), _spec("s3://b/1"), _spec("s3://b/2")]
-        )
+        factory.open_many([_spec("s3://b/0"), _spec("s3://b/1"), _spec("s3://b/2")])
 
     # Reader 1 (idx=0) finished before the failure; it must have been
     # shut down. Reader 3 may or may not have started (depends on
@@ -203,9 +201,7 @@ def test_open_many_first_builder_failure_no_orphans(fake_uniffi_reader: Any) -> 
 
     factory = SlateDbReaderFactory()
     with pytest.raises(_OpenError, match="first failed"):
-        factory.open_many(
-            [_spec("s3://b/0"), _spec("s3://b/1"), _spec("s3://b/2")]
-        )
+        factory.open_many([_spec("s3://b/0"), _spec("s3://b/1"), _spec("s3://b/2")])
 
     # Any siblings that completed before the failure observed the cleanup.
     for reader in _FakeDbReaderBuilder._built:

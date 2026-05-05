@@ -219,8 +219,7 @@ class SlateDbReaderFactory:
     def __post_init__(self) -> None:
         if self.iterator_chunk_size <= 0:
             raise ConfigValidationError(
-                f"iterator_chunk_size must be positive, "
-                f"got {self.iterator_chunk_size}"
+                f"iterator_chunk_size must be positive, got {self.iterator_chunk_size}"
             )
 
     def __call__(

@@ -252,9 +252,7 @@ class TestAppliedEnvFile:
             assert os.environ["_SF_TEST_KEY_A"] == "alpha"
         assert "_SF_TEST_KEY_A" not in os.environ
 
-    def test_restores_pre_existing_value(
-        self, clean_env: None, tmp_path: Path
-    ) -> None:
+    def test_restores_pre_existing_value(self, clean_env: None, tmp_path: Path) -> None:
         os.environ["_SF_TEST_KEY_A"] = "original"
         p = tmp_path / "creds.env"
         p.write_text("_SF_TEST_KEY_A=overridden\n")
@@ -290,9 +288,7 @@ class TestAppliedEnvFile:
             assert ctx._locked is False
         assert ctx._locked is False
 
-    def test_lock_released_after_exit(
-        self, clean_env: None, tmp_path: Path
-    ) -> None:
+    def test_lock_released_after_exit(self, clean_env: None, tmp_path: Path) -> None:
         """A subsequent ``apply_env_file`` works after the previous one
         exits — guards against a regression where ``__exit__`` forgets
         to release the lock and the next caller deadlocks."""
