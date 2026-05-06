@@ -29,6 +29,7 @@ from shardyfusion._writer_core import (
     cleanup_losers,
     discover_cel_num_dbs,
     empty_shard_result,
+    inject_sqlite_btreemeta_manifest_field,
     inject_vector_manifest_fields,
     publish_to_store,
     resolve_cel_num_dbs,
@@ -397,6 +398,7 @@ def _finalize_sharded_write(
 
     if config.vector_spec is not None:
         inject_vector_manifest_fields(config, runtime.adapter_factory)
+    inject_sqlite_btreemeta_manifest_field(config, runtime.adapter_factory)
     manifest_started = time.perf_counter()
     manifest_ref = publish_to_store(
         config=config,

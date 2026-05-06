@@ -461,6 +461,69 @@ def inject_vector_manifest_fields(config: BaseShardedWriteConfig, factory: Any) 
     config.manifest.custom_manifest_fields = custom_fields
 
 
+def _detect_btreemeta_page_size(factory: Any) -> int | None:
+    """Return the SQLite shard ``page_size`` if ``factory`` (or its inner
+    KV factory, when wrapped in :class:`CompositeFactory`) is a SQLite-backed
+    factory with ``emit_btree_metadata=True``; else ``None``.
+
+    Mirrors the unwrapping pattern in :func:`detect_kv_backend`.
+    """
+
+    actual: Any = factory
+    try:
+        from shardyfusion.composite_adapter import CompositeFactory
+
+        if isinstance(actual, CompositeFactory):
+            actual = actual.kv_factory
+    except ImportError:
+        pass
+
+    try:
+        from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
+
+        if isinstance(actual, SqliteVecFactory) and getattr(
+            actual, "emit_btree_metadata", False
+        ):
+            return int(actual.page_size)
+    except ImportError:
+        pass
+
+    try:
+        from shardyfusion.sqlite_adapter import SqliteFactory
+
+        if isinstance(actual, SqliteFactory) and getattr(
+            actual, "emit_btree_metadata", False
+        ):
+            return int(actual.page_size)
+    except ImportError:
+        pass
+
+    return None
+
+
+def inject_sqlite_btreemeta_manifest_field(
+    config: BaseShardedWriteConfig, factory: Any
+) -> None:
+    """Record the presence of SQLite btree-metadata sidecars in the manifest.
+
+    No-op when ``factory`` is not SQLite-backed or has the toggle disabled.
+    Safe to call universally — every framework writer can invoke this next
+    to :func:`inject_vector_manifest_fields` regardless of backend.
+    """
+
+    page_size = _detect_btreemeta_page_size(factory)
+    if page_size is None:
+        return
+    custom_fields = dict(config.manifest.custom_manifest_fields)
+    custom_fields["sqlite_btreemeta"] = {
+        "format_version": 3,
+        "page_size": page_size,
+        "filename": "shard.btreemeta",
+        "codec": "zstd",
+    }
+    config.manifest.custom_manifest_fields = custom_fields
+
+
 def publish_to_store(
     *,
     config: BaseShardedWriteConfig,
