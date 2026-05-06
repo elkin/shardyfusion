@@ -40,6 +40,7 @@ from .sqlite_adapter import (
     DEFAULT_AUTO_TOTAL_BUDGET_BYTES,
     SqliteAccessPolicy,
     _ThresholdPolicy,
+    maybe_upload_btreemeta_sidecar,
 )
 from .storage import ObstoreBackend, create_s3_store, parse_s3_url
 from .type_defs import Manifest, S3ConnectionOptions
@@ -110,7 +111,15 @@ class SqliteVecAdapterError(ShardyfusionError):
 
 @dataclass(slots=True)
 class SqliteVecFactory:
-    """Factory that builds unified KV + vector SQLite shards."""
+    """Factory that builds unified KV + vector SQLite shards.
+
+    ``emit_btree_metadata`` (default ``True``) controls whether each
+    finalized shard uploads a sibling ``shard.btreemeta`` artifact
+    alongside the main ``shard.db``.  See
+    :class:`shardyfusion.sqlite_adapter.SqliteFactory` for details — the
+    semantics, default, and graceful-degradation behavior are identical
+    on both factories.
+    """
 
     vector_spec: VectorSpec
     page_size: int = 4096
@@ -118,6 +127,7 @@ class SqliteVecFactory:
     s3_connection_options: S3ConnectionOptions | None = None
     credential_provider: CredentialProvider | None = None
     supports_vector_writes: bool = True
+    emit_btree_metadata: bool = True
 
     def __call__(
         self,
@@ -134,6 +144,7 @@ class SqliteVecFactory:
             cache_size_pages=self.cache_size_pages,
             s3_connection_options=self.s3_connection_options,
             credential_provider=self.credential_provider,
+            emit_btree_metadata=self.emit_btree_metadata,
         )
 
 
@@ -154,6 +165,7 @@ class SqliteVecAdapter:
         cache_size_pages: int = -2000,
         s3_connection_options: S3ConnectionOptions | None = None,
         credential_provider: CredentialProvider | None = None,
+        emit_btree_metadata: bool = True,
     ) -> None:
         self._db_url = db_url
         self._local_dir = local_dir
@@ -163,6 +175,7 @@ class SqliteVecAdapter:
         self._closed = False
         self._checkpointed = False
         self._db_bytes = 0
+        self._emit_btree_metadata = bool(emit_btree_metadata)
         self._s3_conn_opts = s3_connection_options
         self._s3_creds: S3Credentials | None = (
             credential_provider.resolve() if credential_provider else None
@@ -359,9 +372,17 @@ class SqliteVecAdapter:
                     connection_options=self._s3_conn_opts,
                 )
                 backend = ObstoreBackend(store)
+                db_bytes = self._db_path.read_bytes()
+                if self._emit_btree_metadata:
+                    maybe_upload_btreemeta_sidecar(
+                        backend=backend,
+                        db_url=self._db_url,
+                        db_path=self._db_path,
+                        db_bytes=db_bytes,
+                    )
                 backend.put(
                     s3_key,
-                    self._db_path.read_bytes(),
+                    db_bytes,
                     content_type="application/x-sqlite3",
                 )
                 self._uploaded = True

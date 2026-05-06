@@ -31,7 +31,7 @@ dependencies = [
 # Backend extras — storage engine deps only
 slatedb = ["slatedb<0.12"]
 sqlite = []
-sqlite-range = ["apsw>=3.44"]
+sqlite-range = ["apsw>=3.44", "zstandard>=0.22"]
 
 # Convenience extras — backend is named explicitly in every extra (slatedb, sqlite, lancedb, sqlite-vec)
 read-slatedb = ["shardyfusion[slatedb]"]
@@ -207,6 +207,7 @@ backend-vector-lancedb = [
 ]
 backend-sqlite-range = [
   "apsw>=3.44",
+  "zstandard>=0.22",
 ]
 cap-writer-spark = [
   "pyspark>=3.3",

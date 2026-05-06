@@ -21,6 +21,7 @@ import hashlib
 import json
 import logging
 import sqlite3
+import struct
 import types
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -38,6 +39,17 @@ _logger = get_logger(__name__)
 
 _DB_FILENAME = "shard.db"
 _DB_IDENTITY_FILENAME = "shard.identity.json"
+_BTREEMETA_FILENAME = "shard.btreemeta"
+_BTREEMETA_MAGIC = b"SFBTM\x00\x00\x00"
+# v3 = body is zstd-compressed and carries an explicit ``(pageno, offset)``
+# index so consumers can decompress to disk and ``pread`` individual pages
+# instead of holding the full body in memory.  Format documented in
+# ``docs/architecture/sqlite-btree-sidecar.md``.
+_BTREEMETA_FORMAT_VERSION = 3
+# zstd default level.  Btree pages compress ~12× at level 3 with
+# sub-millisecond cost; higher levels squeeze a few extra percent for
+# significantly more time and aren't worth it on the writer hot path.
+_BTREEMETA_ZSTD_LEVEL = 3
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +63,243 @@ class SqliteAdapterError(ShardyfusionError):
     retryable = False
 
 
+class BtreeMetaUnavailableError(SqliteAdapterError):
+    """Raised when APSW, ``dbstat``, ``zstandard``, or the on-disk file's
+    invariants make raw-file sidecar extraction unsafe.
+
+    The ``args[0]`` reason string distinguishes causes
+    (``apsw_not_installed`` | ``dbstat_unavailable`` |
+    ``zstandard_not_installed`` | ``unsupported_journal_mode`` |
+    ``page_size_not_int`` | ``page_read_short``) so that ``log_event``
+    calls can record the specific cause for diagnostics.
+    """
+
+    retryable = False
+
+
+# Journal modes whose committed state lives entirely in the main ``.db``
+# file once the writer's connection is closed.  Sidecar extraction reads
+# pages by direct file I/O at deterministic offsets, which is safe only
+# when no committed pages are parked in a sibling artifact (``-wal``).
+# WAL modes can park committed-but-not-yet-checkpointed pages in the WAL
+# sidecar; raw file I/O would silently miss them.  See
+# ``docs/architecture/sqlite-btree-sidecar.md``.
+_BTREEMETA_SAFE_JOURNAL_MODES: frozenset[str] = frozenset(
+    {"off", "delete", "memory", "truncate", "persist"}
+)
+
+
+# ---------------------------------------------------------------------------
+# Btree-metadata sidecar extraction
+# ---------------------------------------------------------------------------
+
+
+def extract_btree_metadata(db_path: Path, *, db_bytes: bytes | None = None) -> bytes:
+    """Read a finalized SQLite DB and return the btree-metadata sidecar bytes.
+
+    The sidecar bundles every interior B-tree page plus every page belonging
+    to ``sqlite_master``.  A range-read reader can fetch the sidecar once
+    on shard open and pin those pages for the lifetime of the shard reader,
+    eliminating the per-query round trips needed to walk B-tree internals.
+
+    Page identification is delegated to SQLite's ``dbstat`` virtual table
+    (via APSW for reliable availability — APSW bundles a SQLite built with
+    ``SQLITE_ENABLE_DBSTAT_VTAB``).  Once page numbers are known, page
+    bytes are retrieved by slicing the in-memory file contents at the
+    well-defined ``(pageno - 1) * page_size`` offsets.  APSW is
+    lazy-imported so the writer base install does not require it; if APSW
+    (or ``dbstat``) is unavailable, raises
+    :class:`BtreeMetaUnavailableError` which the adapter's ``close()``
+    treats as a soft skip.
+
+    Pass ``db_bytes`` when the file has already been read into memory by
+    the caller (e.g. ``SqliteAdapter.close()`` reads the DB once for its
+    main S3 PUT) to avoid re-reading the file.
+
+    Format (little-endian):
+
+    * ``8 bytes`` magic ``b"SFBTM\\x00\\x00\\x00"``
+    * ``u32`` format version (currently ``3``)
+    * zstd-compressed body, which when decompressed contains:
+      * ``u32`` page size in bytes
+      * ``u32`` page count ``N``
+      * ``N * (u32 pageno, u32 offset)`` index entries — sorted by
+        pageno; ``offset`` is the body-relative byte position of the
+        corresponding page slab. Equivalently, when a consumer writes
+        the decompressed body to a file, ``offset`` is the file offset.
+      * ``N * page_size`` raw page bytes (in the same order)
+
+    Storing ``offset`` explicitly (even though pages are uniformly
+    ``page_size`` bytes today) lets a disk-based consumer build a
+    ``pageno → offset`` map and ``pread`` individual pages without
+    holding the whole body in memory — useful for memory-constrained
+    readers and large sidecars.  Pages compress ~12× under zstd at
+    level 3 because each interior page is typically ~50% free space
+    and the per-page headers and cell pointer arrays repeat across the
+    bundle.  Compression is via the ``zstandard`` package (already in
+    the ``[sqlite-range]`` extra alongside APSW).
+    """
+
+    try:
+        import apsw  # pyright: ignore[reportMissingImports]
+    except ImportError as exc:
+        raise BtreeMetaUnavailableError("apsw_not_installed") from exc
+
+    try:
+        import zstandard  # pyright: ignore[reportMissingImports]
+    except ImportError as exc:
+        raise BtreeMetaUnavailableError("zstandard_not_installed") from exc
+
+    conn = apsw.Connection(
+        f"file:{db_path}?mode=ro",
+        flags=apsw.SQLITE_OPEN_READONLY | apsw.SQLITE_OPEN_URI,
+    )
+    try:
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("SELECT pageno FROM dbstat LIMIT 0").fetchall()
+        except apsw.SQLError as exc:
+            raise BtreeMetaUnavailableError("dbstat_unavailable") from exc
+
+        # Guard against future writer changes that would silently break the
+        # raw-file extraction path (e.g. switching to WAL mode without a
+        # forced checkpoint).  PRAGMA journal_mode reflects the file's
+        # persistent setting even on a read-only connection.
+        journal_rows = cursor.execute("PRAGMA journal_mode").fetchall()
+        mode_value = journal_rows[0][0] if journal_rows else None
+        if (
+            not isinstance(mode_value, str)
+            or mode_value.lower() not in _BTREEMETA_SAFE_JOURNAL_MODES
+        ):
+            raise BtreeMetaUnavailableError("unsupported_journal_mode")
+
+        ((page_size_raw,),) = cursor.execute("PRAGMA page_size").fetchall()
+        if not isinstance(page_size_raw, int):
+            raise BtreeMetaUnavailableError("page_size_not_int")
+        page_size = page_size_raw
+
+        # The schema btree is named ``sqlite_schema`` in modern SQLite
+        # (renamed from ``sqlite_master`` in 3.33); accept both for portability
+        # across SQLite versions.
+        rows = cursor.execute(
+            "SELECT pageno FROM dbstat "
+            " WHERE pagetype = 'internal' "
+            "    OR name IN ('sqlite_master', 'sqlite_schema') "
+            " ORDER BY pageno"
+        ).fetchall()
+        page_nums: list[int] = sorted(
+            {int(r[0]) for r in rows if isinstance(r[0], int)}
+        )
+    finally:
+        conn.close()
+
+    if db_bytes is None:
+        db_bytes = db_path.read_bytes()
+
+    page_blobs: list[bytes] = []
+    for pgno in page_nums:
+        offset = (pgno - 1) * page_size
+        slab = db_bytes[offset : offset + page_size]
+        if len(slab) != page_size:
+            raise BtreeMetaUnavailableError("page_read_short")
+        page_blobs.append(slab)
+
+    n = len(page_nums)
+    # Header: page_size + n_pages.  Index: N * (pageno, offset) pairs.
+    # Data section starts after header + index.
+    header_size = 8
+    index_size = n * 8
+    data_start = header_size + index_size
+
+    index_pairs: list[int] = []
+    for i, pgno in enumerate(page_nums):
+        index_pairs.append(pgno)
+        index_pairs.append(data_start + i * page_size)
+
+    body = b"".join(
+        [
+            struct.pack("<II", page_size, n),
+            struct.pack(f"<{2 * n}I", *index_pairs) if n else b"",
+            b"".join(page_blobs),
+        ]
+    )
+    compressor = zstandard.ZstdCompressor(level=_BTREEMETA_ZSTD_LEVEL)
+    return b"".join(
+        [
+            _BTREEMETA_MAGIC,
+            _BTREEMETA_FORMAT_VERSION.to_bytes(4, "little"),
+            compressor.compress(body),
+        ]
+    )
+
+
+def maybe_upload_btreemeta_sidecar(
+    *,
+    backend: ObstoreBackend,
+    db_url: str,
+    db_path: Path,
+    db_bytes: bytes,
+) -> None:
+    """Best-effort upload of the btree-metadata sidecar.
+
+    Never raises: extraction or upload failures are logged and the caller
+    proceeds to upload the main ``shard.db``.  Used by both
+    ``SqliteAdapter.close()`` and ``SqliteVecAdapter.close()``.
+
+    ``db_bytes`` is the already-read file contents the caller is about to
+    upload as the main artifact — sharing it here avoids reading the
+    finalized file twice.
+    """
+    try:
+        payload = extract_btree_metadata(db_path, db_bytes=db_bytes)
+    except BtreeMetaUnavailableError as exc:
+        log_event(
+            "sqlite_btreemeta_unsupported",
+            level=logging.DEBUG,
+            logger=_logger,
+            db_url=db_url,
+            reason=str(exc.args[0]) if exc.args else "unknown",
+        )
+        return
+    except Exception as exc:  # pragma: no cover - defensive
+        log_failure(
+            "sqlite_btreemeta_failed",
+            severity=FailureSeverity.TRANSIENT,
+            logger=_logger,
+            error=exc,
+            db_url=db_url,
+            stage="extract",
+        )
+        return
+
+    sidecar_key = f"{db_url.rstrip('/')}/{_BTREEMETA_FILENAME}"
+    try:
+        backend.put(
+            sidecar_key,
+            payload,
+            content_type="application/octet-stream",
+        )
+    except Exception as exc:
+        log_failure(
+            "sqlite_btreemeta_failed",
+            severity=FailureSeverity.TRANSIENT,
+            logger=_logger,
+            error=exc,
+            db_url=db_url,
+            stage="upload",
+        )
+        return
+
+    log_event(
+        "sqlite_btreemeta_uploaded",
+        level=logging.DEBUG,
+        logger=_logger,
+        db_url=db_url,
+        sidecar_bytes=len(payload),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Writer: KV adapter (Layer 1)
 # ---------------------------------------------------------------------------
@@ -58,12 +307,25 @@ class SqliteAdapterError(ShardyfusionError):
 
 @dataclass(slots=True)
 class SqliteFactory:
-    """Picklable factory that builds local SQLite KV shards."""
+    """Picklable factory that builds local SQLite KV shards.
+
+    ``emit_btree_metadata`` (default ``True``) controls whether each
+    finalized shard uploads a sibling ``shard.btreemeta`` artifact
+    bundling all interior B-tree pages plus every ``sqlite_master`` page.
+    Reader-side range-mode consumers can fetch this once on shard open
+    and pin those pages for the lifetime of the shard reader.
+
+    The sidecar requires APSW (already declared in the ``[sqlite-range]``
+    extra) and a SQLite build with ``SQLITE_ENABLE_DBSTAT_VTAB``.  If
+    either is unavailable the writer logs a debug-level event and skips
+    the sidecar — the main ``shard.db`` upload proceeds unchanged.
+    """
 
     page_size: int = 4096
     cache_size_pages: int = -2000  # negative = KiB, so ~8 MB
     s3_connection_options: S3ConnectionOptions | None = None
     credential_provider: CredentialProvider | None = None
+    emit_btree_metadata: bool = True
 
     def __call__(self, *, db_url: str, local_dir: Path) -> SqliteAdapter:
         return SqliteAdapter(
@@ -73,6 +335,7 @@ class SqliteFactory:
             cache_size_pages=self.cache_size_pages,
             s3_connection_options=self.s3_connection_options,
             credential_provider=self.credential_provider,
+            emit_btree_metadata=self.emit_btree_metadata,
         )
 
 
@@ -91,6 +354,7 @@ class SqliteAdapter:
         cache_size_pages: int = -2000,
         s3_connection_options: S3ConnectionOptions | None = None,
         credential_provider: CredentialProvider | None = None,
+        emit_btree_metadata: bool = True,
     ) -> None:
         page_size = int(page_size)
         cache_size_pages = int(cache_size_pages)
@@ -102,6 +366,7 @@ class SqliteAdapter:
         self._closed = False
         self._checkpointed = False
         self._db_bytes = 0
+        self._emit_btree_metadata = bool(emit_btree_metadata)
         self._s3_conn_opts = s3_connection_options
         self._s3_creds: S3Credentials | None = (
             credential_provider.resolve() if credential_provider else None
@@ -197,9 +462,17 @@ class SqliteAdapter:
                     connection_options=self._s3_conn_opts,
                 )
                 backend = ObstoreBackend(store)
+                db_bytes = self._db_path.read_bytes()
+                if self._emit_btree_metadata:
+                    maybe_upload_btreemeta_sidecar(
+                        backend=backend,
+                        db_url=self._db_url,
+                        db_path=self._db_path,
+                        db_bytes=db_bytes,
+                    )
                 backend.put(
                     s3_key,
-                    self._db_path.read_bytes(),
+                    db_bytes,
                     content_type="application/x-sqlite3",
                 )
                 self._uploaded = True
