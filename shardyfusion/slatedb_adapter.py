@@ -55,7 +55,7 @@ from ._slatedb_symbols import (
     get_write_batch_class,
 )
 from .credentials import CredentialProvider, apply_env_file, resolve_env_file
-from .errors import BridgeTimeoutError, DbAdapterError
+from .errors import BridgeTimeoutError, DbAdapterError, ShardWriteError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
 
 if TYPE_CHECKING:
@@ -68,6 +68,28 @@ __all__ = [
 ]
 
 _logger = get_logger(__name__)
+
+
+def _is_transient_slatedb_error(exc: BaseException) -> bool:
+    """Return True if ``exc`` is a slatedb ``Error.Unavailable``.
+
+    ``Error.Unavailable`` is the binding's "temporary unavailability"
+    variant — typically an upstream object-store hiccup, throttle, or
+    transient network failure. Treating it as retryable preserves the
+    behaviour of the underlying retry loop, which only retries
+    ``ShardyfusionError`` subclasses with ``retryable=True``.
+
+    Other ``slatedb.uniffi`` ``Error`` variants (``Invalid``, ``Data``,
+    ``Internal``, ``Closed``, ``Transaction``) indicate programmer or
+    structural failures that retrying will not fix, and are wrapped as
+    non-retryable :class:`DbAdapterError` by the caller.
+    """
+    try:
+        from slatedb.uniffi import Error  # type: ignore[attr-defined]
+    except ImportError:  # pragma: no cover - runtime dependent
+        return False
+    unavailable = getattr(Error, "Unavailable", None)
+    return unavailable is not None and isinstance(exc, unavailable)
 
 
 @dataclass(slots=True, frozen=True)
@@ -177,6 +199,18 @@ class DefaultSlateDbAdapter:
             # retryable=False and short-circuit retries.
             raise
         except Exception as exc:
+            # slatedb's ``Error.Unavailable`` signals transient
+            # object-store unavailability (network hiccup, S3 503/throttle,
+            # missing dependency that will come back). Surface it as a
+            # retryable ``ShardWriteError`` so ``_run_attempts_with_retry``
+            # honours its ``retryable`` flag instead of giving up after a
+            # single attempt. Everything else (bad URL, invalid config,
+            # corrupt manifest, internal binding error) stays as
+            # non-retryable ``DbAdapterError``.
+            if _is_transient_slatedb_error(exc):
+                raise ShardWriteError(
+                    f"Transient SlateDB open failure at {db_url!r}: {exc}"
+                ) from exc
             raise DbAdapterError(
                 f"Failed to open SlateDB at {db_url!r} via slatedb.uniffi"
             ) from exc
