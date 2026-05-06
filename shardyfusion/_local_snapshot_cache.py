@@ -50,11 +50,23 @@ _LOCK_FILENAME = ".cache.lock"
 
 
 def _atomic_write_bytes(path: Path, data: bytes) -> None:
-    """Write ``data`` to ``path`` atomically via temp+fsync+replace."""
+    """Write ``data`` to ``path`` atomically via temp+fsync+replace.
+
+    ``os.write`` is allowed to return after writing fewer bytes than
+    requested (POSIX ``write(2)`` only guarantees a partial write). For
+    multi-GB shard databases a short write would silently produce a
+    truncated cache file that the identity check then trusts as valid.
+    Loop until every byte is written.
+    """
     tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
     try:
-        os.write(fd, data)
+        view = memoryview(data)
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                raise OSError(f"os.write returned {written} writing to {tmp}")
+            view = view[written:]
         os.fsync(fd)
     finally:
         os.close(fd)
