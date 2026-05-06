@@ -114,18 +114,8 @@ def fake_uniffi_reader(
     fake_slatedb = types.ModuleType("slatedb")
     fake_slatedb.uniffi = fake_uniffi_mod
 
-    fake_inner_pkg = types.ModuleType("slatedb.uniffi._slatedb_uniffi")
-    fake_inner_mod = types.ModuleType("slatedb.uniffi._slatedb_uniffi.slatedb")
-    fake_inner_mod.uniffi_set_event_loop = lambda _loop: None
-
     monkeypatch.setitem(sys.modules, "slatedb", fake_slatedb)
     monkeypatch.setitem(sys.modules, "slatedb.uniffi", fake_uniffi_mod)
-    monkeypatch.setitem(sys.modules, "slatedb.uniffi._slatedb_uniffi", fake_inner_pkg)
-    monkeypatch.setitem(
-        sys.modules,
-        "slatedb.uniffi._slatedb_uniffi.slatedb",
-        fake_inner_mod,
-    )
     yield fake_uniffi_mod
 
 

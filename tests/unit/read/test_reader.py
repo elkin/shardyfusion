@@ -211,21 +211,6 @@ def test_slate_db_reader_factory_uses_uniffi_db_reader_builder(
     fake_uniffi.DbReaderBuilder = _FakeBuilder
     fake_uniffi.DbReader = _FakeBuiltReader
     fake_uniffi.ObjectStore = _FakeObjectStore
-    # The shardyfusion async bridge calls uniffi_set_event_loop(loop) on
-    # first use to register its daemon-thread loop with slatedb's
-    # generated bindings. The real symbol lives at
-    # slatedb.uniffi._slatedb_uniffi.slatedb.uniffi_set_event_loop;
-    # provide a no-op stand-in at the real path so this fake is a
-    # faithful drop-in for the slatedb.uniffi surface.
-    fake_inner_pkg = types.ModuleType("slatedb.uniffi._slatedb_uniffi")
-    fake_inner_mod = types.ModuleType("slatedb.uniffi._slatedb_uniffi.slatedb")
-    fake_inner_mod.uniffi_set_event_loop = lambda _loop: None
-    monkeypatch.setitem(sys.modules, "slatedb.uniffi._slatedb_uniffi", fake_inner_pkg)
-    monkeypatch.setitem(
-        sys.modules,
-        "slatedb.uniffi._slatedb_uniffi.slatedb",
-        fake_inner_mod,
-    )
     fake_slatedb = types.ModuleType("slatedb")
     fake_slatedb.uniffi = fake_uniffi
     monkeypatch.setitem(sys.modules, "slatedb", fake_slatedb)

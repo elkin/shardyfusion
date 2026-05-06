@@ -8,13 +8,18 @@ running event loop.
 
 This module owns a single daemon-thread event loop for the lifetime of
 the process. Every sync caller submits coroutines to that loop via
-:func:`run_coro` and blocks on the resulting future. The loop is also
-registered with uniffi via ``uniffi_set_event_loop`` so that any
-internal callbacks the bindings schedule end up on the same loop.
+:func:`run_coro` and blocks on the resulting future. The bridge thread
+runs ``loop.run_forever()``, so coroutines submitted via
+``asyncio.run_coroutine_threadsafe`` see the bridge loop as their
+running loop and the slatedb.uniffi bindings discover it through
+``asyncio.get_running_loop()`` without any global registration.
 
 Async callers (``AsyncShardedReader`` etc.) should *not* go through this
 module — they already have their own running loop and can ``await``
-slatedb coroutines directly.
+slatedb coroutines directly. Importantly, this module does **not** call
+``uniffi_set_event_loop``: doing so would pin the bridge loop in
+uniffi's process-global slot and cause async callers' awaited futures
+to be created on the wrong loop.
 
 Design notes
 ------------
@@ -35,17 +40,13 @@ import asyncio
 import atexit
 import threading
 from collections.abc import Coroutine
-from typing import TYPE_CHECKING, Any, TypeVar, cast
-
-if TYPE_CHECKING:
-    from asyncio import BaseEventLoop
+from typing import Any, TypeVar
 
 _T = TypeVar("_T")
 
 _lock = threading.Lock()
 _loop: asyncio.AbstractEventLoop | None = None
 _thread: threading.Thread | None = None
-_uniffi_registered = False
 
 
 def _run_loop(loop: asyncio.AbstractEventLoop) -> None:
@@ -59,51 +60,20 @@ def _run_loop(loop: asyncio.AbstractEventLoop) -> None:
             pass
 
 
-def _register_with_uniffi(loop: asyncio.AbstractEventLoop) -> None:
-    """Tell slatedb.uniffi which loop to use for its internal callbacks.
-
-    ``uniffi_set_event_loop`` is defined inside the generated uniffi
-    bindings module ``slatedb.uniffi._slatedb_uniffi.slatedb`` (it is
-    not re-exported from the ``slatedb.uniffi`` package facade). We
-    pin ``slatedb>=0.12,<0.13`` in ``pyproject.toml`` so the import
-    path is stable; if a future patch release changes the layout we
-    want a loud ``ImportError`` here at first writer/reader call
-    rather than a confusing "no running event loop" deeper in the
-    bindings.
-
-    Registration is technically only required when uniffi fires Python
-    callbacks from a thread that does not own a running loop (e.g. a
-    Rust-spawned thread). The shardyfusion bridge always submits
-    coroutines via :func:`asyncio.run_coroutine_threadsafe`, which
-    runs them on the bridge thread where the loop *is* running, so the
-    common path works without registration. We register defensively
-    anyway so any future uniffi callback that does need to look up the
-    global loop finds ours.
-    """
-    global _uniffi_registered
-    if _uniffi_registered:
-        return
-    try:
-        from slatedb.uniffi._slatedb_uniffi.slatedb import (  # type: ignore[attr-defined]
-            uniffi_set_event_loop,
-        )
-    except ImportError:
-        # slatedb is an optional extra. The bridge itself works without
-        # it (it just runs arbitrary coroutines on a background loop);
-        # uniffi registration is only meaningful when slatedb is
-        # installed. Mark registered so we do not retry on every call.
-        _uniffi_registered = True
-        return
-
-    # uniffi declares ``eventloop: BaseEventLoop``; the concrete asyncio
-    # loops we hand it (Selector/Proactor) inherit BaseEventLoop, but the
-    # static type from ``new_event_loop()`` is ``AbstractEventLoop``.
-    uniffi_set_event_loop(cast("BaseEventLoop", loop))
-    _uniffi_registered = True
-
-
 def get_loop() -> asyncio.AbstractEventLoop:
-    """Return the shardyfusion-owned bridge loop, starting it if needed."""
+    """Return the shardyfusion-owned bridge loop, starting it if needed.
+
+    We deliberately do *not* call ``slatedb.uniffi`` ``uniffi_set_event_loop``
+    here. That function pins a process-global event-loop slot that the
+    generated bindings consult *before* falling back to
+    ``asyncio.get_running_loop()`` — pinning the bridge loop would make
+    every uniffi async call (including ones the application awaits from
+    its own loop via :class:`AsyncSlateDbReaderFactory`) create futures
+    on the bridge loop, raising cross-loop errors or hanging. The bridge
+    thread runs ``loop.run_forever()``, so any coroutine submitted via
+    :func:`asyncio.run_coroutine_threadsafe` already has the bridge loop
+    as its running loop and the bindings find it without registration.
+    """
     global _loop, _thread
     with _lock:
         if _loop is not None and _loop.is_running():
@@ -118,11 +88,6 @@ def get_loop() -> asyncio.AbstractEventLoop:
         thread.start()
         _loop = loop
         _thread = thread
-        # Register inside the lock so two first-use threads cannot both
-        # see ``_uniffi_registered=False`` and double-call
-        # ``uniffi_set_event_loop``. The flag and the registration must
-        # be atomic with the loop creation they pair with.
-        _register_with_uniffi(loop)
     return loop
 
 
