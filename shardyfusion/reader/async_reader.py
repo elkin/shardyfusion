@@ -213,10 +213,20 @@ class AsyncSlateDbReaderFactory:
             ) from exc
 
         with resolve_env_file(self.env_file, self.credential_provider) as env_path:
+            # ``apply_env_file`` holds a process-wide ``threading.Lock`` to
+            # serialise ``os.environ`` mutation across threads. Releasing
+            # that lock before the ``await`` is critical: holding a sync
+            # lock across an await blocks the event loop on subsequent
+            # ``Lock.acquire()`` calls from concurrent async tasks, which
+            # in turn prevents the awaited coroutine from completing —
+            # i.e. a deadlock. ``ObjectStore.resolve`` is the only step
+            # that needs the env vars; the resolved store captures the
+            # credentials internally, so ``builder.build()`` can run with
+            # the lock released.
             with apply_env_file(env_path):
                 store = object_store_cls.resolve(db_url)
                 builder = db_reader_builder_cls("", store)
-                inner = await builder.build()
+            inner = await builder.build()
         return _SlateDbAsyncShardReader(inner)
 
 
