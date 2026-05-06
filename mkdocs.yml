@@ -108,10 +108,12 @@ nav:
     - Observability: architecture/observability.md
     - Error model: architecture/error-model.md
     - Optional imports: architecture/optional-imports.md
+    - SQLite B-tree sidecar: architecture/sqlite-btree-sidecar.md
   - Reference:
     - Public API: reference/api.md
     - Configuration: reference/config.md
     - CLI: reference/cli.md
+    - SQLite B-Tree Sidecar Format: reference/sqlite-btree-sidecar-format.md
     - Glossary: reference/glossary.md
   - Contributing:
     - Overview: contributing/index.md

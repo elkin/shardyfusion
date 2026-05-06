@@ -160,8 +160,29 @@ Removing an extra is a breaking change. Steps:
 5. Run `validate-docs` — it will surface any stale references.
 6. Note the removal in the next ADR or release notes.
 
+## Cross-side extras: `sqlite-range`
+
+Some extras serve both reader and writer roles even though they're named
+after one side. `sqlite-range` is the canonical example:
+
+- **Reader**: APSW powers the range-read VFS in
+  [`SqliteRangeShardReader`](../architecture/sqlite-btree-sidecar.md).
+- **Writer**: APSW + `zstandard` power writer-side B-tree metadata
+  extraction (sidecar emission) for `SqliteFactory` and `SqliteVecFactory` —
+  see
+  [`architecture/sqlite-btree-sidecar.md`](../architecture/sqlite-btree-sidecar.md).
+  APSW provides the `dbstat` virtual table; `zstandard` compresses the
+  sidecar body (~12× ratio).
+
+Sidecar emission is opt-out (default-on) but degrades silently when APSW is
+not installed. Users that install only the base `sqlite` extra will still
+write valid shards; they just won't pre-extract the B-tree pages. Install
+`shardyfusion[sqlite-range]` on writer hosts that publish snapshots intended
+for range-mode reads.
+
 ## See also
 
 - [`architecture/optional-imports.md`](../architecture/optional-imports.md) — the pattern's design.
+- [`architecture/sqlite-btree-sidecar.md`](../architecture/sqlite-btree-sidecar.md) — the sidecar artifact and dependency.
 - [`operate/tox-matrix.md`](../operate/tox-matrix.md) — full env list.
 - [`adding-an-adapter.md`](adding-an-adapter.md) — the canonical worked example.
