@@ -67,12 +67,17 @@ def seal_and_stamp(adapter: _Sealable) -> tuple[str, int]:
     """Seal a shard and return its ``(checkpoint_id, db_bytes)``.
 
     ``seal()`` is the canonical finalization point per the Protocol
-    contract — callers MUST have already invoked ``adapter.flush()`` if
-    their backend separates the two steps (slatedb's WAL flush, for
-    example). Backends whose ``seal()`` is self-contained (LanceDB
-    calls ``flush()`` internally) need no pre-call. The id is stamped
-    *after* ``seal()`` returns, so a raising ``seal()`` leaves no
-    half-stamped state.
+    contract. Whether a pre-call to ``adapter.flush()`` is needed
+    depends on the backend:
+
+    * **slatedb**: call ``flush()`` first (writes the WAL).
+    * **LanceDB**: ``seal()`` calls ``flush()`` internally — no pre-call
+      needed.
+    * **SQLite / SQLite-vec**: ``seal()`` is self-contained — no
+      pre-call needed.
+
+    The id is stamped *after* ``seal()`` returns, so a raising
+    ``seal()`` leaves no half-stamped state.
     """
     adapter.seal()
     return generate_checkpoint_id(), adapter.db_bytes()
