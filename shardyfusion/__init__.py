@@ -67,6 +67,9 @@ from .errors import (
     ShardWriteError,
     ShardyfusionError,
 )
+from .local_slatedb_adapter import (
+    LocalSlateDbFactory,
+)
 from .logging import (
     FailureSeverity,
     JsonFormatter,
@@ -180,6 +183,7 @@ __all__ = [
     "KeyEncoding",
     "KeyValueWriteConfig",
     "KvWriteRateLimitConfig",
+    "LocalSlateDbFactory",
     "LogContext",
     "ManifestArtifact",
     "ManifestBuildError",
