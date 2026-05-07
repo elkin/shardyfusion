@@ -65,6 +65,7 @@ class _BaseShardedReader:
             self._reader_factory = SlateDbReaderFactory(
                 env_file=slate_env_file,
                 credential_provider=credential_provider,
+                s3_connection_options=s3_connection_options,
             )
 
         if manifest_store is not None:

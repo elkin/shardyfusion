@@ -191,10 +191,15 @@ class AsyncSlateDbReaderFactory:
     ``checkpoint_id`` is accepted for protocol symmetry but ignored —
     uniffi 0.12 does not expose checkpoint pinning, and shardyfusion's
     serial publish + S3 strong consistency make it unnecessary.
+
+    ``s3_connection_options`` mirrors the sync factory and translates
+    transport overrides into ``AWS_*`` env vars during
+    ``ObjectStore.resolve()``; required for path-style stores.
     """
 
     env_file: str | None = None
     credential_provider: CredentialProvider | None = None
+    s3_connection_options: S3ConnectionOptions | None = None
 
     async def __call__(
         self,
@@ -212,7 +217,11 @@ class AsyncSlateDbReaderFactory:
                 "slatedb package is required for reading shards"
             ) from exc
 
-        with resolve_env_file(self.env_file, self.credential_provider) as env_path:
+        with resolve_env_file(
+            self.env_file,
+            self.credential_provider,
+            connection_options=self.s3_connection_options,
+        ) as env_path:
             # ``apply_env_file`` holds a process-wide ``threading.Lock`` to
             # serialise ``os.environ`` mutation across threads. Releasing
             # that lock before the ``await`` is critical: holding a sync
@@ -347,6 +356,7 @@ class AsyncShardedReader:
             self._reader_factory = AsyncSlateDbReaderFactory(
                 env_file=slate_env_file,
                 credential_provider=credential_provider,
+                s3_connection_options=s3_connection_options,
             )
 
     @classmethod
