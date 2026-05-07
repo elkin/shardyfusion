@@ -18,7 +18,9 @@ from shardyfusion.credentials import (
     apply_env_file,
     materialize_env_file,
     remove_env_file,
+    resolve_env_file,
 )
+from shardyfusion.type_defs import S3ConnectionOptions
 
 
 class TestS3Credentials:
@@ -174,6 +176,156 @@ class TestMaterializeEnvFile:
 
     def test_remove_nonexistent_is_safe(self):
         remove_env_file("/tmp/nonexistent_shardyfusion_test_file")
+
+
+class TestMaterializeEnvFileWithConnectionOptions:
+    """``connection_options`` translates into the ``AWS_*`` env vars
+    honored by Apache ``object_store`` so the SlateDB uniffi reader can
+    talk path-style S3 (Garage / MinIO / Ceph) and non-TLS endpoints
+    that the crate would otherwise reject."""
+
+    def _read(self, path: str) -> str:
+        try:
+            with open(path) as fh:
+                return fh.read()
+        finally:
+            remove_env_file(path)
+
+    def test_no_options_is_regression_compatible(self) -> None:
+        """``connection_options=None`` keeps the legacy creds-only payload."""
+        creds = S3Credentials(access_key_id="AKIA", secret_access_key="secret")
+        content = self._read(materialize_env_file(creds, connection_options=None))
+        assert "AWS_ACCESS_KEY_ID=AKIA" in content
+        assert "AWS_SECRET_ACCESS_KEY=secret" in content
+        for unexpected in (
+            "AWS_ENDPOINT_URL",
+            "AWS_REGION",
+            "AWS_ALLOW_HTTP",
+            "AWS_VIRTUAL_HOSTED_STYLE_REQUEST",
+        ):
+            assert unexpected not in content
+
+    def test_addressing_path_emits_virtual_hosted_false(self) -> None:
+        opts: S3ConnectionOptions = {"addressing_style": "path"}
+        content = self._read(
+            materialize_env_file(S3Credentials(), connection_options=opts)
+        )
+        assert "AWS_VIRTUAL_HOSTED_STYLE_REQUEST=false" in content
+
+    def test_addressing_virtual_emits_virtual_hosted_true(self) -> None:
+        opts: S3ConnectionOptions = {"addressing_style": "virtual"}
+        content = self._read(
+            materialize_env_file(S3Credentials(), connection_options=opts)
+        )
+        assert "AWS_VIRTUAL_HOSTED_STYLE_REQUEST=true" in content
+
+    def test_addressing_auto_omits_virtual_hosted_var(self) -> None:
+        """``"auto"`` is a valid TypedDict value but the crate has no
+        knob for it — emit nothing and let the default apply."""
+        opts: S3ConnectionOptions = {"addressing_style": "auto"}
+        content = self._read(
+            materialize_env_file(S3Credentials(), connection_options=opts)
+        )
+        assert "AWS_VIRTUAL_HOSTED_STYLE_REQUEST" not in content
+
+    def test_http_endpoint_emits_allow_http(self) -> None:
+        opts: S3ConnectionOptions = {"endpoint_url": "http://garage:3900"}
+        content = self._read(
+            materialize_env_file(S3Credentials(), connection_options=opts)
+        )
+        assert "AWS_ENDPOINT_URL=http://garage:3900" in content
+        assert "AWS_ALLOW_HTTP=true" in content
+
+    def test_https_endpoint_omits_allow_http(self) -> None:
+        opts: S3ConnectionOptions = {"endpoint_url": "https://s3.amazonaws.com"}
+        content = self._read(
+            materialize_env_file(S3Credentials(), connection_options=opts)
+        )
+        assert "AWS_ENDPOINT_URL=https://s3.amazonaws.com" in content
+        assert "AWS_ALLOW_HTTP" not in content
+
+    def test_region_emits_aws_region(self) -> None:
+        opts: S3ConnectionOptions = {"region_name": "garage"}
+        content = self._read(
+            materialize_env_file(S3Credentials(), connection_options=opts)
+        )
+        assert "AWS_REGION=garage" in content
+
+    def test_full_garage_recipe(self) -> None:
+        """Realistic Garage-style options produce the full env-var set."""
+        creds = S3Credentials(access_key_id="AKIA", secret_access_key="secret")
+        opts: S3ConnectionOptions = {
+            "endpoint_url": "http://garage:3900",
+            "region_name": "garage",
+            "addressing_style": "path",
+        }
+        content = self._read(materialize_env_file(creds, connection_options=opts))
+        for expected in (
+            "AWS_ACCESS_KEY_ID=AKIA",
+            "AWS_SECRET_ACCESS_KEY=secret",
+            "AWS_ENDPOINT_URL=http://garage:3900",
+            "AWS_ALLOW_HTTP=true",
+            "AWS_REGION=garage",
+            "AWS_VIRTUAL_HOSTED_STYLE_REQUEST=false",
+        ):
+            assert expected in content, f"missing {expected!r}"
+
+    def test_options_only_no_credentials(self) -> None:
+        """``connection_options`` alone (no creds) still materializes a file."""
+        opts: S3ConnectionOptions = {"addressing_style": "path"}
+        content = self._read(
+            materialize_env_file(S3Credentials(), connection_options=opts)
+        )
+        assert "AWS_VIRTUAL_HOSTED_STYLE_REQUEST=false" in content
+        # No credentials supplied → no AWS_*KEY* lines.
+        assert "AWS_ACCESS_KEY_ID" not in content
+        assert "AWS_SECRET_ACCESS_KEY" not in content
+
+
+class TestResolveEnvFileWithConnectionOptions:
+    """``resolve_env_file`` threads connection options into the dotenv
+    materialised on demand for ``SlateDbReaderFactory``."""
+
+    def test_options_only_materializes_file_with_var(self, tmp_path: Path) -> None:
+        opts: S3ConnectionOptions = {"addressing_style": "path"}
+        materialized: str | None = None
+        with resolve_env_file(
+            env_file=None,
+            credential_provider=None,
+            connection_options=opts,
+        ) as path:
+            assert path is not None
+            materialized = path
+            content = open(path).read()
+            assert "AWS_VIRTUAL_HOSTED_STYLE_REQUEST=false" in content
+        # File cleaned up on context exit.
+        assert materialized is not None
+        assert not os.path.exists(materialized)
+
+    def test_explicit_env_file_takes_precedence_over_options(
+        self, tmp_path: Path
+    ) -> None:
+        """An explicit ``env_file`` is the source of truth — options are
+        ignored to avoid silently overwriting the user's payload."""
+        explicit = tmp_path / "user.env"
+        explicit.write_text("AWS_ENDPOINT_URL=http://user-supplied/\n")
+        opts: S3ConnectionOptions = {"endpoint_url": "http://from-options/"}
+        with resolve_env_file(
+            env_file=str(explicit),
+            credential_provider=None,
+            connection_options=opts,
+        ) as path:
+            assert path == str(explicit)
+            assert "user-supplied" in open(path).read()
+            assert "from-options" not in open(path).read()
+
+    def test_no_inputs_yields_none(self) -> None:
+        with resolve_env_file(
+            env_file=None,
+            credential_provider=None,
+            connection_options=None,
+        ) as path:
+            assert path is None
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,8 @@ import threading
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from shardyfusion.type_defs import S3ConnectionOptions
+
 _logger = logging.getLogger(__name__)
 
 # Serialises ``_AppliedEnvContext`` bodies across threads in the same
@@ -97,12 +99,31 @@ class EnvCredentialProvider:
         )
 
 
-def materialize_env_file(creds: S3Credentials) -> str:
+def materialize_env_file(
+    creds: S3Credentials,
+    *,
+    connection_options: S3ConnectionOptions | None = None,
+) -> str:
     """Write credentials to a temporary ``.env`` file for SlateDB's object-store.
 
     Returns the file path.  The file is created with ``0o600`` permissions
     so only the current user can read it.  Caller is responsible for
     calling :func:`remove_env_file` after use.
+
+    When *connection_options* is supplied, transport overrides are translated
+    into the standard ``AWS_*`` env vars honored by the Apache ``object_store``
+    crate (the Rust dependency wrapped by ``slatedb.uniffi``):
+
+    * ``endpoint_url``       → ``AWS_ENDPOINT_URL`` (and ``AWS_ALLOW_HTTP=true``
+      when the endpoint is plain ``http://``, which the crate otherwise rejects).
+    * ``region_name``        → ``AWS_REGION``.
+    * ``addressing_style``   → ``AWS_VIRTUAL_HOSTED_STYLE_REQUEST`` (``"path"``
+      → ``false``, ``"virtual"`` → ``true``).  Required for path-style stores
+      such as Garage / MinIO / Ceph that lack wildcard DNS.
+
+    Identity (creds) and transport (options) are kept on separate parameters
+    so callers can pass connection options without supplying credentials and
+    vice-versa; both are merged into the same dotenv.
     """
     lines: list[str] = []
     if creds.access_key_id:
@@ -111,6 +132,21 @@ def materialize_env_file(creds: S3Credentials) -> str:
         lines.append(f"AWS_SECRET_ACCESS_KEY={creds.secret_access_key}")
     if creds.session_token:
         lines.append(f"AWS_SESSION_TOKEN={creds.session_token}")
+
+    if connection_options is not None:
+        endpoint = connection_options.get("endpoint_url")
+        if endpoint:
+            lines.append(f"AWS_ENDPOINT_URL={endpoint}")
+            if endpoint.startswith("http://"):
+                lines.append("AWS_ALLOW_HTTP=true")
+        region = connection_options.get("region_name")
+        if region:
+            lines.append(f"AWS_REGION={region}")
+        addressing = connection_options.get("addressing_style")
+        if addressing == "path":
+            lines.append("AWS_VIRTUAL_HOSTED_STYLE_REQUEST=false")
+        elif addressing == "virtual":
+            lines.append("AWS_VIRTUAL_HOSTED_STYLE_REQUEST=true")
 
     fd, path = tempfile.mkstemp(prefix="shardyfusion_creds_", suffix=".env")
     try:
@@ -132,29 +168,47 @@ def remove_env_file(path: str) -> None:
 class _EnvFileContext:
     """Context manager that resolves an env file path for SlateDB.
 
-    If *env_file* is already set, yields it unchanged (explicit takes precedence).
-    Otherwise, if *credential_provider* is set, materializes a temp env file,
-    yields its path, and cleans it up on exit.  Yields ``None`` when neither
-    is provided.
+    If *env_file* is already set, yields it unchanged (explicit takes
+    precedence; *connection_options* is ignored in that case — the
+    caller's file is the source of truth).  Otherwise, if
+    *credential_provider* or *connection_options* is set, materializes
+    a temp env file, yields its path, and cleans it up on exit.  Yields
+    ``None`` when nothing is provided.
     """
 
-    __slots__ = ("_env_file", "_credential_provider", "_materialized")
+    __slots__ = (
+        "_env_file",
+        "_credential_provider",
+        "_connection_options",
+        "_materialized",
+    )
 
     def __init__(
         self,
         env_file: str | None,
         credential_provider: CredentialProvider | None,
+        connection_options: S3ConnectionOptions | None = None,
     ) -> None:
         self._env_file = env_file
         self._credential_provider = credential_provider
+        self._connection_options = connection_options
         self._materialized: str | None = None
 
     def __enter__(self) -> str | None:
         if self._env_file is not None:
             return self._env_file
-        if self._credential_provider is not None:
-            self._materialized = materialize_env_file(
+        if (
+            self._credential_provider is not None
+            or self._connection_options is not None
+        ):
+            creds = (
                 self._credential_provider.resolve()
+                if self._credential_provider is not None
+                else S3Credentials()
+            )
+            self._materialized = materialize_env_file(
+                creds,
+                connection_options=self._connection_options,
             )
             return self._materialized
         return None
@@ -168,9 +222,10 @@ class _EnvFileContext:
 def resolve_env_file(
     env_file: str | None,
     credential_provider: CredentialProvider | None,
+    connection_options: S3ConnectionOptions | None = None,
 ) -> _EnvFileContext:
     """Create a context manager that resolves an env file for SlateDB."""
-    return _EnvFileContext(env_file, credential_provider)
+    return _EnvFileContext(env_file, credential_provider, connection_options)
 
 
 def _parse_dotenv(text: str) -> dict[str, str]:
