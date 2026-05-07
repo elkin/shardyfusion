@@ -151,6 +151,7 @@ Strategies: `CLUSTER` (k-means, default), `LSH`, `EXPLICIT` (uses `VectorRecord.
 | Factory | Module | Notes |
 |---|---|---|
 | `SlateDbFactory()` | `shardyfusion.slatedb_adapter` | Default. In top-level `__all__`. |
+| `LocalSlateDbFactory(s3_connection_options=None, credential_provider=None)` | `shardyfusion.local_slatedb_adapter` | Local-first: writes to ``file://``, uploads to S3 on close. In top-level `__all__`. |
 | `SqliteFactory(page_size=4096, cache_size_pages=-2000, journal_mode="OFF", synchronous="OFF", temp_store="MEMORY", mmap_size=0)` | `shardyfusion.sqlite_adapter` | Not re-exported. |
 | `SqliteVecFactory(vector_spec, ...)` | `shardyfusion.sqlite_vec_adapter` | Unified KV+vector single backend. |
 | `LanceDbFactory()` | `shardyfusion.vector.adapters.lancedb_adapter` | Vector only. |

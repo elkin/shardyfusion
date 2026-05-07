@@ -32,11 +32,13 @@ This page enumerates the **public** symbols (those in `shardyfusion.__all__`) an
 
 ### Adapters (top-level re-export)
 
-- `SlateDbFactory` — only adapter factory in public `__all__`.
+- `SlateDbFactory` — only adapter factory in public `__all__`.  ``LocalSlateDbFactory`` is also re-exported at the top level.
   - SQLite, sqlite-vec, composite factories must be imported from their modules:
     - `from shardyfusion.sqlite_adapter import SqliteFactory, SqliteReaderFactory, SqliteRangeReaderFactory, AsyncSqliteReaderFactory`
     - `from shardyfusion.sqlite_vec_adapter import SqliteVecFactory`
     - `from shardyfusion.composite_adapter import CompositeFactory`
+    - `from shardyfusion.local_slatedb_adapter import LocalSlateDbFactory` (also top-level)
+  - `from shardyfusion.slatedb_adapter import SlateDbBridgeTimeouts` (per-operation bridge timeouts for both SlateDB adapters)
 - `SlateDbSettings` — typed dataclass for slatedb 0.12 settings (`Settings.set(dotted_key, json_literal)`); includes a `raw_overrides: dict[str, str]` escape hatch for keys not yet promoted to typed fields. Re-exported at the top level. Legacy JSON-dict configs are still accepted but emit `DeprecationWarning`.
 
 #### Adapter Protocol changes (slatedb 0.12)

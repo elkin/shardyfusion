@@ -194,6 +194,24 @@ Key `CelShardedWriteConfig` fields (in addition to the common fields above):
 - Streaming-safe: generators work; dataset does not need to fit in memory.
 - Append-only LSM: each batch is written incrementally; `seal()` flushes the memtable and persists the shard.
 
+### SlateDB (local)
+
+- Writes to a local ``file://`` object store; bulk uploads all shard files to S3 on ``close()``.
+- Per-batch network I/O is eliminated — write throughput is decoupled from S3 latency.
+- The reader side is unchanged: use the same ``SlateDbReaderFactory``.
+
+Swap ``adapter_factory`` to use the local-first adapter:
+
+```python
+from shardyfusion import LocalSlateDbFactory
+
+config = HashShardedWriteConfig(
+    num_dbs=4,
+    s3_prefix="s3://my-bucket/snapshots/users-local-slate",
+    adapter_factory=LocalSlateDbFactory(),
+)
+```
+
 ### SQLite
 
 - Each shard is a complete `.db` file; uploaded as one object per shard.

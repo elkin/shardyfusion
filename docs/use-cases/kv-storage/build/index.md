@@ -16,6 +16,7 @@ All writers share the same core behavior: deterministic routing, attempt-isolate
 | Backend | Read-side access | When to use |
 |---|---|---|
 | **SlateDB** (default) | Point-key `get` / `multi_get` | Lowest friction, LSM characteristics, default for most users |
+| **SlateDB (local)** | Point-key `get` / `multi_get` | Writes to local disk, bulk uploads to S3 — decouples write throughput from S3 latency |
 | **SQLite** | Point-key + SQL queries + range-read VFS | Need SQL, single-file shards, or remote page-level access |
 
 Backend selection is a single config swap (`adapter_factory=SqliteFactory()` instead of default). Everything else — routing, publishing, reading — works identically.

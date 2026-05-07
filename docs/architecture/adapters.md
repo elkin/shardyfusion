@@ -22,6 +22,7 @@ Of the built-in factories, only `SlateDbFactory` is in the public `__all__` (`sh
 | Backend | Factory | Adapter | Module |
 |---|---|---|---|
 | SlateDB | `SlateDbFactory` | `DefaultSlateDbAdapter` | `slatedb_adapter.py:58`, `:78` |
+| SlateDB (local) | `LocalSlateDbFactory` | `LocalSlateDbAdapter` | `local_slatedb_adapter.py:73`, `:111` |
 | SQLite | `SqliteFactory` | `SqliteAdapter` | `sqlite_adapter.py:59`, `:78` |
 | sqlite-vec (KV+vector) | `SqliteVecFactory` | `SqliteVecAdapter` | `sqlite_vec_adapter.py:111`, `:139` |
 | Composite (KV + vector) | `CompositeFactory` | `CompositeAdapter` | `composite_adapter.py:72`, `:111` |
@@ -69,6 +70,7 @@ LanceDB supports `cosine`, `l2`, and `dot_product` distances; `dot_product` is m
 | You want | Pick |
 |---|---|
 | Just KV, default | SlateDB |
+| Just KV, local writes then S3 upload | SlateDB (local) |
 | Just KV, want SQL queries on each shard | SQLite (download) |
 | Just KV, large shards, sparse access | SQLite (range-read) |
 | KV + vector, single file per shard | sqlite-vec |

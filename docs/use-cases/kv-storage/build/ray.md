@@ -145,6 +145,11 @@ The writer also adds a temporary `_shard_id` column for shard routing. It is dro
 
 - Incremental writes; `seal()` flushes the memtable and persists the shard.
 
+### SlateDB (local)
+
+- Writes to a local ``file://`` object store per task; bulk uploads to S3 on ``close()``.
+- Same reader (``SlateDbReaderFactory``); swap ``adapter_factory=LocalSlateDbFactory()``.
+
 ### SQLite
 
 - Complete `.db` file per shard; one PUT per shard.
