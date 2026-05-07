@@ -97,7 +97,20 @@ def _sqlite_backend(service: LocalS3Service) -> BackendFixture:
 def backend(
     request: pytest.FixtureRequest, garage_s3_service: LocalS3Service, tmp_path: Path
 ) -> BackendFixture:
-    """Yield a ``BackendFixture`` for each parameterised storage backend."""
+    """Yield a ``BackendFixture`` for each parameterised storage backend.
+
+    A "local_slatedb" variant (writer uploads to Garage via
+    :class:`~shardyfusion.local_slatedb_adapter.LocalSlateDbFactory`,
+    reader opens from Garage via :class:`SlateDbReaderFactory`) was
+    prototyped but the read side hangs against Garage:
+    ``slatedb.uniffi.ObjectStore.resolve(url)`` has no path-style
+    override and the Rust ``object_store`` crate defaults to
+    virtual-hosted-style, which can't reach the compose-internal
+    ``garage:3900`` endpoint.  ``LocalSlateDbAdapter``'s upload path is
+    covered by ``tests/integration/backend/slatedb/test_local_slatedb_s3.py``;
+    full Garage round-trip support for the SlateDB reader needs upstream
+    work in the SlateDB bindings before the e2e variant can be enabled.
+    """
     if request.param == "slatedb":
         return _slatedb_backend(tmp_path)
     return _sqlite_backend(garage_s3_service)
