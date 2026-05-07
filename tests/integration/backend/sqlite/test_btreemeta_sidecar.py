@@ -108,13 +108,14 @@ class TestBtreemetaSidecarRoundTrip:
         with pytest.raises(Exception):  # noqa: B017 — obstore not-found surface
             backend.get(f"{db_url}/shard.btreemeta")
 
-    def test_sidecar_object_count_via_listing(
+    def test_default_factory_writes_both_objects(
         self, tmp_path: Path, s3_prefix: str
     ) -> None:
-        """Defensive check: list bucket prefix and confirm exactly the two
-        expected keys are present (shard.db, shard.btreemeta)."""
+        """End-to-end: a default ``SqliteFactory`` write produces both
+        ``shard.db`` and ``shard.btreemeta`` at the expected S3 keys, and
+        the sidecar starts with the v3 magic header."""
         pytest.importorskip("apsw")
-        db_url = f"{s3_prefix}/shards/run_id=listing/db=00000/attempt=00"
+        db_url = f"{s3_prefix}/shards/run_id=both/db=00000/attempt=00"
         write_dir = tmp_path / "write"
 
         with SqliteFactory()(db_url=db_url, local_dir=write_dir) as adapter:
@@ -122,10 +123,9 @@ class TestBtreemetaSidecarRoundTrip:
             adapter.checkpoint()
 
         backend = _make_backend(db_url)
-        # Confirm both keys exist.
+        # Both keys must be fetchable; backend.get raises on missing keys.
         sidecar = backend.get(f"{db_url}/shard.btreemeta")
         db = backend.get(f"{db_url}/shard.db")
         assert sidecar
         assert db
-        # The sidecar header sanity check.
         assert sidecar[:8] == _BTREEMETA_MAGIC

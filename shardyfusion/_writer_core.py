@@ -514,11 +514,19 @@ def inject_sqlite_btreemeta_manifest_field(
     page_size = _detect_btreemeta_page_size(factory)
     if page_size is None:
         return
+    # Format version comes from the writer of the artifact (sqlite_adapter)
+    # so the manifest stays in lock-step with whatever format extract_
+    # btree_metadata actually emits.
+    from shardyfusion.sqlite_adapter import (
+        _BTREEMETA_FILENAME,
+        _BTREEMETA_FORMAT_VERSION,
+    )
+
     custom_fields = dict(config.manifest.custom_manifest_fields)
     custom_fields["sqlite_btreemeta"] = {
-        "format_version": 3,
+        "format_version": _BTREEMETA_FORMAT_VERSION,
         "page_size": page_size,
-        "filename": "shard.btreemeta",
+        "filename": _BTREEMETA_FILENAME,
         "codec": "zstd",
     }
     config.manifest.custom_manifest_fields = custom_fields

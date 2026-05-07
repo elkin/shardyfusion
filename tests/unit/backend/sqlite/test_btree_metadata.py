@@ -107,8 +107,8 @@ class TestExtractBtreeMetadata:
             assert slab == raw[(pgno - 1) * page_size : pgno * page_size]
 
     def test_format_compressed_smaller_than_uncompressed(self, tmp_path: Path) -> None:
-        # The sidecar body is gzip-compressed (format v2). Btree pages
-        # compress ~10× in practice — a sanity check that the on-the-wire
+        # The sidecar body is zstd-compressed (format v3). Btree pages
+        # compress ~12× in practice — a sanity check that the on-the-wire
         # blob is meaningfully smaller than what an uncompressed body
         # would be, and that the magic + version header is still
         # readable cheaply without decompressing.
@@ -116,13 +116,15 @@ class TestExtractBtreeMetadata:
         _build_kv_db(db_path, rows=10_000)
         blob = extract_btree_metadata(db_path)
         _, page_size, n, _, _ = _parse_sidecar(blob)
-        uncompressed_size = 20 + n * (4 + page_size)
+        # Wire size if uncompressed: magic(8) + version(4) + body where body
+        # is page_size(4) + n(4) + n*(pageno(4) + offset(4)) + n*page_size.
+        uncompressed_size = 8 + 4 + 8 + n * (8 + page_size)
         assert len(blob) < uncompressed_size, (
             f"compressed sidecar should be smaller than uncompressed "
             f"({len(blob)} vs {uncompressed_size})"
         )
         # Magic and version are not compressed; reader can sniff them
-        # without invoking gzip.
+        # without invoking zstd.
         assert blob[:8] == _BTREEMETA_MAGIC
 
 
