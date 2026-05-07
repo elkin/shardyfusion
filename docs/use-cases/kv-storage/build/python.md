@@ -212,6 +212,31 @@ config = HashShardedWriteConfig(
 )
 ```
 
+For path-style S3 stores (Garage, MinIO, Ceph) where the default
+virtual-hosted-style addressing won't reach the endpoint, both the
+writer factory and the reader factory accept ``s3_connection_options``:
+
+```python
+from shardyfusion import LocalSlateDbFactory
+from shardyfusion.reader import SlateDbReaderFactory
+from shardyfusion.type_defs import S3ConnectionOptions
+
+opts = S3ConnectionOptions(
+    endpoint_url="http://garage:3900",
+    region_name="garage",
+    addressing_style="path",
+)
+
+writer_factory = LocalSlateDbFactory(s3_connection_options=opts)
+reader_factory = SlateDbReaderFactory(s3_connection_options=opts)
+```
+
+The reader translates these into the ``AWS_ENDPOINT_URL`` /
+``AWS_VIRTUAL_HOSTED_STYLE_REQUEST`` / ``AWS_ALLOW_HTTP`` env vars that
+the underlying ``object_store`` crate consumes during
+``ObjectStore.resolve()``; the env vars are scoped to the resolve call
+and restored afterwards.
+
 ### SQLite
 
 - Each shard is a complete `.db` file; uploaded as one object per shard.

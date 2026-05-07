@@ -29,6 +29,7 @@ from shardyfusion.sharding_types import (
 )
 from shardyfusion.type_defs import (
     Manifest,
+    S3ConnectionOptions,
     ShardReader,
 )
 
@@ -210,10 +211,18 @@ class SlateDbReaderFactory:
     bridge fetches per async hop — see :class:`_SlateDbReaderHandle`.
     Must be positive; ``0`` would silently produce empty scans because
     the per-chunk drain loop runs ``range(chunk_size)`` rows at a time.
+
+    ``s3_connection_options`` mirrors the upload-side parameter on
+    :class:`~shardyfusion.local_slatedb_adapter.LocalSlateDbFactory`
+    and lets callers point the uniffi ``ObjectStore`` at non-AWS,
+    path-style stores (Garage / MinIO / Ceph) by translating the
+    options into the standard ``AWS_*`` env vars honored by Apache
+    ``object_store`` during ``ObjectStore.resolve()``.
     """
 
     env_file: str | None = None
     credential_provider: CredentialProvider | None = None
+    s3_connection_options: S3ConnectionOptions | None = None
     iterator_chunk_size: int = 1024
 
     def __post_init__(self) -> None:
@@ -238,7 +247,11 @@ class SlateDbReaderFactory:
                 "slatedb package is required for reading shards"
             ) from exc
 
-        with resolve_env_file(self.env_file, self.credential_provider) as env_path:
+        with resolve_env_file(
+            self.env_file,
+            self.credential_provider,
+            connection_options=self.s3_connection_options,
+        ) as env_path:
             with apply_env_file(env_path):
                 store = object_store_cls.resolve(db_url)
                 builder = db_reader_builder_cls("", store)
@@ -278,7 +291,11 @@ class SlateDbReaderFactory:
         # ObjectStore.resolve and DbReaderBuilder construction are sync
         # \u2014 do them up front so the bridge hop only carries the async
         # build() coroutines. The env file context covers all of them.
-        with resolve_env_file(self.env_file, self.credential_provider) as env_path:
+        with resolve_env_file(
+            self.env_file,
+            self.credential_provider,
+            connection_options=self.s3_connection_options,
+        ) as env_path:
             with apply_env_file(env_path):
                 builders = []
                 for db_url, _manifest in specs:

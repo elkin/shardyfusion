@@ -237,6 +237,106 @@ def test_slate_db_reader_factory_uses_uniffi_db_reader_builder(
     assert steps[-1] == "build"
 
 
+def test_slate_db_reader_factory_applies_path_style_env_for_garage(
+    monkeypatch,
+) -> None:
+    """``s3_connection_options`` is translated into the ``AWS_*`` env
+    vars during ``ObjectStore.resolve()`` so the uniffi reader can talk
+    to path-style stores like Garage that lack wildcard DNS.
+
+    The crate reads env vars at resolve time; we capture ``os.environ``
+    *inside* the stub ``resolve`` to assert the vars are present at the
+    exact moment SlateDB consumes them — and that they're cleaned up
+    afterwards (the env file context restores the prior environment)."""
+    import os
+
+    from shardyfusion.credentials import StaticCredentialProvider
+    from shardyfusion.type_defs import S3ConnectionOptions
+
+    captured: dict[str, str | None] = {}
+
+    class _FakeBuiltReader:
+        async def get(self, key: bytes) -> bytes | None:
+            return None
+
+    class _FakeBuilder:
+        def __init__(self, path: str, store: object) -> None:
+            pass
+
+        async def build(self) -> _FakeBuiltReader:
+            return _FakeBuiltReader()
+
+    class _FakeObjectStore:
+        @staticmethod
+        def resolve(url: str) -> str:
+            for key in (
+                "AWS_ENDPOINT_URL",
+                "AWS_ALLOW_HTTP",
+                "AWS_REGION",
+                "AWS_VIRTUAL_HOSTED_STYLE_REQUEST",
+                "AWS_ACCESS_KEY_ID",
+            ):
+                captured[key] = os.environ.get(key)
+            return f"resolved::{url}"
+
+    fake_uniffi = types.ModuleType("slatedb.uniffi")
+    fake_uniffi.DbReaderBuilder = _FakeBuilder
+    fake_uniffi.DbReader = _FakeBuiltReader
+    fake_uniffi.ObjectStore = _FakeObjectStore
+    fake_slatedb = types.ModuleType("slatedb")
+    fake_slatedb.uniffi = fake_uniffi
+    monkeypatch.setitem(sys.modules, "slatedb", fake_slatedb)
+    monkeypatch.setitem(sys.modules, "slatedb.uniffi", fake_uniffi)
+
+    # Drop the candidate env vars so we can detect them being injected
+    # by the factory rather than inheriting them from a polluted shell.
+    for key in (
+        "AWS_ENDPOINT_URL",
+        "AWS_ALLOW_HTTP",
+        "AWS_REGION",
+        "AWS_VIRTUAL_HOSTED_STYLE_REQUEST",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    opts: S3ConnectionOptions = {
+        "endpoint_url": "http://garage:3900",
+        "region_name": "garage",
+        "addressing_style": "path",
+    }
+    factory = SlateDbReaderFactory(
+        credential_provider=StaticCredentialProvider(
+            access_key_id="AKIA",
+            secret_access_key="secret",
+        ),
+        s3_connection_options=opts,
+    )
+    factory(
+        db_url="s3://bucket/db",
+        local_dir=Path("/tmp/local"),
+        checkpoint_id=None,
+        manifest=None,  # type: ignore[arg-type]
+    )
+
+    # Inside the stubbed ObjectStore.resolve(), every relevant env var
+    # was set from the materialised dotenv.
+    assert captured["AWS_ENDPOINT_URL"] == "http://garage:3900"
+    assert captured["AWS_ALLOW_HTTP"] == "true"
+    assert captured["AWS_REGION"] == "garage"
+    assert captured["AWS_VIRTUAL_HOSTED_STYLE_REQUEST"] == "false"
+    assert captured["AWS_ACCESS_KEY_ID"] == "AKIA"
+    # And after the factory returns, the env file context restored the
+    # prior (absent) values — no leakage to the rest of the process.
+    for key in (
+        "AWS_ENDPOINT_URL",
+        "AWS_VIRTUAL_HOSTED_STYLE_REQUEST",
+        "AWS_REGION",
+        "AWS_ALLOW_HTTP",
+    ):
+        assert os.environ.get(key) is None, f"{key} leaked past env file context"
+
+
 class _NullManifestStore:
     """Always returns None for CURRENT (simulates missing pointer)."""
 
