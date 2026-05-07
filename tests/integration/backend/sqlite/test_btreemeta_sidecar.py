@@ -68,7 +68,7 @@ class TestBtreemetaSidecarRoundTrip:
             # ~10k rows so the kv btree certainly has at least one interior level.
             pairs = [(i.to_bytes(8, "big"), f"v{i}".encode()) for i in range(10_000)]
             adapter.write_batch(pairs)
-            adapter.checkpoint()
+            adapter.seal()
 
         backend = _make_backend(db_url)
         sidecar_key = f"{db_url}/shard.btreemeta"
@@ -96,7 +96,7 @@ class TestBtreemetaSidecarRoundTrip:
             db_url=db_url, local_dir=write_dir, emit_btree_metadata=False
         ) as adapter:
             adapter.write_batch([(b"k", b"v")])
-            adapter.checkpoint()
+            adapter.seal()
 
         backend = _make_backend(db_url)
         # Main db must exist.
@@ -120,7 +120,7 @@ class TestBtreemetaSidecarRoundTrip:
 
         with SqliteFactory()(db_url=db_url, local_dir=write_dir) as adapter:
             adapter.write_batch([(b"k", b"v")])
-            adapter.checkpoint()
+            adapter.seal()
 
         backend = _make_backend(db_url)
         # Both keys must be fetchable; backend.get raises on missing keys.

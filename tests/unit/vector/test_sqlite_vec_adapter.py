@@ -785,7 +785,7 @@ class TestBtreemetaSidecarOnSqliteVecAdapter:
                 emit_btree_metadata=False,
             ) as adapter:
                 adapter.write_batch([(b"k", b"v")])
-                adapter.checkpoint()
+                adapter.seal()
         keys = self._put_keys(instance)
         assert len(keys) == 1
         assert keys[0].endswith("/shard.db")
@@ -803,7 +803,7 @@ class TestBtreemetaSidecarOnSqliteVecAdapter:
                 vector_spec=MagicMock(dim=4),
             ) as adapter:
                 adapter.write_batch([(b"k", b"v")])
-                adapter.checkpoint()
+                adapter.seal()
         keys = self._put_keys(instance)
         assert len(keys) == 2
         assert keys[0].endswith("/shard.btreemeta")
@@ -827,7 +827,7 @@ class TestBtreemetaSidecarOnSqliteVecAdapter:
                     vector_spec=MagicMock(dim=4),
                 ) as adapter:
                     adapter.write_batch([(b"k", b"v")])
-                    adapter.checkpoint()
+                    adapter.seal()
         keys = self._put_keys(instance)
         assert len(keys) == 1
         assert keys[0].endswith("/shard.db")

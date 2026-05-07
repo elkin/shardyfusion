@@ -323,7 +323,7 @@ class TestBtreemetaSidecarOnSqliteAdapter:
             emit_btree_metadata=False,
         ) as adapter:
             adapter.write_batch([(b"k", b"v")])
-            adapter.checkpoint()
+            adapter.seal()
 
         keys = self._put_keys(mock_backend)
         assert len(keys) == 1
@@ -338,7 +338,7 @@ class TestBtreemetaSidecarOnSqliteAdapter:
         local_dir = tmp_path / "shard"
         with SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir) as adapter:
             adapter.write_batch([(b"k", b"v")])
-            adapter.checkpoint()
+            adapter.seal()
 
         keys = self._put_keys(mock_backend)
         assert len(keys) == 2, f"expected sidecar + db; got {keys!r}"
@@ -360,7 +360,7 @@ class TestBtreemetaSidecarOnSqliteAdapter:
             emit_btree_metadata=True,
         ) as adapter:
             adapter.write_batch([(b"k", b"v")])
-            adapter.checkpoint()
+            adapter.seal()
 
         keys = self._put_keys(mock_backend)
         assert any(k.endswith("/shard.btreemeta") for k in keys)
@@ -380,7 +380,7 @@ class TestBtreemetaSidecarOnSqliteAdapter:
                 db_url="s3://test/shard", local_dir=local_dir
             ) as adapter:
                 adapter.write_batch([(b"k", b"v")])
-                adapter.checkpoint()
+                adapter.seal()
 
         # Sidecar skipped silently; main db still uploaded.
         keys = self._put_keys(mock_backend)
@@ -399,7 +399,7 @@ class TestBtreemetaSidecarOnSqliteAdapter:
                 db_url="s3://test/shard", local_dir=local_dir
             ) as adapter:
                 adapter.write_batch([(b"k", b"v")])
-                adapter.checkpoint()
+                adapter.seal()
 
         keys = self._put_keys(mock_backend)
         assert len(keys) == 1
@@ -428,7 +428,7 @@ class TestBtreemetaSidecarOnSqliteAdapter:
                 db_url="s3://test/shard", local_dir=local_dir
             ) as adapter:
                 adapter.write_batch([(b"k", b"v")])
-                adapter.checkpoint()
+                adapter.seal()
 
             assert any(c.endswith("/shard.btreemeta") for c in calls)
             assert any(c.endswith("/shard.db") for c in calls)
@@ -440,7 +440,7 @@ class TestBtreemetaSidecarOnSqliteAdapter:
         local_dir = tmp_path / "shard"
         with SqliteAdapter(db_url="s3://test/shard", local_dir=local_dir) as adapter:
             adapter.write_batch([(b"k", b"v")])
-            adapter.checkpoint()
+            adapter.seal()
 
         keys = self._put_keys(mock_backend)
         # Sidecar must precede db (defensive ordering for direct-S3 consumers).

@@ -238,7 +238,7 @@ class TestPageSelectionUnified:
                 ids = np.array([1, 2, 3], dtype=np.int64)
                 vecs = np.random.rand(3, 8).astype(np.float32)
                 adapter.write_vector_batch(ids, vecs)
-                adapter.checkpoint()
+                adapter.seal()
 
         db_path = local_dir / "shard.db"
         assert db_path.exists()
