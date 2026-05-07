@@ -211,6 +211,10 @@ full run impractical. If it cannot be run, say exactly what was skipped.
 - SQLite range-read VFS requires APSW and uses per-instance VFS names.
 - SQLite adapter writes build a local DB and upload it on close; checkpoint is
   the DB file SHA-256.
+- SQLite adapters emit a `shard.btreemeta` sidecar alongside `shard.db` by
+  default (opt out via `emit_btree_metadata=False`). Requires APSW + zstandard
+  from the `[sqlite-range]` extra; silently skips when either is missing.
+  Format spec: `docs/reference/sqlite-btree-sidecar-format.md`.
 - Session-scoped Spark and S3 fixtures are shared across tests for speed.
 - Writer scenario imports in `tests/helpers/` are intentionally deferred so
   reader-only collection does not require writer extras.
