@@ -13,7 +13,6 @@ import os
 import urllib.request
 from collections.abc import Generator
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -47,33 +46,23 @@ class BackendFixture:
     reader_factory: ShardReaderFactory
 
 
-def _slatedb_backend(tmp_path: Path) -> BackendFixture:
+def _slatedb_backend(service: LocalS3Service) -> BackendFixture:
+    """Real ``SlateDbFactory`` writer + ``SlateDbReaderFactory`` reader,
+    both wired against Garage with path-style ``S3ConnectionOptions``."""
     pytest.importorskip("slatedb")
     from shardyfusion.reader._types import SlateDbReaderFactory
-    from shardyfusion.testing import (
-        map_s3_db_url_to_file_url,
-        real_file_adapter_factory,
-    )
+    from shardyfusion.slatedb_adapter import SlateDbFactory
 
-    object_store_root = str(tmp_path / "object-store")
-    _delegate = SlateDbReaderFactory()
-
-    def _reader(
-        *, db_url: str, local_dir: Path, checkpoint_id: str | None, manifest=None
-    ):  # type: ignore[no-untyped-def]
-        # Tests use s3:// URLs but data is materialized on local disk;
-        # remap to a file:// URL before opening the shard reader.
-        return _delegate(
-            db_url=map_s3_db_url_to_file_url(db_url, object_store_root),
-            local_dir=local_dir,
-            checkpoint_id=checkpoint_id,
-            manifest=manifest,
-        )
-
+    opts = s3_connection_options_from_service(service)
+    creds = credential_provider_from_service(service)
     return BackendFixture(
         name="slatedb",
-        adapter_factory=real_file_adapter_factory(object_store_root),
-        reader_factory=_reader,
+        adapter_factory=SlateDbFactory(
+            credential_provider=creds, s3_connection_options=opts
+        ),
+        reader_factory=SlateDbReaderFactory(
+            credential_provider=creds, s3_connection_options=opts
+        ),
     )
 
 
@@ -93,27 +82,53 @@ def _sqlite_backend(service: LocalS3Service) -> BackendFixture:
     )
 
 
+def _local_slatedb_backend(service: LocalS3Service) -> BackendFixture:
+    """``LocalSlateDbFactory`` writer + ``SlateDbReaderFactory`` reader,
+    both wired against Garage with path-style ``S3ConnectionOptions``."""
+    pytest.importorskip("slatedb")
+    from shardyfusion.local_slatedb_adapter import LocalSlateDbFactory
+    from shardyfusion.reader._types import SlateDbReaderFactory
+
+    opts = s3_connection_options_from_service(service)
+    creds = credential_provider_from_service(service)
+    return BackendFixture(
+        name="local_slatedb",
+        adapter_factory=LocalSlateDbFactory(
+            credential_provider=creds, s3_connection_options=opts
+        ),
+        reader_factory=SlateDbReaderFactory(
+            credential_provider=creds, s3_connection_options=opts
+        ),
+    )
+
+
 @pytest.fixture(params=["slatedb", "sqlite"])
 def backend(
-    request: pytest.FixtureRequest, garage_s3_service: LocalS3Service, tmp_path: Path
+    request: pytest.FixtureRequest, garage_s3_service: LocalS3Service
 ) -> BackendFixture:
     """Yield a ``BackendFixture`` for each parameterised storage backend.
 
-    A "local_slatedb" variant (writer uploads to Garage via
-    :class:`~shardyfusion.local_slatedb_adapter.LocalSlateDbFactory`,
-    reader opens from Garage via :class:`SlateDbReaderFactory`) was
-    prototyped but the read side hangs against Garage:
-    ``slatedb.uniffi.ObjectStore.resolve(url)`` has no path-style
-    override and the Rust ``object_store`` crate defaults to
-    virtual-hosted-style, which can't reach the compose-internal
-    ``garage:3900`` endpoint.  ``LocalSlateDbAdapter``'s upload path is
-    covered by ``tests/integration/backend/slatedb/test_local_slatedb_s3.py``;
-    full Garage round-trip support for the SlateDB reader needs upstream
-    work in the SlateDB bindings before the e2e variant can be enabled.
+    Both variants now perform real round-trips through Garage; the
+    ``slatedb`` variant streams writes directly to S3 via
+    :class:`SlateDbFactory`.  The bulk-upload-on-close
+    :class:`LocalSlateDbFactory` is exercised separately via
+    :func:`local_slatedb_backend` to keep its (slightly different) write
+    path observable as its own test.
     """
     if request.param == "slatedb":
-        return _slatedb_backend(tmp_path)
+        return _slatedb_backend(garage_s3_service)
     return _sqlite_backend(garage_s3_service)
+
+
+@pytest.fixture
+def local_slatedb_backend(garage_s3_service: LocalS3Service) -> BackendFixture:
+    """Opt-in fixture for the LocalSlateDb→Garage→SlateDbReader round-trip.
+
+    Kept off the parameterised :func:`backend` so a SlateDB-bindings
+    regression on path-style addressing surfaces as one targeted failure
+    instead of a swarm across the existing ``backend``-driven suite.
+    """
+    return _local_slatedb_backend(garage_s3_service)
 
 
 def _admin_request(
