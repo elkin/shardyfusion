@@ -57,6 +57,7 @@ from ._slatedb_symbols import (
 from .credentials import CredentialProvider, apply_env_file, resolve_env_file
 from .errors import BridgeTimeoutError, DbAdapterError, ShardWriteError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
+from .type_defs import S3ConnectionOptions
 
 if TYPE_CHECKING:
     from slatedb.uniffi import Db, Settings
@@ -128,6 +129,14 @@ class SlateDbFactory:
     ``bridge_timeouts`` controls optional per-operation timeouts on the
     sync\u2192async bridge; defaults to all-unbounded for backward
     compatibility.
+
+    ``s3_connection_options`` mirrors the field on
+    :class:`~shardyfusion.local_slatedb_adapter.LocalSlateDbFactory` and
+    :class:`~shardyfusion.reader._types.SlateDbReaderFactory`: when set,
+    transport overrides are translated into the standard ``AWS_*`` env
+    vars honored by Apache ``object_store`` for the duration of the
+    ``ObjectStore.resolve()`` call inside the adapter.  Required for
+    path-style S3-compatible stores such as Garage / MinIO / Ceph.
     """
 
     env_file: str | None = None
@@ -136,9 +145,14 @@ class SlateDbFactory:
     bridge_timeouts: SlateDbBridgeTimeouts = field(
         default_factory=SlateDbBridgeTimeouts
     )
+    s3_connection_options: S3ConnectionOptions | None = None
 
     def __call__(self, *, db_url: str, local_dir: Path) -> DefaultSlateDbAdapter:
-        with resolve_env_file(self.env_file, self.credential_provider) as env_path:
+        with resolve_env_file(
+            self.env_file,
+            self.credential_provider,
+            connection_options=self.s3_connection_options,
+        ) as env_path:
             return DefaultSlateDbAdapter(
                 local_dir=local_dir,
                 db_url=db_url,
