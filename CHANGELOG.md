@@ -70,6 +70,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uniffi `Db` / `DbReader` handles for tests that need to assert directly
   against slatedb state. Caller owns lifecycle (`run_coro(db.shutdown())`).
 
+### Fixed
+- **Vector CLUSTER sharding: writer/reader shard divergence on tied
+  distances.** `cluster_probe_shards` (reader-side query routing) used a
+  non-stable `np.argsort`, while `cluster_assign` (writer-side assignment)
+  uses `np.argmin`. When two or more centroids were exactly equidistant from
+  a vector, the reader's first probe could pick a different tied centroid
+  than the writer assigned, so a vector written to shard *S* was routed to a
+  different shard on read and silently not found (reproducible e.g. with
+  duplicate centroids, or a zero query under cosine where every centroid is
+  equidistant). `cluster_probe_shards` now uses a stable sort, so the nearest
+  probe is always the lowest tied index — identical to the writer's
+  `np.argmin`. LSH/CEL/EXPLICIT routing were unaffected. Added a
+  writer↔reader vector routing contract suite
+  (`tests/unit/vector/test_vector_routing_contract.py`) and an end-to-end
+  findability test
+  (`tests/integration/vector/test_vector_sharding_findability.py`).
+
 ### Added
 - **Performance microbenchmarks** under `tests/integration/perf/`
   (`@pytest.mark.perf`, opt-in only, excluded from default `pytest tests`

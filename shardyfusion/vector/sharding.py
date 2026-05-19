@@ -87,10 +87,17 @@ def cluster_probe_shards(
     num_probes: int,
     metric: DistanceMetric = DistanceMetric.COSINE,
 ) -> list[int]:
-    """Return the top-N nearest centroid shard IDs for a query vector."""
+    """Return the top-N nearest centroid shard IDs for a query vector.
+
+    Uses a stable sort so that, on tied distances, the nearest shard
+    (``indices[0]``) is the lowest tied index — matching
+    ``cluster_assign``'s ``np.argmin``. Without this, reader probe[0]
+    could pick a different tied centroid than the writer assigned,
+    silently routing a query away from the shard its vector lives in.
+    """
     dist_fn = _DISTANCE_FNS[metric]
     dists = dist_fn(query, centroids)
-    indices = np.argsort(dists)[:num_probes]
+    indices = np.argsort(dists, kind="stable")[:num_probes]
     return [int(i) for i in indices]
 
 
