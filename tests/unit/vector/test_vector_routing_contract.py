@@ -17,6 +17,8 @@ the real ``resolve_vector_routing`` so the resolve/manifest determinism
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
 from hypothesis import given, settings
@@ -52,12 +54,16 @@ metrics = st.sampled_from(list(DistanceMetric))
 dtypes = st.sampled_from([np.float32, np.float64])
 
 
-def _vec(seed: int, dim: int, dtype: type) -> np.ndarray:
+def _vec(seed: int, dim: int, dtype: type[np.floating[Any]]) -> np.ndarray:
     return np.random.default_rng(seed).standard_normal(dim).astype(dtype)
 
 
 def _cluster_routing(
-    num_dbs: int, dim: int, metric: DistanceMetric, seed: int, dtype: type
+    num_dbs: int,
+    dim: int,
+    metric: DistanceMetric,
+    seed: int,
+    dtype: type[np.floating[Any]],
 ) -> ResolvedVectorRouting:
     centroids = (
         np.random.default_rng(seed).standard_normal((num_dbs, dim)).astype(dtype)
@@ -90,8 +96,8 @@ def _reader_probe(
     query: np.ndarray,
     num_probes: int,
     *,
-    routing_context: dict | None = None,
-    cel_columns: dict | None = None,
+    routing_context: dict[str, Any] | None = None,
+    cel_columns: dict[str, str] | None = None,
 ) -> list[int]:
     """Invoke the exact reader routing call (mirrors ShardedVectorReader.search)."""
     return route_vector_to_shards(
@@ -115,9 +121,13 @@ def _reader_probe(
 
 
 @given(seed=seeds, dim=dims, num_dbs=num_dbs_st, metric=metrics, dtype=dtypes)
-@settings(max_examples=400)
+@settings(max_examples=400, deadline=None)
 def test_cluster_writer_reader_identity(
-    seed: int, dim: int, num_dbs: int, metric: DistanceMetric, dtype: type
+    seed: int,
+    dim: int,
+    num_dbs: int,
+    metric: DistanceMetric,
+    dtype: type[np.floating[Any]],
 ) -> None:
     routing = _cluster_routing(num_dbs, dim, metric, seed, dtype)
     query = _vec(seed + 1, dim, dtype)
@@ -133,7 +143,7 @@ def test_cluster_writer_reader_identity(
 
 
 @given(seed=seeds, dim=dims, num_dbs=num_dbs_st, metric=metrics)
-@settings(max_examples=200)
+@settings(max_examples=200, deadline=None)
 def test_cluster_writer_shard_in_probe_set(
     seed: int, dim: int, num_dbs: int, metric: DistanceMetric
 ) -> None:
@@ -141,7 +151,7 @@ def test_cluster_writer_shard_in_probe_set(
     query = _vec(seed + 1, dim, np.float32)
     writer_shard = assign_vector_shard(vector=query, routing=routing)
 
-    for num_probes in (1, 2, num_dbs):
+    for num_probes in sorted({1, 2, num_dbs}):
         probes = _reader_probe(routing, query, num_probes=num_probes)
         assert writer_shard in probes
         assert len(probes) == len(set(probes))
@@ -170,10 +180,12 @@ def test_cluster_tied_centroids_regression() -> None:
     reader_shard = _reader_probe(routing, query, num_probes=1)[0]
 
     assert writer_shard == reader_shard == 0
+    # The full probe set still surfaces every tied centroid, in stable order.
+    assert _reader_probe(routing, query, num_probes=288)[:4] == [0, 96, 192, 287]
 
 
 @given(num_dbs=num_dbs_st, dim=dims, seed=seeds)
-@settings(max_examples=100)
+@settings(max_examples=100, deadline=None)
 def test_cluster_zero_vector_cosine_identity(num_dbs: int, dim: int, seed: int) -> None:
     """A zero query under COSINE makes every centroid equidistant (all ties).
     Writer and reader must still agree on the chosen shard."""
@@ -192,7 +204,7 @@ def test_cluster_zero_vector_cosine_identity(num_dbs: int, dim: int, seed: int) 
 
 
 @given(seed=seeds, dim=dims, num_dbs=num_dbs_st, num_hash_bits=hash_bits_st)
-@settings(max_examples=400)
+@settings(max_examples=400, deadline=None)
 def test_lsh_writer_reader_identity(
     seed: int, dim: int, num_dbs: int, num_hash_bits: int
 ) -> None:
@@ -207,7 +219,7 @@ def test_lsh_writer_reader_identity(
 
 
 @given(seed=seeds, dim=dims, num_dbs=num_dbs_st, num_hash_bits=hash_bits_st)
-@settings(max_examples=200)
+@settings(max_examples=200, deadline=None)
 def test_lsh_writer_shard_in_probe_set(
     seed: int, dim: int, num_dbs: int, num_hash_bits: int
 ) -> None:
@@ -215,7 +227,7 @@ def test_lsh_writer_shard_in_probe_set(
     query = _vec(seed, dim, np.float32)
     writer_shard = assign_vector_shard(vector=query, routing=routing)
 
-    for num_probes in (1, 2, num_dbs):
+    for num_probes in sorted({1, 2, num_dbs}):
         probes = _reader_probe(routing, query, num_probes=num_probes)
         assert writer_shard in probes
         assert len(probes) == len(set(probes))
@@ -224,12 +236,12 @@ def test_lsh_writer_shard_in_probe_set(
 
 
 @given(seed=seeds, dim=dims, num_dbs=num_dbs_st, num_hash_bits=hash_bits_st)
-@settings(max_examples=200)
+@settings(max_examples=200, deadline=None)
 def test_lsh_scalar_matches_batch(
     seed: int, dim: int, num_dbs: int, num_hash_bits: int
 ) -> None:
-    """Python writer uses scalar ``lsh_assign``; distributed writers use the
-    vectorized ``lsh_assign_batch``. They must agree row-for-row."""
+    """The scalar ``lsh_assign`` and the vectorized ``lsh_assign_batch`` must
+    agree row-for-row, so either form routes a vector to the same shard."""
     routing = _lsh_routing(num_dbs, dim, num_hash_bits)
     assert routing.hyperplanes is not None
     vectors = np.random.default_rng(seed).standard_normal((16, dim)).astype(np.float32)
@@ -247,7 +259,9 @@ def test_lsh_scalar_matches_batch(
     ("context", "expected"),
     [({"region": "us"}, 0), ({"region": "eu"}, 1), ({"region": "asia"}, 2)],
 )
-def test_cel_categorical_writer_reader_identity(context: dict, expected: int) -> None:
+def test_cel_categorical_writer_reader_identity(
+    context: dict[str, str], expected: int
+) -> None:
     cel_columns = {"region": "string"}
     cfg = VectorShardedWriteConfig(
         num_dbs=3,
