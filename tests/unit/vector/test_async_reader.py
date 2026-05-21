@@ -6,15 +6,17 @@ import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 
+from shardyfusion.errors import ReaderStateError
 from shardyfusion.manifest import ManifestRef, ParsedManifest
 from shardyfusion.vector.async_reader import AsyncShardedVectorReader
-from shardyfusion.vector.types import SearchResult
+from shardyfusion.vector.types import SearchResult, VectorShardingStrategy
 
-from .test_reader import _make_manifest
+from .test_reader import _FailingBackend, _make_manifest
 
 
 class MockAsyncShardReader:
@@ -237,3 +239,106 @@ class TestAsyncShardedVectorReader:
         await reader.search(query, top_k=3, shard_ids=[0])
         assert limiter.calls == 1
         await reader.close()
+
+    @pytest.mark.asyncio
+    async def test_apply_manifest_fails_fast_on_missing_cluster_centroids(
+        self, tmp_path: Path
+    ) -> None:
+        reader, _, store = await self._make_reader(num_dbs=2, tmp_path=tmp_path)
+        try:
+            reader._backend = _FailingBackend()  # type: ignore[assignment]
+            bad = _make_manifest(
+                num_dbs=2,
+                sharding_strategy="cluster",
+                centroids_ref="s3://bucket/artifacts/centroids.npy",
+            )
+            with pytest.raises(ReaderStateError, match="centroids artifact"):
+                await reader._apply_manifest(store._ref, bad)
+            # Raise happens before state mutation: original manifest is intact.
+            assert reader._sharding_strategy == VectorShardingStrategy.EXPLICIT
+        finally:
+            await reader.close()
+
+    @pytest.mark.asyncio
+    async def test_apply_manifest_fails_fast_on_missing_lsh_hyperplanes(
+        self, tmp_path: Path
+    ) -> None:
+        reader, _, store = await self._make_reader(num_dbs=2, tmp_path=tmp_path)
+        try:
+            reader._backend = _FailingBackend()  # type: ignore[assignment]
+            bad = _make_manifest(
+                num_dbs=2,
+                sharding_strategy="lsh",
+                hyperplanes_ref="s3://bucket/artifacts/hyperplanes.npy",
+            )
+            with pytest.raises(ReaderStateError, match="hyperplanes artifact"):
+                await reader._apply_manifest(store._ref, bad)
+            assert reader._sharding_strategy == VectorShardingStrategy.EXPLICIT
+        finally:
+            await reader.close()
+
+    @pytest.mark.asyncio
+    async def test_apply_manifest_tolerates_unused_artifact_failure(
+        self, tmp_path: Path
+    ) -> None:
+        reader, _, store = await self._make_reader(num_dbs=2, tmp_path=tmp_path)
+        try:
+            reader._backend = _FailingBackend()  # type: ignore[assignment]
+            # centroids_ref is present but EXPLICIT routing never consumes it,
+            # so a load failure must not break the reader.
+            stale = _make_manifest(
+                num_dbs=2,
+                sharding_strategy="explicit",
+                centroids_ref="s3://bucket/artifacts/centroids.npy",
+            )
+            await reader._apply_manifest(store._ref, stale)
+            assert reader._centroids is None
+            assert reader._sharding_strategy == VectorShardingStrategy.EXPLICIT
+        finally:
+            await reader.close()
+
+    @pytest.mark.asyncio
+    async def test_refresh_keeps_state_when_required_artifact_fails(
+        self, tmp_path: Path
+    ) -> None:
+        reader, _, store = await self._make_reader(num_dbs=2, tmp_path=tmp_path)
+        try:
+            original_ref = reader._manifest_ref
+            reader._backend = _FailingBackend()  # type: ignore[assignment]
+            store.update(
+                _make_manifest(
+                    num_dbs=2,
+                    sharding_strategy="cluster",
+                    centroids_ref="s3://bucket/artifacts/centroids.npy",
+                ),
+                run_id="run-v2",
+            )
+            assert await reader.refresh() is False
+            # Previous working manifest/strategy retained.
+            assert reader._manifest_ref == original_ref
+            assert reader._sharding_strategy == VectorShardingStrategy.EXPLICIT
+        finally:
+            await reader.close()
+
+    @pytest.mark.asyncio
+    async def test_open_fails_fast_when_required_artifact_unavailable(
+        self, tmp_path: Path
+    ) -> None:
+        store = MockAsyncManifestStore(
+            _make_manifest(
+                num_dbs=2,
+                sharding_strategy="cluster",
+                centroids_ref="s3://bucket/artifacts/centroids.npy",
+            )
+        )
+        with patch(
+            "shardyfusion.vector.async_reader.ObstoreBackend",
+            return_value=_FailingBackend(),
+        ):
+            with pytest.raises(ReaderStateError, match="centroids artifact"):
+                await AsyncShardedVectorReader.open(
+                    s3_prefix="s3://bucket/prefix",
+                    local_root=str(tmp_path),
+                    reader_factory=MockAsyncReaderFactory(),
+                    manifest_store=store,
+                )

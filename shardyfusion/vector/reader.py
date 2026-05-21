@@ -157,7 +157,13 @@ class ShardedVectorReader:
         self._routing_values: list[int | str | bytes] | None = None
         self._shard_meta: dict[int, RequiredShardMeta] = {}
 
-        self._load_initial_manifest()
+        try:
+            self._load_initial_manifest()
+        except BaseException:
+            # A constructor that fails must not leak the executor's threads.
+            if self._executor is not None:
+                self._executor.shutdown(wait=False)
+            raise
 
         if self._mc is not None:
             self._mc.emit(
@@ -516,10 +522,21 @@ class ShardedVectorReader:
             try:
                 data = self._backend.get(centroids_ref)
                 centroids = np.load(io.BytesIO(data))
-            except Exception:
+            except Exception as exc:
                 log_event(
-                    "centroids_load_failed", logger=_logger, centroids_ref=centroids_ref
+                    "centroids_load_failed",
+                    logger=_logger,
+                    centroids_ref=centroids_ref,
+                    error=str(exc),
                 )
+                # Fail fast: a CLUSTER snapshot is unusable without a loadable
+                # centroids artifact. For other strategies it is unused, so a
+                # load failure there is harmless.
+                if strategy == VectorShardingStrategy.CLUSTER:
+                    raise ReaderStateError(
+                        f"Failed to load centroids artifact {centroids_ref!r} "
+                        "required by CLUSTER sharding strategy"
+                    ) from exc
 
         hyperplanes: np.ndarray | None = None
         hyperplanes_ref = vector_meta.get("hyperplanes_ref")
@@ -527,12 +544,21 @@ class ShardedVectorReader:
             try:
                 data = self._backend.get(hyperplanes_ref)
                 hyperplanes = np.load(io.BytesIO(data))
-            except Exception:
+            except Exception as exc:
                 log_event(
                     "hyperplanes_load_failed",
                     logger=_logger,
                     hyperplanes_ref=hyperplanes_ref,
+                    error=str(exc),
                 )
+                # Fail fast: an LSH snapshot is unusable without a loadable
+                # hyperplanes artifact. For other strategies it is unused, so a
+                # load failure there is harmless.
+                if strategy == VectorShardingStrategy.LSH:
+                    raise ReaderStateError(
+                        f"Failed to load hyperplanes artifact {hyperplanes_ref!r} "
+                        "required by LSH sharding strategy"
+                    ) from exc
 
         self._manifest_ref = ref
         self._manifest = manifest

@@ -217,6 +217,17 @@ class MockManifestStore:
         )
 
 
+class _FailingBackend:
+    """Artifact backend stub whose get() always raises.
+
+    Simulates a corrupt or missing centroids/hyperplanes blob referenced by a
+    manifest.
+    """
+
+    def get(self, key: str) -> bytes:
+        raise OSError(f"artifact unavailable: {key}")
+
+
 class MockRateLimiter:
     """Tracks acquire() calls."""
 
@@ -607,6 +618,136 @@ class TestShardedVectorReader:
             assert reader._routing_values is None
         finally:
             reader.close()
+
+    def test_apply_manifest_fails_fast_on_missing_cluster_centroids(
+        self, tmp_path: Path
+    ) -> None:
+        store = MockManifestStore(
+            _make_manifest(num_dbs=2, sharding_strategy="explicit")
+        )
+        reader = ShardedVectorReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            reader_factory=MockReaderFactory(),
+            manifest_store=store,
+        )
+        try:
+            reader._backend = _FailingBackend()  # type: ignore[assignment]
+            bad = _make_manifest(
+                num_dbs=2,
+                sharding_strategy="cluster",
+                centroids_ref="s3://bucket/artifacts/centroids.npy",
+            )
+            with pytest.raises(ReaderStateError, match="centroids artifact"):
+                reader._apply_manifest(store._ref, bad)
+            # Raise happens before state mutation: original manifest is intact.
+            assert reader._sharding_strategy == VectorShardingStrategy.EXPLICIT
+        finally:
+            reader.close()
+
+    def test_apply_manifest_fails_fast_on_missing_lsh_hyperplanes(
+        self, tmp_path: Path
+    ) -> None:
+        store = MockManifestStore(
+            _make_manifest(num_dbs=2, sharding_strategy="explicit")
+        )
+        reader = ShardedVectorReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            reader_factory=MockReaderFactory(),
+            manifest_store=store,
+        )
+        try:
+            reader._backend = _FailingBackend()  # type: ignore[assignment]
+            bad = _make_manifest(
+                num_dbs=2,
+                sharding_strategy="lsh",
+                hyperplanes_ref="s3://bucket/artifacts/hyperplanes.npy",
+            )
+            with pytest.raises(ReaderStateError, match="hyperplanes artifact"):
+                reader._apply_manifest(store._ref, bad)
+            assert reader._sharding_strategy == VectorShardingStrategy.EXPLICIT
+        finally:
+            reader.close()
+
+    def test_apply_manifest_tolerates_unused_artifact_failure(
+        self, tmp_path: Path
+    ) -> None:
+        store = MockManifestStore(
+            _make_manifest(num_dbs=2, sharding_strategy="explicit")
+        )
+        reader = ShardedVectorReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            reader_factory=MockReaderFactory(),
+            manifest_store=store,
+        )
+        try:
+            reader._backend = _FailingBackend()  # type: ignore[assignment]
+            # centroids_ref is present but EXPLICIT routing never consumes it,
+            # so a load failure must not break the reader.
+            stale = _make_manifest(
+                num_dbs=2,
+                sharding_strategy="explicit",
+                centroids_ref="s3://bucket/artifacts/centroids.npy",
+            )
+            reader._apply_manifest(store._ref, stale)
+            assert reader._centroids is None
+            assert reader._sharding_strategy == VectorShardingStrategy.EXPLICIT
+        finally:
+            reader.close()
+
+    def test_refresh_keeps_state_when_required_artifact_fails(
+        self, tmp_path: Path
+    ) -> None:
+        store = MockManifestStore(
+            _make_manifest(num_dbs=2, sharding_strategy="explicit")
+        )
+        reader = ShardedVectorReader(
+            s3_prefix="s3://bucket/prefix",
+            local_root=str(tmp_path),
+            reader_factory=MockReaderFactory(),
+            manifest_store=store,
+        )
+        try:
+            original_ref = reader._manifest_ref
+            reader._backend = _FailingBackend()  # type: ignore[assignment]
+            store.update(
+                _make_manifest(
+                    num_dbs=2,
+                    sharding_strategy="cluster",
+                    centroids_ref="s3://bucket/artifacts/centroids.npy",
+                ),
+                run_id="run-v2",
+            )
+            assert reader.refresh() is False
+            # Previous working manifest/strategy retained.
+            assert reader._manifest_ref == original_ref
+            assert reader._sharding_strategy == VectorShardingStrategy.EXPLICIT
+        finally:
+            reader.close()
+
+    def test_init_fails_fast_when_required_artifact_unavailable(
+        self, tmp_path: Path
+    ) -> None:
+        store = MockManifestStore(
+            _make_manifest(
+                num_dbs=2,
+                sharding_strategy="cluster",
+                centroids_ref="s3://bucket/artifacts/centroids.npy",
+            )
+        )
+        with patch(
+            "shardyfusion.vector.reader.ObstoreBackend",
+            return_value=_FailingBackend(),
+        ):
+            with pytest.raises(ReaderStateError, match="centroids artifact"):
+                ShardedVectorReader(
+                    s3_prefix="s3://bucket/prefix",
+                    local_root=str(tmp_path),
+                    reader_factory=MockReaderFactory(),
+                    manifest_store=store,
+                )
 
     def test_init_requires_vector_metadata(self, tmp_path: Path) -> None:
         manifest = _make_manifest(num_dbs=2)
