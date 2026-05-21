@@ -64,9 +64,7 @@ def _make_manifest_store(
     return S3ManifestStore(ObstoreBackend(store), s3_prefix)
 
 
-def _make_records(
-    rng: np.random.Generator, n: int, dim: int
-) -> list[VectorRecord]:
+def _make_records(rng: np.random.Generator, n: int, dim: int) -> list[VectorRecord]:
     vectors = rng.standard_normal((n, dim)).astype(np.float32)
     return [
         VectorRecord(id=i, vector=vectors[i], payload={"label": f"item-{i}"})

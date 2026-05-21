@@ -59,7 +59,9 @@ def _vec(seed: int, dim: int, dtype: type) -> np.ndarray:
 def _cluster_routing(
     num_dbs: int, dim: int, metric: DistanceMetric, seed: int, dtype: type
 ) -> ResolvedVectorRouting:
-    centroids = np.random.default_rng(seed).standard_normal((num_dbs, dim)).astype(dtype)
+    centroids = (
+        np.random.default_rng(seed).standard_normal((num_dbs, dim)).astype(dtype)
+    )
     cfg = VectorShardedWriteConfig(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/prefix",
@@ -71,9 +73,7 @@ def _cluster_routing(
     return resolve_vector_routing(cfg)
 
 
-def _lsh_routing(
-    num_dbs: int, dim: int, num_hash_bits: int
-) -> ResolvedVectorRouting:
+def _lsh_routing(num_dbs: int, dim: int, num_hash_bits: int) -> ResolvedVectorRouting:
     cfg = VectorShardedWriteConfig(
         num_dbs=num_dbs,
         s3_prefix="s3://bucket/prefix",
@@ -114,9 +114,7 @@ def _reader_probe(
 # ---------------------------------------------------------------------------
 
 
-@given(
-    seed=seeds, dim=dims, num_dbs=num_dbs_st, metric=metrics, dtype=dtypes
-)
+@given(seed=seeds, dim=dims, num_dbs=num_dbs_st, metric=metrics, dtype=dtypes)
 @settings(max_examples=400)
 def test_cluster_writer_reader_identity(
     seed: int, dim: int, num_dbs: int, metric: DistanceMetric, dtype: type
@@ -156,9 +154,7 @@ def test_cluster_tied_centroids_regression() -> None:
     probe[0]. Before the stable-sort fix in ``cluster_probe_shards`` the
     writer assigned shard 0 (np.argmin) while the reader's first probe was
     192 (non-stable np.argsort) for this exact input."""
-    centroids = np.random.default_rng(123).standard_normal((288, 4)).astype(
-        np.float32
-    )
+    centroids = np.random.default_rng(123).standard_normal((288, 4)).astype(np.float32)
     winner = centroids[0].copy()
     for i in (0, 96, 192, 287):
         centroids[i] = winner
@@ -178,9 +174,7 @@ def test_cluster_tied_centroids_regression() -> None:
 
 @given(num_dbs=num_dbs_st, dim=dims, seed=seeds)
 @settings(max_examples=100)
-def test_cluster_zero_vector_cosine_identity(
-    num_dbs: int, dim: int, seed: int
-) -> None:
+def test_cluster_zero_vector_cosine_identity(num_dbs: int, dim: int, seed: int) -> None:
     """A zero query under COSINE makes every centroid equidistant (all ties).
     Writer and reader must still agree on the chosen shard."""
     routing = _cluster_routing(num_dbs, dim, DistanceMetric.COSINE, seed, np.float32)
@@ -238,9 +232,7 @@ def test_lsh_scalar_matches_batch(
     vectorized ``lsh_assign_batch``. They must agree row-for-row."""
     routing = _lsh_routing(num_dbs, dim, num_hash_bits)
     assert routing.hyperplanes is not None
-    vectors = np.random.default_rng(seed).standard_normal((16, dim)).astype(
-        np.float32
-    )
+    vectors = np.random.default_rng(seed).standard_normal((16, dim)).astype(np.float32)
     batch = lsh_assign_batch(vectors, routing.hyperplanes, num_dbs)
     for i, v in enumerate(vectors):
         assert lsh_assign(v, routing.hyperplanes, num_dbs) == int(batch[i])
@@ -255,9 +247,7 @@ def test_lsh_scalar_matches_batch(
     ("context", "expected"),
     [({"region": "us"}, 0), ({"region": "eu"}, 1), ({"region": "asia"}, 2)],
 )
-def test_cel_categorical_writer_reader_identity(
-    context: dict, expected: int
-) -> None:
+def test_cel_categorical_writer_reader_identity(context: dict, expected: int) -> None:
     cel_columns = {"region": "string"}
     cfg = VectorShardedWriteConfig(
         num_dbs=3,
@@ -277,7 +267,10 @@ def test_cel_categorical_writer_reader_identity(
         vector=query, routing=routing, routing_context=context
     )
     reader_shard = _reader_probe(
-        routing, query, num_probes=1, routing_context=context,
+        routing,
+        query,
+        num_probes=1,
+        routing_context=context,
         cel_columns=cel_columns,
     )[0]
 
@@ -305,7 +298,10 @@ def test_cel_direct_integer_writer_reader_identity(zone: int) -> None:
         vector=query, routing=routing, routing_context=context
     )
     reader_shard = _reader_probe(
-        routing, query, num_probes=1, routing_context=context,
+        routing,
+        query,
+        num_probes=1,
+        routing_context=context,
         cel_columns=cel_columns,
     )[0]
 
