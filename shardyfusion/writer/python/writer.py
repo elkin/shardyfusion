@@ -100,7 +100,7 @@ def _reject_engine_profile_flag(config: BaseShardedWriteConfig) -> None:
     seal time on each shard.  Use ``page_size="auto"`` on the SQLite
     factory for that.
     """
-    if getattr(config.kv, "profile_value_sizes_for_page_size", False):
+    if config.kv.profile_value_sizes_for_page_size:
         raise ConfigValidationError(
             "kv.profile_value_sizes_for_page_size is only supported by the "
             "Spark/Dask/Ray distributed writers (they compute the value-size "

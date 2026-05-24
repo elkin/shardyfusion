@@ -82,7 +82,7 @@ def _apply_engine_page_size_for_ray(
 ) -> None:
     """Compute a value-size p95 from a Ray sample and rebuild the factory."""
 
-    if not getattr(config.kv, "profile_value_sizes_for_page_size", False):
+    if not config.kv.profile_value_sizes_for_page_size:
         return
     sample_rows = ds.take(DEFAULT_ENGINE_PROFILE_SAMPLE_SIZE)
     if not sample_rows:

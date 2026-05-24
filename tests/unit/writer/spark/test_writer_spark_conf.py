@@ -101,6 +101,7 @@ def test_write_sharded_spark_uses_optional_spark_conf_overrides(monkeypatch) -> 
             max_writes_per_second=None,
             max_write_bytes_per_second=None,
         ),
+        kv=SimpleNamespace(profile_value_sizes_for_page_size=False),
         validate=lambda: None,
     )
 
@@ -183,6 +184,7 @@ def test_write_sharded_spark_wraps_input_df_when_cache_enabled(monkeypatch) -> N
             max_writes_per_second=None,
             max_write_bytes_per_second=None,
         ),
+        kv=SimpleNamespace(profile_value_sizes_for_page_size=False),
         validate=lambda: None,
     )
 

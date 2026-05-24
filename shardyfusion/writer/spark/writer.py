@@ -106,7 +106,7 @@ def _apply_engine_page_size_for_spark(
 ) -> None:
     """Compute a value-size p95 from a Spark sample and rebuild the factory."""
 
-    if not getattr(config.kv, "profile_value_sizes_for_page_size", False):
+    if not config.kv.profile_value_sizes_for_page_size:
         return
     sample_rows = df.limit(DEFAULT_ENGINE_PROFILE_SAMPLE_SIZE).collect()
     sizes = collect_value_byte_samples(rows=sample_rows, value_spec=value_spec)

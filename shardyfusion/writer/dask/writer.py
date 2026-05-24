@@ -79,7 +79,7 @@ def _apply_engine_page_size_for_dask(
 ) -> None:
     """Compute a value-size p95 from a Dask sample and rebuild the factory."""
 
-    if not getattr(config.kv, "profile_value_sizes_for_page_size", False):
+    if not config.kv.profile_value_sizes_for_page_size:
         return
     sample_pdf = ddf.head(DEFAULT_ENGINE_PROFILE_SAMPLE_SIZE, npartitions=-1)
     if sample_pdf.empty:
