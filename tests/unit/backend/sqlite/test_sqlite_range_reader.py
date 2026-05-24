@@ -105,11 +105,16 @@ def fake_obstore() -> Iterator[_FakeObstore]:
 # ---------------------------------------------------------------------------
 
 
-def _build_sqlite_db(tmp_path: Path, rows: list[tuple[bytes, bytes]]) -> bytes:
+def _build_sqlite_db(
+    tmp_path: Path,
+    rows: list[tuple[bytes, bytes]],
+    *,
+    page_size: int = 4096,
+) -> bytes:
     """Build a SQLite DB containing the standard ``kv`` table."""
     db_path = tmp_path / "source.db"
     conn = sqlite3.connect(str(db_path))
-    conn.execute("PRAGMA page_size = 4096")
+    conn.execute(f"PRAGMA page_size = {page_size}")
     conn.execute("CREATE TABLE kv (k BLOB PRIMARY KEY, v BLOB NOT NULL) WITHOUT ROWID")
     conn.executemany("INSERT INTO kv (k, v) VALUES (?, ?)", rows)
     conn.commit()
@@ -126,29 +131,45 @@ def _open_reader(
 ) -> SqliteRangeShardReader:
     """Construct a SqliteRangeShardReader whose backing object is ``db_bytes``.
 
-    Strategy: wrap the real ``S3ReadOnlyFile`` so that immediately after
-    construction we seed the fake's dict against the actual store
-    instance.
+    The constructor needs ``head()`` to report the right size and
+    ``get_ranges()`` to serve the header bytes (so VFS page-size
+    discovery picks up the real value), but the fake's dict is keyed
+    on ``id(store)`` which we don't know until the store is built
+    inside the constructor.  Patch both methods to serve from a
+    closure over ``db_bytes`` during init, then register the real data
+    against the actual store instance afterwards.
     """
     real_cls = S3ReadOnlyFile
 
     def make(*args: Any, **kwargs: Any) -> S3ReadOnlyFile:
-        # The fake's head() returns size 0 unless data is registered, so
-        # we register first by intercepting at the obstore.head level.
-        # Simpler path: patch head to return correct size for any store
-        # while the constructor runs.
         original_head = fake.head
+        original_get_ranges = fake.get_ranges
 
         def head_with_size(store: Any, path: str) -> dict[str, Any]:
             fake.head_calls += 1
             return {"size": len(db_bytes), "path": path}
 
+        def get_ranges_with_data(
+            store: Any,
+            path: str,
+            *,
+            starts: list[int],
+            ends: list[int],
+            coalesce: int = 1024 * 1024,
+        ) -> list[_FakeBytes]:
+            fake.get_ranges_calls += 1
+            return [
+                _FakeBytes(db_bytes[s:e]) for s, e in zip(starts, ends, strict=True)
+            ]
+
         fake.head = head_with_size  # type: ignore[assignment]
+        fake.get_ranges = get_ranges_with_data  # type: ignore[assignment]
         try:
             inst = real_cls(*args, **kwargs)
         finally:
             fake.head = original_head  # type: ignore[assignment]
-        # Now register the data on the actual store object.
+            fake.get_ranges = original_get_ranges  # type: ignore[assignment]
+        # Register the real data against the now-known store instance.
         fake.put(inst._store, inst._key, db_bytes)
         return inst
 
@@ -232,6 +253,67 @@ class TestSqliteRangeShardReaderVFS:
         reader.close()
         with pytest.raises(SqliteAdapterError, match="closed"):
             reader.get(b"key1")
+
+
+# ---------------------------------------------------------------------------
+# Page-size coverage: writer can produce any supported page_size; the
+# range-read VFS must discover it from the file header and round-trip
+# every value byte-for-byte.
+# ---------------------------------------------------------------------------
+
+
+class TestRangeReaderHandlesEverySupportedPageSize:
+    """End-to-end: build a shard at each supported page_size, read back
+    via the range VFS, assert the VFS discovered the right size and the
+    values round-trip.  This is the test that catches a regression in
+    the hardcoded ``_PAGE_SIZE = 4096`` we removed in this PR."""
+
+    @pytest.mark.parametrize("page_size", [4096, 8192, 16384, 32768, 65536])
+    def test_round_trip(
+        self,
+        tmp_path: Path,
+        fake_obstore: _FakeObstore,
+        page_size: int,
+    ) -> None:
+        # Use values that span a full SQLite leaf at the chosen page
+        # size, so the read genuinely exercises multi-page navigation
+        # (root + interior + leaf), not just a single-page lookup.
+        rows = [(i.to_bytes(8, "big"), b"v" * (page_size // 4)) for i in range(64)]
+        db_bytes = _build_sqlite_db(tmp_path, rows, page_size=page_size)
+
+        reader = _open_reader(
+            fake_obstore, db_bytes=db_bytes, local_dir=tmp_path / "read"
+        )
+        try:
+            # The VFS discovers the page_size from the SQLite header at
+            # open time; this is the load-bearing assertion behind the
+            # whole feature.
+            assert reader._s3_file.page_size == page_size
+            # Every row round-trips byte-for-byte.
+            for k, v in rows:
+                assert reader.get(k) == v
+            # Missing keys still return None.
+            assert reader.get(b"missing-key-bytes") is None
+        finally:
+            reader.close()
+
+    def test_default_factory_default_page_size_still_works(
+        self, tmp_path: Path, fake_obstore: _FakeObstore
+    ) -> None:
+        """Regression: a shard produced at the default page_size=4096
+        must still be readable through the (now-per-file-aware) VFS."""
+        rows = [(b"k1", b"v1"), (b"k2", b"v2"), (b"k3", b"v3")]
+        db_bytes = _build_sqlite_db(tmp_path, rows)  # default page_size=4096
+
+        reader = _open_reader(
+            fake_obstore, db_bytes=db_bytes, local_dir=tmp_path / "read"
+        )
+        try:
+            assert reader._s3_file.page_size == 4096
+            for k, v in rows:
+                assert reader.get(k) == v
+        finally:
+            reader.close()
 
 
 # ---------------------------------------------------------------------------

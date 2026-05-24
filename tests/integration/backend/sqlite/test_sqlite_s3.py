@@ -113,6 +113,86 @@ class TestSqliteKvRoundTrip:
         reader.close()
 
 
+class TestRangeReaderHandlesEveryPageSize:
+    """End-to-end through moto S3: ``SqliteFactory(page_size=N)`` produces
+    a shard, the range-read reader pulls it back via real obstore range
+    GETs, and every value round-trips.
+
+    This is the canonical regression test for the writer's configurable
+    ``page_size`` knob — without it, the reader-side VFS would have to
+    hard-code 4096, and any non-default writer would silently produce
+    unreadable shards.
+    """
+
+    @pytest.mark.parametrize("page_size", [4096, 8192, 16384, 32768, 65536])
+    def test_range_reader_round_trip(
+        self, tmp_path: Path, s3_prefix: str, page_size: int
+    ) -> None:
+        pytest.importorskip("apsw")
+        from shardyfusion.sqlite_adapter import SqliteFactory
+
+        db_url = f"{s3_prefix}/range-pagesize/p{page_size}/db=0/attempt=00"
+        write_dir = tmp_path / f"write_{page_size}"
+
+        # Values sized to span multiple leaf pages at the chosen size so
+        # the reader actually walks root → interior → leaf, not just one
+        # page.  ~256 B keeps tests fast across all sizes.
+        rows = [
+            (i.to_bytes(8, "big"), f"v-{i:04d}-{'x' * 200}".encode()) for i in range(64)
+        ]
+
+        factory = SqliteFactory(page_size=page_size)
+        with factory(db_url=db_url, local_dir=write_dir) as adapter:
+            adapter.write_batch(rows)
+            adapter.seal()
+
+        reader = SqliteRangeShardReader(
+            db_url=db_url,
+            local_dir=tmp_path / f"read_{page_size}",
+            checkpoint_id=None,
+        )
+        try:
+            # The VFS must discover the file's actual page_size from the
+            # SQLite header — this is the load-bearing assertion.
+            assert reader._s3_file.page_size == page_size
+            for k, v in rows:
+                assert reader.get(k) == v
+            assert reader.get(b"nonexistent") is None
+        finally:
+            reader.close()
+
+    def test_range_reader_round_trip_auto_mode(
+        self, tmp_path: Path, s3_prefix: str
+    ) -> None:
+        """``page_size='auto'`` chooses per-shard at seal time.  The
+        reader has to learn the chosen size from the file header on
+        every shard open."""
+        pytest.importorskip("apsw")
+        from shardyfusion.sqlite_adapter import SqliteFactory
+
+        db_url = f"{s3_prefix}/range-pagesize/auto/db=0/attempt=00"
+        write_dir = tmp_path / "write_auto"
+
+        # ~8 KB values force the picker out of 4 KB into a larger size.
+        rows = [(i.to_bytes(8, "big"), b"x" * 8000) for i in range(32)]
+
+        factory = SqliteFactory(page_size="auto")
+        with factory(db_url=db_url, local_dir=write_dir) as adapter:
+            adapter.write_batch(rows)
+            adapter.seal()
+
+        reader = SqliteRangeShardReader(
+            db_url=db_url, local_dir=tmp_path / "read_auto", checkpoint_id=None
+        )
+        try:
+            # 8 KB values land on 32 KB pages per `recommend_page_size`.
+            assert reader._s3_file.page_size == 32768
+            for k, v in rows:
+                assert reader.get(k) == v
+        finally:
+            reader.close()
+
+
 class TestSqliteReaderFactory:
     def test_factory_creates_working_reader(
         self, tmp_path: Path, s3_prefix: str
