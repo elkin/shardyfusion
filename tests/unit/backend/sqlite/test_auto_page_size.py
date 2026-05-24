@@ -104,3 +104,74 @@ class TestRepageHelperEdgeCases:
         after = _read_page_size_from_header(db_path)
         # Picker recommends 16384 for 4000-byte values; same as current.
         assert before == after == 16384
+
+
+class TestSqliteVecAdapterAutoMode:
+    """Auto-mode VACUUM must keep sqlite-vec virtual tables resolvable.
+
+    SQLite VACUUM walks every schema object during the rewrite; the
+    ``vec_index`` virtual table is unresolvable without the sqlite-vec
+    extension loaded on the same connection.  The unified adapter wires
+    ``_open_sqlite_vec_connection`` into :func:`_maybe_repage_to_auto`
+    for exactly this reason — this test exercises the wire-up end to
+    end.
+    """
+
+    def test_auto_mode_rewrites_unified_shard(self, tmp_path: Path) -> None:
+        pytest.importorskip("sqlite_vec")
+        import numpy as np
+
+        from shardyfusion.config import VectorSpec
+        from shardyfusion.sqlite_vec_adapter import SqliteVecAdapter
+
+        local_dir = tmp_path / "vec_shard"
+        spec = VectorSpec(dim=8, metric="cosine", index_type="flat")
+        with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as mock:
+            mock.return_value = MagicMock()
+            adapter = SqliteVecAdapter(
+                db_url="s3://bucket/vec",
+                local_dir=local_dir,
+                vector_spec=spec,
+                page_size="auto",
+                emit_btree_metadata=False,
+            )
+            # ~8 KB KV values force a repage above 4 KB inline threshold.
+            adapter.write_batch(
+                [(i.to_bytes(8, "big"), b"v" * 8000) for i in range(20)]
+            )
+            ids = np.arange(20, dtype=np.int64)
+            vecs = np.random.rand(20, 8).astype(np.float32)
+            adapter.write_vector_batch(ids, vecs)
+            adapter.seal()
+
+        # VACUUM with the sqlite-vec extension loaded must succeed, and
+        # the post-rewrite file must report the recommended page_size in
+        # its SQLite header.
+        assert _read_page_size_from_header(local_dir / "shard.db") == 32768
+
+    def test_auto_mode_kv_only_workload(self, tmp_path: Path) -> None:
+        """Vec adapter with empty vec_index still routes the repage through
+        the sqlite-vec connection opener (the schema still has vec0)."""
+        pytest.importorskip("sqlite_vec")
+
+        from shardyfusion.config import VectorSpec
+        from shardyfusion.sqlite_vec_adapter import SqliteVecAdapter
+
+        local_dir = tmp_path / "vec_shard_kv_only"
+        spec = VectorSpec(dim=8, metric="cosine", index_type="flat")
+        with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as mock:
+            mock.return_value = MagicMock()
+            adapter = SqliteVecAdapter(
+                db_url="s3://bucket/vec2",
+                local_dir=local_dir,
+                vector_spec=spec,
+                page_size="auto",
+                emit_btree_metadata=False,
+            )
+            adapter.write_batch([(i.to_bytes(8, "big"), b"v" * 50) for i in range(50)])
+            adapter.seal()
+
+        # Tiny values fit inline at 4 KB; picker stays put.  VACUUM
+        # still runs through the vec-aware opener because the vec0
+        # schema object is present.
+        assert _read_page_size_from_header(local_dir / "shard.db") == 4096

@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### Fixed (pre-release follow-ups to the page_size + sidecar work)
+
+- **Engine-percentile substitution no longer crashes downstream
+  re-validation.** `maybe_apply_engine_page_size` now clears
+  `kv.profile_value_sizes_for_page_size` after baking the chosen size
+  into the factory; previously the next `validate_configs(config)` call
+  (inside `_common_runtime_kwargs`) would re-trip
+  `_validate_page_size_mutual_exclusion` and abort the write.
+- **`S3ReadOnlyFile.__init__` no longer fails open on transient S3
+  errors.** The new header-discovery GET catches any exception from
+  `obstore.get_ranges` and falls back to the 4 KiB default; SQLite's
+  first real `xRead` surfaces the underlying error through the regular
+  retry path.
+- **`SqliteVecAdapter` validates `page_size` before opening its SQLite
+  connection.** Previously a bad `page_size` would leak an open
+  connection and an empty `shard.db` file on disk before the validation
+  error fired.  Now matches the ordering used by the plain
+  `SqliteAdapter`.
+- **Nearest-rank p95 picker uses `math.ceil`, not floor.** Both
+  pickers (`_maybe_repage_to_auto` and `maybe_apply_engine_page_size`)
+  now compute `idx = max(0, ceil(p * N) - 1)`.  For sample/row sizes
+  where `0.95 * N` is non-integer (21, 41, 73, 199, ...) the previous
+  `int(...) - 1` formula picked one rank below the true p95.
+- **Engine picker accounts for the vec_index embedding payload.** For
+  unified KV+vector writers the picker now treats `max(p95_kv, 4 *
+  vector.dim)` as the threshold the chosen `page_size` must
+  accommodate; previously the embedding was ignored and tiny KV values
+  would steer the picker to a too-small page size.
+
 ### Added
 
 #### Configurable SQLite `page_size` (writer)

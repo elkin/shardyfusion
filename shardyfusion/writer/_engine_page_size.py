@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import math
 from typing import Any
 
 from shardyfusion.config import BaseShardedWriteConfig
@@ -33,6 +34,21 @@ _logger = get_logger(__name__)
 # entire page-size bucket; small enough that .collect()/.take() costs
 # a few ms on any backend.
 DEFAULT_ENGINE_PROFILE_SAMPLE_SIZE: int = 1000
+
+
+def _vec_index_payload_bytes(config: BaseShardedWriteConfig) -> int:
+    """Per-row ``vec_index`` payload size (float32 embedding) or ``0``.
+
+    Returns 0 when the writer is KV-only.  For unified KV+vector
+    writers the embedding is the dominant per-row cost on the
+    ``vec_index`` table — sampling only ``kv`` values misses it
+    entirely and lets the picker pick a too-small page size.
+    """
+    vec = getattr(config, "vector", None)
+    if vec is None:
+        return 0
+    dim = getattr(vec, "dim", 0)
+    return int(dim) * 4
 
 
 def maybe_apply_engine_page_size(
@@ -52,9 +68,23 @@ def maybe_apply_engine_page_size(
     integers, already collected to the driver.  ``writer_kind`` is a
     free-form string ("spark"/"dask"/"ray") used only for logging.
 
+    For unified KV+vector writers (``config.vector`` present) the
+    ``vec_index`` row payload (``4 * dim`` bytes for a float32
+    embedding) is folded into the recommendation as a lower bound on
+    ``p95_value_bytes`` — sampling only the ``kv`` value column would
+    otherwise miss the dominant per-row cost.
+
+    Caveat: key bytes are not observed by the engine sample.  The
+    picker passes the :func:`recommend_page_size` default
+    ``max_key_bytes=64`` which covers U64BE / U64LE / typical UTF-8
+    keys.  Workloads with wider keys (long composite keys, URL keys,
+    >64 B blobs) should pin ``page_size`` explicitly on the factory.
+
     The mutation is on the user-supplied config; this matches existing
     convention (the writers similarly read and assume ownership of
-    config-derived state during a single run).
+    config-derived state during a single run).  The flag is cleared
+    after substitution so downstream re-validations do not trip the
+    mutual-exclusion check.
     """
 
     if not getattr(config.kv, "profile_value_sizes_for_page_size", False):
@@ -70,13 +100,20 @@ def maybe_apply_engine_page_size(
         return
 
     sorted_sizes = sorted(int(n) for n in value_byte_samples)
-    # 95th percentile via the same OFFSET trick used by the local picker
-    # (kept as nearest-rank to avoid pulling numpy in for one operation).
-    idx = max(0, int(len(sorted_sizes) * 0.95) - 1)
+    # Nearest-rank percentile: rank = ceil(p * N) (1-indexed) → index =
+    # rank - 1 (0-indexed).  Plain `int(...) - 1` rounds toward zero and
+    # picks one rank below the true p95 whenever `p * N` is non-integer.
+    idx = max(0, math.ceil(len(sorted_sizes) * 0.95) - 1)
     p95 = sorted_sizes[idx]
 
+    # For unified KV+vector the vec_index leaf cell stores the embedding
+    # (4 * dim bytes) per row.  Treat the larger of (kv p95, embedding)
+    # as the threshold the picker must accommodate.
+    vec_payload = _vec_index_payload_bytes(config)
+    effective_p95 = max(p95, vec_payload)
+
     try:
-        target = recommend_page_size(p95_value_bytes=p95)
+        target = recommend_page_size(p95_value_bytes=effective_p95)
     except ConfigValidationError:
         return
 
@@ -100,6 +137,15 @@ def maybe_apply_engine_page_size(
         ) from exc
 
     config.kv.adapter_factory = new_factory
+    # Clear the flag now that the engine-percentile choice has been
+    # baked into the factory.  Otherwise any subsequent re-validation
+    # (e.g. inside `_common_runtime_kwargs` -> `validate_configs`) would
+    # see a non-default factory page_size alongside the still-set flag
+    # and raise `ConfigValidationError` from
+    # `_validate_page_size_mutual_exclusion` — the very check that
+    # rejects "two strategies at once" — even though we have just
+    # finished applying the one chosen strategy.
+    config.kv.profile_value_sizes_for_page_size = False
     log_event(
         "engine_page_size_picked",
         level=logging.DEBUG,
@@ -107,6 +153,8 @@ def maybe_apply_engine_page_size(
         writer_kind=writer_kind,
         sample_size=len(sorted_sizes),
         p95_value_bytes=p95,
+        vec_payload_bytes=vec_payload,
+        effective_p95_bytes=effective_p95,
         from_page_size=str(current),
         to_page_size=target,
     )

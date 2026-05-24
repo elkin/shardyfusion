@@ -168,7 +168,7 @@ class TestBtreemetaSidecarRoundTrip:
     ) -> None:
         """End-to-end: a default ``SqliteFactory`` write produces both
         ``shard.db`` and ``shard.btreemeta`` at the expected S3 keys, and
-        the sidecar starts with the v3 magic header."""
+        the sidecar starts with the v4 magic header."""
         pytest.importorskip("apsw")
         db_url = f"{s3_prefix}/shards/run_id=both/db=00000/attempt=00"
         write_dir = tmp_path / "write"

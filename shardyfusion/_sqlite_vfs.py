@@ -92,10 +92,11 @@ class S3ReadOnlyFile:
     """Read-only virtual file backed by S3 range requests with page LRU cache.
 
     Reads are decomposed into a contiguous range of fixed-size pages
-    (``_PAGE_SIZE`` bytes each).  Cached pages are returned directly;
-    missing pages are fetched in a single :func:`obstore.get_ranges`
-    call that coalesces adjacent ranges and parallelises non-adjacent
-    ones inside Rust.
+    whose size is discovered from the SQLite file header at open time
+    (``self.page_size``; falls back to :data:`_DEFAULT_PAGE_SIZE`).
+    Cached pages are returned directly; missing pages are fetched in a
+    single :func:`obstore.get_ranges` call that coalesces adjacent
+    ranges and parallelises non-adjacent ones inside Rust.
     """
 
     def __init__(
@@ -151,14 +152,24 @@ class S3ReadOnlyFile:
         """Read the first 100 bytes of the file and parse the header page size.
 
         Falls back to :data:`_DEFAULT_PAGE_SIZE` (4096) when the file is
-        empty, too small, or the header parse fails.  A 100-byte GET is
-        small enough that the cost is negligible compared to the per-shard
-        latency benefit of caching the right-sized pages.
+        empty, too small, the header parse fails, or the underlying
+        ``obstore.get_ranges`` call raises (e.g. a transient S3 5xx).
+        A 100-byte GET is small enough that the cost is negligible
+        compared to the per-shard latency benefit of caching the
+        right-sized pages — and a failure here only forces a fallback
+        to the (still correct) 4 KiB default; SQLite's first real
+        ``xRead`` will surface the same transient error if it persists.
         """
         end = min(_SQLITE_HEADER_SIZE, self._size)
         if end <= 0:
             return _DEFAULT_PAGE_SIZE
-        results = obstore.get_ranges(self._store, self._key, starts=[0], ends=[end])
+        try:
+            results = obstore.get_ranges(self._store, self._key, starts=[0], ends=[end])
+        except Exception:
+            # Constructor stays cheap; SQLite's first xRead will retry
+            # the same fetch through the regular page-cache path and
+            # surface the real error there if it sticks.
+            return _DEFAULT_PAGE_SIZE
         header = bytes(results[0])
         parsed = _parse_page_size_from_header(header)
         return parsed if parsed is not None else _DEFAULT_PAGE_SIZE

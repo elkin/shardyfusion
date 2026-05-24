@@ -194,6 +194,15 @@ class SqliteVecAdapter:
         credential_provider: CredentialProvider | None = None,
         emit_btree_metadata: bool = True,
     ) -> None:
+        # Validate page_size before touching the filesystem or opening a
+        # connection — failure here must not leave a half-initialised
+        # SQLite file behind.  Matches the ordering in SqliteAdapter.
+        self._page_size_mode: PageSizeMode = _validate_factory_page_size(page_size)
+        initial_page_size = (
+            4096 if self._page_size_mode == "auto" else int(self._page_size_mode)
+        )
+        cache_size_pages = int(cache_size_pages)
+
         self._db_url = db_url
         self._local_dir = local_dir
         self._db_path = local_dir / _DB_FILENAME
@@ -215,11 +224,6 @@ class SqliteVecAdapter:
         _load_sqlite_vec(conn)
 
         # SQLite pragmas for write performance
-        self._page_size_mode: PageSizeMode = _validate_factory_page_size(page_size)
-        initial_page_size = (
-            4096 if self._page_size_mode == "auto" else int(self._page_size_mode)
-        )
-        cache_size_pages = int(cache_size_pages)
         conn.execute(f"PRAGMA page_size = {initial_page_size}")
         conn.execute("PRAGMA journal_mode = OFF")
         conn.execute("PRAGMA synchronous = OFF")
@@ -746,7 +750,11 @@ class SqliteVecRangeReaderFactory:
     Requires ``apsw`` and ``obstore`` (bundled with the ``vector-sqlite`` extra).
     """
 
-    page_cache_pages: int = 1024  # ~4 MB at 4 KB/page; 0 disables caching
+    # 1024 slots × page_size; ~4 MB at the 4 KiB default but 16 MB at
+    # 16 KiB pages and 64 MB at 64 KiB.  Range-mode readers that pin
+    # ``page_size`` on the writer above the default should shrink this
+    # to keep the per-shard cache budget in line.  ``0`` disables caching.
+    page_cache_pages: int = 1024
     s3_connection_options: S3ConnectionOptions | None = None
     credential_provider: CredentialProvider | None = None
 

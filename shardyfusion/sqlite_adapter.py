@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import sqlite3
 import struct
 import types
@@ -143,11 +144,11 @@ def _maybe_repage_to_auto(
         if int(row_count) == 0:
             return
 
-        # OFFSET-based percentile: cheaper than building a histogram and
-        # accurate enough for this picker.  Ordering by length then taking
-        # the offset matching the requested percentile yields the
-        # k-th-smallest size.
-        offset = max(0, int(int(row_count) * _AUTO_PAGE_SIZE_PERCENTILE) - 1)
+        # Nearest-rank percentile via OFFSET: rank = ceil(p * N) (1-indexed)
+        # → OFFSET = rank - 1.  Using `int(...) - 1` would round toward zero
+        # and pick one rank below the true p95 whenever `p * N` is non-
+        # integer (e.g. N=21, 41, 73, ...).
+        offset = max(0, math.ceil(int(row_count) * _AUTO_PAGE_SIZE_PERCENTILE) - 1)
         ((p95_value_bytes,),) = conn.execute(
             "SELECT length(v) FROM kv ORDER BY length(v) LIMIT 1 OFFSET ?",
             (offset,),
@@ -914,7 +915,11 @@ class AsyncSqliteShardReader:
 class SqliteRangeReaderFactory:
     """Picklable factory for the range-read VFS reader.  Requires ``apsw``."""
 
-    page_cache_pages: int = 1024  # ~4 MB at 4 KB/page; 0 disables caching
+    # 1024 slots × page_size; ~4 MB at the 4 KiB default but 16 MB at
+    # 16 KiB pages and 64 MB at 64 KiB.  Range-mode readers that pin
+    # ``page_size`` on the writer above the default should shrink this
+    # to keep the per-shard cache budget in line.  ``0`` disables caching.
+    page_cache_pages: int = 1024
     s3_connection_options: S3ConnectionOptions | None = None
     credential_provider: CredentialProvider | None = None
 

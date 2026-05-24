@@ -92,3 +92,98 @@ class TestPythonWriterRejectsProfileFlag:
 
         cfg = type("_Stub", (), {"kv": KeyValueWriteConfig()})()
         _reject_engine_profile_flag(cfg)  # no raise
+
+
+class TestEnginePickerSurvivesRevalidation:
+    """Regression: the engine substitution must leave the config in a
+    state that survives a downstream ``validate_configs(config)`` call.
+
+    `_common_runtime_kwargs` re-runs validation after the writer
+    entrypoint, and an earlier version of the helper left the flag set
+    next to a non-default factory page_size — which then tripped
+    ``_validate_page_size_mutual_exclusion`` and aborted the write.
+    """
+
+    def test_revalidation_after_substitution(self) -> None:
+        from shardyfusion.config import BaseShardedWriteConfig, WriterStorageConfig
+        from shardyfusion.writer._engine_page_size import maybe_apply_engine_page_size
+
+        config = BaseShardedWriteConfig(
+            storage=WriterStorageConfig(s3_prefix="s3://bucket/x"),
+            kv=KeyValueWriteConfig(
+                adapter_factory=SqliteFactory(),
+                profile_value_sizes_for_page_size=True,
+            ),
+        )
+        maybe_apply_engine_page_size(
+            config, value_byte_samples=[3500] * 100, writer_kind="test"
+        )
+        assert config.kv.adapter_factory.page_size == 16384
+        assert config.kv.profile_value_sizes_for_page_size is False
+        # Must not raise — the writer re-validates inside
+        # _common_runtime_kwargs and would have crashed before the fix.
+        config.validate()
+
+
+class TestEnginePickerVecAware:
+    """The engine picker must account for the vec_index embedding payload
+    so unified KV+vector workloads with tiny KV values still pick a
+    page size large enough to fit the embedding inline."""
+
+    def test_vec_payload_bumps_recommendation(self) -> None:
+        pytest.importorskip("sqlite_vec")
+        from shardyfusion.config import (
+            BaseShardedWriteConfig,
+            VectorSpec,
+            WriterStorageConfig,
+        )
+        from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
+        from shardyfusion.writer._engine_page_size import maybe_apply_engine_page_size
+
+        spec = VectorSpec(dim=256, metric="cosine")  # 256 * 4 = 1024 B
+        config = BaseShardedWriteConfig(
+            storage=WriterStorageConfig(s3_prefix="s3://bucket/x"),
+            vector=spec,
+            kv=KeyValueWriteConfig(
+                adapter_factory=SqliteVecFactory(vector_spec=spec),
+                profile_value_sizes_for_page_size=True,
+            ),
+        )
+        # KV values are tiny but the vec embedding payload is 1024 B,
+        # which exceeds the 4 KiB-page inline threshold (~1002 B) once
+        # key + cell overhead are added.
+        maybe_apply_engine_page_size(
+            config, value_byte_samples=[64] * 100, writer_kind="test"
+        )
+        assert config.kv.adapter_factory.page_size == 8192
+
+
+class TestNearestRankPercentile:
+    """Verify the picker uses true nearest-rank percentile, not a
+    floor-based off-by-one.  Sample sizes where ``0.95 * N`` is non-
+    integer trigger the regression (e.g. 21, 41, 73, 199)."""
+
+    def test_engine_picker_uses_ceil_for_odd_sample_sizes(self) -> None:
+        from shardyfusion.config import BaseShardedWriteConfig, WriterStorageConfig
+        from shardyfusion.writer._engine_page_size import maybe_apply_engine_page_size
+
+        config = BaseShardedWriteConfig(
+            storage=WriterStorageConfig(s3_prefix="s3://bucket/x"),
+            kv=KeyValueWriteConfig(
+                adapter_factory=SqliteFactory(),
+                profile_value_sizes_for_page_size=True,
+            ),
+        )
+        # 21 sorted values: 20 small + 1 large at rank 21.  Nearest-rank
+        # p95 = ceil(0.95 * 21) = rank 20 (1-indexed), value 100 → 4096.
+        # Buggy floor formula would have picked rank 19, value 100 too,
+        # so the difference is only visible at the boundary where the
+        # largest values straddle a page-size threshold.
+        samples = [100] * 19 + [1500] + [4000]
+        maybe_apply_engine_page_size(
+            config, value_byte_samples=samples, writer_kind="test"
+        )
+        # Nearest-rank p95 of N=21 picks the 20th smallest = 1500 →
+        # picker bumps to 8192.  Floor formula would have picked rank
+        # 19 (still 100) → stayed at 4096.
+        assert config.kv.adapter_factory.page_size == 8192
