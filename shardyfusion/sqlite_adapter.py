@@ -21,7 +21,7 @@ import logging
 import sqlite3
 import struct
 import types
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol, Self, runtime_checkable
@@ -29,8 +29,9 @@ from typing import Any, Literal, Protocol, Self, runtime_checkable
 from ._local_snapshot_cache import ensure_cached_snapshot
 from ._sqlite_vfs import S3ReadOnlyFile, S3VfsError, create_apsw_vfs
 from .credentials import CredentialProvider, S3Credentials
-from .errors import ShardyfusionError
+from .errors import ConfigValidationError, ShardyfusionError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
+from .sqlite_page_size import SUPPORTED_PAGE_SIZES, recommend_page_size
 from .storage import ObstoreBackend, create_s3_store, parse_s3_url
 from .type_defs import Manifest, S3ConnectionOptions
 
@@ -42,9 +43,13 @@ _BTREEMETA_FILENAME = "shard.btreemeta"
 _BTREEMETA_MAGIC = b"SFBTM\x00\x00\x00"
 # v3 = body is zstd-compressed and carries an explicit ``(pageno, offset)``
 # index so consumers can decompress to disk and ``pread`` individual pages
-# instead of holding the full body in memory.  Format documented in
-# ``docs/architecture/sqlite-btree-sidecar.md``.
-_BTREEMETA_FORMAT_VERSION = 3
+# instead of holding the full body in memory.
+# v4 = v3 followed by an overflow-chain map (one entry per kv overflow
+# chain head, each entry listing the ordered pagenos in the chain).
+# A future reader can prefetch entire chains in a single coalesced
+# range-read instead of chasing each link sequentially.  Format
+# documented in ``docs/architecture/sqlite-btree-sidecar.md``.
+_BTREEMETA_FORMAT_VERSION = 4
 # zstd default level.  Btree pages compress ~12× at level 3 with
 # sub-millisecond cost; higher levels squeeze a few extra percent for
 # significantly more time and aren't worth it on the writer hot path.
@@ -89,6 +94,92 @@ _BTREEMETA_SAFE_JOURNAL_MODES: frozenset[str] = frozenset(
 
 
 # ---------------------------------------------------------------------------
+# Adaptive page_size (post-write VACUUM)
+# ---------------------------------------------------------------------------
+
+
+# Fraction of values that should fit inline; the picker chooses the
+# smallest supported page size whose inline threshold accommodates this
+# percentile.  0.95 is a deliberate trade-off: tight enough to
+# eliminate overflow for the vast majority of values, loose enough that
+# a long tail of outliers does not blow up to the largest page size.
+_AUTO_PAGE_SIZE_PERCENTILE: float = 0.95
+
+
+def _maybe_repage_to_auto(
+    db_path: Path,
+    *,
+    db_url: str,
+    connection_opener: Callable[[Path], sqlite3.Connection] | None = None,
+) -> None:
+    """Rewrite ``db_path`` in-place at the page size recommended for its values.
+
+    No-op when the recommended size matches the current size or when
+    the kv table is empty (in which case the default size is fine).
+    The rewrite uses ``PRAGMA page_size = N; VACUUM;`` on a fresh
+    connection; ``VACUUM`` honours the pragma even when it changes the
+    on-disk page size.
+
+    ``connection_opener`` is called with the DB path and must return an
+    open ``sqlite3.Connection`` configured with whatever extensions are
+    needed to read every virtual table the file owns.  The default opens
+    a plain :func:`sqlite3.connect`; the sqlite-vec adapter overrides
+    this to load the vec extension so ``VACUUM`` can resolve
+    ``vec_index``.
+
+    Errors are logged and re-raised — the caller's ``seal()`` already
+    treats this as part of the finalize step.
+    """
+
+    if connection_opener is None:
+        conn = sqlite3.connect(str(db_path), isolation_level=None)
+    else:
+        conn = connection_opener(db_path)
+    try:
+        ((current_page_size,),) = conn.execute("PRAGMA page_size").fetchall()
+        current_page_size = int(current_page_size)
+
+        ((row_count,),) = conn.execute("SELECT count(*) FROM kv").fetchall()
+        if int(row_count) == 0:
+            return
+
+        # OFFSET-based percentile: cheaper than building a histogram and
+        # accurate enough for this picker.  Ordering by length then taking
+        # the offset matching the requested percentile yields the
+        # k-th-smallest size.
+        offset = max(0, int(int(row_count) * _AUTO_PAGE_SIZE_PERCENTILE) - 1)
+        ((p95_value_bytes,),) = conn.execute(
+            "SELECT length(v) FROM kv ORDER BY length(v) LIMIT 1 OFFSET ?",
+            (offset,),
+        ).fetchall()
+
+        ((max_key_bytes,),) = conn.execute("SELECT max(length(k)) FROM kv").fetchall()
+        max_key_bytes = int(max_key_bytes or 0)
+
+        target = recommend_page_size(
+            p95_value_bytes=int(p95_value_bytes),
+            max_key_bytes=max_key_bytes,
+        )
+        if target == current_page_size:
+            return
+
+        conn.execute(f"PRAGMA page_size = {target}")
+        conn.execute("VACUUM")
+        log_event(
+            "sqlite_adapter_repaged",
+            level=logging.DEBUG,
+            logger=_logger,
+            db_url=db_url,
+            from_page_size=current_page_size,
+            to_page_size=target,
+            p95_value_bytes=int(p95_value_bytes),
+            max_key_bytes=max_key_bytes,
+        )
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
 # Btree-metadata sidecar extraction
 # ---------------------------------------------------------------------------
 
@@ -118,7 +209,7 @@ def extract_btree_metadata(db_path: Path, *, db_bytes: bytes | None = None) -> b
     Format (little-endian):
 
     * ``8 bytes`` magic ``b"SFBTM\\x00\\x00\\x00"``
-    * ``u32`` format version (currently ``3``)
+    * ``u32`` format version (currently ``4``)
     * zstd-compressed body, which when decompressed contains:
       * ``u32`` page size in bytes
       * ``u32`` page count ``N``
@@ -127,16 +218,27 @@ def extract_btree_metadata(db_path: Path, *, db_bytes: bytes | None = None) -> b
         corresponding page slab. Equivalently, when a consumer writes
         the decompressed body to a file, ``offset`` is the file offset.
       * ``N * page_size`` raw page bytes (in the same order)
+      * ``u32`` overflow chain count ``C``
+      * ``C`` entries, each:
+          - ``u32`` head pageno
+          - ``u32`` chain length ``L`` (number of pages in the chain,
+            including the head)
+          - ``L * u32`` pagenos in chain order, starting with the head
 
     Storing ``offset`` explicitly (even though pages are uniformly
     ``page_size`` bytes today) lets a disk-based consumer build a
     ``pageno → offset`` map and ``pread`` individual pages without
     holding the whole body in memory — useful for memory-constrained
-    readers and large sidecars.  Pages compress ~12× under zstd at
-    level 3 because each interior page is typically ~50% free space
-    and the per-page headers and cell pointer arrays repeat across the
-    bundle.  Compression is via the ``zstandard`` package (already in
-    the ``[sqlite-range]`` extra alongside APSW).
+    readers and large sidecars.  The chain map carries the structure
+    of every overflow chain so a future range-read reader can prefetch
+    the entire chain in one parallel multi-range request instead of
+    chasing each ``next-page`` pointer sequentially.  Pages compress
+    ~12× under zstd at level 3 because each interior page is typically
+    ~50% free space and the per-page headers and cell pointer arrays
+    repeat across the bundle; the chain map compresses similarly well
+    (long runs of monotonically-increasing pagenos).  Compression is
+    via the ``zstandard`` package (already in the ``[sqlite-range]``
+    extra alongside APSW).
     """
 
     try:
@@ -190,6 +292,13 @@ def extract_btree_metadata(db_path: Path, *, db_bytes: bytes | None = None) -> b
         page_nums: list[int] = sorted(
             {int(r[0]) for r in rows if isinstance(r[0], int)}
         )
+
+        overflow_rows = cursor.execute(
+            "SELECT pageno FROM dbstat WHERE pagetype = 'overflow' ORDER BY pageno"
+        ).fetchall()
+        overflow_pages: list[int] = sorted(
+            {int(r[0]) for r in overflow_rows if isinstance(r[0], int)}
+        )
     finally:
         conn.close()
 
@@ -204,6 +313,12 @@ def extract_btree_metadata(db_path: Path, *, db_bytes: bytes | None = None) -> b
             raise BtreeMetaUnavailableError("page_read_short")
         page_blobs.append(slab)
 
+    chains = _enumerate_overflow_chains(
+        overflow_pages=overflow_pages,
+        db_bytes=db_bytes,
+        page_size=page_size,
+    )
+
     n = len(page_nums)
     # Header: page_size + n_pages.  Index: N * (pageno, offset) pairs.
     # Data section starts after header + index.
@@ -216,11 +331,17 @@ def extract_btree_metadata(db_path: Path, *, db_bytes: bytes | None = None) -> b
         index_pairs.append(pgno)
         index_pairs.append(data_start + i * page_size)
 
+    chain_bytes_parts: list[bytes] = [struct.pack("<I", len(chains))]
+    for chain in chains:
+        chain_bytes_parts.append(struct.pack("<II", chain[0], len(chain)))
+        chain_bytes_parts.append(struct.pack(f"<{len(chain)}I", *chain))
+
     body = b"".join(
         [
             struct.pack("<II", page_size, n),
             struct.pack(f"<{2 * n}I", *index_pairs) if n else b"",
             b"".join(page_blobs),
+            b"".join(chain_bytes_parts),
         ]
     )
     compressor = zstandard.ZstdCompressor(level=_BTREEMETA_ZSTD_LEVEL)
@@ -231,6 +352,62 @@ def extract_btree_metadata(db_path: Path, *, db_bytes: bytes | None = None) -> b
             compressor.compress(body),
         ]
     )
+
+
+def _enumerate_overflow_chains(
+    *,
+    overflow_pages: Sequence[int],
+    db_bytes: bytes,
+    page_size: int,
+) -> list[list[int]]:
+    """Reconstruct every overflow chain from raw page successor pointers.
+
+    Each overflow page starts with a 4-byte big-endian ``next-pageno``
+    field (``0`` marks the end of the chain).  A chain head is any
+    overflow page that is not referenced as a successor by any other
+    overflow page (i.e. it is referenced from a leaf cell instead).
+    Returns a list of chains; each chain is ``[head, p1, p2, ...]`` in
+    traversal order.
+
+    Cycles are defensively short-circuited: if a successor walk re-enters
+    a page already visited in the current chain, the walk stops there.
+    This should never happen in a well-formed SQLite file but the cost
+    of the guard is negligible.
+    """
+
+    if not overflow_pages:
+        return []
+
+    successor: dict[int, int] = {}
+    overflow_set = set(overflow_pages)
+    for pgno in overflow_pages:
+        offset = (pgno - 1) * page_size
+        next_bytes = db_bytes[offset : offset + 4]
+        if len(next_bytes) != 4:
+            raise BtreeMetaUnavailableError("page_read_short")
+        next_pageno = int.from_bytes(next_bytes, "big")
+        # 0 = end of chain; any non-overflow successor is treated as
+        # malformed and stops the walk.
+        if next_pageno and next_pageno in overflow_set:
+            successor[pgno] = next_pageno
+
+    successors_set = set(successor.values())
+    heads = sorted(overflow_set - successors_set)
+
+    chains: list[list[int]] = []
+    for head in heads:
+        chain: list[int] = [head]
+        seen = {head}
+        cur = head
+        while cur in successor:
+            nxt = successor[cur]
+            if nxt in seen:
+                break
+            chain.append(nxt)
+            seen.add(nxt)
+            cur = nxt
+        chains.append(chain)
+    return chains
 
 
 def maybe_upload_btreemeta_sidecar(
@@ -304,15 +481,63 @@ def maybe_upload_btreemeta_sidecar(
 # ---------------------------------------------------------------------------
 
 
+# ``page_size`` accepts either a concrete SQLite page size or the
+# ``"auto"`` sentinel.  Under ``"auto"`` the adapter opens at the default
+# 4096-byte size, then after :meth:`SqliteAdapter.seal` analyses the
+# value-size distribution in the finalized DB and rewrites it in-place
+# (``PRAGMA page_size = N; VACUUM;``) if a larger page would have kept
+# the bulk of values inline.  Trade-offs in :mod:`sqlite_page_size` and
+# the adapter docstring.  Mutually exclusive with
+# :attr:`shardyfusion.config.KeyValueWriteConfig.profile_value_sizes_for_page_size`
+# — combining the two raises ``ConfigValidationError`` at config build.
+PageSizeMode = int | Literal["auto"]
+
+
+def _validate_factory_page_size(page_size: PageSizeMode) -> PageSizeMode:
+    if isinstance(page_size, str):
+        if page_size != "auto":
+            raise ConfigValidationError(
+                f"page_size string must be 'auto', got {page_size!r}"
+            )
+        return page_size
+    page_size = int(page_size)
+    if page_size not in SUPPORTED_PAGE_SIZES:
+        raise ConfigValidationError(
+            f"page_size {page_size!r} not in supported sizes {SUPPORTED_PAGE_SIZES}"
+        )
+    return page_size
+
+
 @dataclass(slots=True)
 class SqliteFactory:
     """Picklable factory that builds local SQLite KV shards.
 
+    ``page_size`` is one of the supported SQLite page sizes (4096, 8192,
+    16384, 32768, 65536) or the string ``"auto"``.  Larger pages raise
+    the inline-payload threshold so large values stay on the leaf page
+    instead of spilling into overflow chains (one extra S3 GET per page
+    under the range-read reader).  Trade-offs:
+
+    * **Pro** — fewer S3 GETs per large-value lookup; higher B-tree
+      fanout shrinks the tree depth; range scans hit fewer leaves.
+    * **Con** — every cache miss fetches ``page_size`` bytes, so small-
+      value point reads waste bandwidth on the larger payload; the
+      reader page cache costs proportionally more memory per slot.
+
+    Under ``page_size="auto"`` the adapter opens at 4 KB, observes the
+    on-disk value-size distribution at seal time, and rewrites the file
+    in-place at the recommended size via
+    :func:`shardyfusion.sqlite_page_size.recommend_page_size`.  This
+    doubles local I/O on rewrite but adds no S3 cost; callers that can
+    pre-compute the percentile upstream should pass an explicit int
+    instead via :func:`recommend_page_size`.
+
     ``emit_btree_metadata`` (default ``True``) controls whether each
     finalized shard uploads a sibling ``shard.btreemeta`` artifact
-    bundling all interior B-tree pages plus every ``sqlite_master`` page.
-    Reader-side range-mode consumers can fetch this once on shard open
-    and pin those pages for the lifetime of the shard reader.
+    bundling all interior B-tree pages plus every ``sqlite_master`` page
+    and the overflow chain map.  Reader-side range-mode consumers can
+    fetch this once on shard open and pin those pages for the lifetime
+    of the shard reader.
 
     The sidecar requires APSW (already declared in the ``[sqlite-range]``
     extra) and a SQLite build with ``SQLITE_ENABLE_DBSTAT_VTAB``.  If
@@ -320,11 +545,14 @@ class SqliteFactory:
     the sidecar — the main ``shard.db`` upload proceeds unchanged.
     """
 
-    page_size: int = 4096
+    page_size: PageSizeMode = 4096
     cache_size_pages: int = -2000  # negative = KiB, so ~8 MB
     s3_connection_options: S3ConnectionOptions | None = None
     credential_provider: CredentialProvider | None = None
     emit_btree_metadata: bool = True
+
+    def __post_init__(self) -> None:
+        self.page_size = _validate_factory_page_size(self.page_size)
 
     def __call__(self, *, db_url: str, local_dir: Path) -> SqliteAdapter:
         return SqliteAdapter(
@@ -349,14 +577,20 @@ class SqliteAdapter:
         *,
         db_url: str,
         local_dir: Path,
-        page_size: int = 4096,
+        page_size: PageSizeMode = 4096,
         cache_size_pages: int = -2000,
         s3_connection_options: S3ConnectionOptions | None = None,
         credential_provider: CredentialProvider | None = None,
         emit_btree_metadata: bool = True,
     ) -> None:
-        page_size = int(page_size)
+        page_size = _validate_factory_page_size(page_size)
         cache_size_pages = int(cache_size_pages)
+
+        self._page_size_mode: PageSizeMode = page_size
+        # Connection always opens at a concrete int.  Under "auto" we
+        # start at the smallest supported size and let seal() rewrite
+        # the file in-place if a larger size would fit values inline.
+        initial_page_size = 4096 if page_size == "auto" else int(page_size)
 
         self._db_url = db_url
         self._local_dir = local_dir
@@ -373,7 +607,7 @@ class SqliteAdapter:
 
         local_dir.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self._db_path), isolation_level=None)
-        conn.execute(f"PRAGMA page_size = {page_size}")
+        conn.execute(f"PRAGMA page_size = {initial_page_size}")
         conn.execute("PRAGMA journal_mode = OFF")
         conn.execute("PRAGMA synchronous = OFF")
         conn.execute(f"PRAGMA cache_size = {cache_size_pages}")
@@ -391,6 +625,7 @@ class SqliteAdapter:
             level=logging.DEBUG,
             logger=_logger,
             db_url=db_url,
+            page_size_mode=str(page_size),
         )
 
     def __enter__(self) -> Self:
@@ -423,6 +658,10 @@ class SqliteAdapter:
         SHA-256 of the file as a content-addressed checkpoint id; that
         is no longer used (writers now stamp shards with an opaque
         UUID — see :func:`shardyfusion._checkpoint_id.generate_checkpoint_id`).
+
+        Under ``page_size="auto"`` the closed file is reopened to scan
+        the kv value-size distribution and rewritten in-place at the
+        recommended page size when that differs from the initial 4 KB.
         """
         if self._conn is None:
             raise SqliteAdapterError("Adapter already closed")
@@ -433,6 +672,9 @@ class SqliteAdapter:
         self._conn.close()
         self._conn = None
         self._sealed = True
+
+        if self._page_size_mode == "auto":
+            _maybe_repage_to_auto(self._db_path, db_url=self._db_url)
 
         self._db_bytes = self._db_path.stat().st_size
         log_event(

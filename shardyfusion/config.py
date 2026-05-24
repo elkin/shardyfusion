@@ -116,11 +116,24 @@ class WriterManifestConfig:
 
 @dataclass(slots=True)
 class KeyValueWriteConfig:
-    """Key/value storage settings shared by KV writers."""
+    """Key/value storage settings shared by KV writers.
+
+    ``profile_value_sizes_for_page_size`` (distributed writers only)
+    asks the engine writer to compute the 95th percentile of value
+    sizes across the input using engine-native aggregation before
+    partition dispatch, then build the per-shard SQLite factory with
+    the recommended ``page_size``.  Mutually exclusive with an
+    explicit non-default factory ``page_size`` (including ``"auto"``):
+    combining the two raises :class:`ConfigValidationError`.  Ignored
+    by the in-process Python writer (no upstream to aggregate over) —
+    pass ``page_size="auto"`` on the SQLite factory instead for the
+    equivalent local picker.
+    """
 
     key_encoding: KeyEncoding = KeyEncoding.U64BE
     batch_size: int = 50_000
     adapter_factory: DbAdapterFactory | None = None
+    profile_value_sizes_for_page_size: bool = False
 
     def __post_init__(self) -> None:
         self.validate()
@@ -133,6 +146,44 @@ class KeyValueWriteConfig:
                 raise ConfigValidationError(str(exc)) from exc
         if self.batch_size <= 0:
             raise ConfigValidationError("kv.batch_size must be > 0")
+        _validate_page_size_mutual_exclusion(
+            adapter_factory=self.adapter_factory,
+            profile_value_sizes_for_page_size=self.profile_value_sizes_for_page_size,
+        )
+
+
+def _validate_page_size_mutual_exclusion(
+    *,
+    adapter_factory: Any,
+    profile_value_sizes_for_page_size: bool,
+) -> None:
+    """Reject configs that pick more than one page_size mechanism.
+
+    The factory may carry an explicit ``page_size`` (int) or the
+    ``"auto"`` post-write VACUUM sentinel.  ``profile_value_sizes_for_page_size``
+    asks the distributed engine writer to compute it upstream.  Exactly
+    one mechanism is allowed; the default ``page_size=4096`` with the
+    flag unset counts as the "no choice made" baseline.
+    """
+    if not profile_value_sizes_for_page_size:
+        return
+    if adapter_factory is None:
+        return
+    factory_page_size = getattr(adapter_factory, "page_size", None)
+    if factory_page_size is None:
+        return
+    if factory_page_size == "auto":
+        raise ConfigValidationError(
+            "kv.profile_value_sizes_for_page_size=True conflicts with "
+            "adapter_factory.page_size='auto': pick one page_size strategy "
+            "(engine-percentile vs post-write VACUUM), not both."
+        )
+    if isinstance(factory_page_size, int) and factory_page_size != 4096:
+        raise ConfigValidationError(
+            "kv.profile_value_sizes_for_page_size=True conflicts with an "
+            f"explicit adapter_factory.page_size={factory_page_size}: pick one "
+            "page_size strategy (engine-percentile vs caller-supplied), not both."
+        )
 
 
 @dataclass(slots=True)

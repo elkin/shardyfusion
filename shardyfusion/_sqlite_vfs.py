@@ -23,12 +23,38 @@ from .errors import ShardyfusionError
 from .storage import create_s3_store
 from .type_defs import S3ConnectionOptions
 
-# Page size used for LRU cache keying.  Matches the value advertised
-# from ``xSectorSize`` and the default SQLite page size.  Reads from
-# SQLite are typically aligned to this boundary, so caching whole pages
-# keyed by index gives a much higher hit rate than caching exact
-# ``(offset, amount)`` slices.
-_PAGE_SIZE = 4096
+# Fallback page size used for LRU cache keying when the file header
+# is unreachable.  Matches the SQLite default; real shards advertise
+# their page size in the file header (big-endian u16 at bytes 16-17,
+# with a special-case value of 1 meaning 65536) which the VFS parses on
+# open and exposes as ``S3ReadOnlyFile.page_size``.
+_DEFAULT_PAGE_SIZE = 4096
+# Bytes 16-17 of the SQLite file header encode the page size.  Reading
+# the first 100 bytes is enough to recover the page size and validate
+# the magic; this is one short S3 GET amortised over every subsequent
+# page-aligned read.
+_SQLITE_HEADER_SIZE = 100
+_SQLITE_HEADER_MAGIC = b"SQLite format 3\x00"
+
+
+def _parse_page_size_from_header(header: bytes) -> int | None:
+    """Return the page size encoded in a SQLite file header, or ``None``.
+
+    The header is the first 100 bytes of every SQLite database file.
+    Bytes 0-15 hold the magic ``"SQLite format 3\\x00"``; bytes 16-17
+    encode page size as big-endian ``u16`` with the special value ``1``
+    meaning 65536 (the upper bound that doesn't fit in a u16).  Any
+    value outside ``[512, 65536]`` or not a power of two is rejected.
+    """
+    if len(header) < 18 or header[:16] != _SQLITE_HEADER_MAGIC:
+        return None
+    raw = int.from_bytes(header[16:18], "big")
+    page_size = 65536 if raw == 1 else raw
+    if page_size < 512 or page_size > 65536:
+        return None
+    if page_size & (page_size - 1):
+        return None
+    return page_size
 
 
 class S3VfsError(ShardyfusionError):
@@ -98,7 +124,6 @@ class S3ReadOnlyFile:
             s3_credentials=s3_credentials,
         )
         self._key = key
-        self._page_size = _PAGE_SIZE
         self._page_cache: OrderedDict[int, bytes] = OrderedDict()
         self._page_cache_pages = page_cache_pages
         self._lock = threading.Lock()
@@ -115,6 +140,28 @@ class S3ReadOnlyFile:
                     "obstore.head response did not expose a 'size' field"
                 ) from None
         self._size: int = int(size)
+
+        self._page_size = self._discover_page_size(obstore)
+
+    @property
+    def page_size(self) -> int:
+        return self._page_size
+
+    def _discover_page_size(self, obstore: Any) -> int:
+        """Read the first 100 bytes of the file and parse the header page size.
+
+        Falls back to :data:`_DEFAULT_PAGE_SIZE` (4096) when the file is
+        empty, too small, or the header parse fails.  A 100-byte GET is
+        small enough that the cost is negligible compared to the per-shard
+        latency benefit of caching the right-sized pages.
+        """
+        end = min(_SQLITE_HEADER_SIZE, self._size)
+        if end <= 0:
+            return _DEFAULT_PAGE_SIZE
+        results = obstore.get_ranges(self._store, self._key, starts=[0], ends=[end])
+        header = bytes(results[0])
+        parsed = _parse_page_size_from_header(header)
+        return parsed if parsed is not None else _DEFAULT_PAGE_SIZE
 
     @property
     def size(self) -> int:
@@ -276,7 +323,7 @@ def create_apsw_vfs(vfs_name: str, s3_file: S3ReadOnlyFile) -> Any:
             return False
 
         def xSectorSize(self) -> int:
-            return _PAGE_SIZE
+            return s3_file.page_size
 
         def xDeviceCharacteristics(self) -> int:
             return 0

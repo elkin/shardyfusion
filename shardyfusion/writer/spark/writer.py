@@ -79,6 +79,11 @@ from shardyfusion.writer._accumulators import (
     ShardBatchAccumulator,
     UnifiedAccumulator,
 )
+from shardyfusion.writer._engine_page_size import (
+    DEFAULT_ENGINE_PROFILE_SAMPLE_SIZE,
+    collect_value_byte_samples,
+    maybe_apply_engine_page_size,
+)
 from shardyfusion.writer._runtime import PartitionWriteRuntime
 from shardyfusion.writer.spark.util import (
     DataFrameCacheContext,
@@ -91,6 +96,21 @@ from .sharding import (
 )
 
 _logger = get_logger(__name__)
+
+
+def _apply_engine_page_size_for_spark(
+    *,
+    df: DataFrame,
+    config: BaseShardedWriteConfig,
+    value_spec: ValueSpec,
+) -> None:
+    """Compute a value-size p95 from a Spark sample and rebuild the factory."""
+
+    if not getattr(config.kv, "profile_value_sizes_for_page_size", False):
+        return
+    sample_rows = df.limit(DEFAULT_ENGINE_PROFILE_SAMPLE_SIZE).collect()
+    sizes = collect_value_byte_samples(rows=sample_rows, value_spec=value_spec)
+    maybe_apply_engine_page_size(config, value_byte_samples=sizes, writer_kind="spark")
 
 
 @dataclass(slots=True)
@@ -111,6 +131,7 @@ def write_hash_sharded(
     options = options or SparkWriteOptions()
     validate_configs(config, input, options)
     validate_shard_id_col_no_collision(config, set(df.columns))
+    _apply_engine_page_size_for_spark(df=df, config=config, value_spec=input.value_spec)
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
     spark = df.sparkSession
@@ -142,6 +163,7 @@ def write_cel_sharded(
     options = options or SparkWriteOptions()
     validate_configs(config, input, options)
     validate_shard_id_col_no_collision(config, set(df.columns))
+    _apply_engine_page_size_for_spark(df=df, config=config, value_spec=input.value_spec)
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
     spark = df.sparkSession

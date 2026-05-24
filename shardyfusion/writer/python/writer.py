@@ -89,6 +89,29 @@ def _sharding_strategy_name(sharding: ShardingSpec) -> str:
     return "unknown"
 
 
+def _reject_engine_profile_flag(config: BaseShardedWriteConfig) -> None:
+    """Refuse ``kv.profile_value_sizes_for_page_size`` on the Python writer.
+
+    The flag asks an upstream distributed engine (Spark/Dask/Ray) to
+    compute a value-size percentile across the input and bake the
+    recommended SQLite ``page_size`` into the factory.  The Python
+    writer is in-process, has no upstream aggregation step, and an
+    iterator can be consumed only once — so the equivalent must run at
+    seal time on each shard.  Use ``page_size="auto"`` on the SQLite
+    factory for that.
+    """
+    if getattr(config.kv, "profile_value_sizes_for_page_size", False):
+        raise ConfigValidationError(
+            "kv.profile_value_sizes_for_page_size is only supported by the "
+            "Spark/Dask/Ray distributed writers (they compute the value-size "
+            "percentile via engine-native aggregation before partition "
+            "dispatch).  For the in-process Python writer, pass "
+            "page_size='auto' on the SQLite factory instead — it observes "
+            "the value-size distribution at seal time and rewrites the shard "
+            "in-place at the recommended page size."
+        )
+
+
 def write_hash_sharded(
     records: Iterable[T],
     config: HashShardedWriteConfig,
@@ -119,6 +142,7 @@ def write_hash_sharded(
 
     options = options or PythonWriteOptions()
     validate_configs(config, input, options)
+    _reject_engine_profile_flag(config)
     key_fn = input.key_fn
     value_fn = input.value_fn
     columns_fn = input.columns_fn
@@ -263,6 +287,7 @@ def write_cel_sharded(
 
     options = options or PythonWriteOptions()
     validate_configs(config, input, options)
+    _reject_engine_profile_flag(config)
     key_fn = input.key_fn
     value_fn = input.value_fn
     columns_fn = input.columns_fn

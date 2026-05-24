@@ -59,6 +59,11 @@ from shardyfusion.sharding_types import (
     ShardingSpec,
 )
 from shardyfusion.writer._accumulators import KvAccumulator, UnifiedAccumulator
+from shardyfusion.writer._engine_page_size import (
+    DEFAULT_ENGINE_PROFILE_SAMPLE_SIZE,
+    collect_value_byte_samples,
+    maybe_apply_engine_page_size,
+)
 from shardyfusion.writer._runtime import RetryingPartitionWriteRuntime
 
 from .sharding import (
@@ -67,6 +72,24 @@ from .sharding import (
 )
 
 _logger = get_logger(__name__)
+
+
+def _apply_engine_page_size_for_ray(
+    *,
+    ds: ray.data.Dataset,
+    config: BaseShardedWriteConfig,
+    value_spec: ValueSpec,
+) -> None:
+    """Compute a value-size p95 from a Ray sample and rebuild the factory."""
+
+    if not getattr(config.kv, "profile_value_sizes_for_page_size", False):
+        return
+    sample_rows = ds.take(DEFAULT_ENGINE_PROFILE_SAMPLE_SIZE)
+    if not sample_rows:
+        return
+    sizes = collect_value_byte_samples(rows=sample_rows, value_spec=value_spec)
+    maybe_apply_engine_page_size(config, value_byte_samples=sizes, writer_kind="ray")
+
 
 # Import ShuffleStrategy for save/restore of the process-global shuffle setting.
 # Deferred to avoid import errors on older Ray versions.
@@ -110,6 +133,7 @@ def write_hash_sharded(
     cols = ds.columns()
     if cols is not None:
         validate_shard_id_col_no_collision(config, set(cols))
+    _apply_engine_page_size_for_ray(ds=ds, config=config, value_spec=input.value_spec)
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
     num_dbs = _resolve_num_dbs_before_sharding(ds, config)
@@ -141,6 +165,7 @@ def write_cel_sharded(
     cols = ds.columns()
     if cols is not None:
         validate_shard_id_col_no_collision(config, set(cols))
+    _apply_engine_page_size_for_ray(ds=ds, config=config, value_spec=input.value_spec)
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
 

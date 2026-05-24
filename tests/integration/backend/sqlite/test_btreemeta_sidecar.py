@@ -52,6 +52,27 @@ def _parse_sidecar(blob: bytes) -> tuple[int, int, list[int], list[bytes]]:
     return fv, page_size, page_nums, blobs
 
 
+def _parse_chain_map(blob: bytes) -> list[list[int]]:
+    import struct
+
+    import zstandard
+
+    body = zstandard.ZstdDecompressor().decompress(blob[12:])
+    page_size, n = struct.unpack("<II", body[:8])
+    cursor = 8 + 8 * n + n * page_size
+    (num_chains,) = struct.unpack("<I", body[cursor : cursor + 4])
+    cursor += 4
+    chains: list[list[int]] = []
+    for _ in range(num_chains):
+        head, length = struct.unpack("<II", body[cursor : cursor + 8])
+        cursor += 8
+        pages = list(struct.unpack(f"<{length}I", body[cursor : cursor + 4 * length]))
+        cursor += 4 * length
+        assert pages[0] == head
+        chains.append(pages)
+    return chains
+
+
 class TestBtreemetaSidecarRoundTrip:
     """Round-trip the sidecar through moto + obstore and validate contents."""
 
@@ -107,6 +128,40 @@ class TestBtreemetaSidecarRoundTrip:
         # error surfaces (404 from moto via the obstore range layer).
         with pytest.raises(Exception):  # noqa: B017 — obstore not-found surface
             backend.get(f"{db_url}/shard.btreemeta")
+
+    def test_overflow_chains_recorded_in_sidecar(
+        self, tmp_path: Path, s3_prefix: str
+    ) -> None:
+        """Values bigger than the inline-payload threshold spill into
+        overflow chains; the v4 sidecar should record every chain in
+        traversal order so a reader can prefetch them in one parallel
+        multi-range request."""
+        pytest.importorskip("apsw")
+        db_url = f"{s3_prefix}/shards/run_id=overflow/db=00000/attempt=00"
+        write_dir = tmp_path / "write"
+
+        with SqliteFactory()(db_url=db_url, local_dir=write_dir) as adapter:
+            # 20 KB values at 4 KB pages → ~1 KB inline + 5 overflow pages.
+            adapter.write_batch(
+                [(i.to_bytes(8, "big"), b"x" * 20_000) for i in range(20)]
+            )
+            adapter.seal()
+
+        backend = _make_backend(db_url)
+        sidecar = backend.get(f"{db_url}/shard.btreemeta")
+        db_bytes = backend.get(f"{db_url}/shard.db")
+
+        chains = _parse_chain_map(sidecar)
+        assert len(chains) == 20
+        assert {len(c) for c in chains} == {5}
+
+        # Cross-check: every next-pointer in every chain matches the raw
+        # DB's overflow-page header (big-endian u32 at offset 0).
+        for chain in chains:
+            for src, dst in zip(chain[:-1], chain[1:], strict=True):
+                off = (src - 1) * 4096
+                next_in_file = int.from_bytes(db_bytes[off : off + 4], "big")
+                assert next_in_file == dst
 
     def test_default_factory_writes_both_objects(
         self, tmp_path: Path, s3_prefix: str

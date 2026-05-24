@@ -461,12 +461,16 @@ def inject_vector_manifest_fields(config: BaseShardedWriteConfig, factory: Any) 
     config.manifest.custom_manifest_fields = custom_fields
 
 
-def _detect_btreemeta_page_size(factory: Any) -> int | None:
-    """Return the SQLite shard ``page_size`` if ``factory`` (or its inner
-    KV factory, when wrapped in :class:`CompositeFactory`) is a SQLite-backed
-    factory with ``emit_btree_metadata=True``; else ``None``.
+def _detect_btreemeta_page_size(factory: Any) -> int | str | None:
+    """Return the SQLite shard ``page_size`` (or ``"auto"``) for ``factory``.
 
-    Mirrors the unwrapping pattern in :func:`detect_kv_backend`.
+    Unwraps :class:`CompositeFactory` to the inner KV factory.  Returns
+    ``None`` when the factory is not SQLite-backed or has the
+    btree-metadata toggle disabled.  When the factory was configured
+    with ``page_size="auto"`` the post-write VACUUM picks per-shard
+    sizes; the manifest reports the literal ``"auto"`` so consumers
+    know not to trust a single value and instead read the size from
+    each shard's file header (the range-read VFS does this automatically).
     """
 
     actual: Any = factory
@@ -484,7 +488,7 @@ def _detect_btreemeta_page_size(factory: Any) -> int | None:
         if isinstance(actual, SqliteVecFactory) and getattr(
             actual, "emit_btree_metadata", False
         ):
-            return int(actual.page_size)
+            return _coerce_page_size_manifest_value(actual.page_size)
     except ImportError:
         pass
 
@@ -494,11 +498,17 @@ def _detect_btreemeta_page_size(factory: Any) -> int | None:
         if isinstance(actual, SqliteFactory) and getattr(
             actual, "emit_btree_metadata", False
         ):
-            return int(actual.page_size)
+            return _coerce_page_size_manifest_value(actual.page_size)
     except ImportError:
         pass
 
     return None
+
+
+def _coerce_page_size_manifest_value(value: Any) -> int | str:
+    if isinstance(value, str):
+        return value
+    return int(value)
 
 
 def inject_sqlite_btreemeta_manifest_field(

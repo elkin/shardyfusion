@@ -56,6 +56,11 @@ from shardyfusion.sharding_types import (
     ShardingSpec,
 )
 from shardyfusion.writer._accumulators import KvAccumulator, UnifiedAccumulator
+from shardyfusion.writer._engine_page_size import (
+    DEFAULT_ENGINE_PROFILE_SAMPLE_SIZE,
+    collect_value_byte_samples,
+    maybe_apply_engine_page_size,
+)
 from shardyfusion.writer._runtime import RetryingPartitionWriteRuntime
 
 from .sharding import (
@@ -64,6 +69,24 @@ from .sharding import (
 )
 
 _logger = get_logger(__name__)
+
+
+def _apply_engine_page_size_for_dask(
+    *,
+    ddf: dd.DataFrame,
+    config: BaseShardedWriteConfig,
+    value_spec: ValueSpec,
+) -> None:
+    """Compute a value-size p95 from a Dask sample and rebuild the factory."""
+
+    if not getattr(config.kv, "profile_value_sizes_for_page_size", False):
+        return
+    sample_pdf = ddf.head(DEFAULT_ENGINE_PROFILE_SAMPLE_SIZE, npartitions=-1)
+    if sample_pdf.empty:
+        return
+    rows = [row for _, row in sample_pdf.iterrows()]
+    sizes = collect_value_byte_samples(rows=rows, value_spec=value_spec)
+    maybe_apply_engine_page_size(config, value_byte_samples=sizes, writer_kind="dask")
 
 
 # Meta schema for result DataFrames returned by partition writers.
@@ -108,6 +131,9 @@ def write_hash_sharded(
     options = options or DaskWriteOptions()
     validate_configs(config, input, options)
     validate_shard_id_col_no_collision(config, set(ddf.columns))
+    _apply_engine_page_size_for_dask(
+        ddf=ddf, config=config, value_spec=input.value_spec
+    )
     num_dbs = resolve_num_dbs(config, lambda: len(ddf))
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
@@ -137,6 +163,9 @@ def write_cel_sharded(
     options = options or DaskWriteOptions()
     validate_configs(config, input, options)
     validate_shard_id_col_no_collision(config, set(ddf.columns))
+    _apply_engine_page_size_for_dask(
+        ddf=ddf, config=config, value_spec=input.value_spec
+    )
     started = time.perf_counter()
     run_id = config.output.run_id or uuid4().hex
 

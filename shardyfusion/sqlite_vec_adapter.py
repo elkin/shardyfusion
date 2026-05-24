@@ -38,8 +38,11 @@ from .logging import FailureSeverity, get_logger, log_event, log_failure
 from .sqlite_adapter import (
     DEFAULT_AUTO_PER_SHARD_THRESHOLD_BYTES,
     DEFAULT_AUTO_TOTAL_BUDGET_BYTES,
+    PageSizeMode,
     SqliteAccessPolicy,
+    _maybe_repage_to_auto,
     _ThresholdPolicy,
+    _validate_factory_page_size,
     maybe_upload_btreemeta_sidecar,
 )
 from .storage import ObstoreBackend, create_s3_store, parse_s3_url
@@ -93,6 +96,20 @@ def _load_sqlite_vec(conn: sqlite3.Connection) -> None:
     sqlite_vec.load(conn)
 
 
+def _open_sqlite_vec_connection(db_path: Path) -> sqlite3.Connection:
+    """Open a sqlite-vec aware connection for post-write maintenance (VACUUM).
+
+    SQLite's VACUUM walks every schema object, including virtual tables;
+    if the sqlite-vec extension is not loaded the ``vec_index`` table is
+    unresolvable and the rewrite fails.  Used as the
+    ``connection_opener`` callback for
+    :func:`shardyfusion.sqlite_adapter._maybe_repage_to_auto`.
+    """
+    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    _load_sqlite_vec(conn)
+    return conn
+
+
 # ---------------------------------------------------------------------------
 # Errors
 # ---------------------------------------------------------------------------
@@ -113,6 +130,13 @@ class SqliteVecAdapterError(ShardyfusionError):
 class SqliteVecFactory:
     """Factory that builds unified KV + vector SQLite shards.
 
+    ``page_size`` accepts the same values as
+    :class:`shardyfusion.sqlite_adapter.SqliteFactory`: a supported
+    integer or the string ``"auto"`` for post-write VACUUM.  The
+    ``"auto"`` picker chooses based on the ``kv`` table's value sizes;
+    vector embeddings live in ``vec_index`` (sqlite-vec) and are not
+    sampled.
+
     ``emit_btree_metadata`` (default ``True``) controls whether each
     finalized shard uploads a sibling ``shard.btreemeta`` artifact
     alongside the main ``shard.db``.  See
@@ -122,12 +146,15 @@ class SqliteVecFactory:
     """
 
     vector_spec: VectorSpec
-    page_size: int = 4096
+    page_size: PageSizeMode = 4096
     cache_size_pages: int = -2000
     s3_connection_options: S3ConnectionOptions | None = None
     credential_provider: CredentialProvider | None = None
     supports_vector_writes: bool = True
     emit_btree_metadata: bool = True
+
+    def __post_init__(self) -> None:
+        self.page_size = _validate_factory_page_size(self.page_size)
 
     def __call__(
         self,
@@ -161,7 +188,7 @@ class SqliteVecAdapter:
         db_url: str,
         local_dir: Path,
         vector_spec: VectorSpec,
-        page_size: int = 4096,
+        page_size: PageSizeMode = 4096,
         cache_size_pages: int = -2000,
         s3_connection_options: S3ConnectionOptions | None = None,
         credential_provider: CredentialProvider | None = None,
@@ -188,9 +215,12 @@ class SqliteVecAdapter:
         _load_sqlite_vec(conn)
 
         # SQLite pragmas for write performance
-        page_size = int(page_size)
+        self._page_size_mode: PageSizeMode = _validate_factory_page_size(page_size)
+        initial_page_size = (
+            4096 if self._page_size_mode == "auto" else int(self._page_size_mode)
+        )
         cache_size_pages = int(cache_size_pages)
-        conn.execute(f"PRAGMA page_size = {page_size}")
+        conn.execute(f"PRAGMA page_size = {initial_page_size}")
         conn.execute("PRAGMA journal_mode = OFF")
         conn.execute("PRAGMA synchronous = OFF")
         conn.execute(f"PRAGMA cache_size = {cache_size_pages}")
@@ -344,6 +374,13 @@ class SqliteVecAdapter:
         self._conn.close()
         self._conn = None
         self._sealed = True
+
+        if self._page_size_mode == "auto":
+            _maybe_repage_to_auto(
+                self._db_path,
+                db_url=self._db_url,
+                connection_opener=_open_sqlite_vec_connection,
+            )
 
         self._db_bytes = self._db_path.stat().st_size
         log_event(

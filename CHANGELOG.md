@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
+### Added
+
+#### Configurable SQLite `page_size` (writer)
+
+- **`SqliteFactory.page_size` / `SqliteVecFactory.page_size` now accept
+  any supported SQLite page size** (4096, 8192, 16384, 32768, 65536) or
+  the new sentinel `"auto"`. The default stays at 4096 — no behaviour
+  change for existing callers.
+- **`page_size="auto"` (post-write VACUUM)**. The adapter opens the
+  connection at 4 KB, observes the on-disk value-size distribution at
+  `seal()`, and rewrites the file in-place at the recommended page size
+  via `PRAGMA page_size = N; VACUUM;`. The picker uses the 95th
+  percentile of `length(v)` from the `kv` table and the largest key
+  size as inputs to `shardyfusion.sqlite_page_size.recommend_page_size`.
+  Cost: ~2× local I/O on rewrite, no extra S3 cost.
+- **`KeyValueWriteConfig.profile_value_sizes_for_page_size: bool = False`**.
+  Distributed writers (Spark, Dask, Ray) honour this flag by sampling
+  the input (`DataFrame.limit(N).collect()` /
+  `ddf.head(N, npartitions=-1)` / `ds.take(N)`), computing the value-size
+  95th percentile in the driver, and rebuilding the per-shard SQLite
+  factory with the recommended `page_size` via
+  `dataclasses.replace(factory, page_size=N)`. The Python writer rejects
+  the flag (no upstream aggregation step) and points users at
+  `page_size="auto"` as the in-process equivalent.
+- **Mutual-exclusivity validation**. Only one page-size mechanism may
+  be active at a time. Combining an explicit non-default factory
+  `page_size` (including `"auto"`) with
+  `profile_value_sizes_for_page_size=True` raises
+  `ConfigValidationError` at `KeyValueWriteConfig` construction.
+
+#### Sidecar v4 — overflow chain map
+
+- **`shard.btreemeta` format bumped from v3 to v4**. The new section,
+  appended after the page-slab body, records every kv overflow chain
+  in traversal order (head pageno + length + list of pagenos). A future
+  range-mode reader can prefetch the entire chain in one parallel
+  multi-range request instead of chasing each `next-pageno` pointer
+  sequentially. Format is documented in
+  `docs/architecture/sqlite-btree-sidecar.md`. Manifest schema unchanged
+  except the propagated `format_version: 4`.
+
+#### Range-read VFS now honours per-shard page size
+
+- **`S3ReadOnlyFile` parses the SQLite file header on open** (one
+  100-byte GET) and caches whole pages at the file's real page size
+  instead of the previously hard-coded 4 KB. APSW `xSectorSize` reports
+  the same value. Required for shards written at `page_size > 4096` to
+  be readable via the range-read VFS — without it the VFS aliased
+  multiple SQLite pages into one cache slot. Falls back to the 4 KB
+  default when the header is unreachable or malformed.
+
 ### Changed (breaking)
 
 #### SlateDB upgrade — 0.7 → 0.12

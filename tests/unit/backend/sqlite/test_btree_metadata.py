@@ -44,8 +44,11 @@ def _parse_sidecar(blob: bytes) -> tuple[int, int, int, list[int], list[bytes]]:
     """Parse the sidecar blob and return (format_version, page_size, n,
     page_numbers, page_blobs).
 
-    Format v3: ``magic(8) + version(4=3) + zstd(body)`` where the body is
-    ``page_size(4) + n(4) + (pageno, offset)*n + page_data(page_size*n)``.
+    Format v4: ``magic(8) + version(4=4) + zstd(body)`` where the body is
+    ``page_size(4) + n(4) + (pageno, offset)*n + page_data(page_size*n)
+    + num_chains(4) + (head, len, len*pageno)*num_chains``.  This helper
+    returns only the page-index portion; use :func:`_parse_chain_map`
+    for the chain section.
     """
     import struct
 
@@ -64,6 +67,26 @@ def _parse_sidecar(blob: bytes) -> tuple[int, int, int, list[int], list[bytes]]:
             f"offset[{i}]={off} expected={expected_data_start + i * page_size}"
         )
     return fv, page_size, n, page_nums, blobs
+
+
+def _parse_chain_map(blob: bytes) -> list[list[int]]:
+    """Return the v4 overflow chain map ``[[head, p1, p2, ...], ...]``."""
+    import struct
+
+    body = zstandard.ZstdDecompressor().decompress(blob[12:])
+    page_size, n = struct.unpack("<II", body[:8])
+    cursor = 8 + 8 * n + n * page_size
+    (num_chains,) = struct.unpack("<I", body[cursor : cursor + 4])
+    cursor += 4
+    chains: list[list[int]] = []
+    for _ in range(num_chains):
+        head, length = struct.unpack("<II", body[cursor : cursor + 8])
+        cursor += 8
+        pages = list(struct.unpack(f"<{length}I", body[cursor : cursor + 4 * length]))
+        cursor += 4 * length
+        assert pages[0] == head
+        chains.append(pages)
+    return chains
 
 
 def _all_page_types(db_path: Path) -> dict[int, tuple[str | None, str | None]]:
@@ -206,6 +229,80 @@ class TestPageSelectionKv:
         # pagetype (interior OR leaf).
         for p in master_pages:
             assert p in set(page_nums)
+
+
+# ---------------------------------------------------------------------------
+# Overflow chain map (v4)
+# ---------------------------------------------------------------------------
+
+
+def _build_kv_db_with_large_values(
+    path: Path,
+    *,
+    rows: int,
+    value_bytes: int,
+    page_size: int = 4096,
+) -> None:
+    """Build a small DB whose kv values are guaranteed to overflow."""
+    conn = sqlite3.connect(str(path), isolation_level=None)
+    conn.execute(f"PRAGMA page_size = {page_size}")
+    conn.execute("PRAGMA journal_mode = OFF")
+    conn.execute("PRAGMA synchronous = OFF")
+    conn.execute("CREATE TABLE kv (k BLOB PRIMARY KEY, v BLOB NOT NULL) WITHOUT ROWID")
+    conn.execute("BEGIN")
+    pairs = [(i.to_bytes(8, "big"), b"x" * value_bytes) for i in range(rows)]
+    conn.executemany("INSERT INTO kv (k, v) VALUES (?, ?)", pairs)
+    conn.execute("COMMIT")
+    conn.close()
+
+
+class TestOverflowChainMap:
+    def test_no_chains_when_values_fit_inline(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "tiny.db"
+        _build_kv_db(db_path, rows=10)  # 32-byte values, fit inline easily
+        blob = extract_btree_metadata(db_path)
+        chains = _parse_chain_map(blob)
+        assert chains == []
+
+    def test_single_overflow_page_chain(self, tmp_path: Path) -> None:
+        # ~3 KB value at 4 KB page → ~2 KB inline + one overflow page.
+        db_path = tmp_path / "short.db"
+        _build_kv_db_with_large_values(db_path, rows=20, value_bytes=3000)
+        blob = extract_btree_metadata(db_path)
+        chains = _parse_chain_map(blob)
+        assert len(chains) == 20
+        for chain in chains:
+            assert len(chain) == 1  # head only — one overflow page per value
+
+    def test_multi_page_chain_in_order(self, tmp_path: Path) -> None:
+        # ~20 KB value at 4 KB → 1 KB inline + ~5 overflow pages.
+        db_path = tmp_path / "long.db"
+        _build_kv_db_with_large_values(db_path, rows=20, value_bytes=20_000)
+        blob = extract_btree_metadata(db_path)
+        chains = _parse_chain_map(blob)
+        assert len(chains) == 20
+
+        # Every chain has the same length (uniform value size).
+        lengths = {len(c) for c in chains}
+        assert lengths == {5}, f"expected uniform chain length, got {lengths}"
+
+        # Every pageno in every chain is unique across all chains.
+        seen: set[int] = set()
+        for chain in chains:
+            for p in chain:
+                assert p not in seen, f"chain page {p} appears in multiple chains"
+                seen.add(p)
+
+        # Each chain's next-pointers match the raw file's overflow headers.
+        raw = db_path.read_bytes()
+        for chain in chains:
+            for src, dst in zip(chain[:-1], chain[1:], strict=True):
+                off = (src - 1) * 4096
+                next_in_file = int.from_bytes(raw[off : off + 4], "big")
+                assert next_in_file == dst
+            # Tail pointer is 0.
+            tail_off = (chain[-1] - 1) * 4096
+            assert int.from_bytes(raw[tail_off : tail_off + 4], "big") == 0
 
 
 # ---------------------------------------------------------------------------

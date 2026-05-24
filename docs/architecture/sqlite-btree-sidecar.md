@@ -45,21 +45,34 @@ uncompressed header followed by a zstd-compressed body:
 offset   size      field
 ------   -------   ----------------------------------
    0     8         magic            = b"SFBTM\x00\x00\x00"
-   8     4         format_version   (u32) = 3
+   8     4         format_version   (u32) = 4
   12     ...       zstd-compressed body
 ```
 
 The body, once decompressed, contains:
 
 ```
-offset   size      field
-------   -------   ----------------------------------
-   0     4         page_size        (u32, e.g. 4096)
-   4     4         page_count N     (u32) — number of pages in sidecar
-   8     8 * N     index            (u32 pageno, u32 offset) per entry,
-                                    sorted ascending by pageno
-   8+8N  PS * N    page_data        (page_size bytes each)
+offset                 size       field
+--------------------   --------   ----------------------------------
+   0                   4          page_size        (u32, e.g. 4096)
+   4                   4          page_count N     (u32)
+   8                   8 * N      index            (u32 pageno, u32 offset)
+                                                   per entry, sorted ascending
+   8+8N                PS * N     page_data        (page_size bytes each)
+   8+8N+PS*N           4          chain_count C    (u32)
+   ...                 var        C chain entries — each is:
+                                    u32 head_pageno
+                                    u32 chain_length L
+                                    L * u32 pagenos in order (head first)
 ```
+
+The chain map at the tail records every overflow chain in the kv table —
+one entry per chain head, listing the pagenos in traversal order. A
+range-mode reader can use this to prefetch the entire chain in a single
+parallel multi-range request instead of chasing each `next-pageno`
+pointer sequentially. Chains compress well under zstd (long runs of
+monotonically-increasing pagenos) so the addition is typically <1% of
+the sidecar even when the kv has millions of overflow pages.
 
 `offset` is the body-relative byte position of the corresponding page
 slab. Equivalently, when a consumer writes the decompressed body to a
@@ -133,12 +146,20 @@ the manifest's `custom` field:
 ```json
 {
   "sqlite_btreemeta": {
-    "format_version": 1,
+    "format_version": 4,
     "page_size": 4096,
-    "filename": "shard.btreemeta"
+    "filename": "shard.btreemeta",
+    "codec": "zstd"
   }
 }
 ```
+
+When the factory is configured with `page_size="auto"` (post-write
+VACUUM picks per-shard), the manifest reports the literal `"auto"` in
+the `page_size` field. Readers must then inspect each shard's SQLite
+file header (bytes 16–17, big-endian u16; 1 means 65536) to learn the
+real value — the range-read VFS does this automatically and exposes
+it via `S3ReadOnlyFile.page_size`.
 
 A range-mode reader can detect the flag once per snapshot and fetch
 `{shard.db_url}/shard.btreemeta` for every shard it opens, with no

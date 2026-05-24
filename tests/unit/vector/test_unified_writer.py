@@ -248,7 +248,7 @@ class TestInjectSqliteBtreemetaManifestField:
         inject_sqlite_btreemeta_manifest_field(config, SqliteFactory())
 
         assert self._field(config) == {
-            "format_version": 3,
+            "format_version": 4,
             "page_size": 4096,
             "filename": "shard.btreemeta",
             "codec": "zstd",
@@ -274,6 +274,20 @@ class TestInjectSqliteBtreemetaManifestField:
         assert isinstance(field, dict)
         assert field["page_size"] == 8192
 
+    def test_sqlite_factory_records_auto_sentinel(self) -> None:
+        """Under ``page_size="auto"`` each shard rewrites itself to a
+        size chosen from its own value distribution.  The manifest
+        carries the literal sentinel so readers know not to trust a
+        single value and to inspect each shard's file header instead."""
+        from shardyfusion._writer_core import inject_sqlite_btreemeta_manifest_field
+        from shardyfusion.sqlite_adapter import SqliteFactory
+
+        config = _cel_config()
+        inject_sqlite_btreemeta_manifest_field(config, SqliteFactory(page_size="auto"))
+        field = self._field(config)
+        assert isinstance(field, dict)
+        assert field["page_size"] == "auto"
+
     def test_sqlite_vec_factory_default_on_records_field(self) -> None:
         from shardyfusion._writer_core import inject_sqlite_btreemeta_manifest_field
         from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
@@ -282,7 +296,7 @@ class TestInjectSqliteBtreemetaManifestField:
         config = _cel_config(vector_spec=vs)
         inject_sqlite_btreemeta_manifest_field(config, SqliteVecFactory(vector_spec=vs))
         assert self._field(config) == {
-            "format_version": 3,
+            "format_version": 4,
             "page_size": 4096,
             "filename": "shard.btreemeta",
             "codec": "zstd",

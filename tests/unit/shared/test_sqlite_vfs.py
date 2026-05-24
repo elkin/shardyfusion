@@ -14,6 +14,7 @@ from shardyfusion._sqlite_vfs import (
     S3ReadOnlyFile,
     S3VfsError,
     _normalize_page_cache_pages,
+    _parse_page_size_from_header,
 )
 
 # ---------------------------------------------------------------------------
@@ -128,25 +129,42 @@ def _build(
 ) -> S3ReadOnlyFile:
     """Construct an S3ReadOnlyFile with ``data`` as the backing object.
 
-    We patch ``head`` to return the size first, then run the constructor,
-    then register the data on the actual store instance for ``get_ranges``.
+    Patches ``head`` to return the right size during init and patches
+    ``get_ranges`` to serve from ``data`` so that the constructor's
+    header-discovery ``get_ranges`` for the SQLite page size sees the
+    right bytes.  After construction, the real data is also registered
+    against the actual store instance for subsequent reads, and the
+    init-time ``get_ranges`` call is cleared from the bookkeeping so
+    test assertions reflect only the test body's calls.
     """
-    # Patch head to return correct size for any store/key during init.
     real_head = fake.head
+    real_get_ranges = fake.get_ranges
 
     def head_with_size(store: Any, path: str) -> dict[str, Any]:
         fake.head_calls.append((store, path))
         return {"size": len(data), "path": path}
 
+    def get_ranges_with_data(
+        store: Any,
+        path: str,
+        *,
+        starts: list[int],
+        ends: list[int],
+        coalesce: int = 1024 * 1024,
+    ) -> list[_FakeBytes]:
+        fake.get_ranges_calls.append((store, path, list(starts), list(ends)))
+        return [_FakeBytes(data[s:e]) for s, e in zip(starts, ends, strict=True)]
+
     fake.head = head_with_size  # type: ignore[assignment]
+    fake.get_ranges = get_ranges_with_data  # type: ignore[assignment]
     try:
         f = S3ReadOnlyFile(bucket=bucket, key=key, page_cache_pages=page_cache_pages)
     finally:
         fake.head = real_head  # type: ignore[assignment]
+        fake.get_ranges = real_get_ranges  # type: ignore[assignment]
 
-    # Now register the data against the actual store object so subsequent
-    # get_ranges calls return the correct slices.
     fake.put(f._store, key, data)
+    fake.get_ranges_calls.clear()
     return f
 
 
@@ -165,6 +183,63 @@ class TestNormalizePageCachePages:
     def test_negative_raises(self) -> None:
         with pytest.raises(S3VfsError, match="page_cache_pages must be >= 0"):
             _normalize_page_cache_pages(-1)
+
+
+# ---------------------------------------------------------------------------
+# SQLite header parser
+# ---------------------------------------------------------------------------
+
+
+def _make_header(page_size_field: int) -> bytes:
+    return b"SQLite format 3\x00" + page_size_field.to_bytes(2, "big") + b"\x00" * 82
+
+
+class TestParsePageSizeFromHeader:
+    def test_default_4k(self) -> None:
+        assert _parse_page_size_from_header(_make_header(4096)) == 4096
+
+    def test_16k(self) -> None:
+        assert _parse_page_size_from_header(_make_header(16384)) == 16384
+
+    def test_64k_encoded_as_1(self) -> None:
+        # SQLite uses 1 as the on-disk encoding of 65536 since the field
+        # is only a u16.
+        assert _parse_page_size_from_header(_make_header(1)) == 65536
+
+    def test_bad_magic_returns_none(self) -> None:
+        bad = b"wrong magic    \x00" + b"\x10\x00" + b"\x00" * 82
+        assert _parse_page_size_from_header(bad) is None
+
+    def test_too_small_returns_none(self) -> None:
+        assert _parse_page_size_from_header(b"SQLite format 3\x00") is None
+
+    def test_non_power_of_two_returns_none(self) -> None:
+        assert _parse_page_size_from_header(_make_header(3000)) is None
+
+    def test_out_of_range_returns_none(self) -> None:
+        assert _parse_page_size_from_header(_make_header(256)) is None
+
+
+class TestS3ReadOnlyFilePageSizeDiscovery:
+    def test_discovers_page_size_from_header(
+        self, fake_obstore: _FakeObstoreModule
+    ) -> None:
+        header = _make_header(16384)
+        # File contents: 100-byte header + filler.  Discovery only reads
+        # the first 100 bytes.
+        f = _build(fake_obstore, data=header + b"\x00" * 4000)
+        assert f.page_size == 16384
+
+    def test_falls_back_when_header_invalid(
+        self, fake_obstore: _FakeObstoreModule
+    ) -> None:
+        # Empty / non-SQLite content → default 4096.
+        f = _build(fake_obstore, data=b"not a sqlite db")
+        assert f.page_size == 4096
+
+    def test_empty_file_falls_back(self, fake_obstore: _FakeObstoreModule) -> None:
+        f = _build(fake_obstore, data=b"")
+        assert f.page_size == 4096
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +507,7 @@ class TestCreateApswVfs:
 
             mock_s3_file = MagicMock()
             mock_s3_file.size = 500
+            mock_s3_file.page_size = 4096
             mock_s3_file.read.return_value = b"x" * 100
 
             vfs = create_apsw_vfs("test-vfs-ops", mock_s3_file)
