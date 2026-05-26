@@ -253,14 +253,18 @@ class S3ReadOnlyFile:
         # Assemble result.
         if len(page_indices) == 1:
             idx = page_indices[0]
-            page = cached.get(idx) or fetched.get(idx, b"")
+            page = cached.get(idx)
+            if page is None:
+                page = fetched.get(idx, b"")
             page_start = idx * page_size
             local_off = offset - page_start
             return page[local_off : local_off + amount]
 
         chunks: list[bytes] = []
         for i, idx in enumerate(page_indices):
-            page = cached.get(idx) or fetched.get(idx, b"")
+            page = cached.get(idx)
+            if page is None:
+                page = fetched.get(idx, b"")
             page_start = idx * page_size
             if i == 0:
                 local_off = offset - page_start
