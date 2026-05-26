@@ -407,13 +407,32 @@ class _FailOnceAdapter:
 
 @dataclass(slots=True)
 class FailOnceAdapterFactory:
-    """Wrap another adapter factory and fail once for selected db ids/attempts."""
+    """Wrap another adapter factory and fail once for selected db ids/attempts.
+
+    Adapter-factory wrappers that hide the inner factory's ``page_size``
+    silently bypass :func:`shardyfusion.config._validate_page_size_mutual_exclusion`
+    and the engine-percentile picker, both of which probe ``page_size``
+    via ``getattr(factory, "page_size", None)``.  This class exposes the
+    inner factory's ``page_size`` and ``vec_payload_bytes_in_kv_db()``
+    as delegating properties so the validator/picker see through the
+    wrapper.  Any new adapter-factory wrapper should follow the same
+    pattern.
+    """
 
     inner_factory: Any
     marker_root: str
     fail_db_ids: tuple[int, ...] = (0,)
     fail_attempts: tuple[int, ...] = (0,)
     error_message: str = "simulated transient write failure"
+
+    @property
+    def page_size(self) -> Any:
+        return getattr(self.inner_factory, "page_size", None)
+
+    def vec_payload_bytes_in_kv_db(self) -> int:
+        if hasattr(self.inner_factory, "vec_payload_bytes_in_kv_db"):
+            return int(self.inner_factory.vec_payload_bytes_in_kv_db())
+        return 0
 
     def __call__(self, *, db_url: str, local_dir: Path) -> _FailOnceAdapter:
         db_id, attempt = _parse_db_url_identity(db_url)
