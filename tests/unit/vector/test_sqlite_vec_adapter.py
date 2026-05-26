@@ -99,7 +99,10 @@ class TestSqliteVecAdapterLifecycle:
             )
 
     def test_double_seal_raises(self, tmp_path: Path) -> None:
-        """After seal, conn is None so a second seal raises 'already closed'."""
+        """A second seal after a successful one raises 'already sealed'
+        — the ``_sealed`` check is now the first guard in ``seal()`` so
+        the message accurately reflects the state (not the side-effect
+        of ``_conn`` having been nulled)."""
         adapter = SqliteVecAdapter(
             db_url="s3://bucket/shard",
             local_dir=tmp_path / "shard",
@@ -107,7 +110,7 @@ class TestSqliteVecAdapterLifecycle:
         )
         adapter.seal()
 
-        with pytest.raises(SqliteVecAdapterError, match="already closed"):
+        with pytest.raises(SqliteVecAdapterError, match="already sealed"):
             adapter.seal()
 
     def test_write_after_close_raises(self, tmp_path: Path) -> None:

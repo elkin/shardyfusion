@@ -175,3 +175,181 @@ class TestSqliteVecAdapterAutoMode:
         # still runs through the vec-aware opener because the vec0
         # schema object is present.
         assert _read_page_size_from_header(local_dir / "shard.db") == 4096
+
+    def test_auto_mode_vec_only_workload(self, tmp_path: Path) -> None:
+        """Vec-only workload (no kv writes) still picks a page size that
+        fits the embedding inline.  Prior to the multi-cell refactor the
+        repage helper short-circuited on empty kv, leaving vec-only
+        files at the 4 KiB default with every embedding spilling to
+        overflow."""
+        pytest.importorskip("sqlite_vec")
+        import numpy as np
+
+        from shardyfusion.config import VectorSpec
+        from shardyfusion.sqlite_vec_adapter import SqliteVecAdapter
+
+        local_dir = tmp_path / "vec_only_shard"
+        # dim=1024 → 4096-byte raw embedding.  At 4 KiB pages the
+        # inline threshold is ~1002 B, so every embedding would overflow
+        # — picker must bump us to a larger page even though kv is empty.
+        spec = VectorSpec(dim=1024, metric="cosine", index_type="flat")
+        with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as mock:
+            mock.return_value = MagicMock()
+            adapter = SqliteVecAdapter(
+                db_url="s3://bucket/vec_only",
+                local_dir=local_dir,
+                vector_spec=spec,
+                page_size="auto",
+                emit_btree_metadata=False,
+            )
+            ids = np.arange(8, dtype=np.int64)
+            vecs = np.random.rand(8, 1024).astype(np.float32)
+            adapter.write_vector_batch(ids, vecs)
+            adapter.seal()
+
+        # 4*1024 + 16 (vec0 overhead) + 9 (rowid) + 12 (cell) = 4117 B
+        # required — exceeds 4096 (1002) and 8192 (2030); 16384 has
+        # threshold 4086 (also too small); 32768 has 8198 → fits.
+        assert _read_page_size_from_header(local_dir / "shard.db") == 32768
+
+    def test_close_refuses_upload_when_seal_failed(self, tmp_path: Path) -> None:
+        """If _maybe_repage_to_auto raises during seal(), close() must
+        skip the upload AND raise so the writer learns the shard was
+        not published.  Otherwise the un-repaged DB ships silently with
+        no signal that the chosen strategy was abandoned."""
+        pytest.importorskip("sqlite_vec")
+        from shardyfusion.config import VectorSpec
+        from shardyfusion.sqlite_vec_adapter import (
+            SqliteVecAdapter,
+            SqliteVecAdapterError,
+        )
+
+        local_dir = tmp_path / "fail_shard"
+        spec = VectorSpec(dim=8, metric="cosine", index_type="flat")
+        adapter = SqliteVecAdapter(
+            db_url="s3://bucket/fail",
+            local_dir=local_dir,
+            vector_spec=spec,
+            page_size="auto",
+            emit_btree_metadata=False,
+        )
+        adapter.write_batch([(i.to_bytes(8, "big"), b"v" * 100) for i in range(10)])
+
+        # Inject a failure in _maybe_repage_to_auto and verify close()
+        # does NOT call ObstoreBackend.put() and raises.
+        with patch(
+            "shardyfusion.sqlite_vec_adapter._maybe_repage_to_auto",
+            side_effect=RuntimeError("VACUUM failed"),
+        ):
+            with pytest.raises(RuntimeError, match="VACUUM failed"):
+                adapter.seal()
+
+        # adapter._sealed must be False, adapter._seal_attempted True.
+        assert adapter._sealed is False
+        assert adapter._seal_attempted is True
+
+        with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as mock:
+            mock.return_value = MagicMock()
+            with pytest.raises(SqliteVecAdapterError, match="seal.*not complete"):
+                adapter.close()
+            # put() must NOT have been called.
+            mock.return_value.put.assert_not_called()
+
+    def test_close_refuses_upload_when_seal_failed_sqlite(self, tmp_path: Path) -> None:
+        """SqliteAdapter (kv-only) has the same skip-and-raise contract."""
+        from shardyfusion.sqlite_adapter import SqliteAdapter, SqliteAdapterError
+
+        local_dir = tmp_path / "fail_shard_kv"
+        adapter = SqliteAdapter(
+            db_url="s3://bucket/fail-kv",
+            local_dir=local_dir,
+            page_size="auto",
+            emit_btree_metadata=False,
+        )
+        adapter.write_batch([(i.to_bytes(8, "big"), b"v" * 100) for i in range(10)])
+
+        with patch(
+            "shardyfusion.sqlite_adapter._maybe_repage_to_auto",
+            side_effect=RuntimeError("VACUUM failed"),
+        ):
+            with pytest.raises(RuntimeError, match="VACUUM failed"):
+                adapter.seal()
+
+        assert adapter._sealed is False
+        assert adapter._seal_attempted is True
+
+        with patch("shardyfusion.sqlite_adapter.ObstoreBackend") as mock:
+            mock.return_value = MagicMock()
+            with pytest.raises(SqliteAdapterError, match="seal.*not complete"):
+                adapter.close()
+            mock.return_value.put.assert_not_called()
+
+    def test_context_manager_propagates_original_seal_error(
+        self, tmp_path: Path
+    ) -> None:
+        """``with adapter:`` must surface the original seal exception when
+        close() also raises — otherwise the seal failure would be buried
+        under Python's __context__ chaining for any caller that only
+        inspects the active exception."""
+        from shardyfusion.sqlite_adapter import SqliteAdapter
+
+        local_dir = tmp_path / "ctxmgr_shard"
+        adapter = SqliteAdapter(
+            db_url="s3://bucket/ctxmgr",
+            local_dir=local_dir,
+            page_size="auto",
+            emit_btree_metadata=False,
+        )
+
+        with (
+            patch(
+                "shardyfusion.sqlite_adapter._maybe_repage_to_auto",
+                side_effect=RuntimeError("VACUUM failed"),
+            ),
+            patch("shardyfusion.sqlite_adapter.ObstoreBackend") as mock,
+        ):
+            mock.return_value = MagicMock()
+            with pytest.raises(Exception) as excinfo:
+                with adapter:
+                    adapter.write_batch(
+                        [(i.to_bytes(8, "big"), b"v" * 50) for i in range(5)]
+                    )
+                    adapter.seal()
+
+        # The original VACUUM failure must be reachable.  __exit__ runs
+        # close() which raises SqliteAdapterError; the seal RuntimeError
+        # ends up under __context__, not lost.
+        exc = excinfo.value
+        chain = []
+        cur: BaseException | None = exc
+        while cur is not None:
+            chain.append(cur)
+            cur = cur.__context__
+        assert any(
+            isinstance(c, RuntimeError) and "VACUUM failed" in str(c) for c in chain
+        ), f"original seal RuntimeError missing from exception chain: {chain}"
+
+    def test_composite_skips_vec_upload_when_kv_seal_fails(
+        self, tmp_path: Path
+    ) -> None:
+        """Half-publish regression: when kv.seal() raises, CompositeAdapter
+        close() must NOT call _vec.close() — otherwise LanceDB uploads its
+        sidecar unconditionally (no _sealed gate), orphaning it in S3 with
+        no matching kv .db."""
+        from shardyfusion.composite_adapter import CompositeAdapter
+
+        kv = MagicMock()
+        kv.seal.side_effect = RuntimeError("kv seal failed")
+        kv.close.return_value = None  # let kv.close() succeed for the test
+        vec = MagicMock()
+
+        adapter = CompositeAdapter(kv_adapter=kv, vector_writer=vec)
+        with pytest.raises(RuntimeError, match="kv seal failed"):
+            adapter.seal()
+        assert adapter._seal_failed is True
+
+        adapter.close()
+
+        vec.seal.assert_not_called()
+        vec.close.assert_not_called()
+        kv.close.assert_called_once()
