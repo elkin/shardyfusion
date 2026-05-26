@@ -82,8 +82,9 @@ def _apply_engine_page_size_for_dask(
     if not config.kv.profile_value_sizes_for_page_size:
         return
     sample_pdf = ddf.head(DEFAULT_ENGINE_PROFILE_SAMPLE_SIZE, npartitions=-1)
-    if sample_pdf.empty:
-        return
+    # Even on an empty sample, call through to maybe_apply_engine_page_size
+    # so the flag-clear contract holds uniformly across spark/dask/ray —
+    # the helper handles empty value_byte_samples internally.
     rows = [row for _, row in sample_pdf.iterrows()]
     sizes = collect_value_byte_samples(rows=rows, value_spec=value_spec)
     maybe_apply_engine_page_size(config, value_byte_samples=sizes, writer_kind="dask")
