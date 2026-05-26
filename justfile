@@ -181,12 +181,11 @@ unit n="4" p="2" path="": _check-venv _check-java
 integration n="4" p="2" path="": _check-venv _check-java
     PYTEST_WORKERS={{n}} uv run tox p -m integration -p {{p}} {{if path != "" { "-- " + path } else { "" }}}
 
-# Performance microbenchmarks (opt-in; not in default CI). Pass a path to
-# narrow scope; requires the real slatedb extra (already part of the local
-# dev install) and uses no tox parallelism so timings stay stable.
+# Performance microbenchmarks (opt-in; not in default CI; pass a path to narrow scope)
 [group('test')]
 [arg('path', help='pytest target under tests/integration/perf/')]
 perf path="tests/integration/perf/":
+    # No tox parallelism: timing-based asserts need stable wall-clock measurements.
     uv run pytest -m perf {{path}}
 
 # Quality + unit + integration in sequence
