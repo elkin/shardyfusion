@@ -26,7 +26,7 @@ import types
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Self
+from typing import Any, Final, Literal, Self
 
 import numpy as np
 
@@ -45,6 +45,7 @@ from .sqlite_adapter import (
     _validate_factory_page_size,
     maybe_upload_btreemeta_sidecar,
 )
+from .sqlite_page_size import VEC_INDEX_ROWID_MAX_BYTES, CellShape
 from .storage import ObstoreBackend, create_s3_store, parse_s3_url
 from .type_defs import Manifest, S3ConnectionOptions
 from .vector.types import SearchResult
@@ -58,6 +59,12 @@ _SQLITE_VEC_IMPORT_ERROR = (
     "Unified KV+vector with SQLite requires the 'vector-sqlite' extra. "
     "Install it with: pip install shardyfusion[vector-sqlite]"
 )
+
+# Conservative safety margin for sqlite-vec vec0 shadow-table per-row
+# overhead (chunk header + rowid linkage).  Folded into the embedding
+# payload estimate so a 4*dim value just under the inline threshold
+# doesn't spill to overflow once vec0 wraps it with metadata.
+_VEC0_ROW_OVERHEAD_BYTES: Final[int] = 16
 
 # Mapping from VectorSpec metric strings to sqlite-vec distance_metric values.
 # sqlite-vec supports "cosine" and "l2"; dot_product is rejected explicitly.
@@ -133,9 +140,12 @@ class SqliteVecFactory:
     ``page_size`` accepts the same values as
     :class:`shardyfusion.sqlite_adapter.SqliteFactory`: a supported
     integer or the string ``"auto"`` for post-write VACUUM.  The
-    ``"auto"`` picker chooses based on the ``kv`` table's value sizes;
-    vector embeddings live in ``vec_index`` (sqlite-vec) and are not
-    sampled.
+    ``"auto"`` picker sizes both the ``kv`` value cell AND the
+    ``vec_index`` embedding cell (``4 * dim`` bytes plus a vec0
+    per-row overhead margin) and chooses the smallest supported page
+    size whose inline threshold fits the larger of the two — so a
+    vec-only workload still gets a page large enough to keep
+    embeddings off overflow chains.
 
     ``emit_btree_metadata`` (default ``True``) controls whether each
     finalized shard uploads a sibling ``shard.btreemeta`` artifact
@@ -155,6 +165,16 @@ class SqliteVecFactory:
 
     def __post_init__(self) -> None:
         self.page_size = _validate_factory_page_size(self.page_size)
+
+    def vec_payload_bytes_in_kv_db(self) -> int:
+        """Per-row embedding payload stored alongside kv in the same .db.
+
+        SqliteVecFactory writes the embedding to the ``vec_index`` virtual
+        table in the same SQLite file, so the page-size picker must
+        budget ``4 * dim`` for the float32 embedding plus a conservative
+        margin for vec0 shadow-table per-row metadata.
+        """
+        return 4 * int(self.vector_spec.dim) + _VEC0_ROW_OVERHEAD_BYTES
 
     def __call__(
         self,
@@ -206,10 +226,19 @@ class SqliteVecAdapter:
         self._db_url = db_url
         self._local_dir = local_dir
         self._db_path = local_dir / _DB_FILENAME
+        # Coerce at the boundary — vector_spec.dim is typed ``int`` but
+        # nothing enforces it at runtime; a numpy.int64 from np.prod /
+        # tensor-shape inference would propagate into log_event fields
+        # and break some JSON serializers downstream.
+        self._vec_dim: int = int(vector_spec.dim)
 
         self._uploaded = False
         self._closed = False
         self._sealed = False
+        # See ``SqliteAdapter._seal_attempted`` — used by ``close()`` to
+        # distinguish "seal() never called" (allowed) from "seal() called
+        # and failed partway" (refuse upload).
+        self._seal_attempted = False
         self._db_bytes = 0
         self._emit_btree_metadata = bool(emit_btree_metadata)
         self._s3_conn_opts = s3_connection_options
@@ -237,12 +266,14 @@ class SqliteVecAdapter:
             "(k BLOB PRIMARY KEY, v BLOB NOT NULL) WITHOUT ROWID"
         )
 
-        # Vector index table (sqlite-vec) with configured distance metric
-        dim = vector_spec.dim
+        # Vector index table (sqlite-vec) with configured distance metric.
+        # Use the coerced ``self._vec_dim`` so the SQL string never embeds a
+        # numpy scalar (which stringifies but masks the type-leak the
+        # coercion is meant to prevent).
         metric_str = _sqlite_vec_metric(vector_spec.metric)
         conn.execute(
             f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_index "
-            f"USING vec0(embedding float[{dim}] distance_metric={metric_str})"
+            f"USING vec0(embedding float[{self._vec_dim}] distance_metric={metric_str})"
         )
 
         # Payload table for vector metadata
@@ -266,7 +297,7 @@ class SqliteVecAdapter:
             level=logging.DEBUG,
             logger=_logger,
             db_url=db_url,
-            dim=dim,
+            dim=self._vec_dim,
         )
 
     def __enter__(self) -> Self:
@@ -369,23 +400,46 @@ class SqliteVecAdapter:
         is no longer used (writers now stamp shards with an opaque
         UUID — see :func:`shardyfusion._checkpoint_id.generate_checkpoint_id`).
         """
-        if self._conn is None:
-            raise SqliteVecAdapterError("Adapter already closed")
         if self._sealed:
             raise SqliteVecAdapterError("Adapter already sealed")
+        if self._seal_attempted:
+            # seal() raised previously (e.g. VACUUM failure).  The adapter
+            # is in an indeterminate state — refuse retry on the same
+            # instance.  Distinct from "Adapter already closed" because
+            # `_conn` was nulled inside the failing seal() call.
+            raise SqliteVecAdapterError(
+                "Adapter seal previously failed; cannot retry on the same "
+                "instance — open a new adapter against the same db_url."
+            )
+        if self._conn is None:
+            raise SqliteVecAdapterError("Adapter already closed")
+        self._seal_attempted = True
         self._conn.execute("COMMIT")
         self._conn.execute("PRAGMA optimize")
         self._conn.close()
         self._conn = None
-        self._sealed = True
 
+        # Run any post-write VACUUM BEFORE marking sealed, so that a
+        # repage failure leaves ``_sealed=False`` and ``close()`` skips
+        # the upload — otherwise the un-repaged DB ships silently with
+        # no signal that the chosen strategy was abandoned.
         if self._page_size_mode == "auto":
+            # vec_index leaf cells use a small rowid varint as the key —
+            # not the user kv key — so size them as their own cell shape.
+            vec_payload = 4 * self._vec_dim + _VEC0_ROW_OVERHEAD_BYTES
             _maybe_repage_to_auto(
                 self._db_path,
                 db_url=self._db_url,
                 connection_opener=_open_sqlite_vec_connection,
+                extra_cells=[
+                    CellShape(
+                        payload_bytes=vec_payload,
+                        max_key_bytes=VEC_INDEX_ROWID_MAX_BYTES,
+                    )
+                ],
             )
 
+        self._sealed = True
         self._db_bytes = self._db_path.stat().st_size
         log_event(
             "sqlite_vec_adapter_sealed",
@@ -410,6 +464,27 @@ class SqliteVecAdapter:
                 self._conn = None
 
             if self._db_path.exists() and not self._uploaded:
+                if self._seal_attempted and not self._sealed:
+                    # seal() was attempted but did not complete (e.g.
+                    # post-write VACUUM raised).  Refuse to upload AND
+                    # raise so the writer learns the shard was not
+                    # published.  ``_closed`` is set first so any
+                    # subsequent close() call is a no-op rather than
+                    # re-raising.  The ``write -> close()`` pattern
+                    # (seal never attempted) still uploads — that
+                    # branch is below.
+                    log_event(
+                        "sqlite_vec_adapter_close_unsealed_skip_upload",
+                        level=logging.WARNING,
+                        logger=_logger,
+                        db_url=self._db_url,
+                    )
+                    self._closed = True
+                    raise SqliteVecAdapterError(
+                        "seal() was attempted but did not complete; "
+                        "refusing to upload an un-finalised shard.  See "
+                        "preceding seal() exception for the root cause."
+                    )
                 s3_key = f"{self._db_url.rstrip('/')}/{_DB_FILENAME}"
                 bucket, _ = parse_s3_url(s3_key)
                 store = create_s3_store(

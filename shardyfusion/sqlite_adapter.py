@@ -32,7 +32,11 @@ from ._sqlite_vfs import S3ReadOnlyFile, S3VfsError, create_apsw_vfs
 from .credentials import CredentialProvider, S3Credentials
 from .errors import ConfigValidationError, ShardyfusionError
 from .logging import FailureSeverity, get_logger, log_event, log_failure
-from .sqlite_page_size import SUPPORTED_PAGE_SIZES, recommend_page_size
+from .sqlite_page_size import (
+    SUPPORTED_PAGE_SIZES,
+    CellShape,
+    recommend_page_size_for_cells,
+)
 from .storage import ObstoreBackend, create_s3_store, parse_s3_url
 from .type_defs import Manifest, S3ConnectionOptions
 
@@ -112,14 +116,14 @@ def _maybe_repage_to_auto(
     *,
     db_url: str,
     connection_opener: Callable[[Path], sqlite3.Connection] | None = None,
+    extra_cells: list[CellShape] | None = None,
 ) -> None:
     """Rewrite ``db_path`` in-place at the page size recommended for its values.
 
-    No-op when the recommended size matches the current size or when
-    the kv table is empty (in which case the default size is fine).
     The rewrite uses ``PRAGMA page_size = N; VACUUM;`` on a fresh
     connection; ``VACUUM`` honours the pragma even when it changes the
-    on-disk page size.
+    on-disk page size.  No-op when the recommended size matches the
+    current size.
 
     ``connection_opener`` is called with the DB path and must return an
     open ``sqlite3.Connection`` configured with whatever extensions are
@@ -127,6 +131,20 @@ def _maybe_repage_to_auto(
     a plain :func:`sqlite3.connect`; the sqlite-vec adapter overrides
     this to load the vec extension so ``VACUUM`` can resolve
     ``vec_index``.
+
+    ``extra_cells`` is an optional list of additional :class:`CellShape`
+    entries to size alongside the kv cell.  Used by
+    :class:`SqliteVecAdapter` to fold the ``vec_index`` leaf cell
+    (``4*dim`` payload, rowid-varint key) into the recommendation so the
+    embedding fits inline on the chosen page.  KV-only adapters pass
+    ``None`` (default).
+
+    If the ``kv`` table is empty AND no ``extra_cells`` were supplied,
+    the function returns without rewriting (the default 4 KiB size is
+    correct for an empty file).  When ``extra_cells`` are present, the
+    picker runs against just those cells even when ``kv`` is empty —
+    this matters for vec-only workloads where every embedding row would
+    otherwise spill to overflow.
 
     Errors are logged and re-raised — the caller's ``seal()`` already
     treats this as part of the finalize step.
@@ -141,40 +159,61 @@ def _maybe_repage_to_auto(
         current_page_size = int(current_page_size)
 
         ((row_count,),) = conn.execute("SELECT count(*) FROM kv").fetchall()
-        if int(row_count) == 0:
+        row_count = int(row_count)
+        cells: list[CellShape] = []
+        p95_value_bytes = 0
+        max_key_bytes = 0
+        if row_count > 0:
+            # Nearest-rank percentile via OFFSET: rank = ceil(p * N) (1-indexed)
+            # → OFFSET = rank - 1.  Using `int(...) - 1` would round toward zero
+            # and pick one rank below the true p95 whenever `p * N` is non-
+            # integer (e.g. N=21, 41, 73, ...).
+            offset = max(0, math.ceil(row_count * _AUTO_PAGE_SIZE_PERCENTILE) - 1)
+            ((p95_value_bytes,),) = conn.execute(
+                "SELECT length(v) FROM kv ORDER BY length(v) LIMIT 1 OFFSET ?",
+                (offset,),
+            ).fetchall()
+            ((max_key_bytes,),) = conn.execute(
+                "SELECT max(length(k)) FROM kv"
+            ).fetchall()
+            p95_value_bytes = int(p95_value_bytes)
+            max_key_bytes = int(max_key_bytes or 0)
+            cells.append(
+                CellShape(payload_bytes=p95_value_bytes, max_key_bytes=max_key_bytes)
+            )
+        if extra_cells:
+            cells.extend(extra_cells)
+        if not cells:
+            # KV-only adapter with an empty file: default page size stands.
             return
 
-        # Nearest-rank percentile via OFFSET: rank = ceil(p * N) (1-indexed)
-        # → OFFSET = rank - 1.  Using `int(...) - 1` would round toward zero
-        # and pick one rank below the true p95 whenever `p * N` is non-
-        # integer (e.g. N=21, 41, 73, ...).
-        offset = max(0, math.ceil(int(row_count) * _AUTO_PAGE_SIZE_PERCENTILE) - 1)
-        ((p95_value_bytes,),) = conn.execute(
-            "SELECT length(v) FROM kv ORDER BY length(v) LIMIT 1 OFFSET ?",
-            (offset,),
-        ).fetchall()
-
-        ((max_key_bytes,),) = conn.execute("SELECT max(length(k)) FROM kv").fetchall()
-        max_key_bytes = int(max_key_bytes or 0)
-
-        target = recommend_page_size(
-            p95_value_bytes=int(p95_value_bytes),
-            max_key_bytes=max_key_bytes,
-        )
+        target = recommend_page_size_for_cells(cells)
         if target == current_page_size:
             return
 
         conn.execute(f"PRAGMA page_size = {target}")
         conn.execute("VACUUM")
+        event_fields: dict[str, Any] = {
+            "db_url": db_url,
+            "from_page_size": current_page_size,
+            "to_page_size": int(target),
+            "kv_row_count": row_count,
+            "extra_cells": [
+                (int(c.payload_bytes), int(c.max_key_bytes))
+                for c in (extra_cells or [])
+            ],
+        }
+        if row_count > 0:
+            # Only meaningful when kv actually had rows.  On a vec-only
+            # workload (row_count=0 with extra_cells) the 0 values
+            # would falsely suggest "kv had zero-byte rows".
+            event_fields["kv_p95_value_bytes"] = p95_value_bytes
+            event_fields["kv_max_key_bytes"] = max_key_bytes
         log_event(
             "sqlite_adapter_repaged",
             level=logging.DEBUG,
             logger=_logger,
-            db_url=db_url,
-            from_page_size=current_page_size,
-            to_page_size=target,
-            p95_value_bytes=int(p95_value_bytes),
-            max_key_bytes=max_key_bytes,
+            **event_fields,
         )
     finally:
         conn.close()
@@ -528,10 +567,12 @@ class SqliteFactory:
     Under ``page_size="auto"`` the adapter opens at 4 KB, observes the
     on-disk value-size distribution at seal time, and rewrites the file
     in-place at the recommended size via
-    :func:`shardyfusion.sqlite_page_size.recommend_page_size`.  This
-    doubles local I/O on rewrite but adds no S3 cost; callers that can
-    pre-compute the percentile upstream should pass an explicit int
-    instead via :func:`recommend_page_size`.
+    :func:`shardyfusion.sqlite_page_size.recommend_page_size_for_cells`
+    (which sizes the kv cell and, in the unified vec variant, the
+    ``vec_index`` cell together).  This doubles local I/O on rewrite
+    but adds no S3 cost; callers that can pre-compute the percentile
+    upstream should pass an explicit int on the factory's
+    ``page_size`` instead.
 
     ``emit_btree_metadata`` (default ``True``) controls whether each
     finalized shard uploads a sibling ``shard.btreemeta`` artifact
@@ -554,6 +595,16 @@ class SqliteFactory:
 
     def __post_init__(self) -> None:
         self.page_size = _validate_factory_page_size(self.page_size)
+
+    def vec_payload_bytes_in_kv_db(self) -> int:
+        """Per-row embedding payload stored alongside kv in the same .db.
+
+        ``SqliteFactory`` is KV-only: any vector data is written to a
+        sidecar by a wrapping :class:`CompositeFactory`, not into this
+        adapter's SQLite file.  Returns ``0`` so page-size sizing budgets
+        only the kv cell.
+        """
+        return 0
 
     def __call__(self, *, db_url: str, local_dir: Path) -> SqliteAdapter:
         return SqliteAdapter(
@@ -599,6 +650,12 @@ class SqliteAdapter:
         self._uploaded = False
         self._closed = False
         self._sealed = False
+        # Distinct from ``_sealed``: True once ``seal()`` has begun, even
+        # if it later raises (e.g. post-write VACUUM fails).  ``close()``
+        # uses this to refuse to upload a half-finalised file while
+        # still permitting the documented ``write -> close()`` pattern
+        # that skips ``seal()`` entirely.
+        self._seal_attempted = False
         self._db_bytes = 0
         self._emit_btree_metadata = bool(emit_btree_metadata)
         self._s3_conn_opts = s3_connection_options
@@ -664,19 +721,33 @@ class SqliteAdapter:
         the kv value-size distribution and rewritten in-place at the
         recommended page size when that differs from the initial 4 KB.
         """
-        if self._conn is None:
-            raise SqliteAdapterError("Adapter already closed")
         if self._sealed:
             raise SqliteAdapterError("Adapter already sealed")
+        if self._seal_attempted:
+            # seal() raised previously (e.g. VACUUM failure).  The adapter
+            # is in an indeterminate state — refuse retry on the same
+            # instance.  Distinct from "Adapter already closed" because
+            # `_conn` was nulled inside the failing seal() call.
+            raise SqliteAdapterError(
+                "Adapter seal previously failed; cannot retry on the same "
+                "instance — open a new adapter against the same db_url."
+            )
+        if self._conn is None:
+            raise SqliteAdapterError("Adapter already closed")
+        self._seal_attempted = True
         self._conn.execute("COMMIT")
         self._conn.execute("PRAGMA optimize")
         self._conn.close()
         self._conn = None
-        self._sealed = True
 
+        # Run any post-write VACUUM BEFORE marking sealed, so that a
+        # repage failure leaves ``_sealed=False`` and ``close()`` skips
+        # the upload — otherwise the un-repaged DB ships silently with
+        # no signal that the chosen strategy was abandoned.
         if self._page_size_mode == "auto":
             _maybe_repage_to_auto(self._db_path, db_url=self._db_url)
 
+        self._sealed = True
         self._db_bytes = self._db_path.stat().st_size
         log_event(
             "sqlite_adapter_sealed",
@@ -701,6 +772,27 @@ class SqliteAdapter:
                 self._conn = None
 
             if self._db_path.exists() and not self._uploaded:
+                if self._seal_attempted and not self._sealed:
+                    # seal() was attempted but did not complete (e.g.
+                    # post-write VACUUM raised).  Refuse to upload AND
+                    # raise so the writer learns the shard was not
+                    # published.  ``_closed`` is set first so any
+                    # subsequent close() call is a no-op rather than
+                    # re-raising.  The ``write -> close()`` pattern
+                    # (seal never attempted) still uploads — that
+                    # branch is below.
+                    log_event(
+                        "sqlite_adapter_close_unsealed_skip_upload",
+                        level=logging.WARNING,
+                        logger=_logger,
+                        db_url=self._db_url,
+                    )
+                    self._closed = True
+                    raise SqliteAdapterError(
+                        "seal() was attempted but did not complete; "
+                        "refusing to upload an un-finalised shard.  See "
+                        "preceding seal() exception for the root cause."
+                    )
                 s3_key = f"{self._db_url.rstrip('/')}/{_DB_FILENAME}"
                 bucket, _ = parse_s3_url(s3_key)
                 store = create_s3_store(
