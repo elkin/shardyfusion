@@ -82,6 +82,19 @@ class CompositeFactory:
     vector_factory: VectorIndexWriterFactory
     vector_spec: VectorSpec
 
+    def vec_payload_bytes_in_kv_db(self) -> int:
+        """Per-row embedding payload stored in the inner kv factory's .db.
+
+        Returns 0 unconditionally.  :class:`CompositeAdapter.write_vector_batch`
+        routes embeddings exclusively to ``vector_factory`` (the sidecar);
+        the inner ``kv_factory`` only receives ``write_batch`` (KV pairs)
+        — so even when the inner happens to be vector-aware
+        (e.g. :class:`SqliteVecFactory`), its own ``vec_index`` table is
+        never populated under this composite.  Delegating to the inner
+        would over-budget the page-size picker for an empty cell.
+        """
+        return 0
+
     def __call__(self, *, db_url: str, local_dir: Path) -> CompositeAdapter:
         index_config = VectorIndexConfig(
             dim=self.vector_spec.dim,
@@ -125,6 +138,11 @@ class CompositeAdapter:
         self._kv = kv_adapter
         self._vec = vector_writer
         self._closed = False
+        # Set when ``seal()`` raises in ``_kv.seal()`` so ``close()`` can
+        # skip the vector sidecar upload — LanceDB.close() uploads
+        # unconditionally (no _sealed gate), and shipping the sidecar
+        # without a matching kv .db would leave an orphan in S3.
+        self._seal_failed = False
 
     def __enter__(self) -> Self:
         return self
@@ -169,11 +187,16 @@ class CompositeAdapter:
         the writer stamps a single UUID covering KV + vector together
         (see :func:`shardyfusion._checkpoint_id.generate_checkpoint_id`).
 
-        If ``_kv.seal()`` raises, ``_vec.seal()`` is skipped; the
-        partial state is harmless because the writer abandons the
-        unpublished shard.
+        If ``_kv.seal()`` raises, ``_vec.seal()`` is skipped AND
+        ``self._seal_failed`` is set so the subsequent ``close()`` skips
+        the vector sidecar upload too — otherwise LanceDB's
+        unconditional upload would leave an orphan in S3.
         """
-        self._kv.seal()
+        try:
+            self._kv.seal()
+        except Exception:
+            self._seal_failed = True
+            raise
         self._vec.seal()
 
     def db_bytes(self) -> int:
@@ -183,9 +206,27 @@ class CompositeAdapter:
         if self._closed:
             return
         try:
-            self._vec.close()
+            if self._seal_failed:
+                # Intentionally do NOT call self._vec.close().  LanceDB's
+                # close() uploads the local .lance dataset unconditionally
+                # (no _sealed gate — see lancedb_adapter.py), so calling
+                # it after a failed kv seal would publish a sidecar with
+                # no matching kv .db and leave an orphan in S3.  The
+                # local LanceDB handle is dropped on process exit; the
+                # cost is acceptable for the failed-shard path.
+                log_event(
+                    "composite_adapter_skip_vec_after_kv_seal_failure",
+                    level=logging.WARNING,
+                    logger=_logger,
+                )
+            else:
+                self._vec.close()
         finally:
             try:
+                # ``_kv.close()`` will raise from its skip-upload branch
+                # when seal previously failed (see SqliteAdapter.close());
+                # we let that propagate so the writer learns the shard
+                # was not published.
                 self._kv.close()
             finally:
                 self._closed = True
