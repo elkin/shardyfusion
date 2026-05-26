@@ -11,7 +11,7 @@ in object-storage backed readers.
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Final, NamedTuple
 
 from .errors import ConfigValidationError
 
@@ -23,6 +23,26 @@ SUPPORTED_PAGE_SIZES: Final[tuple[int, ...]] = (4096, 8192, 16384, 32768, 65536)
 # varint rowid/key length when applicable) plus a small slack for the
 # index-cell metadata. Empirically ~12 bytes covers a typical kv row.
 _CELL_OVERHEAD_BYTES: Final[int] = 12
+
+# Max bytes for a SQLite int64 rowid varint — used as the conservative
+# "key" width for vec_index leaf cells, which key on rowid rather than a
+# user-supplied composite key.
+VEC_INDEX_ROWID_MAX_BYTES: Final[int] = 9
+
+
+class CellShape(NamedTuple):
+    """One b-tree cell shape (payload + key budget) for page-size sizing.
+
+    A SQLite file's inline-payload threshold is per-cell, not per-table,
+    and different tables in the same file can have very different cell
+    shapes (e.g. a wide-key ``WITHOUT ROWID`` kv table next to a narrow
+    rowid-keyed ``vec_index`` leaf).  Compute one shape per table you
+    care about, then pass the list to
+    :func:`recommend_page_size_for_cells`.
+    """
+
+    payload_bytes: int
+    max_key_bytes: int
 
 
 def inline_payload_threshold(page_size: int) -> int:
@@ -74,3 +94,29 @@ def recommend_page_size(
         if inline_payload_threshold(size) >= required:
             return size
     return SUPPORTED_PAGE_SIZES[-1]
+
+
+def recommend_page_size_for_cells(cells: list[CellShape]) -> int:
+    """Smallest supported page_size whose inline threshold fits every cell.
+
+    Computes :func:`recommend_page_size` independently for each cell shape
+    and returns the maximum.  This is the correct way to size a database
+    that contains multiple tables with materially different cell shapes —
+    e.g. a unified kv + vec_index file where the kv cell carries a wide
+    user key and the vec_index leaf carries a small rowid varint.
+
+    Raises ``ConfigValidationError`` if ``cells`` is empty: every caller
+    has at least one shape to fit, and silently returning the default
+    page size would mask the bug.
+    """
+    if not cells:
+        raise ConfigValidationError(
+            "recommend_page_size_for_cells requires at least one cell shape"
+        )
+    return max(
+        recommend_page_size(
+            p95_value_bytes=cell.payload_bytes,
+            max_key_bytes=cell.max_key_bytes,
+        )
+        for cell in cells
+    )
