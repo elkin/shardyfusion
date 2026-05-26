@@ -420,10 +420,30 @@ def detect_vector_backend(factory: Any) -> str:
     return "lancedb"
 
 
-def detect_kv_backend(factory: Any) -> str:
-    from shardyfusion.composite_adapter import CompositeFactory
+def kv_inner_factory(factory: Any) -> Any:
+    """Return the inner KV factory for known wrappers, or ``factory`` unchanged.
 
-    actual = factory.kv_factory if isinstance(factory, CompositeFactory) else factory
+    Centralises the :class:`CompositeFactory` unwrap pattern used by
+    validators and engine pickers that need to reach a SQLite factory's
+    ``page_size`` regardless of wrapping.  Import is local AND guarded by
+    ``ImportError`` because ``composite_adapter`` pulls numpy at module
+    top — installs that omit numpy (e.g. ``[writer-python-sqlite]``)
+    must still be able to call this helper from non-composite paths
+    (``_detect_btreemeta_page_size``, mutex validator).
+    """
+    try:
+        from shardyfusion.composite_adapter import CompositeFactory
+    except ImportError:
+        # composite_adapter unavailable → factory cannot be a CompositeFactory.
+        return factory
+
+    if isinstance(factory, CompositeFactory):
+        return factory.kv_factory
+    return factory
+
+
+def detect_kv_backend(factory: Any) -> str:
+    actual = kv_inner_factory(factory)
     try:
         from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
 
@@ -473,14 +493,7 @@ def _detect_btreemeta_page_size(factory: Any) -> int | str | None:
     each shard's file header (the range-read VFS does this automatically).
     """
 
-    actual: Any = factory
-    try:
-        from shardyfusion.composite_adapter import CompositeFactory
-
-        if isinstance(actual, CompositeFactory):
-            actual = actual.kv_factory
-    except ImportError:
-        pass
+    actual = kv_inner_factory(factory)
 
     try:
         from shardyfusion.sqlite_vec_adapter import SqliteVecFactory

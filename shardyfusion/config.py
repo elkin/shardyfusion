@@ -164,12 +164,26 @@ def _validate_page_size_mutual_exclusion(
     asks the distributed engine writer to compute it upstream.  Exactly
     one mechanism is allowed; the default ``page_size=4096`` with the
     flag unset counts as the "no choice made" baseline.
+
+    Wrapper factories like :class:`CompositeFactory` are unwrapped via
+    :func:`shardyfusion._writer_core.kv_inner_factory` so a conflict on
+    the inner kv factory (e.g. ``CompositeFactory(SqliteFactory('auto'),
+    ...)`` paired with the profile flag) is rejected here rather than
+    being silently overridden at engine-pick time.
     """
     if not profile_value_sizes_for_page_size:
         return
     if adapter_factory is None:
         return
-    factory_page_size = getattr(adapter_factory, "page_size", None)
+
+    # Local import: ``_writer_core`` lives outside the import graph that
+    # ``config`` participates in, and CompositeFactory's own module
+    # imports ``config`` transitively.  A top-level import would either
+    # cycle or pull numpy in for callers that never touch wrappers.
+    from shardyfusion._writer_core import kv_inner_factory
+
+    inner = kv_inner_factory(adapter_factory)
+    factory_page_size = getattr(inner, "page_size", None)
     if factory_page_size is None:
         return
     if factory_page_size == "auto":
