@@ -10,8 +10,8 @@ The matrix covers every page_size configuration the public API supports:
 
 For each mode the scenario asserts that:
 
-* the writer published a manifest + per-shard sidecar v4 (``shard.btreemeta``)
-* the manifest's ``custom.sqlite_btreemeta.page_size`` field matches the
+* the writer published a manifest + per-shard sidecar v5 (``shard.sidecar``)
+* the manifest's ``custom.sqlite_sidecar.page_size`` field matches the
   expected page_size (with the documented asymmetry for ``"auto"`` — it stays
   as the literal string ``"auto"`` in the manifest, not the resolved int)
 * a subprocess reader (``tests.helpers.readers.sqlite_get_driver``) opens the
@@ -61,7 +61,7 @@ if TYPE_CHECKING:
 # config carries ``profile_value_sizes_for_page_size=True``.
 #
 # ``expected_resolved_page_size`` is what the range reader should observe and
-# what should appear in the manifest's ``sqlite_btreemeta.page_size`` field
+# what should appear in the manifest's ``sqlite_sidecar.page_size`` field
 # (with the exception: for the ``"auto"`` mode the manifest stores the literal
 # string ``"auto"``, not the resolved int — see ``_expected_manifest_page_size``
 # below).
@@ -176,8 +176,8 @@ def _build_config(
 
 def _expected_manifest_page_size(mode_id: str, expected_resolved: int) -> Any:
     """``"auto"`` keeps the literal string in the manifest; everything else is
-    the resolved int. See ``_writer_core.inject_sqlite_btreemeta_manifest_field``
-    and ``sqlite_adapter._detect_btreemeta_page_size`` for the asymmetry."""
+    the resolved int. See ``_writer_core.inject_sqlite_sidecar_manifest_field``
+    and ``sqlite_adapter._detect_sidecar_page_size`` for the asymmetry."""
     if mode_id == "auto":
         return "auto"
     return expected_resolved
@@ -186,8 +186,8 @@ def _expected_manifest_page_size(mode_id: str, expected_resolved: int) -> Any:
 def _assert_sidecar_present_for_every_shard(
     result: BuildResult, s3_service: LocalS3Service
 ) -> None:
-    """boto3 head_object on shard.btreemeta for each winner db_url."""
-    from shardyfusion.sqlite_adapter import _BTREEMETA_FILENAME
+    """boto3 head_object on shard.sidecar for each winner db_url."""
+    from shardyfusion.sqlite_adapter import _SIDECAR_FILENAME
 
     client = s3_service["client"]
     bucket = s3_service["bucket"]
@@ -195,7 +195,7 @@ def _assert_sidecar_present_for_every_shard(
         assert winner.db_url is not None, (
             f"winner db_id={winner.db_id} has no db_url after a SQLite-backed write"
         )
-        sidecar_url = f"{winner.db_url.rstrip('/')}/{_BTREEMETA_FILENAME}"
+        sidecar_url = f"{winner.db_url.rstrip('/')}/{_SIDECAR_FILENAME}"
         _, key = parse_s3_url(sidecar_url)
         # Raises ClientError(404) if missing — surfaces as a test failure.
         client.head_object(Bucket=bucket, Key=key)
@@ -220,15 +220,15 @@ def _assert_manifest_page_size(
     store = S3ManifestStore(backend, s3_prefix)
     parsed = store.load_manifest(result.manifest_ref)
 
-    btreemeta = parsed.custom.get("sqlite_btreemeta")
-    assert btreemeta is not None, (
-        f"manifest at {result.manifest_ref} is missing 'sqlite_btreemeta' "
+    sidecar = parsed.custom.get("sqlite_sidecar")
+    assert sidecar is not None, (
+        f"manifest at {result.manifest_ref} is missing 'sqlite_sidecar' "
         f"custom field; got custom={parsed.custom}"
     )
-    assert btreemeta.get("page_size") == expected_manifest_page_size, (
-        f"manifest sqlite_btreemeta.page_size mismatch: "
-        f"expected {expected_manifest_page_size!r}, got {btreemeta.get('page_size')!r} "
-        f"(full sidecar block: {btreemeta})"
+    assert sidecar.get("page_size") == expected_manifest_page_size, (
+        f"manifest sqlite_sidecar.page_size mismatch: "
+        f"expected {expected_manifest_page_size!r}, got {sidecar.get('page_size')!r} "
+        f"(full sidecar block: {sidecar})"
     )
 
 

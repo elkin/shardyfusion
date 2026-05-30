@@ -15,4 +15,4 @@ Internal design notes. Not user-facing API documentation — for that, see [Refe
 - [Observability](observability.md) — `MetricsCollector`, `MetricEvent`.
 - [Error model](error-model.md) — exception hierarchy.
 - [Optional imports](optional-imports.md) — extras and lazy import patterns.
-- [SQLite B-tree sidecar](sqlite-btree-sidecar.md) — `shard.btreemeta` writer-side artifact.
+- [SQLite page-cache sidecar](sqlite-sidecar.md) — `shard.sidecar` writer-side artifact.

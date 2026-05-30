@@ -66,16 +66,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `profile_value_sizes_for_page_size=True` raises
   `ConfigValidationError` at `KeyValueWriteConfig` construction.
 
-#### Sidecar v4 — overflow chain map
+#### SQLite page-cache sidecar (v5)
 
-- **`shard.btreemeta` format bumped from v3 to v4**. The new section,
-  appended after the page-slab body, records every kv overflow chain
-  in traversal order (head pageno + length + list of pagenos). A future
-  range-mode reader can prefetch the entire chain in one parallel
-  multi-range request instead of chasing each `next-pageno` pointer
-  sequentially. Format is documented in
-  `docs/architecture/sqlite-btree-sidecar.md`. Manifest schema unchanged
-  except the propagated `format_version: 4`.
+- **SQLite adapters emit a `shard.sidecar` page-cache file** (renamed from
+  `shard.btreemeta`) alongside each `shard.db`, bundling every interior
+  B-tree page plus the schema btree so a range-read reader avoids per-query
+  navigation round trips. Opt out via `emit_sidecar=False` (renamed from
+  `emit_btree_metadata`).
+- **Vendor-neutral format.** The magic is now `SQPC` (4 bytes) followed by a
+  `u8` version, so the format can be consumed outside shardyfusion. Spec:
+  `docs/reference/sqlite-sidecar-format.md`.
+- **Pages are gap-stripped.** The unallocated middle of each B-tree page is
+  physically removed before compression and reconstructed on read, which
+  roughly halves the reader's resident footprint. The zstd frame carries a
+  content checksum.
+- **Bound to the `.db` object.** The writer uploads `shard.db` first and
+  stamps its object ETag into the sidecar; a reader uses the sidecar only
+  when the live `.db` ETag matches, so a stale or mismatched sidecar can
+  never feed SQLite wrong pages.
+- **Overflow-chain map retained**, so a reader can prefetch a whole chain in
+  one coalesced range request instead of chasing `next-pageno` pointers.
+- Manifest `custom` field renamed `sqlite_btreemeta` → `sqlite_sidecar`
+  (`format_version: 5`, `filename: shard.sidecar`).
 
 #### Range-read VFS now honours per-shard page size
 

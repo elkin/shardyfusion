@@ -166,11 +166,11 @@ Some extras serve both reader and writer roles even though they're named
 after one side. `sqlite-range` is the canonical example:
 
 - **Reader**: APSW powers the range-read VFS in
-  [`SqliteRangeShardReader`](../architecture/sqlite-btree-sidecar.md).
+  [`SqliteRangeShardReader`](../architecture/sqlite-sidecar.md).
 - **Writer**: APSW + `zstandard` power writer-side B-tree metadata
   extraction (sidecar emission) for `SqliteFactory` and `SqliteVecFactory` —
   see
-  [`architecture/sqlite-btree-sidecar.md`](../architecture/sqlite-btree-sidecar.md).
+  [`architecture/sqlite-sidecar.md`](../architecture/sqlite-sidecar.md).
   APSW provides the `dbstat` virtual table; `zstandard` compresses the
   sidecar body (~12× ratio).
 
@@ -183,6 +183,6 @@ for range-mode reads.
 ## See also
 
 - [`architecture/optional-imports.md`](../architecture/optional-imports.md) — the pattern's design.
-- [`architecture/sqlite-btree-sidecar.md`](../architecture/sqlite-btree-sidecar.md) — the sidecar artifact and dependency.
+- [`architecture/sqlite-sidecar.md`](../architecture/sqlite-sidecar.md) — the sidecar artifact and dependency.
 - [`operate/tox-matrix.md`](../operate/tox-matrix.md) — full env list.
 - [`adding-an-adapter.md`](adding-an-adapter.md) — the canonical worked example.

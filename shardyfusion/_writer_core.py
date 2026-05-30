@@ -429,7 +429,7 @@ def kv_inner_factory(factory: Any) -> Any:
     ``ImportError`` because ``composite_adapter`` pulls numpy at module
     top — installs that omit numpy (e.g. ``[writer-python-sqlite]``)
     must still be able to call this helper from non-composite paths
-    (``_detect_btreemeta_page_size``, mutex validator).
+    (``_detect_sidecar_page_size``, mutex validator).
     """
     try:
         from shardyfusion.composite_adapter import CompositeFactory
@@ -481,7 +481,7 @@ def inject_vector_manifest_fields(config: BaseShardedWriteConfig, factory: Any) 
     config.manifest.custom_manifest_fields = custom_fields
 
 
-def _detect_btreemeta_page_size(factory: Any) -> int | str | None:
+def _detect_sidecar_page_size(factory: Any) -> int | str | None:
     """Return the SQLite shard ``page_size`` (or ``"auto"``) for ``factory``.
 
     Unwraps :class:`CompositeFactory` to the inner KV factory.  Returns
@@ -499,7 +499,7 @@ def _detect_btreemeta_page_size(factory: Any) -> int | str | None:
         from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
 
         if isinstance(actual, SqliteVecFactory) and getattr(
-            actual, "emit_btree_metadata", False
+            actual, "emit_sidecar", False
         ):
             return _coerce_page_size_manifest_value(actual.page_size)
     except ImportError:
@@ -508,9 +508,7 @@ def _detect_btreemeta_page_size(factory: Any) -> int | str | None:
     try:
         from shardyfusion.sqlite_adapter import SqliteFactory
 
-        if isinstance(actual, SqliteFactory) and getattr(
-            actual, "emit_btree_metadata", False
-        ):
+        if isinstance(actual, SqliteFactory) and getattr(actual, "emit_sidecar", False):
             return _coerce_page_size_manifest_value(actual.page_size)
     except ImportError:
         pass
@@ -524,7 +522,7 @@ def _coerce_page_size_manifest_value(value: Any) -> int | str:
     return int(value)
 
 
-def inject_sqlite_btreemeta_manifest_field(
+def inject_sqlite_sidecar_manifest_field(
     config: BaseShardedWriteConfig, factory: Any
 ) -> None:
     """Record the presence of SQLite btree-metadata sidecars in the manifest.
@@ -534,22 +532,22 @@ def inject_sqlite_btreemeta_manifest_field(
     to :func:`inject_vector_manifest_fields` regardless of backend.
     """
 
-    page_size = _detect_btreemeta_page_size(factory)
+    page_size = _detect_sidecar_page_size(factory)
     if page_size is None:
         return
     # Format version comes from the writer of the artifact (sqlite_adapter)
     # so the manifest stays in lock-step with whatever format extract_
     # btree_metadata actually emits.
     from shardyfusion.sqlite_adapter import (
-        _BTREEMETA_FILENAME,
-        _BTREEMETA_FORMAT_VERSION,
+        _SIDECAR_FILENAME,
+        _SIDECAR_FORMAT_VERSION,
     )
 
     custom_fields = dict(config.manifest.custom_manifest_fields)
-    custom_fields["sqlite_btreemeta"] = {
-        "format_version": _BTREEMETA_FORMAT_VERSION,
+    custom_fields["sqlite_sidecar"] = {
+        "format_version": _SIDECAR_FORMAT_VERSION,
         "page_size": page_size,
-        "filename": _BTREEMETA_FILENAME,
+        "filename": _SIDECAR_FILENAME,
         "codec": "zstd",
     }
     config.manifest.custom_manifest_fields = custom_fields

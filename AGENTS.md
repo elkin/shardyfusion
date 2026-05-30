@@ -214,10 +214,15 @@ full run impractical. If it cannot be run, say exactly what was skipped.
   writer (see `shardyfusion._checkpoint_id.generate_checkpoint_id`), not
   a SHA-256 of the materialized DB file. The SHA-256 semantic was
   dropped in the slatedb 0.12 upgrade.
-- SQLite adapters emit a `shard.btreemeta` sidecar alongside `shard.db` by
-  default (opt out via `emit_btree_metadata=False`). Requires APSW + zstandard
-  from the `[sqlite-range]` extra; silently skips when either is missing.
-  Format spec: `docs/reference/sqlite-btree-sidecar-format.md`.
+- SQLite adapters emit a `shard.sidecar` page-cache file alongside `shard.db`
+  by default (opt out via `emit_sidecar=False`). The writer uploads `shard.db`
+  first, then stamps its object ETag into the sidecar so a reader only trusts
+  the sidecar when the live `.db` ETag matches. Pages are gap-stripped (the
+  unallocated middle of each B-tree page is dropped and reconstructed on read).
+  Requires APSW + zstandard from the `[sqlite-range]` extra; silently skips
+  when either is missing, on unsafe journal modes, or on reserved-bytes DBs.
+  Format spec (v5, vendor-neutral `SQPC` magic):
+  `docs/reference/sqlite-sidecar-format.md`.
 - The `SqliteShardReader` and SQLite-vec download-cache reader share
   `local_root` (default `/tmp/shardyfusion`) across CLI invocations and
   test processes. Concurrent access is serialised through

@@ -135,6 +135,19 @@ class ObstoreBackend:
         except NotFoundError:
             return None
 
+    def head(self, url: str) -> str | None:
+        """Return the object's storage version token (S3 ETag), or ``None``.
+
+        Used to bind a page-cache sidecar to the exact ``.db`` object it
+        describes: the writer stamps this into the sidecar after uploading
+        the ``.db``, and a reader compares it against the live object before
+        trusting the sidecar.
+        """
+        bucket, key = parse_s3_url(url)
+        meta = obstore.head(self._store, key)
+        tag = meta.get("e_tag") if isinstance(meta, dict) else None
+        return str(tag) if tag is not None else None
+
     def list_prefixes(self, prefix_url: str) -> list[str]:
         bucket, key_prefix = parse_s3_url(prefix_url)
         if not key_prefix.endswith("/"):

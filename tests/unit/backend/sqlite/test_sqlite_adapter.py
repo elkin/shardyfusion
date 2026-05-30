@@ -22,6 +22,7 @@ def mock_backend() -> MagicMock:
         instance = m.return_value
         instance.put = MagicMock()
         instance.get = MagicMock()
+        instance.head = MagicMock(return_value='"mock-etag"')
         yield instance
 
 
@@ -122,7 +123,7 @@ class TestSqliteAdapter:
         with SqliteAdapter(
             db_url="s3://test/shard",
             local_dir=local_dir,
-            emit_btree_metadata=False,
+            emit_sidecar=False,
         ) as adapter:
             adapter.write_batch([(b"key1", b"val1")])
 
@@ -141,7 +142,7 @@ class TestSqliteAdapter:
         adapter = SqliteAdapter(
             db_url="s3://test/shard",
             local_dir=local_dir,
-            emit_btree_metadata=False,
+            emit_sidecar=False,
         )
         adapter.write_batch([(b"k", b"v")])
         adapter.seal()
@@ -302,7 +303,7 @@ class TestSqliteShardReaderDownloadCache:
 # ---------------------------------------------------------------------------
 
 
-class TestBtreemetaSidecarOnSqliteAdapter:
+class TestSidecarOnSqliteAdapter:
     """Sidecar emission contract on SqliteAdapter.close().
 
     Sidecar artifact is best-effort: any failure is logged at TRANSIENT
@@ -320,7 +321,7 @@ class TestBtreemetaSidecarOnSqliteAdapter:
         with SqliteAdapter(
             db_url="s3://test/shard",
             local_dir=local_dir,
-            emit_btree_metadata=False,
+            emit_sidecar=False,
         ) as adapter:
             adapter.write_batch([(b"k", b"v")])
             adapter.seal()
@@ -329,10 +330,10 @@ class TestBtreemetaSidecarOnSqliteAdapter:
         assert len(keys) == 1
         assert keys[0].endswith("/shard.db")
 
-    def test_default_uploads_sidecar_then_db(
+    def test_default_uploads_db_then_sidecar(
         self, tmp_path: Path, mock_backend: MagicMock
     ) -> None:
-        # No explicit emit_btree_metadata kwarg — pin the default-on contract
+        # No explicit emit_sidecar kwarg — pin the default-on contract
         # so a future regression cannot silently flip the default.
         pytest.importorskip("apsw")
         local_dir = tmp_path / "shard"
@@ -341,13 +342,14 @@ class TestBtreemetaSidecarOnSqliteAdapter:
             adapter.seal()
 
         keys = self._put_keys(mock_backend)
-        assert len(keys) == 2, f"expected sidecar + db; got {keys!r}"
-        assert keys[0].endswith("/shard.btreemeta")
-        assert keys[1].endswith("/shard.db")
+        assert len(keys) == 2, f"expected db + sidecar; got {keys!r}"
+        # The .db is uploaded first so the sidecar can bind to its ETag.
+        assert keys[0].endswith("/shard.db")
+        assert keys[1].endswith("/shard.sidecar")
         # Content types
-        sidecar_call, db_call = mock_backend.put.call_args_list
-        assert sidecar_call.kwargs.get("content_type") == "application/octet-stream"
+        db_call, sidecar_call = mock_backend.put.call_args_list
         assert db_call.kwargs.get("content_type") == "application/x-sqlite3"
+        assert sidecar_call.kwargs.get("content_type") == "application/octet-stream"
 
     def test_flag_on_explicit_uploads_sidecar(
         self, tmp_path: Path, mock_backend: MagicMock
@@ -357,24 +359,24 @@ class TestBtreemetaSidecarOnSqliteAdapter:
         with SqliteAdapter(
             db_url="s3://test/shard",
             local_dir=local_dir,
-            emit_btree_metadata=True,
+            emit_sidecar=True,
         ) as adapter:
             adapter.write_batch([(b"k", b"v")])
             adapter.seal()
 
         keys = self._put_keys(mock_backend)
-        assert any(k.endswith("/shard.btreemeta") for k in keys)
+        assert any(k.endswith("/shard.sidecar") for k in keys)
         assert any(k.endswith("/shard.db") for k in keys)
 
-    def test_btreemeta_unavailable_silent_skip(
+    def test_sidecar_unavailable_silent_skip(
         self, tmp_path: Path, mock_backend: MagicMock
     ) -> None:
-        from shardyfusion.sqlite_adapter import BtreeMetaUnavailableError
+        from shardyfusion.sqlite_adapter import SidecarUnavailableError
 
         local_dir = tmp_path / "shard"
         with patch(
-            "shardyfusion.sqlite_adapter.extract_btree_metadata",
-            side_effect=BtreeMetaUnavailableError("apsw_not_installed"),
+            "shardyfusion.sqlite_adapter.extract_sidecar",
+            side_effect=SidecarUnavailableError("apsw_not_installed"),
         ):
             with SqliteAdapter(
                 db_url="s3://test/shard", local_dir=local_dir
@@ -392,7 +394,7 @@ class TestBtreemetaSidecarOnSqliteAdapter:
     ) -> None:
         local_dir = tmp_path / "shard"
         with patch(
-            "shardyfusion.sqlite_adapter.extract_btree_metadata",
+            "shardyfusion.sqlite_adapter.extract_sidecar",
             side_effect=RuntimeError("boom"),
         ):
             with SqliteAdapter(
@@ -406,7 +408,7 @@ class TestBtreemetaSidecarOnSqliteAdapter:
         assert keys[0].endswith("/shard.db")
 
     def test_sidecar_put_failure_silent_skip(self, tmp_path: Path) -> None:
-        # Make only the sidecar PUT fail (key ends with /shard.btreemeta);
+        # Make only the sidecar PUT fail (key ends with /shard.sidecar);
         # the main /shard.db PUT must still succeed.
         pytest.importorskip("apsw")
         local_dir = tmp_path / "shard"
@@ -418,7 +420,7 @@ class TestBtreemetaSidecarOnSqliteAdapter:
 
             def put_side_effect(key: str, data: bytes, **kwargs: object) -> None:
                 calls.append(key)
-                if key.endswith("/shard.btreemeta"):
+                if key.endswith("/shard.sidecar"):
                     raise OSError("sidecar S3 failure")
                 # main db PUT succeeds
 
@@ -430,10 +432,10 @@ class TestBtreemetaSidecarOnSqliteAdapter:
                 adapter.write_batch([(b"k", b"v")])
                 adapter.seal()
 
-            assert any(c.endswith("/shard.btreemeta") for c in calls)
+            assert any(c.endswith("/shard.sidecar") for c in calls)
             assert any(c.endswith("/shard.db") for c in calls)
 
-    def test_sidecar_uploaded_first(
+    def test_db_uploaded_before_sidecar(
         self, tmp_path: Path, mock_backend: MagicMock
     ) -> None:
         pytest.importorskip("apsw")
@@ -443,9 +445,9 @@ class TestBtreemetaSidecarOnSqliteAdapter:
             adapter.seal()
 
         keys = self._put_keys(mock_backend)
-        # Sidecar must precede db (defensive ordering for direct-S3 consumers).
-        sidecar_idx = next(
-            i for i, k in enumerate(keys) if k.endswith("/shard.btreemeta")
-        )
+        # The .db must precede the sidecar so the sidecar binds to its ETag.
         db_idx = next(i for i, k in enumerate(keys) if k.endswith("/shard.db"))
-        assert sidecar_idx < db_idx
+        sidecar_idx = next(
+            i for i, k in enumerate(keys) if k.endswith("/shard.sidecar")
+        )
+        assert db_idx < sidecar_idx

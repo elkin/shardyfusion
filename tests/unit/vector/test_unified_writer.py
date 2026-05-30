@@ -226,11 +226,11 @@ class TestInjectVectorManifestFields:
 
 
 # ---------------------------------------------------------------------------
-# inject_sqlite_btreemeta_manifest_field
+# inject_sqlite_sidecar_manifest_field
 # ---------------------------------------------------------------------------
 
 
-class TestInjectSqliteBtreemetaManifestField:
+class TestInjectSqliteSidecarManifestField:
     """The btree-metadata manifest hook records the snapshot-level flag
     so reader-side range mode can fetch the sidecar without per-shard
     HEAD probes. The hook must be safe to call universally — it's a
@@ -238,38 +238,36 @@ class TestInjectSqliteBtreemetaManifestField:
     """
 
     def _field(self, config: CelShardedWriteConfig) -> object:
-        return config.manifest.custom_manifest_fields.get("sqlite_btreemeta")
+        return config.manifest.custom_manifest_fields.get("sqlite_sidecar")
 
     def test_sqlite_factory_default_on_records_field(self) -> None:
-        from shardyfusion._writer_core import inject_sqlite_btreemeta_manifest_field
+        from shardyfusion._writer_core import inject_sqlite_sidecar_manifest_field
         from shardyfusion.sqlite_adapter import SqliteFactory
 
         config = _cel_config()
-        inject_sqlite_btreemeta_manifest_field(config, SqliteFactory())
+        inject_sqlite_sidecar_manifest_field(config, SqliteFactory())
 
         assert self._field(config) == {
-            "format_version": 4,
+            "format_version": 5,
             "page_size": 4096,
-            "filename": "shard.btreemeta",
+            "filename": "shard.sidecar",
             "codec": "zstd",
         }
 
     def test_sqlite_factory_explicit_off_omits_field(self) -> None:
-        from shardyfusion._writer_core import inject_sqlite_btreemeta_manifest_field
+        from shardyfusion._writer_core import inject_sqlite_sidecar_manifest_field
         from shardyfusion.sqlite_adapter import SqliteFactory
 
         config = _cel_config()
-        inject_sqlite_btreemeta_manifest_field(
-            config, SqliteFactory(emit_btree_metadata=False)
-        )
+        inject_sqlite_sidecar_manifest_field(config, SqliteFactory(emit_sidecar=False))
         assert self._field(config) is None
 
     def test_sqlite_factory_records_custom_page_size(self) -> None:
-        from shardyfusion._writer_core import inject_sqlite_btreemeta_manifest_field
+        from shardyfusion._writer_core import inject_sqlite_sidecar_manifest_field
         from shardyfusion.sqlite_adapter import SqliteFactory
 
         config = _cel_config()
-        inject_sqlite_btreemeta_manifest_field(config, SqliteFactory(page_size=8192))
+        inject_sqlite_sidecar_manifest_field(config, SqliteFactory(page_size=8192))
         field = self._field(config)
         assert isinstance(field, dict)
         assert field["page_size"] == 8192
@@ -279,42 +277,42 @@ class TestInjectSqliteBtreemetaManifestField:
         size chosen from its own value distribution.  The manifest
         carries the literal sentinel so readers know not to trust a
         single value and to inspect each shard's file header instead."""
-        from shardyfusion._writer_core import inject_sqlite_btreemeta_manifest_field
+        from shardyfusion._writer_core import inject_sqlite_sidecar_manifest_field
         from shardyfusion.sqlite_adapter import SqliteFactory
 
         config = _cel_config()
-        inject_sqlite_btreemeta_manifest_field(config, SqliteFactory(page_size="auto"))
+        inject_sqlite_sidecar_manifest_field(config, SqliteFactory(page_size="auto"))
         field = self._field(config)
         assert isinstance(field, dict)
         assert field["page_size"] == "auto"
 
     def test_sqlite_vec_factory_default_on_records_field(self) -> None:
-        from shardyfusion._writer_core import inject_sqlite_btreemeta_manifest_field
+        from shardyfusion._writer_core import inject_sqlite_sidecar_manifest_field
         from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
 
         vs = VectorSpec(dim=8)
         config = _cel_config(vector_spec=vs)
-        inject_sqlite_btreemeta_manifest_field(config, SqliteVecFactory(vector_spec=vs))
+        inject_sqlite_sidecar_manifest_field(config, SqliteVecFactory(vector_spec=vs))
         assert self._field(config) == {
-            "format_version": 4,
+            "format_version": 5,
             "page_size": 4096,
-            "filename": "shard.btreemeta",
+            "filename": "shard.sidecar",
             "codec": "zstd",
         }
 
     def test_sqlite_vec_factory_explicit_off_omits_field(self) -> None:
-        from shardyfusion._writer_core import inject_sqlite_btreemeta_manifest_field
+        from shardyfusion._writer_core import inject_sqlite_sidecar_manifest_field
         from shardyfusion.sqlite_vec_adapter import SqliteVecFactory
 
         vs = VectorSpec(dim=8)
         config = _cel_config(vector_spec=vs)
-        inject_sqlite_btreemeta_manifest_field(
-            config, SqliteVecFactory(vector_spec=vs, emit_btree_metadata=False)
+        inject_sqlite_sidecar_manifest_field(
+            config, SqliteVecFactory(vector_spec=vs, emit_sidecar=False)
         )
         assert self._field(config) is None
 
     def test_composite_factory_unwraps_inner_sqlite_kv(self) -> None:
-        from shardyfusion._writer_core import inject_sqlite_btreemeta_manifest_field
+        from shardyfusion._writer_core import inject_sqlite_sidecar_manifest_field
         from shardyfusion.composite_adapter import CompositeFactory
         from shardyfusion.sqlite_adapter import SqliteFactory
 
@@ -327,42 +325,42 @@ class TestInjectSqliteBtreemetaManifestField:
             vector_spec=vs,
         )
         config = _cel_config(vector_spec=vs)
-        inject_sqlite_btreemeta_manifest_field(config, composite)
+        inject_sqlite_sidecar_manifest_field(config, composite)
 
         field = self._field(config)
         assert isinstance(field, dict)
         assert field["page_size"] == 4096
 
     def test_composite_factory_with_inner_sqlite_off_omits_field(self) -> None:
-        from shardyfusion._writer_core import inject_sqlite_btreemeta_manifest_field
+        from shardyfusion._writer_core import inject_sqlite_sidecar_manifest_field
         from shardyfusion.composite_adapter import CompositeFactory
         from shardyfusion.sqlite_adapter import SqliteFactory
 
         vs = VectorSpec(dim=8)
         composite = CompositeFactory(
-            kv_factory=SqliteFactory(emit_btree_metadata=False),
+            kv_factory=SqliteFactory(emit_sidecar=False),
             vector_factory=MagicMock(),
             vector_spec=vs,
         )
         config = _cel_config(vector_spec=vs)
-        inject_sqlite_btreemeta_manifest_field(config, composite)
+        inject_sqlite_sidecar_manifest_field(config, composite)
         assert self._field(config) is None
 
     def test_non_sqlite_factory_omits_field(self) -> None:
-        from shardyfusion._writer_core import inject_sqlite_btreemeta_manifest_field
+        from shardyfusion._writer_core import inject_sqlite_sidecar_manifest_field
 
         config = _cel_config()
-        inject_sqlite_btreemeta_manifest_field(config, MagicMock())
+        inject_sqlite_sidecar_manifest_field(config, MagicMock())
         assert self._field(config) is None
 
     def test_preserves_other_custom_fields(self) -> None:
-        from shardyfusion._writer_core import inject_sqlite_btreemeta_manifest_field
+        from shardyfusion._writer_core import inject_sqlite_sidecar_manifest_field
         from shardyfusion.sqlite_adapter import SqliteFactory
 
         config = _cel_config()
         config.manifest.custom_manifest_fields = {"existing": {"keep": True}}
 
-        inject_sqlite_btreemeta_manifest_field(config, SqliteFactory())
+        inject_sqlite_sidecar_manifest_field(config, SqliteFactory())
 
         assert config.manifest.custom_manifest_fields["existing"] == {"keep": True}
-        assert "sqlite_btreemeta" in config.manifest.custom_manifest_fields
+        assert "sqlite_sidecar" in config.manifest.custom_manifest_fields

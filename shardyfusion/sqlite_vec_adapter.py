@@ -43,7 +43,7 @@ from .sqlite_adapter import (
     _maybe_repage_to_auto,
     _ThresholdPolicy,
     _validate_factory_page_size,
-    maybe_upload_btreemeta_sidecar,
+    maybe_upload_sidecar,
 )
 from .sqlite_page_size import VEC_INDEX_ROWID_MAX_BYTES, CellShape
 from .storage import ObstoreBackend, create_s3_store, parse_s3_url
@@ -147,8 +147,8 @@ class SqliteVecFactory:
     vec-only workload still gets a page large enough to keep
     embeddings off overflow chains.
 
-    ``emit_btree_metadata`` (default ``True``) controls whether each
-    finalized shard uploads a sibling ``shard.btreemeta`` artifact
+    ``emit_sidecar`` (default ``True``) controls whether each
+    finalized shard uploads a sibling ``shard.sidecar`` artifact
     alongside the main ``shard.db``.  See
     :class:`shardyfusion.sqlite_adapter.SqliteFactory` for details — the
     semantics, default, and graceful-degradation behavior are identical
@@ -161,7 +161,7 @@ class SqliteVecFactory:
     s3_connection_options: S3ConnectionOptions | None = None
     credential_provider: CredentialProvider | None = None
     supports_vector_writes: bool = True
-    emit_btree_metadata: bool = True
+    emit_sidecar: bool = True
 
     def __post_init__(self) -> None:
         self.page_size = _validate_factory_page_size(self.page_size)
@@ -191,7 +191,7 @@ class SqliteVecFactory:
             cache_size_pages=self.cache_size_pages,
             s3_connection_options=self.s3_connection_options,
             credential_provider=self.credential_provider,
-            emit_btree_metadata=self.emit_btree_metadata,
+            emit_sidecar=self.emit_sidecar,
         )
 
 
@@ -212,7 +212,7 @@ class SqliteVecAdapter:
         cache_size_pages: int = -2000,
         s3_connection_options: S3ConnectionOptions | None = None,
         credential_provider: CredentialProvider | None = None,
-        emit_btree_metadata: bool = True,
+        emit_sidecar: bool = True,
     ) -> None:
         # Validate page_size before touching the filesystem or opening a
         # connection — failure here must not leave a half-initialised
@@ -240,7 +240,7 @@ class SqliteVecAdapter:
         # and failed partway" (refuse upload).
         self._seal_attempted = False
         self._db_bytes = 0
-        self._emit_btree_metadata = bool(emit_btree_metadata)
+        self._emit_sidecar = bool(emit_sidecar)
         self._s3_conn_opts = s3_connection_options
         self._s3_creds: S3Credentials | None = (
             credential_provider.resolve() if credential_provider else None
@@ -494,13 +494,9 @@ class SqliteVecAdapter:
                 )
                 backend = ObstoreBackend(store)
                 db_bytes = self._db_path.read_bytes()
-                if self._emit_btree_metadata:
-                    maybe_upload_btreemeta_sidecar(
-                        backend=backend,
-                        db_url=self._db_url,
-                        db_path=self._db_path,
-                        db_bytes=db_bytes,
-                    )
+                # Upload the .db first so the sidecar can bind to its object
+                # version (ETag); a reader refuses a sidecar whose tag does
+                # not match the live .db.
                 backend.put(
                     s3_key,
                     db_bytes,
@@ -513,6 +509,27 @@ class SqliteVecAdapter:
                     logger=_logger,
                     db_url=self._db_url,
                 )
+                if self._emit_sidecar:
+                    try:
+                        db_tag = backend.head(s3_key)
+                    except Exception as exc:
+                        # An unbound sidecar is still safe (a reader declines
+                        # it), so a HEAD hiccup must not abort close().
+                        log_event(
+                            "sqlite_sidecar_tag_unavailable",
+                            level=logging.DEBUG,
+                            logger=_logger,
+                            db_url=self._db_url,
+                            error=str(exc),
+                        )
+                        db_tag = None
+                    maybe_upload_sidecar(
+                        backend=backend,
+                        db_url=self._db_url,
+                        db_path=self._db_path,
+                        db_bytes=db_bytes,
+                        db_tag=db_tag,
+                    )
         except Exception as exc:
             log_failure(
                 "sqlite_vec_adapter_close_failed",

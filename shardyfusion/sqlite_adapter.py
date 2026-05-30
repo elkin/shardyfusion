@@ -44,21 +44,25 @@ _logger = get_logger(__name__)
 
 _DB_FILENAME = "shard.db"
 _DB_IDENTITY_FILENAME = "shard.identity.json"
-_BTREEMETA_FILENAME = "shard.btreemeta"
-_BTREEMETA_MAGIC = b"SFBTM\x00\x00\x00"
-# v3 = body is zstd-compressed and carries an explicit ``(pageno, offset)``
-# index so consumers can decompress to disk and ``pread`` individual pages
-# instead of holding the full body in memory.
-# v4 = v3 followed by an overflow-chain map (one entry per kv overflow
-# chain head, each entry listing the ordered pagenos in the chain).
-# A future reader can prefetch entire chains in a single coalesced
-# range-read instead of chasing each link sequentially.  Format
-# documented in ``docs/architecture/sqlite-btree-sidecar.md``.
-_BTREEMETA_FORMAT_VERSION = 4
+_SIDECAR_FILENAME = "shard.sidecar"
+# Vendor-neutral 4-byte magic so the page-cache sidecar format can be
+# consumed outside shardyfusion.  (v1-v4 used b"SFBTM\x00\x00\x00" under the
+# old ``shard.btreemeta`` name.)
+_SIDECAR_MAGIC = b"SQPC"
+# v5 = uncompressed prefix (magic + u8 version + the .db object tag for a
+# correctness binding) then one zstd frame (with content checksum) over a
+# metadata-first body: ``page_size | n | pagenos | offsets | chains |
+# gap-stripped pages``.  Pages are gap-stripped — the unallocated middle of
+# each B-tree page is physically dropped and the reader splices zeros back
+# in — which roughly halves the decompressed/resident size.  The
+# ``(pageno, offset)`` index is split into the ``pagenos`` bisect key plus
+# pages-relative ``offsets`` (stripped pages are variable-length).  Format
+# documented in ``docs/reference/sqlite-sidecar-format.md``.
+_SIDECAR_FORMAT_VERSION = 5
 # zstd default level.  Btree pages compress ~12× at level 3 with
 # sub-millisecond cost; higher levels squeeze a few extra percent for
 # significantly more time and aren't worth it on the writer hot path.
-_BTREEMETA_ZSTD_LEVEL = 3
+_SIDECAR_ZSTD_LEVEL = 3
 
 
 # ---------------------------------------------------------------------------
@@ -72,15 +76,16 @@ class SqliteAdapterError(ShardyfusionError):
     retryable = False
 
 
-class BtreeMetaUnavailableError(SqliteAdapterError):
+class SidecarUnavailableError(SqliteAdapterError):
     """Raised when APSW, ``dbstat``, ``zstandard``, or the on-disk file's
     invariants make raw-file sidecar extraction unsafe.
 
     The ``args[0]`` reason string distinguishes causes
     (``apsw_not_installed`` | ``dbstat_unavailable`` |
     ``zstandard_not_installed`` | ``unsupported_journal_mode`` |
-    ``page_size_not_int`` | ``page_read_short``) so that ``log_event``
-    calls can record the specific cause for diagnostics.
+    ``page_size_not_int`` | ``page_read_short`` |
+    ``reserved_bytes_unsupported``) so that ``log_event`` calls can record
+    the specific cause for diagnostics.
     """
 
     retryable = False
@@ -92,8 +97,8 @@ class BtreeMetaUnavailableError(SqliteAdapterError):
 # when no committed pages are parked in a sibling artifact (``-wal``).
 # WAL modes can park committed-but-not-yet-checkpointed pages in the WAL
 # sidecar; raw file I/O would silently miss them.  See
-# ``docs/architecture/sqlite-btree-sidecar.md``.
-_BTREEMETA_SAFE_JOURNAL_MODES: frozenset[str] = frozenset(
+# ``docs/reference/sqlite-sidecar-format.md``.
+_SIDECAR_SAFE_JOURNAL_MODES: frozenset[str] = frozenset(
     {"off", "delete", "memory", "truncate", "persist"}
 )
 
@@ -220,76 +225,106 @@ def _maybe_repage_to_auto(
 
 
 # ---------------------------------------------------------------------------
-# Btree-metadata sidecar extraction
+# Page-cache sidecar extraction
 # ---------------------------------------------------------------------------
 
+# SQLite B-tree page-type byte (the page header's first byte): interior
+# index/table are 2/5, leaf index/table are 10/13.  Interior pages carry a
+# 4-byte right-child pointer, so their header is 12 bytes vs 8 for leaves.
+_INTERIOR_PAGE_TYPES: frozenset[int] = frozenset({2, 5})
+_BTREE_PAGE_TYPES: frozenset[int] = _INTERIOR_PAGE_TYPES | {10, 13}
 
-def extract_btree_metadata(db_path: Path, *, db_bytes: bytes | None = None) -> bytes:
-    """Read a finalized SQLite DB and return the btree-metadata sidecar bytes.
+# Byte 20 of the 100-byte DB header is "bytes reserved per page".  Non-zero
+# means a checksum/encryption VFS may cover the whole page (including the
+# gap), so gap stripping would be unsafe.
+_RESERVED_BYTES_OFFSET = 20
 
-    The sidecar bundles every interior B-tree page plus every page belonging
-    to ``sqlite_master``.  A range-read reader can fetch the sidecar once
-    on shard open and pin those pages for the lifetime of the shard reader,
-    eliminating the per-query round trips needed to walk B-tree internals.
+
+def _strip_page_gap(slab: bytes, pageno: int, page_size: int) -> bytes:
+    """Return ``slab`` with its unallocated middle gap physically removed.
+
+    A SQLite B-tree page is laid out as an 8/12-byte header, a 2-byte-per-cell
+    *cell pointer array* growing forward, a contiguous *unallocated gap*, then
+    the *cell content area* growing backward to the end of the page.  SQLite
+    navigates via the pointer array and never reads the gap, so the writer
+    drops it here; the reader splices zeros back in (see ``_reconstruct_page``
+    in the format spec / tests) to recover a page SQLite treats as identical.
+    Interior pages are ~50% gap, so this roughly halves the decompressed
+    sidecar size.
+
+    Header fields are big-endian.  ``base`` is 100 on page 1 (it carries the
+    100-byte DB header first), else 0.  A non-B-tree page (page-type byte not
+    in :data:`_BTREE_PAGE_TYPES`) is returned unchanged.  A full page with no
+    free gap (``cca == cpa_end``) is also returned unchanged.
+    """
+    base = 100 if pageno == 1 else 0
+    ptype = slab[base]
+    if ptype not in _BTREE_PAGE_TYPES:
+        return slab
+    hdr = 12 if ptype in _INTERIOR_PAGE_TYPES else 8
+    n_cells = int.from_bytes(slab[base + 3 : base + 5], "big")
+    # A stored cell-content-area start of 0 encodes 65536 (only valid when
+    # page_size == 65536).
+    cca = int.from_bytes(slab[base + 5 : base + 7], "big") or 65536
+    cpa_end = base + hdr + 2 * n_cells
+    # Drop the unallocated gap [cpa_end, cca).
+    return slab[:cpa_end] + slab[cca:]
+
+
+def extract_sidecar(
+    db_path: Path,
+    *,
+    db_bytes: bytes | None = None,
+    db_tag: str | None = None,
+) -> bytes:
+    """Read a finalized SQLite DB and return the v5 page-cache sidecar bytes.
+
+    The sidecar bundles every interior B-tree page plus every
+    ``sqlite_master`` / ``sqlite_schema`` page — each **gap-stripped** (see
+    :func:`_strip_page_gap`) — so a range-read reader can fetch them once on
+    shard open and reconstruct them locally, eliminating the per-query round
+    trips needed to walk B-tree internals.  It also carries an overflow-chain
+    map so the reader can prefetch each chain in one coalesced range request.
 
     Page identification is delegated to SQLite's ``dbstat`` virtual table
     (via APSW for reliable availability — APSW bundles a SQLite built with
-    ``SQLITE_ENABLE_DBSTAT_VTAB``).  Once page numbers are known, page
-    bytes are retrieved by slicing the in-memory file contents at the
-    well-defined ``(pageno - 1) * page_size`` offsets.  APSW is
-    lazy-imported so the writer base install does not require it; if APSW
-    (or ``dbstat``) is unavailable, raises
-    :class:`BtreeMetaUnavailableError` which the adapter's ``close()``
-    treats as a soft skip.
+    ``SQLITE_ENABLE_DBSTAT_VTAB``).  APSW and ``zstandard`` are lazy-imported
+    so the writer base install does not require them; if either (or
+    ``dbstat``) is unavailable, raises :class:`SidecarUnavailableError` which
+    the adapter's ``close()`` treats as a soft skip.
 
-    Pass ``db_bytes`` when the file has already been read into memory by
-    the caller (e.g. ``SqliteAdapter.close()`` reads the DB once for its
-    main S3 PUT) to avoid re-reading the file.
+    ``db_bytes`` is the already-read file contents the caller is about to
+    upload as the main artifact — sharing it avoids reading the finalized
+    file twice.  ``db_tag`` is the storage object-version token of ``db_path``
+    as uploaded (the S3 ETag); it is embedded in the uncompressed prefix so a
+    reader can refuse a sidecar that does not match the live ``.db`` it is
+    paired with.  Pass ``None`` for an unbound sidecar (``tag_len == 0``).
 
-    Format (little-endian):
+    Format — uncompressed prefix, then one zstd frame (content-checksummed):
 
-    * ``8 bytes`` magic ``b"SFBTM\\x00\\x00\\x00"``
-    * ``u32`` format version (currently ``4``)
-    * zstd-compressed body, which when decompressed contains:
-      * ``u32`` page size in bytes
+    * ``4 bytes`` magic ``b"SQPC"``
+    * ``u8`` format version (currently ``5``)
+    * ``u8`` ``tag_len`` followed by ``tag_len`` bytes of ``db_tag`` (UTF-8)
+    * zstd frame whose decompressed body is, in order:
+      * ``u32`` page size
       * ``u32`` page count ``N``
-      * ``N * (u32 pageno, u32 offset)`` index entries — sorted by
-        pageno; ``offset`` is the body-relative byte position of the
-        corresponding page slab. Equivalently, when a consumer writes
-        the decompressed body to a file, ``offset`` is the file offset.
-      * ``N * page_size`` raw page bytes (in the same order)
-      * ``u32`` overflow chain count ``C``
-      * ``C`` entries, each:
-          - ``u32`` head pageno
-          - ``u32`` chain length ``L`` (number of pages in the chain,
-            including the head)
-          - ``L * u32`` pagenos in chain order, starting with the head
-
-    Storing ``offset`` explicitly (even though pages are uniformly
-    ``page_size`` bytes today) lets a disk-based consumer build a
-    ``pageno → offset`` map and ``pread`` individual pages without
-    holding the whole body in memory — useful for memory-constrained
-    readers and large sidecars.  The chain map carries the structure
-    of every overflow chain so a future range-read reader can prefetch
-    the entire chain in one parallel multi-range request instead of
-    chasing each ``next-page`` pointer sequentially.  Pages compress
-    ~12× under zstd at level 3 because each interior page is typically
-    ~50% free space and the per-page headers and cell pointer arrays
-    repeat across the bundle; the chain map compresses similarly well
-    (long runs of monotonically-increasing pagenos).  Compression is
-    via the ``zstandard`` package (already in the ``[sqlite-range]``
-    extra alongside APSW).
+      * ``N * u32`` pagenos, sorted ascending (the bisect key)
+      * ``(N+1) * u32`` offsets into the trailing pages blob — page ``i`` is
+        ``pages[off[i]:off[i+1]]``; the final entry is the blob length
+      * ``u32`` overflow chain count ``C`` then ``C`` entries of
+        ``u32 head, u32 L, L * u32 pageno``
+      * the gap-stripped pages, concatenated in pageno order
     """
 
     try:
         import apsw  # pyright: ignore[reportMissingImports]
     except ImportError as exc:
-        raise BtreeMetaUnavailableError("apsw_not_installed") from exc
+        raise SidecarUnavailableError("apsw_not_installed") from exc
 
     try:
         import zstandard  # pyright: ignore[reportMissingImports]
     except ImportError as exc:
-        raise BtreeMetaUnavailableError("zstandard_not_installed") from exc
+        raise SidecarUnavailableError("zstandard_not_installed") from exc
 
     conn = apsw.Connection(
         f"file:{db_path}?mode=ro",
@@ -301,7 +336,7 @@ def extract_btree_metadata(db_path: Path, *, db_bytes: bytes | None = None) -> b
         try:
             cursor.execute("SELECT pageno FROM dbstat LIMIT 0").fetchall()
         except apsw.SQLError as exc:
-            raise BtreeMetaUnavailableError("dbstat_unavailable") from exc
+            raise SidecarUnavailableError("dbstat_unavailable") from exc
 
         # Guard against future writer changes that would silently break the
         # raw-file extraction path (e.g. switching to WAL mode without a
@@ -311,13 +346,13 @@ def extract_btree_metadata(db_path: Path, *, db_bytes: bytes | None = None) -> b
         mode_value = journal_rows[0][0] if journal_rows else None
         if (
             not isinstance(mode_value, str)
-            or mode_value.lower() not in _BTREEMETA_SAFE_JOURNAL_MODES
+            or mode_value.lower() not in _SIDECAR_SAFE_JOURNAL_MODES
         ):
-            raise BtreeMetaUnavailableError("unsupported_journal_mode")
+            raise SidecarUnavailableError("unsupported_journal_mode")
 
         ((page_size_raw,),) = cursor.execute("PRAGMA page_size").fetchall()
         if not isinstance(page_size_raw, int):
-            raise BtreeMetaUnavailableError("page_size_not_int")
+            raise SidecarUnavailableError("page_size_not_int")
         page_size = page_size_raw
 
         # The schema btree is named ``sqlite_schema`` in modern SQLite
@@ -345,13 +380,24 @@ def extract_btree_metadata(db_path: Path, *, db_bytes: bytes | None = None) -> b
     if db_bytes is None:
         db_bytes = db_path.read_bytes()
 
-    page_blobs: list[bytes] = []
+    # Gap stripping is only safe when no per-page reserved tail (checksum /
+    # encryption VFS) could cover the dropped gap region.  The writer creates
+    # DBs with the default 0 reserved, so this is a defensive skip.
+    reserved = (
+        db_bytes[_RESERVED_BYTES_OFFSET]
+        if len(db_bytes) > _RESERVED_BYTES_OFFSET
+        else 0
+    )
+    if reserved:
+        raise SidecarUnavailableError("reserved_bytes_unsupported")
+
+    stripped: list[bytes] = []
     for pgno in page_nums:
         offset = (pgno - 1) * page_size
         slab = db_bytes[offset : offset + page_size]
         if len(slab) != page_size:
-            raise BtreeMetaUnavailableError("page_read_short")
-        page_blobs.append(slab)
+            raise SidecarUnavailableError("page_read_short")
+        stripped.append(_strip_page_gap(slab, pgno, page_size))
 
     chains = _enumerate_overflow_chains(
         overflow_pages=overflow_pages,
@@ -360,16 +406,13 @@ def extract_btree_metadata(db_path: Path, *, db_bytes: bytes | None = None) -> b
     )
 
     n = len(page_nums)
-    # Header: page_size + n_pages.  Index: N * (pageno, offset) pairs.
-    # Data section starts after header + index.
-    header_size = 8
-    index_size = n * 8
-    data_start = header_size + index_size
-
-    index_pairs: list[int] = []
-    for i, pgno in enumerate(page_nums):
-        index_pairs.append(pgno)
-        index_pairs.append(data_start + i * page_size)
+    # Offsets into the trailing pages blob (pages-relative), N+1 entries with
+    # a sentinel final offset == blob length.  Stripped pages are
+    # variable-length, so these offsets are load-bearing (not derivable from
+    # a uniform stride).
+    offsets: list[int] = [0]
+    for s in stripped:
+        offsets.append(offsets[-1] + len(s))
 
     chain_bytes_parts: list[bytes] = [struct.pack("<I", len(chains))]
     for chain in chains:
@@ -379,16 +422,28 @@ def extract_btree_metadata(db_path: Path, *, db_bytes: bytes | None = None) -> b
     body = b"".join(
         [
             struct.pack("<II", page_size, n),
-            struct.pack(f"<{2 * n}I", *index_pairs) if n else b"",
-            b"".join(page_blobs),
+            struct.pack(f"<{n}I", *page_nums) if n else b"",
+            struct.pack(f"<{n + 1}I", *offsets),
             b"".join(chain_bytes_parts),
+            b"".join(stripped),
         ]
     )
-    compressor = zstandard.ZstdCompressor(level=_BTREEMETA_ZSTD_LEVEL)
+    compressor = zstandard.ZstdCompressor(
+        level=_SIDECAR_ZSTD_LEVEL, write_checksum=True
+    )
+    # Embed the binding tag only when it is a real, non-empty string; ``None``
+    # (or any non-str) yields an unbound sidecar (``tag_len == 0``), which a
+    # reader safely declines.  Object-version tokens (S3 ETags) are short, so
+    # the u8 length field never overflows in practice — guard anyway.
+    tag_bytes = db_tag.encode("utf-8") if isinstance(db_tag, str) else b""
+    if len(tag_bytes) > 255:
+        tag_bytes = b""
     return b"".join(
         [
-            _BTREEMETA_MAGIC,
-            _BTREEMETA_FORMAT_VERSION.to_bytes(4, "little"),
+            _SIDECAR_MAGIC,
+            _SIDECAR_FORMAT_VERSION.to_bytes(1, "little"),
+            len(tag_bytes).to_bytes(1, "little"),
+            tag_bytes,
             compressor.compress(body),
         ]
     )
@@ -424,7 +479,7 @@ def _enumerate_overflow_chains(
         offset = (pgno - 1) * page_size
         next_bytes = db_bytes[offset : offset + 4]
         if len(next_bytes) != 4:
-            raise BtreeMetaUnavailableError("page_read_short")
+            raise SidecarUnavailableError("page_read_short")
         next_pageno = int.from_bytes(next_bytes, "big")
         # 0 = end of chain; any non-overflow successor is treated as
         # malformed and stops the walk.
@@ -450,28 +505,32 @@ def _enumerate_overflow_chains(
     return chains
 
 
-def maybe_upload_btreemeta_sidecar(
+def maybe_upload_sidecar(
     *,
     backend: ObstoreBackend,
     db_url: str,
     db_path: Path,
     db_bytes: bytes,
+    db_tag: str | None = None,
 ) -> None:
-    """Best-effort upload of the btree-metadata sidecar.
+    """Best-effort upload of the page-cache sidecar.
 
     Never raises: extraction or upload failures are logged and the caller
-    proceeds to upload the main ``shard.db``.  Used by both
-    ``SqliteAdapter.close()`` and ``SqliteVecAdapter.close()``.
+    proceeds.  Used by both ``SqliteAdapter.close()`` and
+    ``SqliteVecAdapter.close()``.
 
-    ``db_bytes`` is the already-read file contents the caller is about to
-    upload as the main artifact — sharing it here avoids reading the
-    finalized file twice.
+    ``db_bytes`` is the already-read file contents the caller just uploaded as
+    the main ``.db`` artifact — sharing it here avoids reading the finalized
+    file twice.  ``db_tag`` is the ``.db`` object's storage version token (S3
+    ETag) returned by that upload; it is embedded in the sidecar so a reader
+    only uses the sidecar when the live ``.db`` tag matches.  The caller must
+    upload the ``.db`` first so this tag is available.
     """
     try:
-        payload = extract_btree_metadata(db_path, db_bytes=db_bytes)
-    except BtreeMetaUnavailableError as exc:
+        payload = extract_sidecar(db_path, db_bytes=db_bytes, db_tag=db_tag)
+    except SidecarUnavailableError as exc:
         log_event(
-            "sqlite_btreemeta_unsupported",
+            "sqlite_sidecar_unsupported",
             level=logging.DEBUG,
             logger=_logger,
             db_url=db_url,
@@ -480,7 +539,7 @@ def maybe_upload_btreemeta_sidecar(
         return
     except Exception as exc:  # pragma: no cover - defensive
         log_failure(
-            "sqlite_btreemeta_failed",
+            "sqlite_sidecar_failed",
             severity=FailureSeverity.TRANSIENT,
             logger=_logger,
             error=exc,
@@ -489,7 +548,7 @@ def maybe_upload_btreemeta_sidecar(
         )
         return
 
-    sidecar_key = f"{db_url.rstrip('/')}/{_BTREEMETA_FILENAME}"
+    sidecar_key = f"{db_url.rstrip('/')}/{_SIDECAR_FILENAME}"
     try:
         backend.put(
             sidecar_key,
@@ -498,7 +557,7 @@ def maybe_upload_btreemeta_sidecar(
         )
     except Exception as exc:
         log_failure(
-            "sqlite_btreemeta_failed",
+            "sqlite_sidecar_failed",
             severity=FailureSeverity.TRANSIENT,
             logger=_logger,
             error=exc,
@@ -508,7 +567,7 @@ def maybe_upload_btreemeta_sidecar(
         return
 
     log_event(
-        "sqlite_btreemeta_uploaded",
+        "sqlite_sidecar_uploaded",
         level=logging.DEBUG,
         logger=_logger,
         db_url=db_url,
@@ -574,8 +633,8 @@ class SqliteFactory:
     upstream should pass an explicit int on the factory's
     ``page_size`` instead.
 
-    ``emit_btree_metadata`` (default ``True``) controls whether each
-    finalized shard uploads a sibling ``shard.btreemeta`` artifact
+    ``emit_sidecar`` (default ``True``) controls whether each
+    finalized shard uploads a sibling ``shard.sidecar`` artifact
     bundling all interior B-tree pages plus every ``sqlite_master`` page
     and the overflow chain map.  Reader-side range-mode consumers can
     fetch this once on shard open and pin those pages for the lifetime
@@ -591,7 +650,7 @@ class SqliteFactory:
     cache_size_pages: int = -2000  # negative = KiB, so ~8 MB
     s3_connection_options: S3ConnectionOptions | None = None
     credential_provider: CredentialProvider | None = None
-    emit_btree_metadata: bool = True
+    emit_sidecar: bool = True
 
     def __post_init__(self) -> None:
         self.page_size = _validate_factory_page_size(self.page_size)
@@ -614,7 +673,7 @@ class SqliteFactory:
             cache_size_pages=self.cache_size_pages,
             s3_connection_options=self.s3_connection_options,
             credential_provider=self.credential_provider,
-            emit_btree_metadata=self.emit_btree_metadata,
+            emit_sidecar=self.emit_sidecar,
         )
 
 
@@ -633,7 +692,7 @@ class SqliteAdapter:
         cache_size_pages: int = -2000,
         s3_connection_options: S3ConnectionOptions | None = None,
         credential_provider: CredentialProvider | None = None,
-        emit_btree_metadata: bool = True,
+        emit_sidecar: bool = True,
     ) -> None:
         page_size = _validate_factory_page_size(page_size)
         cache_size_pages = int(cache_size_pages)
@@ -657,7 +716,7 @@ class SqliteAdapter:
         # that skips ``seal()`` entirely.
         self._seal_attempted = False
         self._db_bytes = 0
-        self._emit_btree_metadata = bool(emit_btree_metadata)
+        self._emit_sidecar = bool(emit_sidecar)
         self._s3_conn_opts = s3_connection_options
         self._s3_creds: S3Credentials | None = (
             credential_provider.resolve() if credential_provider else None
@@ -802,13 +861,9 @@ class SqliteAdapter:
                 )
                 backend = ObstoreBackend(store)
                 db_bytes = self._db_path.read_bytes()
-                if self._emit_btree_metadata:
-                    maybe_upload_btreemeta_sidecar(
-                        backend=backend,
-                        db_url=self._db_url,
-                        db_path=self._db_path,
-                        db_bytes=db_bytes,
-                    )
+                # Upload the .db first so the sidecar can bind to its object
+                # version (ETag); a reader refuses a sidecar whose tag does
+                # not match the live .db.
                 backend.put(
                     s3_key,
                     db_bytes,
@@ -821,6 +876,27 @@ class SqliteAdapter:
                     logger=_logger,
                     db_url=self._db_url,
                 )
+                if self._emit_sidecar:
+                    try:
+                        db_tag = backend.head(s3_key)
+                    except Exception as exc:
+                        # An unbound sidecar is still safe (a reader declines
+                        # it), so a HEAD hiccup must not abort close().
+                        log_event(
+                            "sqlite_sidecar_tag_unavailable",
+                            level=logging.DEBUG,
+                            logger=_logger,
+                            db_url=self._db_url,
+                            error=str(exc),
+                        )
+                        db_tag = None
+                    maybe_upload_sidecar(
+                        backend=backend,
+                        db_url=self._db_url,
+                        db_path=self._db_path,
+                        db_bytes=db_bytes,
+                        db_tag=db_tag,
+                    )
         except Exception as exc:
             log_failure(
                 "sqlite_adapter_close_failed",

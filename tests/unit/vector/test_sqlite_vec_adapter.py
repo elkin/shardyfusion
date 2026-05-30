@@ -133,7 +133,7 @@ class TestSqliteVecAdapterLifecycle:
                 db_url="s3://bucket/shard",
                 local_dir=tmp_path / "shard",
                 vector_spec=MagicMock(dim=4),
-                emit_btree_metadata=False,
+                emit_sidecar=False,
             )
             adapter.write_batch([(b"k1", b"v1")])
             adapter.close()
@@ -150,7 +150,7 @@ class TestSqliteVecAdapterLifecycle:
                 db_url="s3://bucket/shard",
                 local_dir=tmp_path / "shard",
                 vector_spec=MagicMock(dim=4),
-                emit_btree_metadata=False,
+                emit_sidecar=False,
             )
             adapter.close()
             adapter.close()
@@ -767,7 +767,7 @@ class TestRunVecSearchStrictErrors:
 # ---------------------------------------------------------------------------
 
 
-class TestBtreemetaSidecarOnSqliteVecAdapter:
+class TestSidecarOnSqliteVecAdapter:
     """Mirrors the SqliteAdapter sidecar tests to confirm the unified
     KV+vector adapter produces sidecars on the same default-on contract.
     """
@@ -785,7 +785,7 @@ class TestBtreemetaSidecarOnSqliteVecAdapter:
                 db_url="s3://bucket/shard",
                 local_dir=tmp_path / "shard",
                 vector_spec=MagicMock(dim=4),
-                emit_btree_metadata=False,
+                emit_sidecar=False,
             ) as adapter:
                 adapter.write_batch([(b"k", b"v")])
                 adapter.seal()
@@ -793,13 +793,14 @@ class TestBtreemetaSidecarOnSqliteVecAdapter:
         assert len(keys) == 1
         assert keys[0].endswith("/shard.db")
 
-    def test_default_uploads_sidecar_then_db(self, tmp_path: Path) -> None:
+    def test_default_uploads_db_then_sidecar(self, tmp_path: Path) -> None:
         if not _is_sqlite_vec_available():
             pytest.skip("sqlite-vec not installed")
         pytest.importorskip("apsw")
         with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as MockBackend:
             instance = MockBackend.return_value
             instance.put = MagicMock()
+            instance.head = MagicMock(return_value='"mock-etag"')
             with SqliteVecAdapter(
                 db_url="s3://bucket/shard",
                 local_dir=tmp_path / "shard",
@@ -809,20 +810,21 @@ class TestBtreemetaSidecarOnSqliteVecAdapter:
                 adapter.seal()
         keys = self._put_keys(instance)
         assert len(keys) == 2
-        assert keys[0].endswith("/shard.btreemeta")
-        assert keys[1].endswith("/shard.db")
+        # The .db is uploaded first so the sidecar can bind to its ETag.
+        assert keys[0].endswith("/shard.db")
+        assert keys[1].endswith("/shard.sidecar")
 
-    def test_btreemeta_unavailable_silent_skip(self, tmp_path: Path) -> None:
+    def test_sidecar_unavailable_silent_skip(self, tmp_path: Path) -> None:
         if not _is_sqlite_vec_available():
             pytest.skip("sqlite-vec not installed")
-        from shardyfusion.sqlite_adapter import BtreeMetaUnavailableError
+        from shardyfusion.sqlite_adapter import SidecarUnavailableError
 
         with patch("shardyfusion.sqlite_vec_adapter.ObstoreBackend") as MockBackend:
             instance = MockBackend.return_value
             instance.put = MagicMock()
             with patch(
-                "shardyfusion.sqlite_adapter.extract_btree_metadata",
-                side_effect=BtreeMetaUnavailableError("apsw_not_installed"),
+                "shardyfusion.sqlite_adapter.extract_sidecar",
+                side_effect=SidecarUnavailableError("apsw_not_installed"),
             ):
                 with SqliteVecAdapter(
                     db_url="s3://bucket/shard",
@@ -837,8 +839,6 @@ class TestBtreemetaSidecarOnSqliteVecAdapter:
 
     def test_factory_threads_through_emit_flag(self) -> None:
         f_default = SqliteVecFactory(vector_spec=MagicMock(dim=4))
-        assert f_default.emit_btree_metadata is True
-        f_off = SqliteVecFactory(
-            vector_spec=MagicMock(dim=4), emit_btree_metadata=False
-        )
-        assert f_off.emit_btree_metadata is False
+        assert f_default.emit_sidecar is True
+        f_off = SqliteVecFactory(vector_spec=MagicMock(dim=4), emit_sidecar=False)
+        assert f_off.emit_sidecar is False

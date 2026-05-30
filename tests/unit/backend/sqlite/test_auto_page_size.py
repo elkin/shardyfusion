@@ -29,7 +29,7 @@ class TestAutoModePicksFromValues:
                 db_url="s3://bucket/x",
                 local_dir=local_dir,
                 page_size="auto",
-                emit_btree_metadata=False,
+                emit_sidecar=False,
             )
             adapter.write_batch([(i.to_bytes(8, "big"), b"v" * 50) for i in range(100)])
             adapter.seal()
@@ -61,7 +61,7 @@ class TestAutoModePicksFromValues:
                 db_url="s3://bucket/x",
                 local_dir=local_dir,
                 page_size="auto",
-                emit_btree_metadata=False,
+                emit_sidecar=False,
             )
             adapter.write_batch(
                 [(i.to_bytes(8, "big"), b"v" * value_bytes) for i in range(50)]
@@ -81,7 +81,7 @@ class TestRepageHelperEdgeCases:
                 db_url="s3://bucket/x",
                 local_dir=local_dir,
                 page_size="auto",
-                emit_btree_metadata=False,
+                emit_sidecar=False,
             )
             adapter.seal()
         assert _read_page_size_from_header(local_dir / "shard.db") == 4096
@@ -133,7 +133,7 @@ class TestSqliteVecAdapterAutoMode:
                 local_dir=local_dir,
                 vector_spec=spec,
                 page_size="auto",
-                emit_btree_metadata=False,
+                emit_sidecar=False,
             )
             # ~8 KB KV values force a repage above 4 KB inline threshold.
             adapter.write_batch(
@@ -166,7 +166,7 @@ class TestSqliteVecAdapterAutoMode:
                 local_dir=local_dir,
                 vector_spec=spec,
                 page_size="auto",
-                emit_btree_metadata=False,
+                emit_sidecar=False,
             )
             adapter.write_batch([(i.to_bytes(8, "big"), b"v" * 50) for i in range(50)])
             adapter.seal()
@@ -200,7 +200,7 @@ class TestSqliteVecAdapterAutoMode:
                 local_dir=local_dir,
                 vector_spec=spec,
                 page_size="auto",
-                emit_btree_metadata=False,
+                emit_sidecar=False,
             )
             ids = np.arange(8, dtype=np.int64)
             vecs = np.random.rand(8, 1024).astype(np.float32)
@@ -231,7 +231,7 @@ class TestSqliteVecAdapterAutoMode:
             local_dir=local_dir,
             vector_spec=spec,
             page_size="auto",
-            emit_btree_metadata=False,
+            emit_sidecar=False,
         )
         adapter.write_batch([(i.to_bytes(8, "big"), b"v" * 100) for i in range(10)])
 
@@ -264,7 +264,7 @@ class TestSqliteVecAdapterAutoMode:
             db_url="s3://bucket/fail-kv",
             local_dir=local_dir,
             page_size="auto",
-            emit_btree_metadata=False,
+            emit_sidecar=False,
         )
         adapter.write_batch([(i.to_bytes(8, "big"), b"v" * 100) for i in range(10)])
 
@@ -298,7 +298,7 @@ class TestSqliteVecAdapterAutoMode:
             db_url="s3://bucket/ctxmgr",
             local_dir=local_dir,
             page_size="auto",
-            emit_btree_metadata=False,
+            emit_sidecar=False,
         )
 
         with (

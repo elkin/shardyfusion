@@ -1,4 +1,4 @@
-# SQLite B-tree metadata sidecar
+# SQLite page-cache sidecar
 
 The writer emits a small auxiliary artifact alongside each finalized SQLite
 shard. The sidecar bundles the pages that range-mode readers always traverse
@@ -35,81 +35,53 @@ Each finalized shard publishes two sibling objects:
 
 ```
 s3://bucket/.../shards/run_id=X/db=00000/attempt=00/shard.db
-s3://bucket/.../shards/run_id=X/db=00000/attempt=00/shard.btreemeta
+s3://bucket/.../shards/run_id=X/db=00000/attempt=00/shard.sidecar
 ```
 
-The sidecar is a self-describing little-endian binary blob with a small
-uncompressed header followed by a zstd-compressed body:
+The sidecar is a self-describing little-endian binary blob: a small
+uncompressed prefix — vendor-neutral `SQPC` magic, a `u8` version, and the
+`.db` object tag (see [Database binding](#database-binding)) — followed by one
+zstd frame (content-checksummed). The frame body is metadata-first:
+`page_size`, the sorted `pagenos` bisect key, pages-relative `offsets`, the
+overflow-chain map, then the gap-stripped pages. The byte-exact layout is
+specified in
+[`reference/sqlite-sidecar-format.md`](../reference/sqlite-sidecar-format.md);
+this page covers the surrounding architecture (page selection, gap stripping,
+binding, discovery, failure semantics).
 
-```
-offset   size      field
-------   -------   ----------------------------------
-   0     8         magic            = b"SFBTM\x00\x00\x00"
-   8     4         format_version   (u32) = 4
-  12     ...       zstd-compressed body
-```
+The chain map records every overflow chain in the kv table — one entry per
+chain head, listing the pagenos in traversal order — so a range-mode reader
+can prefetch a whole chain in one parallel multi-range request instead of
+chasing each `next-pageno` pointer serially. It compresses well (long runs of
+monotonically-increasing pagenos) and is empty when no value overflows.
 
-The body, once decompressed, contains:
+## Gap stripping
 
-```
-offset                 size       field
---------------------   --------   ----------------------------------
-   0                   4          page_size        (u32, e.g. 4096)
-   4                   4          page_count N     (u32)
-   8                   8 * N      index            (u32 pageno, u32 offset)
-                                                   per entry, sorted ascending
-   8+8N                PS * N     page_data        (page_size bytes each)
-   8+8N+PS*N           4          chain_count C    (u32)
-   ...                 var        C chain entries — each is:
-                                    u32 head_pageno
-                                    u32 chain_length L
-                                    L * u32 pagenos in order (head first)
-```
+Stored B-tree pages have their unallocated middle physically removed before
+compression. SQLite navigates via each page's cell-pointer array and never
+reads the gap between that array and the cell-content area, so the writer drops
+those bytes and the reader splices zeros back in to recover a page SQLite
+treats as identical. Interior pages are ~50% gap, so this roughly halves the
+*decompressed* sidecar — the bytes a reader holds resident per open shard —
+not merely the wire size (zstd already squashes the zeroed gap either way). The
+reader reconstructs each page directly into SQLite's read buffer, so it retains
+only the compact stripped body; reconstruction is deterministic from the stored
+page header (math in the format spec). A representative 100 k-row shard
+(9.5 MiB DB) emits a sidecar well under 1% of the DB. A DB that reserves
+per-page bytes (a checksum/encryption VFS) is left without a sidecar, since
+stripping would be unsafe there.
 
-The chain map at the tail records every overflow chain in the kv table —
-one entry per chain head, listing the pagenos in traversal order. A
-range-mode reader can use this to prefetch the entire chain in a single
-parallel multi-range request instead of chasing each `next-pageno`
-pointer sequentially. Chains compress well under zstd (long runs of
-monotonically-increasing pagenos) so the addition is typically <1% of
-the sidecar even when the kv has millions of overflow pages.
+## Database binding
 
-`offset` is the body-relative byte position of the corresponding page
-slab. Equivalently, when a consumer writes the decompressed body to a
-file on disk, `offset` is the file offset.
-
-This shape lets a reader pick its memory strategy:
-
-- **Pin everything in memory.** Decompress the body, populate the LRU
-  cache by walking the index. Standard path for the eventual range-mode
-  reader.
-- **On-disk lookups.** Decompress the body to a local file. Hold only
-  the `pageno → offset` map in memory (~8 bytes per page) and `pread`
-  individual pages on demand; the OS page cache amortizes hot reads.
-  For million-page sidecars this trades ~MB-scale resident memory for
-  ~KB-scale.
-
-Storing `offset` explicitly is redundant when pages are uniformly
-`page_size` bytes (it equals `8 + 8*N + i*page_size`), but keeping it
-in the format costs almost nothing under zstd (offsets are an
-arithmetic progression and compress to a few bits each) and:
-
-- Removes the offset-arithmetic burden from disk consumers.
-- Future-proofs the format for variable-size pages (e.g. per-page
-  compression for very large sidecars).
-
-The magic and version stay uncompressed so a reader can validate the
-artifact (and reject mismatched versions) before paying the
-decompression cost. Btree pages compress ~12× under zstd at level 3 in
-practice — interior pages are typically ~50% free space, and the
-per-page headers and cell pointer arrays repeat across the bundle. A
-representative 100 k-row shard (9.5 MiB DB) emits a ~21 KB sidecar
-(~0.2% of the DB).
-
-The byte-exact format is specified in
-[`reference/sqlite-btree-sidecar-format.md`](../reference/sqlite-btree-sidecar-format.md);
-this page covers the surrounding architecture (page selection,
-discovery, failure semantics).
+The prefix carries the `.db` object's storage version token — its S3 ETag.
+This is a **correctness** mechanism: a reader uses the sidecar only when the
+live `.db` ETag matches the embedded tag, so a stale or mismatched sidecar can
+never feed SQLite wrong interior pages. The writer therefore uploads
+`shard.db` first, reads back its ETag, and stamps it into the sidecar; a reader
+may additionally pin its range reads with `If-Match` so the store rejects a
+`.db` that changes mid-read. The tag is an opaque identity token (never
+recomputed), so multipart / SSE-KMS ETags work unchanged; an unbound sidecar
+(`tag_len == 0`) is declined by a correctness-strict reader.
 
 ## Page selection
 
@@ -145,10 +117,10 @@ the manifest's `custom` field:
 
 ```json
 {
-  "sqlite_btreemeta": {
-    "format_version": 4,
+  "sqlite_sidecar": {
+    "format_version": 5,
     "page_size": 4096,
-    "filename": "shard.btreemeta",
+    "filename": "shard.sidecar",
     "codec": "zstd"
   }
 }
@@ -162,19 +134,19 @@ real value — the range-read VFS does this automatically and exposes
 it via `S3ReadOnlyFile.page_size`.
 
 A range-mode reader can detect the flag once per snapshot and fetch
-`{shard.db_url}/shard.btreemeta` for every shard it opens, with no
+`{shard.db_url}/shard.sidecar` for every shard it opens, with no
 per-shard probe.
 
 ## Configuration
 
-Both `SqliteFactory.emit_btree_metadata` and
-`SqliteVecFactory.emit_btree_metadata` default to `True`. Opt out
+Both `SqliteFactory.emit_sidecar` and
+`SqliteVecFactory.emit_sidecar` default to `True`. Opt out
 explicitly when desired:
 
 ```python
 from shardyfusion.sqlite_adapter import SqliteFactory
 
-SqliteFactory(emit_btree_metadata=False)
+SqliteFactory(emit_sidecar=False)
 ```
 
 Recommended only when the deployment never uses the range-read VFS — for
@@ -196,11 +168,11 @@ Sidecar emission is **best-effort**. The contract:
 
 | Event                                                | Behavior                                                                                                                                            |
 | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| APSW not installed (writer base install only)        | Debug-level `sqlite_btreemeta_unsupported` log with `reason=apsw_not_installed`; skip sidecar; continue to upload `shard.db`.                       |
+| APSW not installed (writer base install only)        | Debug-level `sqlite_sidecar_unsupported` log with `reason=apsw_not_installed`; skip sidecar; continue to upload `shard.db`.                       |
 | `zstandard` not installed                            | Same — `reason=zstandard_not_installed`.                                                                                                             |
 | `dbstat` virtual table missing in the SQLite build   | Same — `reason=dbstat_unavailable`.                                                                                                                  |
 | Unsafe journal mode on the finalized DB              | Same — `reason=unsupported_journal_mode`. The extractor reads page bytes by direct file I/O at deterministic offsets; this is safe only when committed state lives entirely in the main `.db` file (modes `off`, `delete`, `memory`, `truncate`, `persist`). WAL-family modes can park committed pages in a `-wal` sidecar that raw file I/O would miss, so the guard refuses to run on `wal`/`wal2` files rather than emit a silently incomplete sidecar. |
-| Any other extraction error                           | Warning-level `sqlite_btreemeta_failed` log; skip sidecar; continue to upload `shard.db`.                                                            |
+| Any other extraction error                           | Warning-level `sqlite_sidecar_failed` log; skip sidecar; continue to upload `shard.db`.                                                            |
 | Sidecar PUT fails                                    | Same — sidecar dropped, manifest still lists the shard, reader (when wired) falls back to per-page lazy fetch.                                       |
 | Main `shard.db` PUT fails                            | Existing behavior — re-raise; the shard's retry path handles it.                                                                                     |
 
