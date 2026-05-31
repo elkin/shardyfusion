@@ -351,10 +351,6 @@ def parse_sqlite_manifest(payload: bytes) -> ParsedManifest:
                 "checkpoint_id": sr["checkpoint_id"],
                 "writer_info": json.loads(sr["writer_info"]),
             }
-            if "sidecar_decompressed_bytes" in sr.keys():
-                shard_dict["sidecar_decompressed_bytes"] = sr[
-                    "sidecar_decompressed_bytes"
-                ]
             shards_data.append(shard_dict)
     except ManifestParseError:
         raise

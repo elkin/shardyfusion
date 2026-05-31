@@ -106,7 +106,6 @@ def _sqlite_ddl_fixup(store: PostgresManifestStore) -> None:
         f"  attempt       INTEGER NOT NULL DEFAULT 0,"
         f"  row_count     INTEGER NOT NULL DEFAULT 0,"
         f"  db_bytes      INTEGER NOT NULL DEFAULT 0,"
-        f"  sidecar_decompressed_bytes INTEGER,"
         f"  checkpoint_id TEXT,"
         f"  min_key       TEXT,"
         f"  max_key       TEXT,"

@@ -110,7 +110,6 @@ class RequiredShardMeta(BaseModel):
     attempt: int = Field(ge=0)
     row_count: int = Field(ge=0)
     db_bytes: int = Field(ge=0)
-    sidecar_decompressed_bytes: int | None = Field(default=None, ge=0)
     min_key: int | str | bytes | None = None
     max_key: int | str | bytes | None = None
     checkpoint_id: str | None = Field(
@@ -222,7 +221,6 @@ CREATE TABLE shards (
     attempt       INTEGER NOT NULL,
     row_count     INTEGER NOT NULL,
     db_bytes      INTEGER NOT NULL,
-    sidecar_decompressed_bytes INTEGER,
     min_key       TEXT,
     max_key       TEXT,
     checkpoint_id TEXT,
@@ -295,16 +293,14 @@ class SqliteManifestBuilder:
                 con.execute(
                     "INSERT INTO shards"
                     " (db_id, db_url, attempt, row_count, db_bytes,"
-                    "  sidecar_decompressed_bytes,"
                     "  min_key, max_key, checkpoint_id, writer_info)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    " VALUES (?,?,?,?,?,?,?,?,?)",
                     (
                         sd["db_id"],
                         sd["db_url"],
                         sd["attempt"],
                         sd["row_count"],
                         sd["db_bytes"],
-                        sd["sidecar_decompressed_bytes"],
                         json.dumps(sd["min_key"])
                         if sd["min_key"] is not None
                         else None,

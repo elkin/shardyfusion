@@ -89,7 +89,6 @@ class ShardAttemptResult:
     checkpoint_id: str | None
     writer_info: WriterInfo
     db_bytes: int = 0
-    sidecar_decompressed_bytes: int | None = None
     all_attempt_urls: tuple[str, ...] = ()
 
 
@@ -107,7 +106,6 @@ def empty_shard_result(
         checkpoint_id=None,
         writer_info=writer_info or WriterInfo(),
         db_bytes=0,
-        sidecar_decompressed_bytes=None,
         all_attempt_urls=(),
     )
 
@@ -368,7 +366,6 @@ def select_winners(
                 checkpoint_id=winner.checkpoint_id,
                 writer_info=winner.writer_info,
                 db_bytes=winner.db_bytes,
-                sidecar_decompressed_bytes=winner.sidecar_decompressed_bytes,
             )
         )
 
