@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, cast, runtime_checkable
 
 from ._adapter import DbAdapterFactory
 from ._checkpoint_id import generate_checkpoint_id
@@ -63,8 +63,21 @@ class _Sealable(Protocol):
     def db_bytes(self) -> int: ...
 
 
-def seal_and_stamp(adapter: _Sealable) -> tuple[str, int]:
-    """Seal a shard and return its ``(checkpoint_id, db_bytes)``.
+@runtime_checkable
+class _SidecarSizing(Protocol):
+    """Adapters that emit a page-cache sidecar expose its decompressed size.
+
+    SQLite-family adapters (``SqliteAdapter``, ``SqliteVecAdapter``,
+    ``CompositeAdapter``) implement this; sidecar-less backends (slatedb,
+    LanceDB) do not, so :func:`seal_and_stamp` records ``None`` for them.
+    """
+
+    def sidecar_decompressed_bytes(self) -> int | None: ...
+
+
+def seal_and_stamp(adapter: _Sealable) -> tuple[str, int, int | None]:
+    """Seal a shard and return ``(checkpoint_id, db_bytes,
+    sidecar_decompressed_bytes)``.
 
     ``seal()`` is the canonical finalization point per the Protocol
     contract. Whether a pre-call to ``adapter.flush()`` is needed
@@ -80,7 +93,12 @@ def seal_and_stamp(adapter: _Sealable) -> tuple[str, int]:
     ``seal()`` leaves no half-stamped state.
     """
     adapter.seal()
-    return generate_checkpoint_id(), adapter.db_bytes()
+    sidecar_decompressed_bytes = (
+        adapter.sidecar_decompressed_bytes()
+        if isinstance(adapter, _SidecarSizing)
+        else None
+    )
+    return generate_checkpoint_id(), adapter.db_bytes(), sidecar_decompressed_bytes
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +285,9 @@ def write_shard_core(
                 started=params.started,
             )
             adapter.flush()
-            checkpoint_id, db_bytes = seal_and_stamp(adapter)
+            checkpoint_id, db_bytes, sidecar_decompressed_bytes = seal_and_stamp(
+                adapter
+            )
     except ShardyfusionError:
         raise
     except Exception as exc:
@@ -325,6 +345,7 @@ def write_shard_core(
         checkpoint_id=checkpoint_id,
         writer_info=info,
         db_bytes=db_bytes,
+        sidecar_decompressed_bytes=sidecar_decompressed_bytes,
         all_attempt_urls=(*prior_attempt_urls, params.db_url),
     )
 
@@ -554,6 +575,23 @@ def results_pdf_to_attempts(
         if isinstance(checkpoint_id, float) and pd.isna(checkpoint_id):
             checkpoint_id = None
 
+        # int | None column round-tripped through pandas: the null case may
+        # surface as None, NaN, or pd.NA depending on dtype inference. Gate on a
+        # scalar null check that handles all three — ``x is None`` first (so
+        # pd.isna never sees a non-scalar), then ``bool(pd.isna(x))`` for the
+        # NaN/NA scalars. This also avoids the isinstance(float) check, which
+        # misses pd.NA and would make int(pd.NA) raise.
+        raw_sidecar: Any = (
+            r["sidecar_decompressed_bytes"]
+            if "sidecar_decompressed_bytes" in r.index
+            else None
+        )
+        sidecar_decompressed_bytes: int | None
+        if raw_sidecar is None or bool(pd.isna(raw_sidecar)):
+            sidecar_decompressed_bytes = None
+        else:
+            sidecar_decompressed_bytes = int(raw_sidecar)
+
         normalized_attempt_urls: tuple[str, ...]
         if isinstance(all_attempt_urls, (tuple, list)):
             normalized_attempt_urls = tuple(str(url) for url in all_attempt_urls)
@@ -571,6 +609,7 @@ def results_pdf_to_attempts(
                 checkpoint_id=None if checkpoint_id is None else str(checkpoint_id),
                 writer_info=r["writer_info"],
                 db_bytes=int(r["db_bytes"]) if "db_bytes" in r.index else 0,
+                sidecar_decompressed_bytes=sidecar_decompressed_bytes,
                 all_attempt_urls=normalized_attempt_urls,
             )
         )

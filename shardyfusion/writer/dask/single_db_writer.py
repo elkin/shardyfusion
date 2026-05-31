@@ -292,7 +292,9 @@ def _stream_to_single_db(
                 )
 
             adapter.flush()
-            checkpoint_id, db_bytes = seal_and_stamp(adapter)
+            checkpoint_id, db_bytes, sidecar_decompressed_bytes = seal_and_stamp(
+                adapter
+            )
     except ShardyfusionError:
         raise
     except Exception as exc:
@@ -323,6 +325,7 @@ def _stream_to_single_db(
             duration_ms=int((time.perf_counter() - write_started) * 1000),
         ),
         db_bytes=db_bytes,
+        sidecar_decompressed_bytes=sidecar_decompressed_bytes,
         all_attempt_urls=(*attempt_ctx.prior_attempt_urls, db_url),
     )
 

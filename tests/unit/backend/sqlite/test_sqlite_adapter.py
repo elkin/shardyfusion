@@ -375,7 +375,7 @@ class TestSidecarOnSqliteAdapter:
 
         local_dir = tmp_path / "shard"
         with patch(
-            "shardyfusion.sqlite_adapter.extract_sidecar",
+            "shardyfusion.sqlite_adapter.build_sidecar_frame",
             side_effect=SidecarUnavailableError("apsw_not_installed"),
         ):
             with SqliteAdapter(
@@ -394,7 +394,7 @@ class TestSidecarOnSqliteAdapter:
     ) -> None:
         local_dir = tmp_path / "shard"
         with patch(
-            "shardyfusion.sqlite_adapter.extract_sidecar",
+            "shardyfusion.sqlite_adapter.build_sidecar_frame",
             side_effect=RuntimeError("boom"),
         ):
             with SqliteAdapter(

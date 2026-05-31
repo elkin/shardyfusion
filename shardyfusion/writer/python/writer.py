@@ -71,6 +71,9 @@ class _SingleProcessState:
     max_keys: dict[int, KeyInput | None] = field(default_factory=dict)
     checkpoint_ids: dict[int, str | None] = field(default_factory=dict)
     db_bytes_per_shard: dict[int, int] = field(default_factory=dict)
+    sidecar_decompressed_bytes_per_shard: dict[int, int | None] = field(
+        default_factory=dict
+    )
     total_batched_items: int = 0
     total_batched_bytes: int = 0
     # Vector batches (unified KV+vector mode)
@@ -900,9 +903,11 @@ def _flush_remaining_single_process_batches(
 def _finalize_single_process_adapters(state: _SingleProcessState) -> None:
     for db_id, adapter in state.adapters.items():
         adapter.flush()
-        state.checkpoint_ids[db_id], state.db_bytes_per_shard[db_id] = seal_and_stamp(
-            adapter
-        )
+        (
+            state.checkpoint_ids[db_id],
+            state.db_bytes_per_shard[db_id],
+            state.sidecar_decompressed_bytes_per_shard[db_id],
+        ) = seal_and_stamp(adapter)
 
 
 def _build_single_process_results(
@@ -923,6 +928,9 @@ def _build_single_process_results(
             checkpoint_id=state.checkpoint_ids.get(db_id),
             writer_info=WriterInfo(attempt=attempt),
             db_bytes=state.db_bytes_per_shard.get(db_id, 0),
+            sidecar_decompressed_bytes=(
+                state.sidecar_decompressed_bytes_per_shard.get(db_id)
+            ),
         )
         for db_id in sorted(all_db_ids)
     ]

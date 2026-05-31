@@ -336,23 +336,26 @@ def parse_sqlite_manifest(payload: bytes) -> ParsedManifest:
 
         shards_data = []
         for sr in shard_rows:
-            shards_data.append(
-                {
-                    "db_id": sr["db_id"],
-                    "db_url": sr["db_url"],
-                    "attempt": sr["attempt"],
-                    "row_count": sr["row_count"],
-                    "db_bytes": sr["db_bytes"],
-                    "min_key": json.loads(sr["min_key"])
-                    if sr["min_key"] is not None
-                    else None,
-                    "max_key": json.loads(sr["max_key"])
-                    if sr["max_key"] is not None
-                    else None,
-                    "checkpoint_id": sr["checkpoint_id"],
-                    "writer_info": json.loads(sr["writer_info"]),
-                }
-            )
+            shard_dict = {
+                "db_id": sr["db_id"],
+                "db_url": sr["db_url"],
+                "attempt": sr["attempt"],
+                "row_count": sr["row_count"],
+                "db_bytes": sr["db_bytes"],
+                "min_key": json.loads(sr["min_key"])
+                if sr["min_key"] is not None
+                else None,
+                "max_key": json.loads(sr["max_key"])
+                if sr["max_key"] is not None
+                else None,
+                "checkpoint_id": sr["checkpoint_id"],
+                "writer_info": json.loads(sr["writer_info"]),
+            }
+            if "sidecar_decompressed_bytes" in sr.keys():
+                shard_dict["sidecar_decompressed_bytes"] = sr[
+                    "sidecar_decompressed_bytes"
+                ]
+            shards_data.append(shard_dict)
     except ManifestParseError:
         raise
     except Exception as exc:

@@ -66,6 +66,7 @@ def _vector_result_row(result: RequiredShardMeta) -> dict[str, object]:
         "checkpoint_id": result.checkpoint_id,
         "writer_info": result.writer_info,
         "db_bytes": result.db_bytes,
+        "sidecar_decompressed_bytes": result.sidecar_decompressed_bytes,
         "all_attempt_urls": (),
     }
 
@@ -320,6 +321,11 @@ def write_sharded(
                 checkpoint_id=checkpoint_id,
                 writer_info=writer_info,
                 db_bytes=int(db_bytes),
+                sidecar_decompressed_bytes=(
+                    None
+                    if pd.isna(sidecar_decompressed_bytes)
+                    else int(sidecar_decompressed_bytes)
+                ),
             )
             for (
                 db_id,
@@ -331,6 +337,7 @@ def write_sharded(
                 checkpoint_id,
                 writer_info,
                 db_bytes,
+                sidecar_decompressed_bytes,
                 _all_attempt_urls,
             ) in results.itertuples(index=False, name=None)
         ]

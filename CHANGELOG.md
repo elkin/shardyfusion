@@ -88,6 +88,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one coalesced range request instead of chasing `next-pageno` pointers.
 - Manifest `custom` field renamed `sqlite_btreemeta` → `sqlite_sidecar`
   (`format_version: 5`, `filename: shard.sidecar`).
+- **Per-shard decompressed sidecar size recorded in the manifest.** Each
+  shard's `RequiredShardMeta` now carries `sidecar_decompressed_bytes` — the
+  exact size of the zstd-decompressed `shard.sidecar` payload, captured at
+  `seal()` and threaded through the writer result pipeline alongside
+  `db_bytes`. It is `None` when no sidecar was produced (`emit_sidecar=False`,
+  extraction skipped, or a manifest written before this change), letting a
+  future reader size a download before fetching + decompressing the sidecar.
+  Optional and additive — no manifest `format_version` bump; both the SQLite
+  and Postgres (`PostgresManifestStore`) manifest stores round-trip it via a
+  nullable column.
 
 #### Range-read VFS now honours per-shard page size
 

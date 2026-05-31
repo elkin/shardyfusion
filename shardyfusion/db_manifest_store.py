@@ -112,6 +112,7 @@ class PostgresManifestStore:
             f"  attempt       INTEGER NOT NULL DEFAULT 0,"
             f"  row_count     INTEGER NOT NULL DEFAULT 0,"
             f"  db_bytes      BIGINT  NOT NULL DEFAULT 0,"
+            f"  sidecar_decompressed_bytes BIGINT,"
             f"  checkpoint_id TEXT,"
             f"  min_key       JSONB,"
             f"  max_key       JSONB,"
@@ -142,6 +143,15 @@ class PostgresManifestStore:
                 cursor = conn.cursor()
                 cursor.execute(self._create_builds_ddl)
                 cursor.execute(self._create_shards_ddl)
+                # Migrate pre-existing shards tables created before the
+                # sidecar_decompressed_bytes column was added. CREATE TABLE IF
+                # NOT EXISTS is a no-op on an existing table, so without this an
+                # upgraded deployment's load_manifest SELECT would fail with
+                # "column does not exist". Idempotent (Postgres 9.6+).
+                cursor.execute(
+                    f"ALTER TABLE {self._shards_table} "
+                    f"ADD COLUMN IF NOT EXISTS sidecar_decompressed_bytes BIGINT"
+                )
                 cursor.execute(self._create_pointer_ddl)
                 cursor.execute(self._create_pointer_index_ddl)
                 conn.commit()
@@ -213,6 +223,7 @@ class PostgresManifestStore:
                                 sd["attempt"],
                                 sd["row_count"],
                                 sd["db_bytes"],
+                                sd["sidecar_decompressed_bytes"],
                                 sd["checkpoint_id"],
                                 _json_col(sd["min_key"]),
                                 _json_col(sd["max_key"]),
@@ -222,8 +233,9 @@ class PostgresManifestStore:
                     cursor.executemany(
                         f"INSERT INTO {self._shards_table} "
                         f"  (run_id, db_id, db_url, attempt, row_count, db_bytes,"
+                        f"   sidecar_decompressed_bytes,"
                         f"   checkpoint_id, min_key, max_key, writer_info) "
-                        f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                         shard_rows,
                     )
 
@@ -300,7 +312,8 @@ class PostgresManifestStore:
                     raise ManifestParseError(f"Manifest not found: ref={ref}")
 
                 cursor.execute(
-                    f"SELECT db_id, db_url, attempt, row_count, db_bytes, checkpoint_id,"
+                    f"SELECT db_id, db_url, attempt, row_count, db_bytes,"
+                    f"       sidecar_decompressed_bytes, checkpoint_id,"
                     f"       min_key, max_key, writer_info "
                     f"FROM {self._shards_table} WHERE run_id = %s ORDER BY db_id",
                     (ref,),
@@ -352,6 +365,7 @@ class PostgresManifestStore:
             attempt,
             row_count,
             db_bytes,
+            sidecar_decompressed_bytes,
             checkpoint_id,
             min_key_raw,
             max_key_raw,
@@ -363,6 +377,7 @@ class PostgresManifestStore:
                 "attempt": attempt,
                 "row_count": row_count,
                 "db_bytes": db_bytes,
+                "sidecar_decompressed_bytes": sidecar_decompressed_bytes,
                 "checkpoint_id": checkpoint_id,
                 "min_key": _parse_json_col(min_key_raw),
                 "max_key": _parse_json_col(max_key_raw),

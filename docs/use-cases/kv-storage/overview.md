@@ -137,7 +137,7 @@ The manifest is a **single SQLite database file** (serialized via `con.serialize
 |---|---|
 | `WriterInfo` | Writer flavor, version, build timestamp |
 | `RequiredBuildMeta` | `run_id`, `num_dbs`, `s3_prefix`, sharding strategy, key encoding, format version |
-| `RequiredShardMeta` (per shard) | `db_id`, `db_url`, `row_count`, `byte_size`, `min_key`, `max_key`, `checkpoint_id` |
+| `RequiredShardMeta` (per shard) | `db_id`, `db_url`, `row_count`, `db_bytes`, `sidecar_decompressed_bytes`, `min_key`, `max_key`, `checkpoint_id` |
 | `BuildDurations` | Per-phase timing |
 | `BuildStats` | Aggregate row/byte counts |
 | `custom` | Optional user-defined fields (also used for vector config) |

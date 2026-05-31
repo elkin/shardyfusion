@@ -823,7 +823,9 @@ class TestSidecarOnSqliteVecAdapter:
             instance = MockBackend.return_value
             instance.put = MagicMock()
             with patch(
-                "shardyfusion.sqlite_adapter.extract_sidecar",
+                # The seal-time build is shared via sqlite_adapter._read_and_build_sidecar,
+                # so the frame builder resolves in the sqlite_adapter namespace.
+                "shardyfusion.sqlite_adapter.build_sidecar_frame",
                 side_effect=SidecarUnavailableError("apsw_not_installed"),
             ):
                 with SqliteVecAdapter(
