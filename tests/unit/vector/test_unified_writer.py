@@ -248,7 +248,7 @@ class TestInjectSqliteSidecarManifestField:
         inject_sqlite_sidecar_manifest_field(config, SqliteFactory())
 
         assert self._field(config) == {
-            "format_version": 5,
+            "format_version": 6,
             "page_size": 4096,
             "filename": "shard.sidecar",
             "codec": "zstd",
@@ -294,7 +294,7 @@ class TestInjectSqliteSidecarManifestField:
         config = _cel_config(vector_spec=vs)
         inject_sqlite_sidecar_manifest_field(config, SqliteVecFactory(vector_spec=vs))
         assert self._field(config) == {
-            "format_version": 5,
+            "format_version": 6,
             "page_size": 4096,
             "filename": "shard.sidecar",
             "codec": "zstd",

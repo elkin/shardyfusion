@@ -60,7 +60,6 @@ class VectorShardState:
     row_count: int = 0
     checkpoint_id: str | None = None
     db_bytes: int = 0
-    sidecar_decompressed_bytes: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,7 +352,6 @@ def write_vector_shard(
         (
             state.checkpoint_id,
             state.db_bytes,
-            state.sidecar_decompressed_bytes,
         ) = seal_and_stamp(adapter)
 
     if metrics_collector is not None:
@@ -370,7 +368,6 @@ def write_vector_shard(
         checkpoint_id=state.checkpoint_id,
         writer_info=WriterInfo(),
         db_bytes=state.db_bytes,
-        sidecar_decompressed_bytes=state.sidecar_decompressed_bytes,
     )
 
 

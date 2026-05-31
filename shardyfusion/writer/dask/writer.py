@@ -102,7 +102,6 @@ _RESULT_META = pd.DataFrame(
         "checkpoint_id",
         "writer_info",
         "db_bytes",
-        "sidecar_decompressed_bytes",
         "all_attempt_urls",
     ],
 ).astype(
@@ -116,7 +115,6 @@ _RESULT_META = pd.DataFrame(
         "checkpoint_id": "object",
         "writer_info": "object",
         "db_bytes": "int64",
-        "sidecar_decompressed_bytes": "object",
         "all_attempt_urls": "object",
     }
 )
@@ -726,7 +724,6 @@ def _write_partition(
                 "checkpoint_id": attempt_result.checkpoint_id,
                 "writer_info": attempt_result.writer_info,
                 "db_bytes": attempt_result.db_bytes,
-                "sidecar_decompressed_bytes": attempt_result.sidecar_decompressed_bytes,
                 "all_attempt_urls": attempt_result.all_attempt_urls,
             }
         )

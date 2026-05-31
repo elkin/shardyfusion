@@ -106,7 +106,6 @@ def _write_single_process(
                 (
                     state.checkpoint_id,
                     state.db_bytes,
-                    state.sidecar_decompressed_bytes,
                 ) = seal_and_stamp(state.adapter)
 
     return shard_states
@@ -202,7 +201,6 @@ def write_sharded(
                     checkpoint_id=state.checkpoint_id,
                     writer_info=WriterInfo(),
                     db_bytes=state.db_bytes,
-                    sidecar_decompressed_bytes=state.sidecar_decompressed_bytes,
                 )
             )
 
