@@ -10,7 +10,7 @@ The matrix covers every page_size configuration the public API supports:
 
 For each mode the scenario asserts that:
 
-* the writer published a manifest + per-shard sidecar v5 (``shard.sidecar``)
+* the writer published a manifest + per-shard sidecar v6 (``shard.sidecar``)
 * the manifest's ``custom.sqlite_sidecar.page_size`` field matches the
   expected page_size (with the documented asymmetry for ``"auto"`` — it stays
   as the literal string ``"auto"`` in the manifest, not the resolved int)

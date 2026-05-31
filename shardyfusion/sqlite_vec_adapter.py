@@ -569,6 +569,7 @@ class SqliteVecAdapter:
                         db_bytes=db_bytes,
                         db_tag=db_tag,
                         frame=self._sidecar_frame,
+                        body_size=self._sidecar_decompressed_bytes,
                     )
                 # Release the cached read bytes and compressed frame now that the
                 # upload is done; the recorded size lives in

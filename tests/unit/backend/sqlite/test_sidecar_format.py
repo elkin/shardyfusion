@@ -1,4 +1,4 @@
-"""Unit tests for the v5 SQLite page-cache sidecar.
+"""Unit tests for the v6 SQLite page-cache sidecar.
 
 The sidecar bundles every interior B-tree page plus every schema-btree page,
 each **gap-stripped** (the unallocated middle removed), behind a vendor-neutral
@@ -86,25 +86,25 @@ def _all_page_types(db_path: Path) -> dict[int, tuple[str | None, str | None]]:
 
 
 # ---------------------------------------------------------------------------
-# v5 parser + reference reconstruction (the reader side)
+# v6 parser + reference reconstruction (the reader side)
 # ---------------------------------------------------------------------------
 
 
 def _parse_sidecar(
     blob: bytes,
 ) -> tuple[int, str | None, int, int, list[int], list[bytes], list[list[int]]]:
-    """Parse a v5 sidecar.
+    """Parse a v6 sidecar.
 
     Returns ``(version, db_tag, page_size, n, pagenos, stored_pages, chains)``.
-    Wire: ``magic(4) + version(u8) + tag_len(u8) + tag + zstd(body)`` where the
-    body is ``page_size(u32) + n(u32) + pagenos(u32*n) + offsets(u32*(n+1)) +
-    chain_count(u32) + chains + gap-stripped pages``.
+    Wire: ``magic(4) + version(u8) + body_size(u64) + tag_len(u8) + tag +
+    zstd(body)`` where the body is ``page_size(u32) + n(u32) + pagenos(u32*n)
+    + offsets(u32*(n+1)) + chain_count(u32) + chains + gap-stripped pages``.
     """
     assert blob[:4] == _SIDECAR_MAGIC, blob[:4]
     version = blob[4]
-    tag_len = blob[5]
-    tag = blob[6 : 6 + tag_len].decode("utf-8") if tag_len else None
-    body = zstandard.ZstdDecompressor().decompress(blob[6 + tag_len :])
+    tag_len = blob[13]
+    tag = blob[14 : 14 + tag_len].decode("utf-8") if tag_len else None
+    body = zstandard.ZstdDecompressor().decompress(blob[14 + tag_len :])
 
     cur = 0
     page_size, n = struct.unpack_from("<II", body, cur)
@@ -156,11 +156,11 @@ class TestFormat:
 
         # Vendor-neutral 4-byte magic + 1-byte version, readable without zstd.
         assert blob[:4] == _SIDECAR_MAGIC == b"SQPC"
-        assert blob[4] == _SIDECAR_FORMAT_VERSION == 5
-        assert blob[5] == 0  # tag_len: unbound when no db_tag is passed
+        assert blob[4] == _SIDECAR_FORMAT_VERSION == 6
+        assert blob[13] == 0  # tag_len: unbound when no db_tag is passed
 
         version, tag, page_size, n, pagenos, _, _ = _parse_sidecar(blob)
-        assert version == 5
+        assert version == 6
         assert tag is None
         assert page_size == 4096
         assert n >= 1
@@ -172,7 +172,7 @@ class TestFormat:
         etag = '"d41d8cd98f00b204e9800998ecf8427e-3"'  # multipart-shaped ETag
         blob = extract_sidecar(db_path, db_tag=etag)
 
-        assert blob[5] == len(etag.encode("utf-8"))
+        assert blob[13] == len(etag.encode("utf-8"))
         _, tag, *_ = _parse_sidecar(blob)
         assert tag == etag
 

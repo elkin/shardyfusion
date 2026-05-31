@@ -1,4 +1,4 @@
-# SQLite Page-Cache Sidecar Format — v5
+# SQLite Page-Cache Sidecar Format — v6
 
 A compact binary file holding a selected set of SQLite database pages, indexed
 by page number, so a remote-storage SQLite reader can prefetch and cache the
@@ -17,13 +17,14 @@ producer includes; any subset is valid as long as the layout holds.
 
 All multi-byte integers are little-endian. Byte offsets are zero-based.
 
-| Offset      | Size     | Field            | Description                                  |
-| ----------- | -------- | ---------------- | -------------------------------------------- |
-| 0           | 4        | `magic`          | `b"SQPC"`                                     |
-| 4           | 1        | `format_version` | `u8` — value `5` for this spec               |
-| 5           | 1        | `tag_len`        | `u8` — length of `db_tag` (`0` = unbound)    |
-| 6           | tag_len  | `db_tag`         | the `.db` object-version token (S3 ETag), UTF-8 |
-| 6 + tag_len | rest     | `body`           | one zstd frame (with content checksum)       |
+| Offset       | Size     | Field            | Description                                  |
+| ------------ | -------- | ---------------- | -------------------------------------------- |
+| 0            | 4        | `magic`          | `b"SQPC"`                                     |
+| 4            | 1        | `format_version` | `u8` — value `6` for this spec               |
+| 5            | 8        | `body_size`      | `u64` — uncompressed size of `body` in bytes |
+| 13           | 1        | `tag_len`        | `u8` — length of `db_tag` (`0` = unbound)    |
+| 14           | tag_len  | `db_tag`         | the `.db` object-version token (S3 ETag), UTF-8 |
+| 14 + tag_len | rest     | `body`           | one zstd frame (with content checksum)       |
 
 The prefix is uncompressed so a reader can validate the magic/version and read
 the binding tag before paying the decompression cost. The zstd frame is written
@@ -130,6 +131,8 @@ than it understands treats the sidecar as absent and fetches pages on demand.
 Versions 1–4 used an 8-byte `SFBTM` magic under the name `shard.btreemeta` and
 stored whole (un-stripped) pages with a `(pageno, offset)` index; v5 is a
 breaking change (new magic, 1-byte version, ETag binding, gap-stripped pages).
+v6 adds `body_size` (u64, offset 5) to the uncompressed prefix so a reader can
+size its decompression buffer before paying the zstd decode cost.
 
 ## Reference parser (Python)
 
@@ -138,16 +141,17 @@ import struct
 import zstandard
 
 MAGIC = b"SQPC"
-VERSION = 5
+VERSION = 6
 
 
 def parse_sidecar(blob: bytes):
-    """Return ``(db_tag, page_size, [(pageno, full_page_bytes), ...], chains)``."""
+    """Return ``(db_tag, body_size, page_size, [(pageno, full_page_bytes), ...], chains)``."""
     assert blob[:4] == MAGIC, "bad magic"
     assert blob[4] == VERSION, f"unsupported version {blob[4]}"
-    tag_len = blob[5]
-    db_tag = blob[6 : 6 + tag_len].decode("utf-8") if tag_len else None
-    body = zstandard.ZstdDecompressor().decompress(blob[6 + tag_len :])
+    body_size = int.from_bytes(blob[5:13], "little")
+    tag_len = blob[13]
+    db_tag = blob[14 : 14 + tag_len].decode("utf-8") if tag_len else None
+    body = zstandard.ZstdDecompressor().decompress(blob[14 + tag_len :])
 
     cur = 0
     page_size, n = struct.unpack_from("<II", body, cur)
@@ -170,7 +174,7 @@ def parse_sidecar(blob: bytes):
     for i, pageno in enumerate(pagenos):
         stored = pages[offsets[i] : offsets[i + 1]]
         out.append((pageno, _reconstruct_page(stored, pageno, page_size)))
-    return db_tag, page_size, out, chains
+    return db_tag, body_size, page_size, out, chains
 
 
 def _reconstruct_page(stored: bytes, pageno: int, page_size: int) -> bytes:

@@ -39,9 +39,10 @@ s3://bucket/.../shards/run_id=X/db=00000/attempt=00/shard.sidecar
 ```
 
 The sidecar is a self-describing little-endian binary blob: a small
-uncompressed prefix — vendor-neutral `SQPC` magic, a `u8` version, and the
-`.db` object tag (see [Database binding](#database-binding)) — followed by one
-zstd frame (content-checksummed). The frame body is metadata-first:
+uncompressed prefix — vendor-neutral `SQPC` magic, a `u8` version, the
+uncompressed body size (`u64`), and the `.db` object tag
+(see [Database binding](#database-binding)) — followed by one zstd frame
+(content-checksummed). The frame body is metadata-first:
 `page_size`, the sorted `pagenos` bisect key, pages-relative `offsets`, the
 overflow-chain map, then the gap-stripped pages. The byte-exact layout is
 specified in
