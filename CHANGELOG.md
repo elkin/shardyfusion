@@ -99,6 +99,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and Postgres (`PostgresManifestStore`) manifest stores round-trip it via a
   nullable column.
 
+#### SQLite page-cache sidecar (v6)
+
+- **Sidecar format bumped to v6.** The uncompressed header now carries the
+  decompressed body size as a `u64` at offset 5 (little-endian), between the
+  version byte and the tag length. A reader can size its decompression buffer
+  without parsing the zstd frame. The tag length and tag shift to offsets 13
+  and 14 respectively. See `docs/reference/sqlite-sidecar-format.md`.
+- **`sidecar_decompressed_bytes` removed from the manifest.** Now that the
+  size lives in the sidecar header itself, the per-shard manifest field and
+  the corresponding database columns are dropped. `RequiredShardMeta` and
+  `ShardAttemptResult` no longer carry this field; writers do not thread it
+  through result DataFrames.
+
 #### Range-read VFS now honours per-shard page size
 
 - **`S3ReadOnlyFile` parses the SQLite file header on open** (one
