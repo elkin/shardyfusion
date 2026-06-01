@@ -1,4 +1,4 @@
-"""Unit tests for the v6 SQLite page-cache sidecar.
+"""Unit tests for the v7 SQLite page-cache sidecar.
 
 The sidecar bundles every interior B-tree page plus every schema-btree page,
 each **gap-stripped** (the unallocated middle removed), behind a vendor-neutral
@@ -7,26 +7,29 @@ ETag) for a correctness binding.  A reader reconstructs the full pages on read.
 
 These tests verify the wire format, the gap-strip / reconstruct round-trip
 (via ``PRAGMA integrity_check`` on a rebuilt DB — the correctness contract),
-the ETag binding, the overflow-chain map, and the graceful-degradation paths.
+the ETag binding, the overflow-chain CSR index, and the graceful-degradation paths.
 """
 
 from __future__ import annotations
 
 import sqlite3
-import struct
 import sys
 from pathlib import Path
 
 import pytest
 
 apsw = pytest.importorskip("apsw")
-zstandard = pytest.importorskip("zstandard")
+pytest.importorskip("zstandard")
 
 from shardyfusion.sqlite_adapter import (  # noqa: E402
     _SIDECAR_FORMAT_VERSION,
     _SIDECAR_MAGIC,
     SidecarUnavailableError,
     extract_sidecar,
+)
+from tests.helpers.sidecar import (  # noqa: E402
+    parse_sidecar,
+    reconstruct_page,
 )
 
 # ---------------------------------------------------------------------------
@@ -86,61 +89,24 @@ def _all_page_types(db_path: Path) -> dict[int, tuple[str | None, str | None]]:
 
 
 # ---------------------------------------------------------------------------
-# v6 parser + reference reconstruction (the reader side)
+# v7 parser + reference reconstruction (the reader side)
 # ---------------------------------------------------------------------------
 
 
 def _parse_sidecar(
     blob: bytes,
 ) -> tuple[int, str | None, int, int, list[int], list[bytes], list[list[int]]]:
-    """Parse a v6 sidecar.
-
-    Returns ``(version, db_tag, page_size, n, pagenos, stored_pages, chains)``.
-    Wire: ``magic(4) + version(u8) + body_size(u64) + tag_len(u8) + tag +
-    zstd(body)`` where the body is ``page_size(u32) + n(u32) + pagenos(u32*n)
-    + offsets(u32*(n+1)) + chain_count(u32) + chains + gap-stripped pages``.
-    """
-    assert blob[:4] == _SIDECAR_MAGIC, blob[:4]
-    version = blob[4]
-    tag_len = blob[13]
-    tag = blob[14 : 14 + tag_len].decode("utf-8") if tag_len else None
-    body = zstandard.ZstdDecompressor().decompress(blob[14 + tag_len :])
-
-    cur = 0
-    page_size, n = struct.unpack_from("<II", body, cur)
-    cur += 8
-    pagenos = list(struct.unpack_from(f"<{n}I", body, cur)) if n else []
-    cur += 4 * n
-    offsets = list(struct.unpack_from(f"<{n + 1}I", body, cur))
-    cur += 4 * (n + 1)
-    (chain_count,) = struct.unpack_from("<I", body, cur)
-    cur += 4
-    chains: list[list[int]] = []
-    for _ in range(chain_count):
-        head, length = struct.unpack_from("<II", body, cur)
-        cur += 8
-        chain = list(struct.unpack_from(f"<{length}I", body, cur))
-        cur += 4 * length
-        assert chain[0] == head
-        chains.append(chain)
-    pages_blob = body[cur:]
-    assert offsets[-1] == len(pages_blob), (offsets[-1], len(pages_blob))
-    stored = [pages_blob[offsets[i] : offsets[i + 1]] for i in range(n)]
-    return version, tag, page_size, n, pagenos, stored, chains
-
-
-def _reconstruct_page(stored: bytes, pageno: int, page_size: int) -> bytes:
-    """Reference reader-side inverse of the writer's gap stripping: splice the
-    zero gap back to recover a full ``page_size`` page."""
-    base = 100 if pageno == 1 else 0
-    ptype = stored[base]
-    if ptype not in (2, 5, 10, 13):
-        return stored
-    hdr = 12 if ptype in (2, 5) else 8
-    n_cells = int.from_bytes(stored[base + 3 : base + 5], "big")
-    cca = int.from_bytes(stored[base + 5 : base + 7], "big") or 65536
-    cpa_end = base + hdr + 2 * n_cells
-    return stored[:cpa_end] + b"\x00" * (cca - cpa_end) + stored[cpa_end:]
+    """Parse a v7 sidecar via the shared helper, as a positional tuple."""
+    p = parse_sidecar(blob)
+    return (
+        p.version,
+        p.db_tag,
+        p.page_size,
+        p.n,
+        p.pagenos,
+        p.stored_pages,
+        p.chains,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -156,11 +122,11 @@ class TestFormat:
 
         # Vendor-neutral 4-byte magic + 1-byte version, readable without zstd.
         assert blob[:4] == _SIDECAR_MAGIC == b"SQPC"
-        assert blob[4] == _SIDECAR_FORMAT_VERSION == 6
+        assert blob[4] == _SIDECAR_FORMAT_VERSION == 7
         assert blob[13] == 0  # tag_len: unbound when no db_tag is passed
 
         version, tag, page_size, n, pagenos, _, _ = _parse_sidecar(blob)
-        assert version == 6
+        assert version == 7
         assert tag is None
         assert page_size == 4096
         assert n >= 1
@@ -257,7 +223,7 @@ class TestGapStripping:
         stored_total = 0
         for pgno, s in zip(pagenos, stored, strict=True):
             stored_total += len(s)
-            recon = _reconstruct_page(s, pgno, ps)
+            recon = reconstruct_page(s, pgno, ps)
             assert len(recon) == ps
             original = bytes(raw[(pgno - 1) * ps : pgno * ps])
             # Reconstruction only zeroes bytes — it never alters a real byte.
@@ -296,7 +262,7 @@ class TestGapStripping:
 
 
 # ---------------------------------------------------------------------------
-# Overflow chain map
+# Overflow chain CSR index
 # ---------------------------------------------------------------------------
 
 
@@ -380,7 +346,7 @@ class TestPageSelectionUnified:
         # Every stored page reconstructs to a full, byte-consistent page.
         raw = db_path.read_bytes()
         for pgno, s in zip(pagenos, stored, strict=True):
-            recon = _reconstruct_page(s, pgno, page_size)
+            recon = reconstruct_page(s, pgno, page_size)
             assert len(recon) == page_size
             original = raw[(pgno - 1) * page_size : pgno * page_size]
             for a, b in zip(original, recon, strict=True):

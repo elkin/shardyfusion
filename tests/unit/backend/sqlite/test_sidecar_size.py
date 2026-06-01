@@ -1,6 +1,6 @@
 """Tests for recording each shard's decompressed page-cache sidecar size.
 
-The writer captures the exact ``len(body)`` of the v6 sidecar at ``seal()`` and
+The writer captures the exact ``len(body)`` of the v7 sidecar at ``seal()`` and
 stores it in the sidecar header (``body_size`` at offset 5).  The adapter still
 exposes the size via ``sidecar_decompressed_bytes()`` so a reader can size a
 download before fetching + decompressing the sidecar, but the size is no longer

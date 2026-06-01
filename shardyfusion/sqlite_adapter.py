@@ -49,16 +49,20 @@ _SIDECAR_FILENAME = "shard.sidecar"
 # consumed outside shardyfusion.  (v1-v4 used b"SFBTM\x00\x00\x00" under the
 # old ``shard.btreemeta`` name.)
 _SIDECAR_MAGIC = b"SQPC"
-# v5 = uncompressed prefix (magic + u8 version + the .db object tag for a
-# correctness binding) then one zstd frame (with content checksum) over a
-# metadata-first body: ``page_size | n | pagenos | offsets | chains |
-# gap-stripped pages``.  Pages are gap-stripped — the unallocated middle of
-# each B-tree page is physically dropped and the reader splices zeros back
-# in — which roughly halves the decompressed/resident size.  The
-# ``(pageno, offset)`` index is split into the ``pagenos`` bisect key plus
-# pages-relative ``offsets`` (stripped pages are variable-length).  Format
-# documented in ``docs/reference/sqlite-sidecar-format.md``.
-_SIDECAR_FORMAT_VERSION = 6
+# Uncompressed prefix (magic + u8 version + u64 body_size + the .db object
+# tag for a correctness binding) then one zstd frame (with content checksum)
+# over a metadata-first body: ``page_size | n | pagenos | offsets |
+# chain_count | chain_heads | chain_offsets | chain_pages | gap-stripped
+# pages``.  Pages are gap-stripped — the unallocated middle of each B-tree
+# page is physically dropped and the reader splices zeros back in — which
+# roughly halves the decompressed/resident size.  The ``(pageno, offset)``
+# index is split into the ``pagenos`` bisect key plus pages-relative
+# ``offsets`` (stripped pages are variable-length); overflow chains are a
+# parallel CSR triple (sorted ``chain_heads`` + ``chain_offsets`` + flat
+# ``chain_pages``) so a reader bisects chain heads and slices the page list
+# with no dict.  Format documented in
+# ``docs/reference/sqlite-sidecar-format.md``.
+_SIDECAR_FORMAT_VERSION = 7
 # zstd default level.  Btree pages compress ~12× at level 3 with
 # sub-millisecond cost; higher levels squeeze a few extra percent for
 # significantly more time and aren't worth it on the writer hot path.
@@ -276,7 +280,7 @@ def build_sidecar_frame(
     *,
     db_bytes: bytes | None = None,
 ) -> tuple[bytes, int]:
-    """Build the v5 page-cache sidecar *frame* for a finalized SQLite DB.
+    """Build the v7 page-cache sidecar *frame* for a finalized SQLite DB.
 
     Returns ``(frame, decompressed_size)`` where ``frame`` is the compressed
     zstd body (no uncompressed prefix) and ``decompressed_size`` is exactly
@@ -290,7 +294,9 @@ def build_sidecar_frame(
     :func:`_strip_page_gap`) — so a range-read reader can fetch them once on
     shard open and reconstruct them locally, eliminating the per-query round
     trips needed to walk B-tree internals.  It also carries an overflow-chain
-    map so the reader can prefetch each chain in one coalesced range request.
+    CSR index (sorted ``chain_heads`` + ``chain_offsets`` + flat ``chain_pages``)
+    so the reader can bisect a chain head and prefetch the whole chain in one
+    coalesced range request.
 
     Page identification is delegated to SQLite's ``dbstat`` virtual table
     (via APSW for reliable availability — APSW bundles a SQLite built with
@@ -309,8 +315,10 @@ def build_sidecar_frame(
     * ``N * u32`` pagenos, sorted ascending (the bisect key)
     * ``(N+1) * u32`` offsets into the trailing pages blob — page ``i`` is
       ``pages[off[i]:off[i+1]]``; the final entry is the blob length
-    * ``u32`` overflow chain count ``C`` then ``C`` entries of
-      ``u32 head, u32 L, L * u32 pageno``
+    * ``u32`` overflow chain count ``C``, then the CSR triple — ``C * u32``
+      ``chain_heads`` (sorted), ``(C+1) * u32`` ``chain_offsets`` (page-number
+      units), and ``M * u32`` ``chain_pages`` (every chain head-first,
+      ``M = chain_offsets[-1]``)
     * the gap-stripped pages, concatenated in pageno order
     """
 
@@ -412,10 +420,23 @@ def build_sidecar_frame(
     for s in stripped:
         offsets.append(offsets[-1] + len(s))
 
-    chain_bytes_parts: list[bytes] = [struct.pack("<I", len(chains))]
+    # Overflow chains as a CSR triple — a sorted head key, an offset table, and
+    # a flat page list — mirroring pagenos/offsets/pages.  Heads already come
+    # out sorted from _enumerate_overflow_chains, so a reader bisects
+    # chain_heads and slices chain_pages directly (no dict).  chain_offsets is
+    # in page-number units (entries are fixed-width u32), unlike the byte-unit
+    # ``offsets`` above.
+    chain_offsets: list[int] = [0]
+    flat_pages: list[int] = []
     for chain in chains:
-        chain_bytes_parts.append(struct.pack("<II", chain[0], len(chain)))
-        chain_bytes_parts.append(struct.pack(f"<{len(chain)}I", *chain))
+        flat_pages.extend(chain)
+        chain_offsets.append(len(flat_pages))
+    chain_bytes_parts: list[bytes] = [
+        struct.pack("<I", len(chains)),
+        struct.pack(f"<{len(chains)}I", *(c[0] for c in chains)) if chains else b"",
+        struct.pack(f"<{len(chain_offsets)}I", *chain_offsets),
+        struct.pack(f"<{len(flat_pages)}I", *flat_pages) if flat_pages else b"",
+    ]
 
     body = b"".join(
         [
@@ -467,7 +488,7 @@ def extract_sidecar(
     db_bytes: bytes | None = None,
     db_tag: str | None = None,
 ) -> bytes:
-    """Read a finalized SQLite DB and return the complete v6 sidecar object.
+    """Read a finalized SQLite DB and return the complete v7 sidecar object.
 
     Thin wrapper over :func:`build_sidecar_frame` + :func:`frame_to_sidecar`,
     kept for callers/tests that want the whole blob (prefix + frame) in one
@@ -722,7 +743,7 @@ class SqliteFactory:
     ``emit_sidecar`` (default ``True``) controls whether each
     finalized shard uploads a sibling ``shard.sidecar`` artifact
     bundling all interior B-tree pages plus every ``sqlite_master`` page
-    and the overflow chain map.  Reader-side range-mode consumers can
+    and the overflow-chain CSR index.  Reader-side range-mode consumers can
     fetch this once on shard open and pin those pages for the lifetime
     of the shard reader.
 
