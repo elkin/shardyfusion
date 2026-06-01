@@ -1,4 +1,4 @@
-# SQLite Page-Cache Sidecar Format — v6
+# SQLite Page-Cache Sidecar Format — v7
 
 A compact binary file holding a selected set of SQLite database pages, indexed
 by page number, so a remote-storage SQLite reader can prefetch and cache the
@@ -20,7 +20,7 @@ All multi-byte integers are little-endian. Byte offsets are zero-based.
 | Offset       | Size     | Field            | Description                                  |
 | ------------ | -------- | ---------------- | -------------------------------------------- |
 | 0            | 4        | `magic`          | `b"SQPC"`                                     |
-| 4            | 1        | `format_version` | `u8` — value `6` for this spec               |
+| 4            | 1        | `format_version` | `u8` — value `7` for this spec               |
 | 5            | 8        | `body_size`      | `u64` — uncompressed size of `body` in bytes |
 | 13           | 1        | `tag_len`        | `u8` — length of `db_tag` (`0` = unbound)    |
 | 14           | tag_len  | `db_tag`         | the `.db` object-version token (S3 ETag), UTF-8 |
@@ -42,7 +42,9 @@ After zstd-decompressing `body`, the bytes are, in order:
 | `pagenos`     | `n × u32`       | SQLite page numbers (1-based), sorted strictly ascending           |
 | `offsets`     | `(n+1) × u32`   | start offset of each stored page **within `pages`**; entry `n` is the `pages` byte length |
 | `chain_count` | `u32`           | number of overflow chains `C` (may be 0)                           |
-| `chains`      | variable        | `C` × `(u32 head, u32 L, L × u32 pageno)`, each in traversal order |
+| `chain_heads`   | `C × u32`     | head page numbers, one per chain, **sorted strictly ascending** (the chain bisect key) |
+| `chain_offsets` | `(C+1) × u32` | start index of each chain **within `chain_pages`**, in page-number units; entry `C` is the `chain_pages` length `M` |
+| `chain_pages`   | `M × u32`     | every chain's pages, **head-first** in traversal order, concatenated in `chain_heads` order |
 | `pages`       | variable        | `n` **gap-stripped** pages, concatenated in `pagenos` order        |
 
 All small index/metadata sections precede the bulk `pages` blob, so a reader may
@@ -55,10 +57,15 @@ stream-decompress just the metadata prefix without inflating the page bytes.
 - **`offsets`** locates page `i` as `pages[offsets[i] : offsets[i+1]]`. Stored
   pages are variable-length (see gap stripping), so these offsets are
   load-bearing.
-- **`chains`** records each overflow chain head-first. A reader prefetches the
-  whole chain from the main `.db` in one parallel/coalesced range request rather
-  than chasing each page's 4-byte big-endian next-pointer serially. Overflow
-  page *contents* are not stored — only their page numbers.
+- **`chain_heads`** is the chain bisect key: a reader binary-searches it for a
+  cell's overflow head `H`, and on a hit at index `j` the chain's pages are the
+  direct slice `chain_pages[chain_offsets[j] : chain_offsets[j+1]]` — no
+  per-chain dict is built first. (`chain_offsets` counts page numbers, not bytes
+  like `offsets`, since every `chain_pages` entry is a fixed-width `u32`.)
+- **`chain_pages`** stores each chain head-first in traversal order, so a reader
+  prefetches the whole chain from the main `.db` in one parallel/coalesced range
+  request rather than chasing each page's 4-byte big-endian next-pointer
+  serially. Overflow page *contents* are not stored — only their page numbers.
 - **`pages`** are gap-stripped (below). A reader reconstructs each to a full
   `page_size` page before handing it to SQLite.
 
@@ -116,8 +123,14 @@ A reader rejects (and falls back to fetching pages on demand) if any of:
 - zstd decode fails (including the frame-checksum check).
 - `page_size` is not a power of two in `[512, 65536]`.
 - `pagenos` is not strictly ascending.
-- `offsets` is not monotonically non-decreasing, or its last entry does not
-  equal the `pages` byte length.
+- `offsets` is not monotonically non-decreasing, its first entry is not `0`, or
+  its last entry does not equal the `pages` byte length.
+- `chain_heads` is not strictly ascending.
+- `chain_offsets` is not strictly increasing, its first entry is not `0`, or its
+  last entry does not equal the `chain_pages` length. (Strictly increasing
+  because every chain — head included — has at least one page.)
+- a stored chain does not begin with its head
+  (`chain_pages[chain_offsets[j]] != chain_heads[j]` for some `j`).
 - a reconstructed page is not exactly `page_size` bytes.
 
 Separately — a *correctness gate*, not a structural reject — a reader declines
@@ -132,7 +145,11 @@ Versions 1–4 used an 8-byte `SFBTM` magic under the name `shard.btreemeta` and
 stored whole (un-stripped) pages with a `(pageno, offset)` index; v5 is a
 breaking change (new magic, 1-byte version, ETag binding, gap-stripped pages).
 v6 adds `body_size` (u64, offset 5) to the uncompressed prefix so a reader can
-size its decompression buffer before paying the zstd decode cost.
+size its decompression buffer before paying the zstd decode cost. v7 restructures
+the overflow-chain section from variable-length `(head, L, pageno…)` records into
+a CSR triple (sorted `chain_heads` + `chain_offsets` + flat `chain_pages`) so a
+reader binary-searches a chain head and slices its page list directly off the
+decompressed metadata, with no dict construction.
 
 ## Reference parser (Python)
 
@@ -141,7 +158,7 @@ import struct
 import zstandard
 
 MAGIC = b"SQPC"
-VERSION = 6
+VERSION = 7
 
 
 def parse_sidecar(blob: bytes):
@@ -162,12 +179,20 @@ def parse_sidecar(blob: bytes):
     cur += 4 * (n + 1)
     (chain_count,) = struct.unpack_from("<I", body, cur)
     cur += 4
-    chains = []
-    for _ in range(chain_count):
-        head, length = struct.unpack_from("<II", body, cur)
-        cur += 8
-        chains.append(list(struct.unpack_from(f"<{length}I", body, cur)))
-        cur += 4 * length
+    chain_heads = (
+        list(struct.unpack_from(f"<{chain_count}I", body, cur)) if chain_count else []
+    )
+    cur += 4 * chain_count
+    chain_offsets = list(struct.unpack_from(f"<{chain_count + 1}I", body, cur))
+    cur += 4 * (chain_count + 1)
+    n_pages = chain_offsets[-1]
+    flat = list(struct.unpack_from(f"<{n_pages}I", body, cur)) if n_pages else []
+    cur += 4 * n_pages
+    chains = [flat[chain_offsets[i] : chain_offsets[i + 1]] for i in range(chain_count)]
+    # A real reader bisects ``chain_heads`` for a cell's overflow head and slices
+    # ``flat[chain_offsets[j]:chain_offsets[j+1]]``; the rebuilt chains must each
+    # start with that head.
+    assert chain_heads == [c[0] for c in chains]
     pages = body[cur:]
 
     out = []

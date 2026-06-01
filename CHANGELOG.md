@@ -112,6 +112,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ShardAttemptResult` no longer carry this field; writers do not thread it
   through result DataFrames.
 
+#### SQLite page-cache sidecar (v7)
+
+- **Sidecar format bumped to v7.** The overflow-chain section is restructured
+  from variable-length `(head, L, pageno…)` records into a CSR triple — a sorted
+  `chain_heads` bisect key, a `chain_offsets` table, and a flat `chain_pages`
+  list — mirroring the existing `pagenos`/`offsets`/`pages` layout. A range-mode
+  reader can now binary-search a chain head and slice its page list directly off
+  the decompressed metadata, with no per-chain dict to build first. Single-page
+  chains are still recorded; `chain_heads` is strictly ascending and each chain's
+  pages are stored head-first.
+  See `docs/reference/sqlite-sidecar-format.md`.
+
 #### Range-read VFS now honours per-shard page size
 
 - **`S3ReadOnlyFile` parses the SQLite file header on open** (one

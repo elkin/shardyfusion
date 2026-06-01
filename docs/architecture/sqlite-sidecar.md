@@ -44,17 +44,21 @@ uncompressed body size (`u64`), and the `.db` object tag
 (see [Database binding](#database-binding)) — followed by one zstd frame
 (content-checksummed). The frame body is metadata-first:
 `page_size`, the sorted `pagenos` bisect key, pages-relative `offsets`, the
-overflow-chain map, then the gap-stripped pages. The byte-exact layout is
+overflow-chain CSR index (sorted chain heads + offsets + a flat page list),
+then the gap-stripped pages. The byte-exact layout is
 specified in
 [`reference/sqlite-sidecar-format.md`](../reference/sqlite-sidecar-format.md);
 this page covers the surrounding architecture (page selection, gap stripping,
 binding, discovery, failure semantics).
 
-The chain map records every overflow chain in the kv table — one entry per
-chain head, listing the pagenos in traversal order — so a range-mode reader
-can prefetch a whole chain in one parallel multi-range request instead of
-chasing each `next-pageno` pointer serially. It compresses well (long runs of
-monotonically-increasing pagenos) and is empty when no value overflows.
+The overflow-chain index records every chain in the kv table as a CSR triple — a
+sorted `chain_heads` bisect key, a `chain_offsets` table, and a flat `chain_pages`
+list of every chain's pages head-first in traversal order — so a range-mode reader
+binary-searches a chain head and slices its page list directly off the decompressed
+metadata (no per-chain dict), then prefetches the whole chain in one parallel
+multi-range request instead of chasing each `next-pageno` pointer serially. It
+compresses well (`chain_heads`/`chain_offsets` are monotonic and a chain's pages
+are usually near-sequential) and holds no chains when no value overflows.
 
 ## Gap stripping
 
@@ -119,7 +123,7 @@ the manifest's `custom` field:
 ```json
 {
   "sqlite_sidecar": {
-    "format_version": 5,
+    "format_version": 7,
     "page_size": 4096,
     "filename": "shard.sidecar",
     "codec": "zstd"
