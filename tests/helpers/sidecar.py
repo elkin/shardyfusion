@@ -11,9 +11,9 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
-import zstandard
+import pytest
 
-from shardyfusion.sqlite_adapter import _SIDECAR_MAGIC
+from shardyfusion.sqlite_adapter import _SIDECAR_FORMAT_VERSION, _SIDECAR_MAGIC
 
 
 @dataclass(frozen=True)
@@ -37,19 +37,31 @@ def parse_sidecar(blob: bytes) -> ParsedSidecar:
     pagenos(u32*n) + offsets(u32*(n+1)) + chain_count(u32) + chain_heads(u32*C)
     + chain_offsets(u32*(C+1)) + chain_pages(u32*M) + gap-stripped pages``.
     """
+    zstandard = pytest.importorskip("zstandard")
+
+    assert len(blob) >= 14, len(blob)
     assert blob[:4] == _SIDECAR_MAGIC, blob[:4]
     version = blob[4]
+    assert version == _SIDECAR_FORMAT_VERSION, version
+    body_size = int.from_bytes(blob[5:13], "little")
     tag_len = blob[13]
+    assert len(blob) >= 14 + tag_len, (len(blob), tag_len)
     db_tag = blob[14 : 14 + tag_len].decode("utf-8") if tag_len else None
     body = zstandard.ZstdDecompressor().decompress(blob[14 + tag_len :])
+    assert body_size == len(body), (body_size, len(body))
 
     cur = 0
     page_size, n = struct.unpack_from("<II", body, cur)
     cur += 8
+    assert 512 <= page_size <= 65536 and page_size & (page_size - 1) == 0
     pagenos = list(struct.unpack_from(f"<{n}I", body, cur)) if n else []
     cur += 4 * n
     offsets = list(struct.unpack_from(f"<{n + 1}I", body, cur))
     cur += 4 * (n + 1)
+    assert all(p > 0 for p in pagenos), pagenos
+    assert all(a < b for a, b in zip(pagenos, pagenos[1:], strict=False)), pagenos
+    assert offsets[0] == 0, offsets
+    assert all(a <= b for a, b in zip(offsets, offsets[1:], strict=False)), offsets
 
     (chain_count,) = struct.unpack_from("<I", body, cur)
     cur += 4
@@ -81,6 +93,8 @@ def parse_sidecar(blob: bytes) -> ParsedSidecar:
     pages_blob = body[cur:]
     assert offsets[-1] == len(pages_blob), (offsets[-1], len(pages_blob))
     stored = [pages_blob[offsets[i] : offsets[i + 1]] for i in range(n)]
+    for pageno, page in zip(pagenos, stored, strict=True):
+        assert len(reconstruct_page(page, pageno, page_size)) == page_size
     return ParsedSidecar(version, db_tag, page_size, n, pagenos, stored, chains)
 
 

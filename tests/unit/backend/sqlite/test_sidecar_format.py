@@ -13,13 +13,14 @@ the ETag binding, the overflow-chain CSR index, and the graceful-degradation pat
 from __future__ import annotations
 
 import sqlite3
+import struct
 import sys
 from pathlib import Path
 
 import pytest
 
 apsw = pytest.importorskip("apsw")
-pytest.importorskip("zstandard")
+zstandard = pytest.importorskip("zstandard")
 
 from shardyfusion.sqlite_adapter import (  # noqa: E402
     _SIDECAR_FORMAT_VERSION,
@@ -114,6 +115,52 @@ def _parse_sidecar(
 # ---------------------------------------------------------------------------
 
 
+def _wrap_test_body(body: bytes, *, body_size: int | None = None) -> bytes:
+    compressor = zstandard.ZstdCompressor(level=3, write_checksum=True)
+    return b"".join(
+        [
+            _SIDECAR_MAGIC,
+            _SIDECAR_FORMAT_VERSION.to_bytes(1, "little"),
+            (len(body) if body_size is None else body_size).to_bytes(8, "little"),
+            b"\x00",  # unbound tag
+            compressor.compress(body),
+        ]
+    )
+
+
+def _synthetic_body(
+    *,
+    page_size: int = 512,
+    pagenos: list[int] | None = None,
+    offsets: list[int] | None = None,
+    chain_heads: list[int] | None = None,
+    chain_offsets: list[int] | None = None,
+    chain_pages: list[int] | None = None,
+) -> bytes:
+    pagenos = pagenos if pagenos is not None else [1]
+    pages = b"\x00" * (page_size * len(pagenos))
+    offsets = (
+        offsets
+        if offsets is not None
+        else [i * page_size for i in range(len(pagenos) + 1)]
+    )
+    chain_heads = chain_heads or []
+    chain_offsets = chain_offsets if chain_offsets is not None else [0]
+    chain_pages = chain_pages or []
+    return b"".join(
+        [
+            struct.pack("<II", page_size, len(pagenos)),
+            struct.pack(f"<{len(pagenos)}I", *pagenos) if pagenos else b"",
+            struct.pack(f"<{len(offsets)}I", *offsets),
+            struct.pack("<I", len(chain_heads)),
+            struct.pack(f"<{len(chain_heads)}I", *chain_heads) if chain_heads else b"",
+            struct.pack(f"<{len(chain_offsets)}I", *chain_offsets),
+            struct.pack(f"<{len(chain_pages)}I", *chain_pages) if chain_pages else b"",
+            pages,
+        ]
+    )
+
+
 class TestFormat:
     def test_prefix_magic_version_and_unbound_tag(self, tmp_path: Path) -> None:
         db_path = tmp_path / "minimal.db"
@@ -150,6 +197,30 @@ class TestFormat:
         # Compressed, gap-stripped sidecar is far smaller than the raw pages
         # it represents.
         assert len(blob) < n * page_size
+
+    def test_shared_parser_rejects_mismatched_body_size(self) -> None:
+        body = _synthetic_body()
+        with pytest.raises(AssertionError):
+            parse_sidecar(_wrap_test_body(body, body_size=len(body) + 1))
+
+    def test_shared_parser_rejects_unsorted_page_index(self) -> None:
+        body = _synthetic_body(pagenos=[2, 1])
+        with pytest.raises(AssertionError):
+            parse_sidecar(_wrap_test_body(body))
+
+    def test_shared_parser_rejects_bad_page_offsets(self) -> None:
+        body = _synthetic_body(offsets=[1, 512])
+        with pytest.raises(AssertionError):
+            parse_sidecar(_wrap_test_body(body))
+
+    def test_shared_parser_rejects_bad_chain_csr(self) -> None:
+        body = _synthetic_body(
+            chain_heads=[7],
+            chain_offsets=[0, 1],
+            chain_pages=[8],
+        )
+        with pytest.raises(AssertionError):
+            parse_sidecar(_wrap_test_body(body))
 
 
 # ---------------------------------------------------------------------------
