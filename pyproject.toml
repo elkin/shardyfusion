@@ -29,7 +29,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Backend extras — storage engine deps only
-slatedb = ["slatedb>=0.12,<0.13"]
+slatedb = ["slatedb>=0.12,<0.14"]
 sqlite = []
 sqlite-range = ["apsw>=3.44", "zstandard>=0.22"]
 
@@ -195,7 +195,7 @@ shardy = "shardyfusion.cli.app:main"
 
 [dependency-groups]
 backend-slatedb = [
-  "slatedb>=0.12,<0.13",
+  "slatedb>=0.12,<0.14",
 ]
 backend-sqlite = []
 backend-sqlite-vec = [
