@@ -35,6 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vector.dim)` as the threshold the chosen `page_size` must
   accommodate; previously the embedding was ignored and tiny KV values
   would steer the picker to a too-small page size.
+- **Page-cache sidecar producer fails loudly on a missing `page_size`.**
+  `frame_to_sidecar` now raises `ValueError` instead of silently writing
+  `page_size=0` (a sidecar every reader rejects); `build_sidecar_frame`
+  returns a `BuiltSidecar` value object so the frame, `body_size`, and
+  `page_size` travel together instead of as parallel positional fields
+  threaded through both adapters.
+- **Sidecar spec reference parser hardened.** The illustrative
+  `parse_sidecar` in `docs/reference/sqlite-sidecar-format.md` now enforces
+  the `page_size` (power-of-two) and `body_size == len(body)` rules its own
+  Validation section lists, and rejects a malformed empty overflow chain
+  cleanly instead of raising `IndexError`.  (binokl's byte-identical
+  canonical copy should be synced to match.)
 
 ### Added
 

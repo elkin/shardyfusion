@@ -172,9 +172,11 @@ def parse_sidecar(blob: bytes):
     assert blob[4] == VERSION, f"unsupported version {blob[4]}"
     body_size = int.from_bytes(blob[5:13], "little")
     page_size = int.from_bytes(blob[13:17], "little")
+    assert 512 <= page_size <= 65536 and page_size & (page_size - 1) == 0, page_size
     tag_len = blob[17]
     db_tag = blob[18 : 18 + tag_len].decode("utf-8") if tag_len else None
     body = zstandard.ZstdDecompressor().decompress(blob[18 + tag_len :])
+    assert body_size == len(body), (body_size, len(body))
 
     cur = 0
     (n,) = struct.unpack_from("<I", body, cur)
@@ -197,8 +199,16 @@ def parse_sidecar(blob: bytes):
     chains = [flat[chain_offsets[i] : chain_offsets[i + 1]] for i in range(chain_count)]
     # A real reader bisects ``chain_heads`` for a cell's overflow head and slices
     # ``flat[chain_offsets[j]:chain_offsets[j+1]]``; the rebuilt chains must each
-    # start with that head.
-    assert chain_heads == [c[0] for c in chains]
+    # start with that head.  The ``lo < hi`` term short-circuits the head index,
+    # so a malformed empty chain (equal adjacent offsets) is rejected cleanly
+    # rather than raising IndexError.
+    assert all(a < b for a, b in zip(chain_heads, chain_heads[1:]))
+    assert chain_offsets[0] == 0 and chain_offsets[-1] == len(flat)
+    assert all(
+        chain_offsets[i] < chain_offsets[i + 1]
+        and flat[chain_offsets[i]] == chain_heads[i]
+        for i in range(chain_count)
+    )
     pages = body[cur:]
 
     out = []
