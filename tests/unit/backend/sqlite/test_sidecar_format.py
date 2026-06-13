@@ -1,4 +1,4 @@
-"""Unit tests for the v7 SQLite page-cache sidecar.
+"""Unit tests for the v8 SQLite page-cache sidecar.
 
 The sidecar bundles every interior B-tree page plus every schema-btree page,
 each **gap-stripped** (the unallocated middle removed), behind a vendor-neutral
@@ -90,14 +90,14 @@ def _all_page_types(db_path: Path) -> dict[int, tuple[str | None, str | None]]:
 
 
 # ---------------------------------------------------------------------------
-# v7 parser + reference reconstruction (the reader side)
+# v8 parser + reference reconstruction (the reader side)
 # ---------------------------------------------------------------------------
 
 
 def _parse_sidecar(
     blob: bytes,
 ) -> tuple[int, str | None, int, int, list[int], list[bytes], list[list[int]]]:
-    """Parse a v7 sidecar via the shared helper, as a positional tuple."""
+    """Parse a v8 sidecar via the shared helper, as a positional tuple."""
     p = parse_sidecar(blob)
     return (
         p.version,
@@ -115,13 +115,16 @@ def _parse_sidecar(
 # ---------------------------------------------------------------------------
 
 
-def _wrap_test_body(body: bytes, *, body_size: int | None = None) -> bytes:
+def _wrap_test_body(
+    body: bytes, *, body_size: int | None = None, page_size: int = 512
+) -> bytes:
     compressor = zstandard.ZstdCompressor(level=3, write_checksum=True)
     return b"".join(
         [
             _SIDECAR_MAGIC,
             _SIDECAR_FORMAT_VERSION.to_bytes(1, "little"),
             (len(body) if body_size is None else body_size).to_bytes(8, "little"),
+            page_size.to_bytes(4, "little"),  # v8: page_size in the prefix
             b"\x00",  # unbound tag
             compressor.compress(body),
         ]
@@ -149,7 +152,7 @@ def _synthetic_body(
     chain_pages = chain_pages or []
     return b"".join(
         [
-            struct.pack("<II", page_size, len(pagenos)),
+            struct.pack("<I", len(pagenos)),
             struct.pack(f"<{len(pagenos)}I", *pagenos) if pagenos else b"",
             struct.pack(f"<{len(offsets)}I", *offsets),
             struct.pack("<I", len(chain_heads)),
@@ -169,11 +172,13 @@ class TestFormat:
 
         # Vendor-neutral 4-byte magic + 1-byte version, readable without zstd.
         assert blob[:4] == _SIDECAR_MAGIC == b"SQPC"
-        assert blob[4] == _SIDECAR_FORMAT_VERSION == 7
-        assert blob[13] == 0  # tag_len: unbound when no db_tag is passed
+        assert blob[4] == _SIDECAR_FORMAT_VERSION == 8
+        # v8: page_size is readable from the uncompressed prefix (offset 13).
+        assert int.from_bytes(blob[13:17], "little") == 4096
+        assert blob[17] == 0  # tag_len: unbound when no db_tag is passed
 
         version, tag, page_size, n, pagenos, _, _ = _parse_sidecar(blob)
-        assert version == 7
+        assert version == 8
         assert tag is None
         assert page_size == 4096
         assert n >= 1
@@ -185,7 +190,7 @@ class TestFormat:
         etag = '"d41d8cd98f00b204e9800998ecf8427e-3"'  # multipart-shaped ETag
         blob = extract_sidecar(db_path, db_tag=etag)
 
-        assert blob[13] == len(etag.encode("utf-8"))
+        assert blob[17] == len(etag.encode("utf-8"))
         _, tag, *_ = _parse_sidecar(blob)
         assert tag == etag
 

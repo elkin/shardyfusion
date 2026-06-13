@@ -1,7 +1,7 @@
 """Integration tests for the SQLite page-cache sidecar against moto S3.
 
 End-to-end: write via SqliteAdapter → both shard.db and shard.sidecar land in
-the bucket → download the sidecar → parse the v7 blob → reconstruct each page
+the bucket → download the sidecar → parse the v8 blob → reconstruct each page
 and verify it is byte-consistent with the source shard.db, that overflow chains
 are recorded, and that the sidecar is bound to the live shard.db's object ETag.
 """
@@ -40,7 +40,7 @@ def _make_backend(s3_url: str) -> ObstoreBackend:
 def _parse_sidecar(
     blob: bytes,
 ) -> tuple[int, str | None, int, list[int], list[bytes], list[list[int]]]:
-    """v7 sidecar as a positional tuple, via the shared helper."""
+    """v8 sidecar as a positional tuple, via the shared helper."""
     p = parse_sidecar(blob)
     return p.version, p.db_tag, p.page_size, p.pagenos, p.stored_pages, p.chains
 
@@ -67,7 +67,7 @@ class TestSidecarRoundTrip:
         db_bytes = backend.get(f"{db_url}/shard.db")
 
         version, _tag, page_size, pagenos, stored, _ = _parse_sidecar(sidecar_bytes)
-        assert version == _SIDECAR_FORMAT_VERSION == 7
+        assert version == _SIDECAR_FORMAT_VERSION == 8
         assert page_size == 4096
         assert pagenos == sorted(pagenos)
         assert len(pagenos) >= 1
@@ -131,7 +131,7 @@ class TestSidecarRoundTrip:
     ) -> None:
         """A default ``SqliteFactory`` write produces both ``shard.db`` and
         ``shard.sidecar`` at the expected S3 keys, and the sidecar starts with
-        the vendor-neutral v7 magic header."""
+        the vendor-neutral ``SQPC`` magic header."""
         pytest.importorskip("apsw")
         db_url = f"{s3_prefix}/shards/run_id=both/db=00000/attempt=00"
         write_dir = tmp_path / "write"

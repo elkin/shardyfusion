@@ -1,6 +1,6 @@
 """Tests for recording each shard's decompressed page-cache sidecar size.
 
-The writer captures the exact ``len(body)`` of the v7 sidecar at ``seal()`` and
+The writer captures the exact ``len(body)`` of the v8 sidecar at ``seal()`` and
 stores it in the sidecar header (``body_size`` at offset 5).  The adapter still
 exposes the size via ``sidecar_decompressed_bytes()`` so a reader can size a
 download before fetching + decompressing the sidecar, but the size is no longer
@@ -47,8 +47,8 @@ class TestAdapterRecordsSize:
         keys = [c.args[0] for c in _mock_backend.put.call_args_list]
         idx = next(i for i, k in enumerate(keys) if k.endswith("/shard.sidecar"))
         blob = _mock_backend.put.call_args_list[idx].args[1]
-        tag_len = blob[13]
-        body = zstandard.ZstdDecompressor().decompress(blob[14 + tag_len :])
+        tag_len = blob[17]
+        body = zstandard.ZstdDecompressor().decompress(blob[18 + tag_len :])
         assert size == len(body)
 
     def test_no_size_when_emit_sidecar_false(

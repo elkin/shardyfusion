@@ -1,7 +1,7 @@
-"""Shared parser for the v7 SQLite page-cache sidecar, for tests.
+"""Shared parser for the v8 SQLite page-cache sidecar, for tests.
 
 Mirrors the reference parser in ``docs/reference/sqlite-sidecar-format.md`` and
-enforces the v7 structural invariants (the spec's "Validation" section) so every
+enforces the v8 structural invariants (the spec's "Validation" section) so every
 test that round-trips a sidecar exercises them.  Kept in one place so a future
 format bump touches a single decoder rather than each test module's own copy.
 """
@@ -30,29 +30,30 @@ class ParsedSidecar:
 
 
 def parse_sidecar(blob: bytes) -> ParsedSidecar:
-    """Parse a v7 sidecar blob and validate its structural invariants.
+    """Parse a v8 sidecar blob and validate its structural invariants.
 
-    Wire: ``magic(4) + version(u8) + body_size(u64) + tag_len(u8) + tag +
-    zstd(body)``; the decompressed body is ``page_size(u32) + n(u32) +
+    Wire: ``magic(4) + version(u8) + body_size(u64) + page_size(u32) +
+    tag_len(u8) + tag + zstd(body)``; the decompressed body is ``n(u32) +
     pagenos(u32*n) + offsets(u32*(n+1)) + chain_count(u32) + chain_heads(u32*C)
     + chain_offsets(u32*(C+1)) + chain_pages(u32*M) + gap-stripped pages``.
     """
     zstandard = pytest.importorskip("zstandard")
 
-    assert len(blob) >= 14, len(blob)
+    assert len(blob) >= 18, len(blob)
     assert blob[:4] == _SIDECAR_MAGIC, blob[:4]
     version = blob[4]
     assert version == _SIDECAR_FORMAT_VERSION, version
     body_size = int.from_bytes(blob[5:13], "little")
-    tag_len = blob[13]
-    assert len(blob) >= 14 + tag_len, (len(blob), tag_len)
-    db_tag = blob[14 : 14 + tag_len].decode("utf-8") if tag_len else None
-    body = zstandard.ZstdDecompressor().decompress(blob[14 + tag_len :])
+    page_size = int.from_bytes(blob[13:17], "little")
+    tag_len = blob[17]
+    assert len(blob) >= 18 + tag_len, (len(blob), tag_len)
+    db_tag = blob[18 : 18 + tag_len].decode("utf-8") if tag_len else None
+    body = zstandard.ZstdDecompressor().decompress(blob[18 + tag_len :])
     assert body_size == len(body), (body_size, len(body))
 
     cur = 0
-    page_size, n = struct.unpack_from("<II", body, cur)
-    cur += 8
+    (n,) = struct.unpack_from("<I", body, cur)
+    cur += 4
     assert 512 <= page_size <= 65536 and page_size & (page_size - 1) == 0
     pagenos = list(struct.unpack_from(f"<{n}I", body, cur)) if n else []
     cur += 4 * n
@@ -76,7 +77,7 @@ def parse_sidecar(blob: bytes) -> ParsedSidecar:
     cur += 4 * n_pages
     chains = [flat[chain_offsets[i] : chain_offsets[i + 1]] for i in range(chain_count)]
 
-    # v7 chain invariants (the spec's "Validation" section): heads strictly
+    # v8 chain invariants (the spec's "Validation" section): heads strictly
     # ascending (the bisect key), the offset table well-formed, and every chain
     # non-empty and stored head-first.  The ``lo < hi`` term short-circuits the
     # head-first index, so a malformed empty chain fails the assert (not IndexError).
