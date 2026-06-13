@@ -246,6 +246,7 @@ class SqliteVecAdapter:
         # can upload it (and reuse the finalized file bytes) without re-reading.
         self._sidecar_frame: bytes | None = None
         self._sidecar_decompressed_bytes: int | None = None
+        self._sidecar_page_size: int | None = None
         self._finalized_db_bytes: bytes | None = None
         self._s3_conn_opts = s3_connection_options
         self._s3_creds: S3Credentials | None = (
@@ -476,6 +477,7 @@ class SqliteVecAdapter:
             self._finalized_db_bytes,
             self._sidecar_frame,
             self._sidecar_decompressed_bytes,
+            self._sidecar_page_size,
         ) = _read_and_build_sidecar(self._db_path, db_url=self._db_url)
 
     def close(self) -> None:
@@ -570,6 +572,7 @@ class SqliteVecAdapter:
                         db_tag=db_tag,
                         frame=self._sidecar_frame,
                         body_size=self._sidecar_decompressed_bytes,
+                        page_size=self._sidecar_page_size,
                     )
                 # Release the cached read bytes and compressed frame now that the
                 # upload is done; the recorded size lives in

@@ -49,9 +49,9 @@ _SIDECAR_FILENAME = "shard.sidecar"
 # consumed outside shardyfusion.  (v1-v4 used b"SFBTM\x00\x00\x00" under the
 # old ``shard.btreemeta`` name.)
 _SIDECAR_MAGIC = b"SQPC"
-# Uncompressed prefix (magic + u8 version + u64 body_size + the .db object
-# tag for a correctness binding) then one zstd frame (with content checksum)
-# over a metadata-first body: ``page_size | n | pagenos | offsets |
+# Uncompressed prefix (magic + u8 version + u64 body_size + u32 page_size +
+# the .db object tag for a correctness binding) then one zstd frame (with
+# content checksum) over a metadata-first body: ``n | pagenos | offsets |
 # chain_count | chain_heads | chain_offsets | chain_pages | gap-stripped
 # pages``.  Pages are gap-stripped — the unallocated middle of each B-tree
 # page is physically dropped and the reader splices zeros back in — which
@@ -60,9 +60,10 @@ _SIDECAR_MAGIC = b"SQPC"
 # ``offsets`` (stripped pages are variable-length); overflow chains are a
 # parallel CSR triple (sorted ``chain_heads`` + ``chain_offsets`` + flat
 # ``chain_pages``) so a reader bisects chain heads and slices the page list
-# with no dict.  Format documented in
-# ``docs/reference/sqlite-sidecar-format.md``.
-_SIDECAR_FORMAT_VERSION = 7
+# with no dict.  ``page_size`` lives in the uncompressed prefix (since v8) so
+# a reader can validate it against the database before decompressing.  Format
+# documented in ``docs/reference/sqlite-sidecar-format.md``.
+_SIDECAR_FORMAT_VERSION = 8
 # zstd default level.  Btree pages compress ~12× at level 3 with
 # sub-millisecond cost; higher levels squeeze a few extra percent for
 # significantly more time and aren't worth it on the writer hot path.
@@ -279,15 +280,17 @@ def build_sidecar_frame(
     db_path: Path,
     *,
     db_bytes: bytes | None = None,
-) -> tuple[bytes, int]:
-    """Build the v7 page-cache sidecar *frame* for a finalized SQLite DB.
+) -> tuple[bytes, int, int]:
+    """Build the v8 page-cache sidecar *frame* for a finalized SQLite DB.
 
-    Returns ``(frame, decompressed_size)`` where ``frame`` is the compressed
-    zstd body (no uncompressed prefix) and ``decompressed_size`` is exactly
-    ``len(body)`` — the number of bytes a reader gets after zstd-decompressing
-    the frame.  Call :func:`frame_to_sidecar` to prepend the ``SQPC`` prefix
-    (magic, version, and the ``.db`` object tag) and obtain a complete sidecar
-    object; :func:`extract_sidecar` does both in one call.
+    Returns ``(frame, decompressed_size, page_size)`` where ``frame`` is the
+    compressed zstd body (no uncompressed prefix), ``decompressed_size`` is
+    exactly ``len(body)`` — the number of bytes a reader gets after
+    zstd-decompressing the frame — and ``page_size`` is the SQLite page size,
+    surfaced here because v8 carries it in the uncompressed prefix (no longer
+    in the body).  Call :func:`frame_to_sidecar` to prepend the ``SQPC`` prefix
+    (magic, version, ``page_size``, and the ``.db`` object tag) and obtain a
+    complete sidecar object; :func:`extract_sidecar` does both in one call.
 
     The sidecar bundles every interior B-tree page plus every
     ``sqlite_master`` / ``sqlite_schema`` page — each **gap-stripped** (see
@@ -310,7 +313,6 @@ def build_sidecar_frame(
 
     Body (the zstd-decompressed frame), in order:
 
-    * ``u32`` page size
     * ``u32`` page count ``N``
     * ``N * u32`` pagenos, sorted ascending (the bisect key)
     * ``(N+1) * u32`` offsets into the trailing pages blob — page ``i`` is
@@ -440,7 +442,7 @@ def build_sidecar_frame(
 
     body = b"".join(
         [
-            struct.pack("<II", page_size, n),
+            struct.pack("<I", n),
             struct.pack(f"<{n}I", *page_nums) if n else b"",
             struct.pack(f"<{n + 1}I", *offsets),
             b"".join(chain_bytes_parts),
@@ -450,31 +452,40 @@ def build_sidecar_frame(
     compressor = zstandard.ZstdCompressor(
         level=_SIDECAR_ZSTD_LEVEL, write_checksum=True
     )
-    return compressor.compress(body), len(body)
+    return compressor.compress(body), len(body), page_size
 
 
 def frame_to_sidecar(
-    frame: bytes, db_tag: str | None = None, body_size: int | None = None
+    frame: bytes,
+    db_tag: str | None = None,
+    body_size: int | None = None,
+    page_size: int | None = None,
 ) -> bytes:
     """Prepend the uncompressed ``SQPC`` prefix to a compressed sidecar frame.
 
-    Wire prefix: ``magic(4) + u8 version + u64 body_size + u8 tag_len + tag``,
-    then ``frame``.  ``db_tag`` is the ``.db`` object-version token (S3 ETag)
-    bound into the sidecar so a reader only trusts it when the live ``.db``
-    tag matches.  A ``None``/non-str (or over-255-byte) tag yields an unbound
-    sidecar (``tag_len == 0``), which a correctness-strict reader declines.
-    ``body_size`` is the uncompressed size of the sidecar body (the
-    decompressed zstd frame); when ``None`` it is written as ``0``.
+    Wire prefix: ``magic(4) + u8 version + u64 body_size + u32 page_size +
+    u8 tag_len + tag``, then ``frame``.  ``db_tag`` is the ``.db``
+    object-version token (S3 ETag) bound into the sidecar so a reader only
+    trusts it when the live ``.db`` tag matches.  A ``None``/non-str (or
+    over-255-byte) tag yields an unbound sidecar (``tag_len == 0``), which a
+    correctness-strict reader declines.  ``body_size`` is the uncompressed size
+    of the sidecar body (the decompressed zstd frame); ``page_size`` is the
+    SQLite page size written at offset 13 so a reader can validate it before
+    decompressing.  Either, when ``None``, is written as ``0`` (a ``0``
+    page_size is an invalid sidecar a reader rejects, matching the unbound-tag
+    fallback semantics).
     """
     tag_bytes = db_tag.encode("utf-8") if isinstance(db_tag, str) else b""
     if len(tag_bytes) > 255:
         tag_bytes = b""
     body_size_val = body_size if body_size is not None else 0
+    page_size_val = page_size if page_size is not None else 0
     return b"".join(
         [
             _SIDECAR_MAGIC,
             _SIDECAR_FORMAT_VERSION.to_bytes(1, "little"),
             body_size_val.to_bytes(8, "little"),
+            page_size_val.to_bytes(4, "little"),
             len(tag_bytes).to_bytes(1, "little"),
             tag_bytes,
             frame,
@@ -488,15 +499,15 @@ def extract_sidecar(
     db_bytes: bytes | None = None,
     db_tag: str | None = None,
 ) -> bytes:
-    """Read a finalized SQLite DB and return the complete v7 sidecar object.
+    """Read a finalized SQLite DB and return the complete v8 sidecar object.
 
     Thin wrapper over :func:`build_sidecar_frame` + :func:`frame_to_sidecar`,
     kept for callers/tests that want the whole blob (prefix + frame) in one
     call.  See :func:`build_sidecar_frame` for the body layout and the
     lazy-import / ``SidecarUnavailableError`` contract.
     """
-    frame, size = build_sidecar_frame(db_path, db_bytes=db_bytes)
-    return frame_to_sidecar(frame, db_tag, body_size=size)
+    frame, size, page_size = build_sidecar_frame(db_path, db_bytes=db_bytes)
+    return frame_to_sidecar(frame, db_tag, body_size=size, page_size=page_size)
 
 
 def _enumerate_overflow_chains(
@@ -564,6 +575,7 @@ def maybe_upload_sidecar(
     db_tag: str | None = None,
     frame: bytes | None = None,
     body_size: int | None = None,
+    page_size: int | None = None,
 ) -> None:
     """Best-effort upload of the page-cache sidecar.
 
@@ -573,14 +585,18 @@ def maybe_upload_sidecar(
 
     When ``frame`` (a pre-built compressed frame from :func:`build_sidecar_frame`,
     typically produced at ``seal()``) is supplied, it is wrapped with the
-    ``db_tag`` prefix and uploaded directly — no re-extraction.  Otherwise the
+    ``db_tag`` / ``body_size`` / ``page_size`` prefix and uploaded directly — no
+    re-extraction (the caller must pass the ``body_size`` and ``page_size``
+    returned by :func:`build_sidecar_frame`).  Otherwise the
     sidecar is extracted here from ``db_path`` / ``db_bytes``.  ``db_tag`` is the
     ``.db`` object's storage version token (S3 ETag); it binds the sidecar to the
     live ``.db``.  The caller must upload the ``.db`` first so this tag is
     available.
     """
     if frame is not None:
-        payload = frame_to_sidecar(frame, db_tag, body_size=body_size)
+        payload = frame_to_sidecar(
+            frame, db_tag, body_size=body_size, page_size=page_size
+        )
     else:
         try:
             payload = extract_sidecar(db_path, db_bytes=db_bytes, db_tag=db_tag)
@@ -633,14 +649,14 @@ def maybe_upload_sidecar(
 
 def _read_and_build_sidecar(
     db_path: Path, *, db_url: str
-) -> tuple[bytes | None, bytes | None, int | None]:
+) -> tuple[bytes | None, bytes | None, int | None, int | None]:
     """Best-effort: read the finalized DB once and build its page-cache sidecar.
 
-    Returns ``(db_bytes, frame, decompressed_size)``:
+    Returns ``(db_bytes, frame, decompressed_size, page_size)``:
 
-    * read failure → ``(None, None, None)``;
-    * read ok but sidecar unavailable/failed → ``(db_bytes, None, None)``;
-    * success → ``(db_bytes, frame, decompressed_size)``.
+    * read failure → ``(None, None, None, None)``;
+    * read ok but sidecar unavailable/failed → ``(db_bytes, None, None, None)``;
+    * success → ``(db_bytes, frame, decompressed_size, page_size)``.
 
     Never raises — a sidecar problem must not fail ``seal()`` / publish, and the
     caller still uploads ``db_bytes`` as the ``.db`` even when ``frame`` is
@@ -657,9 +673,9 @@ def _read_and_build_sidecar(
             db_url=db_url,
             reason=f"db_read_failed:{exc}",
         )
-        return None, None, None
+        return None, None, None, None
     try:
-        frame, size = build_sidecar_frame(db_path, db_bytes=db_bytes)
+        frame, size, page_size = build_sidecar_frame(db_path, db_bytes=db_bytes)
     except SidecarUnavailableError as exc:
         log_event(
             "sqlite_sidecar_unsupported",
@@ -668,7 +684,7 @@ def _read_and_build_sidecar(
             db_url=db_url,
             reason=str(exc.args[0]) if exc.args else "unknown",
         )
-        return db_bytes, None, None
+        return db_bytes, None, None, None
     except Exception as exc:  # pragma: no cover - defensive
         log_failure(
             "sqlite_sidecar_failed",
@@ -678,8 +694,8 @@ def _read_and_build_sidecar(
             db_url=db_url,
             stage="extract",
         )
-        return db_bytes, None, None
-    return db_bytes, frame, size
+        return db_bytes, None, None, None
+    return db_bytes, frame, size, page_size
 
 
 # ---------------------------------------------------------------------------
@@ -828,6 +844,7 @@ class SqliteAdapter:
         # can upload it (and reuse the finalized file bytes) without re-reading.
         self._sidecar_frame: bytes | None = None
         self._sidecar_decompressed_bytes: int | None = None
+        self._sidecar_page_size: int | None = None
         self._finalized_db_bytes: bytes | None = None
         self._s3_conn_opts = s3_connection_options
         self._s3_creds: S3Credentials | None = (
@@ -949,6 +966,7 @@ class SqliteAdapter:
             self._finalized_db_bytes,
             self._sidecar_frame,
             self._sidecar_decompressed_bytes,
+            self._sidecar_page_size,
         ) = _read_and_build_sidecar(self._db_path, db_url=self._db_url)
 
     def close(self) -> None:
@@ -1043,6 +1061,7 @@ class SqliteAdapter:
                         db_tag=db_tag,
                         frame=self._sidecar_frame,
                         body_size=self._sidecar_decompressed_bytes,
+                        page_size=self._sidecar_page_size,
                     )
                 # Release the cached read bytes and compressed frame now that the
                 # upload is done; the recorded size lives in
