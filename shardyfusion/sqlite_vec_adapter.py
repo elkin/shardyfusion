@@ -38,6 +38,7 @@ from .logging import FailureSeverity, get_logger, log_event, log_failure
 from .sqlite_adapter import (
     DEFAULT_AUTO_PER_SHARD_THRESHOLD_BYTES,
     DEFAULT_AUTO_TOTAL_BUDGET_BYTES,
+    BuiltSidecar,
     PageSizeMode,
     SqliteAccessPolicy,
     _maybe_repage_to_auto,
@@ -244,9 +245,11 @@ class SqliteVecAdapter:
         self._emit_sidecar = bool(emit_sidecar)
         # Page-cache sidecar built best-effort at seal(); cached here so close()
         # can upload it (and reuse the finalized file bytes) without re-reading.
-        self._sidecar_frame: bytes | None = None
+        self._sidecar: BuiltSidecar | None = None
+        # Persisted apart from ``_sidecar`` (which is released after upload to
+        # free the frame bytes) because ``sidecar_decompressed_bytes()`` must
+        # keep returning the size after ``close()``.
         self._sidecar_decompressed_bytes: int | None = None
-        self._sidecar_page_size: int | None = None
         self._finalized_db_bytes: bytes | None = None
         self._s3_conn_opts = s3_connection_options
         self._s3_creds: S3Credentials | None = (
@@ -473,12 +476,12 @@ class SqliteVecAdapter:
         """Build the page-cache sidecar at ``seal()`` (best-effort), caching the
         frame and the finalized file bytes for :meth:`close` and recording the
         exact decompressed size.  Delegates to :func:`_read_and_build_sidecar`."""
-        (
-            self._finalized_db_bytes,
-            self._sidecar_frame,
-            self._sidecar_decompressed_bytes,
-            self._sidecar_page_size,
-        ) = _read_and_build_sidecar(self._db_path, db_url=self._db_url)
+        self._finalized_db_bytes, self._sidecar = _read_and_build_sidecar(
+            self._db_path, db_url=self._db_url
+        )
+        self._sidecar_decompressed_bytes = (
+            self._sidecar.body_size if self._sidecar is not None else None
+        )
 
     def close(self) -> None:
         if self._closed:
@@ -549,7 +552,7 @@ class SqliteVecAdapter:
                 # the write->close()-without-seal() path.  A sealed shard whose
                 # seal-time build was skipped/failed is not retried.
                 if self._emit_sidecar and (
-                    self._sidecar_frame is not None or not self._sealed
+                    self._sidecar is not None or not self._sealed
                 ):
                     try:
                         db_tag = backend.head(s3_key)
@@ -570,15 +573,13 @@ class SqliteVecAdapter:
                         db_path=self._db_path,
                         db_bytes=db_bytes,
                         db_tag=db_tag,
-                        frame=self._sidecar_frame,
-                        body_size=self._sidecar_decompressed_bytes,
-                        page_size=self._sidecar_page_size,
+                        built=self._sidecar,
                     )
                 # Release the cached read bytes and compressed frame now that the
                 # upload is done; the recorded size lives in
                 # ``_sidecar_decompressed_bytes`` and is unaffected.
                 self._finalized_db_bytes = None
-                self._sidecar_frame = None
+                self._sidecar = None
         except Exception as exc:
             log_failure(
                 "sqlite_vec_adapter_close_failed",
