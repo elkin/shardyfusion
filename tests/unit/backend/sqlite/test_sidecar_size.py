@@ -30,7 +30,11 @@ class TestAdapterRecordsSize:
     ) -> None:
         pytest.importorskip("apsw")
         zstandard = pytest.importorskip("zstandard")
-        from shardyfusion.sqlite_adapter import SqliteAdapter
+        from shardyfusion.sqlite_adapter import (
+            _SIDECAR_FIXED_PREFIX_SIZE,
+            _SIDECAR_TAG_LEN_OFFSET,
+            SqliteAdapter,
+        )
 
         local_dir = tmp_path / "shard"
         with SqliteAdapter(db_url="s3://bucket/shard", local_dir=local_dir) as adapter:
@@ -47,8 +51,10 @@ class TestAdapterRecordsSize:
         keys = [c.args[0] for c in _mock_backend.put.call_args_list]
         idx = next(i for i, k in enumerate(keys) if k.endswith("/shard.sidecar"))
         blob = _mock_backend.put.call_args_list[idx].args[1]
-        tag_len = blob[17]
-        body = zstandard.ZstdDecompressor().decompress(blob[18 + tag_len :])
+        tag_len = blob[_SIDECAR_TAG_LEN_OFFSET]
+        body = zstandard.ZstdDecompressor().decompress(
+            blob[_SIDECAR_FIXED_PREFIX_SIZE + tag_len :]
+        )
         assert size == len(body)
 
     def test_no_size_when_emit_sidecar_false(

@@ -165,3 +165,28 @@ class TestSidecarRoundTrip:
         live_tag = backend.head(f"{db_url}/shard.db")
         assert tag is not None
         assert tag == live_tag
+
+    def test_manifest_page_size_matches_sidecar_prefix(
+        self, tmp_path: Path, s3_prefix: str
+    ) -> None:
+        """The manifest's sidecar ``page_size`` (derived from the factory) and
+        the sidecar prefix's ``page_size`` (read via ``PRAGMA`` on the built DB)
+        come from unrelated sources; for an explicit page_size they must agree.
+        The ``"auto"`` mode is intentionally asymmetric and excluded here."""
+        pytest.importorskip("apsw")
+        from shardyfusion._writer_core import _detect_sidecar_page_size
+
+        db_url = f"{s3_prefix}/shards/run_id=pgsize/db=00000/attempt=00"
+        write_dir = tmp_path / "write"
+
+        factory = SqliteFactory(page_size=4096)
+        with factory(db_url=db_url, local_dir=write_dir) as adapter:
+            adapter.write_batch([(b"k", b"v")])
+            adapter.seal()
+
+        backend = _make_backend(db_url)
+        _, _, prefix_page_size, *_ = _parse_sidecar(
+            backend.get(f"{db_url}/shard.sidecar")
+        )
+        # Manifest source (factory.page_size) vs prefix source (PRAGMA on the DB).
+        assert _detect_sidecar_page_size(factory) == prefix_page_size == 4096

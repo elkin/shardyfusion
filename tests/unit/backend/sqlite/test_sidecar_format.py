@@ -25,8 +25,11 @@ zstandard = pytest.importorskip("zstandard")
 from shardyfusion.sqlite_adapter import (  # noqa: E402
     _SIDECAR_FORMAT_VERSION,
     _SIDECAR_MAGIC,
+    _SIDECAR_PAGE_SIZE_OFFSET,
+    _SIDECAR_TAG_LEN_OFFSET,
     SidecarUnavailableError,
     extract_sidecar,
+    frame_to_sidecar,
 )
 from tests.helpers.sidecar import (  # noqa: E402
     parse_sidecar,
@@ -164,6 +167,24 @@ def _synthetic_body(
     )
 
 
+def _make_test_sidecar(
+    *,
+    page_size: int = 512,
+    corrupt_body_size: bool = False,
+    **body_kwargs: list[int] | None,
+) -> bytes:
+    """Build a complete synthetic v8 sidecar from one ``page_size`` source.
+
+    Threads a single ``page_size`` into both the body page geometry
+    (:func:`_synthetic_body`) and the prefix (:func:`_wrap_test_body`) so the two
+    can't silently desynchronize; ``corrupt_body_size`` declares a ``body_size``
+    one byte longer than the real body to exercise the length-mismatch reject.
+    """
+    body = _synthetic_body(page_size=page_size, **body_kwargs)
+    body_size = len(body) + 1 if corrupt_body_size else None
+    return _wrap_test_body(body, body_size=body_size, page_size=page_size)
+
+
 class TestFormat:
     def test_prefix_magic_version_and_unbound_tag(self, tmp_path: Path) -> None:
         db_path = tmp_path / "minimal.db"
@@ -174,8 +195,13 @@ class TestFormat:
         assert blob[:4] == _SIDECAR_MAGIC == b"SQPC"
         assert blob[4] == _SIDECAR_FORMAT_VERSION == 8
         # v8: page_size is readable from the uncompressed prefix (offset 13).
-        assert int.from_bytes(blob[13:17], "little") == 4096
-        assert blob[17] == 0  # tag_len: unbound when no db_tag is passed
+        assert (
+            int.from_bytes(
+                blob[_SIDECAR_PAGE_SIZE_OFFSET:_SIDECAR_TAG_LEN_OFFSET], "little"
+            )
+            == 4096
+        )
+        assert blob[_SIDECAR_TAG_LEN_OFFSET] == 0  # tag_len: unbound, no db_tag
 
         version, tag, page_size, n, pagenos, _, _ = _parse_sidecar(blob)
         assert version == 8
@@ -190,7 +216,7 @@ class TestFormat:
         etag = '"d41d8cd98f00b204e9800998ecf8427e-3"'  # multipart-shaped ETag
         blob = extract_sidecar(db_path, db_tag=etag)
 
-        assert blob[17] == len(etag.encode("utf-8"))
+        assert blob[_SIDECAR_TAG_LEN_OFFSET] == len(etag.encode("utf-8"))
         _, tag, *_ = _parse_sidecar(blob)
         assert tag == etag
 
@@ -204,28 +230,40 @@ class TestFormat:
         assert len(blob) < n * page_size
 
     def test_shared_parser_rejects_mismatched_body_size(self) -> None:
-        body = _synthetic_body()
         with pytest.raises(AssertionError):
-            parse_sidecar(_wrap_test_body(body, body_size=len(body) + 1))
+            parse_sidecar(_make_test_sidecar(corrupt_body_size=True))
 
     def test_shared_parser_rejects_unsorted_page_index(self) -> None:
-        body = _synthetic_body(pagenos=[2, 1])
         with pytest.raises(AssertionError):
-            parse_sidecar(_wrap_test_body(body))
+            parse_sidecar(_make_test_sidecar(pagenos=[2, 1]))
 
     def test_shared_parser_rejects_bad_page_offsets(self) -> None:
-        body = _synthetic_body(offsets=[1, 512])
         with pytest.raises(AssertionError):
-            parse_sidecar(_wrap_test_body(body))
+            parse_sidecar(_make_test_sidecar(offsets=[1, 512]))
 
     def test_shared_parser_rejects_bad_chain_csr(self) -> None:
-        body = _synthetic_body(
-            chain_heads=[7],
-            chain_offsets=[0, 1],
-            chain_pages=[8],
-        )
         with pytest.raises(AssertionError):
-            parse_sidecar(_wrap_test_body(body))
+            parse_sidecar(
+                _make_test_sidecar(
+                    chain_heads=[7], chain_offsets=[0, 1], chain_pages=[8]
+                )
+            )
+
+    def test_shared_parser_rejects_non_power_of_two_page_size(self) -> None:
+        # The prefix page_size must be a power of two in [512, 65536]; this gives
+        # the decoder's only structural page_size guard failing-path coverage.
+        with pytest.raises(AssertionError):
+            parse_sidecar(_make_test_sidecar(page_size=3000))
+
+    def test_shared_parser_rejects_zero_page_size(self) -> None:
+        with pytest.raises(AssertionError):
+            parse_sidecar(_make_test_sidecar(page_size=0))
+
+    def test_frame_to_sidecar_requires_page_size(self) -> None:
+        # page_size is mandatory at emit time: a None/0 page_size would produce a
+        # sidecar every reader rejects, so the producer fails loudly instead.
+        with pytest.raises(ValueError, match="page_size"):
+            frame_to_sidecar(b"frame-bytes", body_size=10, page_size=None)
 
 
 # ---------------------------------------------------------------------------

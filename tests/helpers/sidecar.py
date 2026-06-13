@@ -13,7 +13,14 @@ from dataclasses import dataclass
 
 import pytest
 
-from shardyfusion.sqlite_adapter import _SIDECAR_FORMAT_VERSION, _SIDECAR_MAGIC
+from shardyfusion.sqlite_adapter import (
+    _SIDECAR_BODY_SIZE_OFFSET,
+    _SIDECAR_FIXED_PREFIX_SIZE,
+    _SIDECAR_FORMAT_VERSION,
+    _SIDECAR_MAGIC,
+    _SIDECAR_PAGE_SIZE_OFFSET,
+    _SIDECAR_TAG_LEN_OFFSET,
+)
 
 
 @dataclass(frozen=True)
@@ -39,16 +46,21 @@ def parse_sidecar(blob: bytes) -> ParsedSidecar:
     """
     zstandard = pytest.importorskip("zstandard")
 
-    assert len(blob) >= 18, len(blob)
+    assert len(blob) >= _SIDECAR_FIXED_PREFIX_SIZE, len(blob)
     assert blob[:4] == _SIDECAR_MAGIC, blob[:4]
     version = blob[4]
     assert version == _SIDECAR_FORMAT_VERSION, version
-    body_size = int.from_bytes(blob[5:13], "little")
-    page_size = int.from_bytes(blob[13:17], "little")
-    tag_len = blob[17]
-    assert len(blob) >= 18 + tag_len, (len(blob), tag_len)
-    db_tag = blob[18 : 18 + tag_len].decode("utf-8") if tag_len else None
-    body = zstandard.ZstdDecompressor().decompress(blob[18 + tag_len :])
+    body_size = int.from_bytes(
+        blob[_SIDECAR_BODY_SIZE_OFFSET:_SIDECAR_PAGE_SIZE_OFFSET], "little"
+    )
+    page_size = int.from_bytes(
+        blob[_SIDECAR_PAGE_SIZE_OFFSET:_SIDECAR_TAG_LEN_OFFSET], "little"
+    )
+    tag_len = blob[_SIDECAR_TAG_LEN_OFFSET]
+    tag_start = _SIDECAR_FIXED_PREFIX_SIZE
+    assert len(blob) >= tag_start + tag_len, (len(blob), tag_len)
+    db_tag = blob[tag_start : tag_start + tag_len].decode("utf-8") if tag_len else None
+    body = zstandard.ZstdDecompressor().decompress(blob[tag_start + tag_len :])
     assert body_size == len(body), (body_size, len(body))
 
     cur = 0
