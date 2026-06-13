@@ -221,7 +221,7 @@ full run impractical. If it cannot be run, say exactly what was skipped.
   unallocated middle of each B-tree page is dropped and reconstructed on read).
   Requires APSW + zstandard from the `[sqlite-range]` extra; silently skips
   when either is missing, on unsafe journal modes, or on reserved-bytes DBs.
-  Format spec (v7, vendor-neutral `SQPC` magic):
+  Format spec (v8, vendor-neutral `SQPC` magic):
   `docs/reference/sqlite-sidecar-format.md`.
 - The `SqliteShardReader` and SQLite-vec download-cache reader share
   `local_root` (default `/tmp/shardyfusion`) across CLI invocations and

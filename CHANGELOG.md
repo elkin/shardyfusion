@@ -124,6 +124,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pages are stored head-first.
   See `docs/reference/sqlite-sidecar-format.md`.
 
+#### SQLite page-cache sidecar (v8)
+
+- **Sidecar format bumped to v8.** `page_size` moves out of the compressed body
+  and into the uncompressed prefix as a `u32` at offset 13 (between `body_size`
+  and the tag length), so a reader can validate the page size against the
+  database before downloading or decompressing the body. The tag length, tag,
+  and zstd frame shift to offsets 17, 18, and `18 + tag_len` respectively, and
+  the decompressed body is 4 bytes smaller for the same database (it now begins
+  with the page count `n`). This matches the v8 reader in the binokl consumer.
+  See `docs/reference/sqlite-sidecar-format.md`.
+
 #### Range-read VFS now honours per-shard page size
 
 - **`S3ReadOnlyFile` parses the SQLite file header on open** (one
